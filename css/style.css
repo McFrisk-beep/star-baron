@@ -444,6 +444,23 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .c-stand { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
 .rep-bonus { color: var(--gold); font-size: 10px; }
 
+/* ---- Barons / leaderboard ---- */
+.lb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.lb-row { display: grid; grid-template-columns: 44px 1fr auto auto; align-items: center; gap: 10px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; }
+.lb-rank { font-family: var(--mono); font-size: 13px; color: var(--ink-dim); font-weight: 700; }
+.lb-who { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.lb-name { font-size: 13px; }
+.lb-ep { font-size: 11px; color: var(--ink-faint); font-style: italic; }
+.lb-fac { font-size: 10px; font-weight: 700; white-space: nowrap; }
+.lb-fac.you { color: var(--gold); }
+.lb-delta { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); min-width: 30px; text-align: right; }
+.lb-delta.up { color: var(--up); } .lb-delta.down { color: var(--down); }
+.lb-nw { font-family: var(--mono); font-size: 13px; font-weight: 700; text-align: right; min-width: 78px; }
+.lb-you { border-color: var(--gold); background: linear-gradient(90deg, rgba(255,194,75,.12), var(--panel2) 40%); }
+.lb-you .lb-rank, .lb-you .lb-name, .lb-you .lb-nw { color: var(--gold); }
+.tag-rival { background: #3b1d2a; color: var(--down); }
+
 /* ===== modals: mission + equip ===== */
 .modal-wide { max-width: 560px; }
 .mm-req { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin-bottom: 6px; }

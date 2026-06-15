@@ -439,6 +439,49 @@ const MISSION_PHASES = {
   assassinate: ["Infiltrating {SYS}", "Stalking the target", "Taking the shot", "Exfiltrating"],
 };
 
+/* ---- RIVAL BARON CHATTER ---------------------------------------------------
+   Spoken BY a rival, addressed to the player ("Baron"). `concede` fires when
+   you overtake them on the leaderboard, `gloat` when they overtake you, and
+   `ambient` is unprompted bragging. The *Warm variants soften the tone when
+   you're Allied+ with that rival's faction. Tokens: {EPITHET} {NW} {RANK}.    */
+const RIVAL_BARBS = {
+  concede: [
+    "Enjoy the view from up there, Baron. It's draftier than it looks.",
+    "So you slipped past me. A rounding error. I'll have it back by the next cycle.",
+    "Fine — you're ahead. For now. Savor the {RANK} spot while it's warm.",
+    "Lucky run, Baron. The market giveth, and I will personally taketh away.",
+    "You climbed over me? Cute. I've been bankrupt richer than you are now.",
+    "Don't get comfortable up there. I know where your cargo lanes sleep.",
+  ],
+  concedeWarm: [
+    "Well played, Baron — you earned that one. Drinks are on me, briefly.",
+    "Passed me fair and square. I'd rather lose to you than to {EPITHET}'s lot.",
+    "Hah! Took you long enough, friend. Keep climbing — make it worth my respect.",
+  ],
+  gloat: [
+    "Was that you in my rear-view, Baron? Adorable. Wave goodbye.",
+    "Back to {RANK}, I see. The cream rises; the rest of you can curdle.",
+    "I just cleared {NW} while you were counting coppers. Try to keep up.",
+    "You had the lead for what — an afternoon? Precious.",
+    "Step aside, Baron. The grown-ups are trading now.",
+    "I didn't climb over you so much as walk. You were standing still.",
+  ],
+  gloatWarm: [
+    "Edged ahead of you again, Baron — nothing personal, you know I like you.",
+    "Up past you for now, friend. Push back, eh? It's no fun winning easy.",
+    "I'm ahead, but barely. You keep me honest, Baron, I'll give you that.",
+  ],
+  ambient: [
+    "{EPITHET} here, sitting pretty at {NW}. Anyone care to argue?",
+    "Bought a whole sector's spice futures this morning. Tuesday, am I right?",
+    "They don't call me {EPITHET} for nothing. Net worth just kissed {NW}.",
+    "Another quiet day printing credits. The leaderboard practically writes itself.",
+    "Rumor says some upstart 'Baron' is climbing. I've crushed a hundred of those.",
+    "My accountants needed a bigger room. Again. {NW} and counting.",
+  ],
+};
+
+window.RIVAL_BARBS = RIVAL_BARBS;
 window.SHIP_NAME_A = SHIP_NAME_A;
 window.SHIP_NAME_B = SHIP_NAME_B;
 window.ITEM_BRANDS = ITEM_BRANDS;

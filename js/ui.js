@@ -30,6 +30,7 @@ const UI = {
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
       fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
       systemList: $("system-list"), bazaarBody: $("bazaar-body"),
+      rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"),
       achList: $("ach-list"), achCount: $("ach-count"),
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
@@ -58,6 +59,7 @@ const UI = {
     if (name === "fleet") this.renderFleet();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
+    else if (name === "barons") this.renderLeaderboard();
     else if (name === "ach") this.renderAchievements();
   },
 
@@ -147,6 +149,7 @@ const UI = {
     const s = this.s();
     this.refs.credits.textContent = Util.credits(s.credits);
     this.refs.networth.textContent = Util.credits(Economy.netWorth());
+    if (this.refs.rank && window.Rivals) this.refs.rank.textContent = `#${Rivals.rank()} / ${Rivals.count()}`;
     this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = s.prestige.tier;
     const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
@@ -534,6 +537,32 @@ const UI = {
       return `<li class="ach ${have ? "got" : ""}"><b>${have ? "★" : "☆"} ${a.name}</b><span>${a.desc}</span></li>`; }).join("");
   },
 
+  // ===== BARONS / leaderboard ==============================================
+  renderLeaderboard() {
+    if (this.page !== "barons") return;
+    const board = Rivals.board();
+    const snap = (this.s().rivalsMeta || {}).snap;
+    const rank = board.findIndex(r => r.you) + 1;
+    this.refs.lbSub.textContent = `you sit #${rank} of ${board.length} — net worth is the only score that counts`;
+    this.refs.lbList.innerHTML = board.map(r => {
+      const fac = r.faction ? FACTIONS[r.faction] : null;
+      const was = snap && snap.ranks ? snap.ranks[r.id] : null;
+      const d = was == null ? 0 : was - r.rank;
+      const arrow = d > 0 ? `<span class="lb-delta up">▲${d}</span>`
+        : d < 0 ? `<span class="lb-delta down">▼${-d}</span>`
+        : `<span class="lb-delta">·</span>`;
+      const who = r.you
+        ? `<b class="lb-name">You</b>`
+        : `<b class="lb-name">${r.name}</b> <span class="lb-ep">${r.epithet}</span>`;
+      const chip = fac ? `<span class="lb-fac" style="color:${fac.color}">◆ ${fac.name}</span>` : `<span class="lb-fac you">◆ your empire</span>`;
+      return `<li class="lb-row ${r.you ? "lb-you" : ""}">
+        <span class="lb-rank">#${r.rank}</span>
+        <span class="lb-who">${who}${chip}</span>
+        ${arrow}
+        <span class="lb-nw">${Util.credits(r.netWorth)}c</span></li>`;
+    }).join("");
+  },
+
   // ===== broadcast / feed ==================================================
   setBroadcast({ channel, title, caption }) {
     const img = this.refs.bcFrame; img.onerror = () => { img.style.visibility = "hidden"; };
@@ -558,7 +587,7 @@ const UI = {
     const img = new Image(); img.src = ASSET.portrait(portrait); img.alt = ""; img.className = "pfp";
     img.onerror = () => { const b = this.el("div", "pfp tintbox", handle.slice(0, 1).toUpperCase()); img.replaceWith(b); };
     const body = this.el("div", "msg-body");
-    const tag = kind === "omen" ? `<span class="tag tag-omen">tip</span>` : kind === "scam" ? `<span class="tag tag-scam">tip</span>` : kind === "reaction" ? `<span class="tag tag-react">live</span>` : "";
+    const tag = kind === "omen" ? `<span class="tag tag-omen">tip</span>` : kind === "scam" ? `<span class="tag tag-scam">tip</span>` : kind === "reaction" ? `<span class="tag tag-react">live</span>` : kind === "rival" ? `<span class="tag tag-rival">rival</span>` : "";
     body.innerHTML = `<div class="msg-head"><span class="msg-handle">${handle}</span>${tag}</div><div class="msg-text"></div>`;
     body.querySelector(".msg-text").textContent = text;
     li.append(img, body); ul.appendChild(li);
@@ -635,6 +664,13 @@ const UI = {
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
+    Bus.on("rivalPass", e => {
+      const r = Rivals.data(e.rival); if (!r) return;
+      if (e.dir === "up") this.toast(`You overtook ${r.name} — now #${e.rank} on the board.`, "good", 4500);
+      else this.toast(`${r.name} just passed you — down to #${e.rank}.`, "warn", 4500);
+      this.updateHeader();
+      if (this.page === "barons") this.renderLeaderboard();
+    });
   },
   audioSafe(t) { try { window.Game.audio(t); } catch (e) {} },
 
@@ -645,6 +681,7 @@ const UI = {
     this.updateClock();
     if (this.page === "fleet") { this.renderMissions(); }
     if (this.page === "bazaar") this.renderBazaar();
+    if (this.page === "barons") this.renderLeaderboard();
     if (this.page === "systems" && this.s().travel) this.renderSystems();
   },
 
@@ -653,6 +690,7 @@ const UI = {
     this.renderSystems(); this.renderAchievements(); this.renderNewswire(); this.applySettings();
     if (this.page === "fleet") this.renderFleet();
     if (this.page === "bazaar") this.renderBazaar();
+    if (this.page === "barons") this.renderLeaderboard();
   },
 };
 

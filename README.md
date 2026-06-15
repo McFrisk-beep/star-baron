@@ -51,6 +51,13 @@ pattern.
   **bazaar discounts**, **bigger contract payouts**, and **gates the top jobs**
   (assassinations / extreme-danger work) behind being Friendly with the sponsor —
   so you pick who to serve.
+- **Rival barons & leaderboard** — twelve named AI barons whose net worth
+  compounds in real time. Your live net worth is slotted into the same board, so
+  climbing the exchange means **climbing the ladder** — and going idle means
+  sliding back as the rivals keep getting richer. Overtakes (either direction)
+  fire **faction-flavored taunts and gloats** in the trader chat (softened if
+  you're Allied with that rival's faction) plus a toast, and the HUD shows your
+  live **Rank**. A constant rivalry to chase between milestones and prestige.
 - **Progression** — credits, ship tiers, system unlocks, achievements, a market
   sentiment gauge, a galactic clock, and **prestige** ("Retire Empire") for the
   long tail.
@@ -82,6 +89,8 @@ star-baron/
 │   ├── items.js          # procedural ship accessories (rarity, naming, value)
 │   ├── fleet.js          # persistent ships, combat stats, flagship, equipping
 │   ├── economy.js        # credits, exchange, timed docking, achievements, prestige
+│   ├── reputation.js     # faction standing: edges, discounts, contract gates
+│   ├── rivals.js         # AI baron leaderboard: drift, ranks, taunts/gloats
 │   ├── missions.js       # contract missions: phases, success, rewards, losses
 │   ├── bazaar.js         # ships/mercs/contracts/accessories market + listings
 │   ├── feed.js           # chat scheduler, templating, reactions, omens

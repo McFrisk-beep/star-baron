@@ -29,6 +29,8 @@ const Game = {
       prestige: { tier: 0, multiplier: 1.0 },
       stats: { trades: 0, contractsDone: 0, peakNetWorth: CONFIG.startingCredits, biggestTrade: 0 },
       newswire: [],
+      rivals: null,          // seeded lazily by Rivals.ensure()
+      rivalsMeta: null,
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches },
       lastSeenAt: Date.now(),
       market: null,
@@ -71,6 +73,7 @@ const Game = {
     Galaxy.build();
     Galaxy.hydrate(this.state.galaxy);
     Bazaar.ensure();
+    Rivals.ensure();
 
     // ---- offline catch-up (before any feed listeners are wired) ----
     this._booting = true;
@@ -81,6 +84,7 @@ const Game = {
     const offlineReports = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
     const offlineSold = Bazaar.tick(now);
+    Rivals.tick(now);             // catch the leaderboard up over offline time
     this.state.lastSeenAt = now;
 
     // ---- UI + flavor wiring ----
@@ -101,6 +105,10 @@ const Game = {
     });
 
     Bus.on("missionDone", () => this.requestSave());
+
+    // Retiring drops you to the bottom of the board — resync rank silently so
+    // the reset doesn't spam overtake toasts on the next tick.
+    Bus.on("prestige", () => { if (this.state.rivalsMeta) this.state.rivalsMeta.lastRank = Rivals.rank(); });
 
     // Faction standing crossed a tier — toast + a little in-character chatter.
     Bus.on("rep", e => {
@@ -143,6 +151,7 @@ const Game = {
     Economy.checkArrival(now);
     const done = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
+    Rivals.tick(now);
     if (done.length) this.requestSave();
     UI.tick();
   },

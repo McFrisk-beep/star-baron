@@ -201,6 +201,37 @@ const REP = {
   ],
 };
 
+/* ---- RIVAL BARONS ---------------------------------------------------------
+   The competitive ladder. Twelve AI barons whose net worth drifts upward over
+   time (idle = fall behind); the player climbs past them as they grow rich.
+   Each rival is affiliated with a faction — your standing colors how they
+   needle you when you trade ranks. `base` seeds their net worth (spread ~geo-
+   metrically so there's always someone just above and just below you for a
+   very long time); `growthPerHr` is their organic compounding rate.            */
+const RIVALCFG = {
+  driftMs: 4000,          // rivals re-price about this often
+  snapshotMs: 20 * 1000,  // how often the leaderboard re-baselines rank arrows
+  noiseSd: 0.01,          // per-drift gaussian wiggle on net worth
+  minMult: 0.4,           // a rival never sinks below base × this…
+  maxMult: 6,             // …nor balloons past base × this
+  barbMinGapMs: 70 * 1000,// throttle rival chatter (taunts/gloats/brags)
+  ambientChance: 0.06,    // chance per drift a rival brags unprompted
+};
+const RIVALS = [
+  { id: "pace",    name: "Dolio Pace",  epithet: "the Hopeful",        faction: "free_trade",      portrait: 0,  base: 2500,    growthPerHr: 0.060 },
+  { id: "harrow",  name: "Quill Harrow",epithet: "the Penny Baron",    faction: "mining_combine",  portrait: 1,  base: 6000,    growthPerHr: 0.050 },
+  { id: "akari",   name: "Senn Akari",  epithet: "the Upstart",        faction: "agri_collective", portrait: 2,  base: 14000,   growthPerHr: 0.050 },
+  { id: "toll",    name: "Bram Toll",   epithet: "the Tollmaster",     faction: "syndicate",       portrait: 3,  base: 30000,   growthPerHr: 0.045 },
+  { id: "renko",   name: "Iva Renko",   epithet: "the Climber",        faction: "free_trade",      portrait: 4,  base: 65000,   growthPerHr: 0.040 },
+  { id: "gran",    name: "Otho Gran",   epithet: "Ore-Fist",           faction: "mining_combine",  portrait: 5,  base: 130000,  growthPerHr: 0.038 },
+  { id: "marrow",  name: "Lys Marrow",  epithet: "the Spice Countess", faction: "agri_collective", portrait: 6,  base: 260000,  growthPerHr: 0.034 },
+  { id: "dury",    name: "Cax Dury",    epithet: "the Fence",          faction: "syndicate",       portrait: 7,  base: 520000,  growthPerHr: 0.030 },
+  { id: "voss",    name: "Pell Voss",   epithet: "the Magnate",        faction: "free_trade",      portrait: 8,  base: 950000,  growthPerHr: 0.027 },
+  { id: "kessel",  name: "Dorn Kessel", epithet: "the Deepvein",       faction: "mining_combine",  portrait: 9,  base: 1700000, growthPerHr: 0.024 },
+  { id: "vaunt",   name: "Sera Vaunt",  epithet: "the Greencrown",     faction: "agri_collective", portrait: 10, base: 3000000, growthPerHr: 0.020 },
+  { id: "vex",     name: "Mara Vex",    epithet: "the Velvet Knife",   faction: "syndicate",       portrait: 11, base: 6000000, growthPerHr: 0.018 },
+];
+
 /* ---- PRESTIGE -------------------------------------------------------------
    [DECISION] starting curve — tune freely. Unlocks at the net-worth
    threshold; "sell the empire" grants a permanent multiplier and bumps the
@@ -282,6 +313,8 @@ window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;
 window.REP = REP;
+window.RIVALCFG = RIVALCFG;
+window.RIVALS = RIVALS;
 window.PRESTIGE = PRESTIGE;
 window.GALAXY = GALAXY;
 window.RACES = RACES;

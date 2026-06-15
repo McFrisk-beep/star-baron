@@ -18,6 +18,7 @@
     <div class="stats">
       <div class="stat"><label>Credits</label><span id="hud-credits">—</span></div>
       <div class="stat"><label>Net Worth</label><span id="hud-networth">—</span></div>
+      <div class="stat" title="Your place among the galaxy's barons"><label>Rank</label><span id="hud-rank">—</span></div>
       <div class="stat"><label>Location</label><span id="hud-system">—</span></div>
       <div class="stat" title="Market sentiment"><label>Sentiment</label>
         <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
@@ -38,6 +39,7 @@
         <button class="tab" data-page="fleet">Fleet <span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
         <button class="tab" data-page="systems">Star Systems</button>
         <button class="tab" data-page="bazaar">Bazaar</button>
+        <button class="tab" data-page="barons">Barons</button>
         <button class="tab" data-page="ach">Milestones</button>
       </nav>
 
@@ -80,6 +82,14 @@
       <!-- BAZAAR -->
       <section class="page hidden" id="page-bazaar">
         <div id="bazaar-body"></div>
+      </section>
+
+      <!-- BARONS / LEADERBOARD -->
+      <section class="page hidden" id="page-barons">
+        <div class="panel">
+          <h2>Baron Leaderboard <small id="lb-sub"></small></h2>
+          <ol class="lb-list" id="lb-list"></ol>
+        </div>
       </section>
 
       <!-- MILESTONES -->
@@ -190,6 +200,7 @@
   <script src="js/fleet.js"></script>
   <script src="js/economy.js"></script>
   <script src="js/reputation.js"></script>
+  <script src="js/rivals.js"></script>
   <script src="js/missions.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
