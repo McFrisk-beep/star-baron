@@ -404,7 +404,11 @@ const UI = {
       <div class="bc-stats">⚔${def.firepower} ❤${def.hull} 🛡${def.armor} ✦${def.shields} ▣${def.cargo} »${def.speed}</div>
       <button class="btn btn-go" data-buyship="${def.id}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
 
+    // The free starter ship only shows when the player has no ships at all
+    // (the flagship doesn't count).
+    const noShips = this.s().ships.length === 0;
     const yard = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort]
+      .filter(d => d.price > 0 || noShips)
       .map(d => shipCardBuy(d, d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite))).join("");
 
     const mains = SHIP_CATALOG.main.map(d => {
