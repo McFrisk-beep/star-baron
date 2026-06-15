@@ -286,6 +286,18 @@ const SECTORS = [
 const STAR_TYPES = ["yellow", "blue", "red", "white", "orange", "neutron", "binary"];
 const PLANET_TYPES = ["rocky", "terran", "ocean", "ice", "lava", "gas_giant", "barren", "ringed", "toxic"];
 
+/* ---- SYSTEM VIEW (animated scene) -----------------------------------------
+   Tunables for the canvas scene behind a system on the Star Map: ambient ship
+   traffic, the hyperspace gate ships warp in/out through, and ship voice-lines.
+   Lower ship speeds make the system feel vast.                                 */
+const SYSTEMVIEW = {
+  shipSpeedMin: 24, shipSpeedMax: 52,   // px/s — was 42–90; slower = bigger space
+  gateLeaveChance: 0.22,                 // chance a ship picks the gate (jumps out) over a dock
+  chatterMinGapMs: 3800,                 // min real gap between ambient hail/reply exchanges
+  chatterRate: 0.5,                      // per-second chance of an exchange once off cooldown
+  bubbleMs: 2900,                        // how long a speech bubble lingers
+};
+
 // asset path helpers — change these if you reorganize /assets
 const ASSET = {
   portrait: i => `assets/portraits/alien_${String(i).padStart(2, "0")}.png`,
@@ -321,4 +333,5 @@ window.RACES = RACES;
 window.SECTORS = SECTORS;
 window.STAR_TYPES = STAR_TYPES;
 window.PLANET_TYPES = PLANET_TYPES;
+window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;

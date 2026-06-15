@@ -481,6 +481,64 @@ const RIVAL_BARBS = {
   ],
 };
 
+/* ---- SHIP RADIO ------------------------------------------------------------
+   Voice-lines for the tiny ships in a system's animated scene. `hail` opens an
+   exchange (talking to one another), `reply` answers it; `combat` barks when a
+   dogfight breaks out; `win` after; `warpIn`/`warpOut` at the hyperspace gate. */
+const SHIP_RADIO = {
+  hail: [
+    "Anyone got eyes on that patrol?",
+    "Hauling spice to the inner belt.",
+    "Clear vector ahead — looking good.",
+    "Long way between stars out here.",
+    "Trade winds are kind today.",
+    "Watch your spacing, friend.",
+    "Picking up chatter on the old channels.",
+    "Coffee's cold and the void's colder.",
+    "Customs gave me grief at the last hub.",
+    "She handles like a brick today.",
+  ],
+  reply: [
+    "Copy that. Safe travels.",
+    "Roger — keeping it clean.",
+    "Heh, tell me about it.",
+    "Acknowledged. Eyes open.",
+    "Same to you, spacer.",
+    "Loud and clear.",
+    "Mind the asteroids out there.",
+    "Catch you at the next station.",
+  ],
+  combat: [
+    "Under attack! Under attack!",
+    "Mayday — taking fire!",
+    "I'm hit! Going evasive!",
+    "Returning fire!",
+    "Break off, break off!",
+    "Shields buckling!",
+    "Where'd that come from?!",
+    "Get off my tail!",
+  ],
+  win: [
+    "Splash one. Threat clear.",
+    "That's that — resuming course.",
+    "Scratch one hostile.",
+    "Told you to break off.",
+  ],
+  warpIn: [
+    "Dropping out of hyperspace.",
+    "Jump complete — hello, system.",
+    "Made it through the gate.",
+    "Long jump. Good to see a star.",
+  ],
+  warpOut: [
+    "Spinning up the jump drive.",
+    "Next system, here I come.",
+    "Punching out — see you, spacers.",
+    "Gate's hot. Jumping.",
+  ],
+};
+
+window.SHIP_RADIO = SHIP_RADIO;
 window.RIVAL_BARBS = RIVAL_BARBS;
 window.SHIP_NAME_A = SHIP_NAME_A;
 window.SHIP_NAME_B = SHIP_NAME_B;

@@ -65,8 +65,11 @@ pattern.
   procedurally generated from a fixed seed = the same universe every load). Every
   node is anchored to the galactic market and pulses green/red with its local
   prices. Click a system for a big animated scene — a star, orbiting planets, a
-  space station, and tiny race-varied ships — plus planet industries, what each
-  planet imports, and a **local news feed**. Most local news is flavor, but
+  space station, and tiny race-varied ships that drift unhurriedly (space is
+  *big*), **call out to one another** and bark "Under attack!" mid-dogfight, and
+  warp in and out through a **hyperspace gate** at the system's edge — plus
+  planet industries, what each planet imports, and a **local news feed**. Most
+  local news is flavor, but
   **local events** (riots halting an export, a fresh seam, a customs lockdown)
   actually move that system's prices — "valuable insight" for whoever's reading.
   Trading/fleet stay on the curated unlockable capitals (one per sector).

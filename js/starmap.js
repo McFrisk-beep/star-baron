@@ -302,12 +302,18 @@ const StarMap = {
     const neb = this.img(ASSET.nebula(sys.nebula));
     const aster = sys.asteroidBelt ? this.img(ASSET.asteroids()) : null;
 
+    // The hyperspace gate sits at the system's edge: ships warp in here from
+    // other systems, and ships heading "out" jump away through it.
+    const gatePos = () => ({ x: W() - 64, y: H() * 0.3 });
+
     // ---- ambient ship traffic (with behaviour) ----
     const raceKeys = Object.keys(RACES);
     const targetPop = reduced ? 4 : 9;
     const ships = [];
     const particles = [];
     const raceImg = r => this.img(ASSET.raceship(r));
+    const shipSpeed = () => Util.randFloat(SYSTEMVIEW.shipSpeedMin, SYSTEMVIEW.shipSpeedMax);
+    const say = (sh, pool) => { const lines = SHIP_RADIO[pool]; if (lines) sh.bubble = { text: Util.pick(lines), t: SYSTEMVIEW.bubbleMs / 1000 }; };
 
     const dockPoints = () => {
       const pts = planets.map((pl, i) => ({ x: pl._x ?? W() / 2, y: pl._y ?? H() / 2, kind: "planet", idx: i }));
@@ -318,19 +324,25 @@ const StarMap = {
       if (!t) return { x: W() / 2, y: H() / 2 };
       if (t.kind === "planet") { const pl = planets[t.idx]; return { x: pl?._x ?? W() / 2, y: pl?._y ?? H() / 2 }; }
       if (t.kind === "station") return { x: station._x ?? W() / 2, y: station._y ?? H() / 2 };
+      if (t.kind === "gate") return gatePos();
       return { x: t.x, y: t.y };
     };
-    const pickTarget = avoid => {
+    // Ships mostly shuttle between docks, but sometimes choose the gate (leave).
+    const pickTarget = (avoid, noGate) => {
+      if (!noGate && Math.random() < SYSTEMVIEW.gateLeaveChance) return { kind: "gate" };
       const docks = dockPoints();
       let t = Util.pick(docks);
       if (avoid && t.kind === avoid.kind && t.idx === avoid.idx && docks.length > 1) t = Util.pick(docks);
       return t.kind === "planet" ? { kind: "planet", idx: t.idx } : { kind: "station" };
     };
+    const warpFlash = (x, y) => this._gateBurst(particles, x, y);
+    // New ships arrive through the gate (warp-in), then go about their errands.
     const spawnShip = () => {
-      const d = Util.pick(dockPoints());
+      const g = gatePos();
       const r = Util.pick(raceKeys);
-      ships.push({ x: d.x, y: d.y, race: r, img: raceImg(r), alpha: 0, state: "spawn",
-        spd: Util.randFloat(42, 90), ang: Math.random() * 6.28, target: null, dwell: 0 });
+      ships.push({ x: g.x, y: g.y, race: r, img: raceImg(r), alpha: 0, scale: 0.3, state: "warpIn",
+        spd: shipSpeed(), ang: Math.atan2(H() / 2 - g.y, W() / 2 - g.x), target: null, dwell: 0 });
+      warpFlash(g.x, g.y);
     };
     const explode = (x, y, color) => {
       for (let i = 0; i < 16; i++) {
@@ -344,10 +356,11 @@ const StarMap = {
     };
     for (let i = 0; i < targetPop; i++) {   // start with traffic already underway
       const r = Util.pick(raceKeys);
-      ships.push({ x: Math.random() * W(), y: Math.random() * H(), race: r, img: raceImg(r),
-        alpha: 1, state: "travel", spd: Util.randFloat(42, 90), ang: Math.random() * 6.28, target: null, dwell: 0 });
+      ships.push({ x: Math.random() * W(), y: Math.random() * H(), race: r, img: raceImg(r), scale: 1,
+        alpha: 1, state: "travel", spd: shipSpeed(), ang: Math.random() * 6.28, target: null, dwell: 0 });
     }
     let combatCooldown = 5;
+    let lastChatterAt = 0;
 
     const stars = [];
     for (let i = 0; i < 120; i++) stars.push({ x: Math.random(), y: Math.random(), b: Math.random() });
@@ -396,6 +409,10 @@ const StarMap = {
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
 
+      // hyperspace gate at the system edge — ships warp in/out through it
+      const gp = gatePos();
+      this._drawGate(ctx, gp.x, gp.y, now * 0.001);
+
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
       if (!reduced) {
@@ -410,20 +427,36 @@ const StarMap = {
             if (b === a) b = cand[(cand.indexOf(a) + 1) % cand.length];
             const ccx = (a.x + b.x) / 2, ccy = (a.y + b.y) / 2;
             for (const s of [a, b]) { s.state = "combat"; s.foe = (s === a ? b : a); s.combatT = Util.randFloat(3, 6); s.cx = ccx; s.cy = ccy; s.orbA = Math.random() * 6.28; }
+            say(a, "combat"); b._replyIn = Util.randFloat(0.4, 0.9); b._replyPool = "combat";
             const ally = ships.find(s => s.state === "travel" && (s.race === a.race || s.race === b.race));
             if (ally && Math.random() < 0.6) { ally.target = { kind: "roam", x: ccx, y: ccy }; ally._interfere = 2.5; }
             combatCooldown = Util.randFloat(14, 34);
           }
         }
+        // ambient radio: someone hails, a nearby ship answers
+        if (now - lastChatterAt > SYSTEMVIEW.chatterMinGapMs && Math.random() < dt * SYSTEMVIEW.chatterRate) {
+          const talkers = ships.filter(s => (s.state === "travel" || s.state === "dock") && !s.bubble);
+          if (talkers.length) {
+            const a = Util.pick(talkers); say(a, "hail");
+            let b = null, bd = 1e9;
+            for (const o of ships) {
+              if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut") continue;
+              const dd = Math.hypot(o.x - a.x, o.y - a.y); if (dd < bd) { bd = dd; b = o; }
+            }
+            if (b && bd < Math.min(w, h) * 0.6) { b._replyIn = Util.randFloat(0.7, 1.4); b._replyPool = "reply"; }
+            lastChatterAt = now;
+          }
+        }
       }
-      const env = { targetPos, pickTarget, explode, spark, sx, sy };
+      const env = { targetPos, pickTarget, explode, spark, say, warpFlash, gatePos, sx, sy };
       for (const sh of ships) {
         if (!reduced) this._stepShip(sh, dt, env);
         const a = Util.clamp(sh.alpha, 0, 1);
         if (a <= 0) continue;
+        const sc = sh.scale ?? 1;
         ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
-        if (sh.img && sh.img.ok) ctx.drawImage(sh.img, -10, -6, 20, 12);
-        else { ctx.fillStyle = RACES[sh.race] ? RACES[sh.race].color : "#cdd6f5"; ctx.fillRect(-4, -2, 8, 4); }
+        if (sh.img && sh.img.ok) ctx.drawImage(sh.img, -10 * sc, -6 * sc, 20 * sc, 12 * sc);
+        else { ctx.fillStyle = RACES[sh.race] ? RACES[sh.race].color : "#cdd6f5"; ctx.fillRect(-4 * sc, -2 * sc, 8 * sc, 4 * sc); }
         ctx.restore();
       }
       for (let i = ships.length - 1; i >= 0; i--) if (ships[i].state === "dead") ships.splice(i, 1);
@@ -435,6 +468,8 @@ const StarMap = {
         ctx.fillStyle = p.color + (p.life / p.max).toFixed(2) + ")";
         ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
       }
+      // speech bubbles ride on top of everything
+      for (const sh of ships) this._drawBubble(ctx, sh, w, h);
 
       if (!reduced) this.raf = requestAnimationFrame(draw);
     };
@@ -443,22 +478,33 @@ const StarMap = {
     this.scene = { canvas };
   },
 
-  // One ship's behaviour for a frame. States: spawn → travel → (dock | land) →
-  // travel … with rare combat. Docked ships linger; landed ships fade into a
-  // planet and despawn; combat ends with one ship exploding.
+  // One ship's behaviour for a frame. States: warpIn → travel → (dock | land |
+  // warpOut) → travel … with rare combat. Ships arrive through the hyperspace
+  // gate, run errands between docks, and either land (fade into a planet),
+  // jump out through the gate, or get caught in a dogfight. Speech bubbles and
+  // delayed replies tick down here too.
   _stepShip(sh, dt, env) {
-    const { targetPos, pickTarget, explode, spark, sx, sy } = env;
+    const { targetPos, pickTarget, explode, spark, say, warpFlash, gatePos, sx, sy } = env;
     const moveTo = (tx, ty, slow) => {
       const dx = tx - sh.x, dy = ty - sh.y, d = Math.hypot(dx, dy) || 1;
       const v = sh.spd * (slow ? 0.5 : 1) * dt;
       sh.x += dx / d * v; sh.y += dy / d * v; sh.ang = Math.atan2(dy, dx);
       return d;
     };
+    // voice-line bubble lifetime + any pending reply
+    if (sh.bubble) { sh.bubble.t -= dt; if (sh.bubble.t <= 0) sh.bubble = null; }
+    if (sh._replyIn != null) {
+      sh._replyIn -= dt;
+      if (sh._replyIn <= 0) { if (sh.state !== "dead" && sh.state !== "warpOut") say(sh, sh._replyPool || "reply"); sh._replyIn = null; sh._replyPool = null; }
+    }
     switch (sh.state) {
-      case "spawn":
-        sh.alpha += dt * 0.8;
-        if (sh.alpha >= 1) { sh.alpha = 1; sh.state = "travel"; sh.target = pickTarget(); }
+      case "warpIn": {   // materialize at the gate and drift inward
+        sh.alpha = Math.min(1, sh.alpha + dt * 1.8);
+        sh.scale = Math.min(1, (sh.scale ?? 0.3) + dt * 1.8);
+        sh.x += Math.cos(sh.ang) * sh.spd * 0.5 * dt; sh.y += Math.sin(sh.ang) * sh.spd * 0.5 * dt;
+        if (sh.alpha >= 1) { sh.alpha = 1; sh.scale = 1; sh.state = "travel"; sh.target = pickTarget(null, true); if (Math.random() < 0.55) say(sh, "warpIn"); }
         break;
+      }
       case "travel": {
         if (!sh.target) sh.target = pickTarget();
         const p = targetPos(sh.target);
@@ -466,8 +512,16 @@ const StarMap = {
         if (d < 8) {
           if (sh.target.kind === "station") { sh.state = "dock"; sh.dwell = Util.randFloat(2.5, 7); }
           else if (sh.target.kind === "planet") { sh.state = "land"; sh.landRef = sh.target; }
+          else if (sh.target.kind === "gate") { sh.state = "warpOut"; sh.warpT = Util.randFloat(0.7, 1.1); if (Math.random() < 0.7) say(sh, "warpOut"); }
           else sh.target = pickTarget();   // roam point reached → new errand
         }
+        break;
+      }
+      case "warpOut": {   // charge at the gate, then blink out of the system
+        sh.warpT -= dt;
+        sh.alpha = Math.max(0, sh.alpha - dt * 1.3);
+        sh.scale = Math.max(0.12, (sh.scale ?? 1) - dt * 1.1);
+        if (sh.warpT <= 0) { warpFlash(sh.x, sh.y); sh.state = "dead"; }
         break;
       }
       case "dock": {   // linger near the (moving) station
@@ -484,13 +538,14 @@ const StarMap = {
         if (sh.alpha <= 0) sh.state = "dead";
         break;
       }
-      case "combat": {   // orbit the fight, spit sparks, then resolve
+      case "combat": {   // orbit the fight, spit sparks, bark, then resolve
         sh.orbA += dt * 3.2;
         const rr = 18 + Math.sin(sh.orbA * 1.7) * 8;
         sh.x = sh.cx + Math.cos(sh.orbA) * rr;
         sh.y = sh.cy + Math.sin(sh.orbA) * rr;
         sh.ang = sh.orbA + Math.PI / 2;
         if (Math.random() < dt * 4) spark(sh.x, sh.y);
+        if (!sh.bubble && sh._replyIn == null && Math.random() < dt * 0.4) say(sh, "combat");
         sh.combatT -= dt;
         if (sh.combatT <= 0) {
           if (sh.foe && sh.foe.state === "combat") {
@@ -500,6 +555,7 @@ const StarMap = {
               explode(loser.x, loser.y, "rgba(255,150,70,");
               loser.state = "dead";
               winner.state = "travel"; winner.target = null; winner.foe = null;
+              if (Math.random() < 0.7) say(winner, "win");
             }
           } else { sh.state = "travel"; sh.target = null; sh.foe = null; }
         }
@@ -507,6 +563,64 @@ const StarMap = {
       }
     }
     if (sh._interfere != null) { sh._interfere -= dt; if (sh._interfere <= 0) sh._interfere = null; }
+  },
+
+  // ---- scene draw helpers (hyperspace gate + speech bubbles) ----
+  _gateBurst(particles, x, y) {
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2, s = Util.randFloat(40, 110);
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: Util.randFloat(.3, .7), max: .7, color: "rgba(130,200,255," });
+    }
+  },
+
+  _drawGate(ctx, gx, gy, t) {
+    ctx.save();
+    const glow = ctx.createRadialGradient(gx, gy, 2, gx, gy, 34);
+    glow.addColorStop(0, "rgba(130,200,255,.5)"); glow.addColorStop(1, "rgba(130,200,255,0)");
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(gx, gy, 34, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 2;
+    for (let k = 0; k < 3; k++) {
+      ctx.strokeStyle = `rgba(150,210,255,${(0.8 - k * 0.18).toFixed(2)})`;
+      const r = 9 + k * 5;
+      ctx.beginPath(); ctx.ellipse(gx, gy, r, r * 0.42, t * (1.1 + k * 0.5), 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.fillStyle = "rgba(210,238,255,.95)"; ctx.beginPath(); ctx.arc(gx, gy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(170,210,255,.75)"; ctx.font = "9px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText("⇋ HYPERSPACE GATE", gx, gy + 30);
+    ctx.restore();
+  },
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  },
+
+  _drawBubble(ctx, sh, w, h) {
+    const b = sh.bubble;
+    if (!b || b.t <= 0 || (sh.alpha ?? 1) <= 0.05) return;
+    ctx.save();
+    ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+    const tw = ctx.measureText(b.text).width;
+    const padX = 6, bh = 18, bw = tw + padX * 2;
+    let bx = sh.x - bw / 2, by = sh.y - 16 - bh;
+    bx = Util.clamp(bx, 3, w - bw - 3); by = Util.clamp(by, 3, h - bh - 3);
+    const al = Util.clamp(b.t, 0, 1);
+    ctx.globalAlpha = 0.92 * al; ctx.fillStyle = "rgba(10,14,24,.92)";
+    // pointer tail toward the ship
+    ctx.beginPath(); ctx.moveTo(sh.x - 4, by + bh); ctx.lineTo(sh.x + 4, by + bh);
+    ctx.lineTo(sh.x, Math.min(sh.y - 11, by + bh + 7)); ctx.closePath(); ctx.fill();
+    this._roundRect(ctx, bx, by, bw, bh, 5); ctx.fill();
+    ctx.strokeStyle = (RACES[sh.race] && RACES[sh.race].color) || "#7b8cff"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.globalAlpha = al; ctx.fillStyle = "#e6ecff";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(b.text, bx + padX, by + bh / 2 + 0.5);
+    ctx.restore();
   },
 
   stopScene() {
