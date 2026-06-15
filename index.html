@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Star Baron — Galactic Exchange</title>
-  <meta name="description" content="A browser-based interstellar trading game. Read the market, run the fleet, become a galactic trade baron." />
+  <meta name="description" content="A browser-based interstellar trading game. Read the market, run a combat fleet, become a galactic trade baron." />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body class="muted">
@@ -18,7 +18,7 @@
     <div class="stats">
       <div class="stat"><label>Credits</label><span id="hud-credits">—</span></div>
       <div class="stat"><label>Net Worth</label><span id="hud-networth">—</span></div>
-      <div class="stat"><label>Docked At</label><span id="hud-system">—</span></div>
+      <div class="stat"><label>Location</label><span id="hud-system">—</span></div>
       <div class="stat" title="Market sentiment"><label>Sentiment</label>
         <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
       <div class="stat"><label>Baron Tier</label><span id="hud-tier">0</span></div>
@@ -32,53 +32,66 @@
   </header>
 
   <main class="layout">
-    <!-- ===== LEFT: GAMEPLAY ===== -->
     <div class="col-main">
-      <section class="panel" id="panel-exchange">
-        <h2>Galactic Exchange <small id="exchange-sub"></small></h2>
-        <div class="table-wrap">
-          <table class="market" id="market-table">
-            <thead>
-              <tr>
+      <nav class="tabs" id="tabs">
+        <button class="tab active" data-page="exchange">Exchange</button>
+        <button class="tab" data-page="fleet">Fleet <span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+        <button class="tab" data-page="systems">Star Systems</button>
+        <button class="tab" data-page="bazaar">Bazaar</button>
+        <button class="tab" data-page="ach">Milestones</button>
+      </nav>
+
+      <!-- EXCHANGE -->
+      <section class="page" id="page-exchange">
+        <div class="panel">
+          <h2>Galactic Exchange <small id="exchange-sub"></small></h2>
+          <div class="table-wrap">
+            <table class="market" id="market-table">
+              <thead><tr>
                 <th></th><th>Commodity</th><th class="num">Price</th>
                 <th class="num">Δ</th><th>Trend</th>
                 <th class="num">Held</th><th class="num">P&amp;L</th>
                 <th class="actions">Trade</th>
-              </tr>
-            </thead>
-            <tbody id="market-body"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel" id="panel-fleet">
-        <h2>The Fleet</h2>
-        <div class="dispatch" id="dispatch-form">
-          <div class="dispatch-row">
-            <label>Ship<select id="d-ship"></select></label>
-            <label>Buy<select id="d-comm"></select></label>
-            <label>Qty<input type="number" id="d-qty" min="1" value="10" /></label>
-            <button class="btn btn-mini" id="d-max">Max</button>
-            <label>Send to<select id="d-dest"></select></label>
-            <button class="btn btn-go" id="d-go">Dispatch ▸</button>
+              </tr></thead>
+              <tbody id="market-body"></tbody>
+            </table>
           </div>
-          <div class="dispatch-hint" id="d-hint"></div>
+          <div class="transit-overlay hidden" id="transit-overlay"></div>
         </div>
-        <ul class="ship-list" id="ship-list"></ul>
       </section>
 
-      <section class="panel" id="panel-systems">
-        <h2>Star Systems</h2>
-        <ul class="system-list" id="system-list"></ul>
+      <!-- FLEET -->
+      <section class="page hidden" id="page-fleet">
+        <div class="panel" id="fleet-main"></div>
+        <div class="panel"><h2>Active Missions</h2><div id="fleet-missions"></div></div>
+        <div class="panel hidden" id="fleet-reports-panel"><h2>Mission Reports</h2><div id="fleet-reports"></div></div>
+        <div class="panel"><h2>Owned Ships <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
+        <div class="panel"><h2>Inventory <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
       </section>
 
-      <section class="panel" id="panel-ach">
-        <h2>Milestones <small id="ach-count"></small></h2>
-        <ul class="ach-list" id="ach-list"></ul>
+      <!-- SYSTEMS -->
+      <section class="page hidden" id="page-systems">
+        <div class="panel">
+          <h2>Star Systems <small>docking takes time — set by your flagship</small></h2>
+          <ul class="system-list" id="system-list"></ul>
+        </div>
+      </section>
+
+      <!-- BAZAAR -->
+      <section class="page hidden" id="page-bazaar">
+        <div id="bazaar-body"></div>
+      </section>
+
+      <!-- MILESTONES -->
+      <section class="page hidden" id="page-ach">
+        <div class="panel">
+          <h2>Milestones <small id="ach-count"></small></h2>
+          <ul class="ach-list" id="ach-list"></ul>
+        </div>
       </section>
     </div>
 
-    <!-- ===== RIGHT: FLAVOR ===== -->
+    <!-- RIGHT: persistent flavor sidebar -->
     <aside class="col-side">
       <section class="panel" id="panel-broadcast">
         <h2>Broadcast</h2>
@@ -116,8 +129,6 @@
       <div class="starmap-title" id="sm-title">GALACTIC CHART</div>
       <button class="btn" id="sm-close">✕ Close</button>
     </div>
-
-    <!-- galaxy view -->
     <div class="galaxy-view" id="galaxy-view">
       <svg id="galaxy-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="galaxy-tip" id="galaxy-tip"></div>
@@ -128,12 +139,8 @@
         <span><i class="dot cap"></i> trade hub</span>
       </div>
     </div>
-
-    <!-- system view -->
     <div class="system-view hidden" id="system-view">
-      <div class="system-scene">
-        <canvas id="system-canvas"></canvas>
-      </div>
+      <div class="system-scene"><canvas id="system-canvas"></canvas></div>
       <aside class="system-info" id="system-info"></aside>
     </div>
   </div>
@@ -143,36 +150,47 @@
 
   <!-- ===== MODALS ===== -->
   <div class="modal-backdrop hidden" id="wywa-modal">
-    <div class="modal">
-      <h3>While You Were Away</h3>
-      <div id="wywa-body"></div>
-      <button class="btn btn-go" id="wywa-close">Collect &amp; Trade</button>
-    </div>
+    <div class="modal"><h3>While You Were Away</h3><div id="wywa-body"></div>
+      <button class="btn btn-go" id="wywa-close">Collect &amp; Continue</button></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="mission-modal">
+    <div class="modal modal-wide"><h3 id="mm-title">Launch Mission</h3><div id="mm-body"></div>
+      <div class="settings-actions">
+        <button class="btn btn-go" id="mm-launch">Launch ▸</button>
+        <button class="btn" id="mm-cancel">Cancel</button>
+      </div></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="equip-modal">
+    <div class="modal"><h3 id="eq-title">Equip Accessory</h3><div id="eq-body"></div>
+      <button class="btn" id="eq-cancel">Cancel</button></div>
   </div>
 
   <div class="modal-backdrop hidden" id="settings-modal">
-    <div class="modal">
-      <h3>Settings</h3>
+    <div class="modal"><h3>Settings</h3>
       <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
       <label class="toggle"><input type="checkbox" id="set-reduced" /> Reduce motion</label>
       <label class="toggle"><input type="checkbox" id="set-fastnews" /> Dev: fast news (~20s)</label>
-      <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (runs/news ×60)</label>
+      <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (×60)</label>
       <div class="settings-actions">
         <button class="btn btn-danger" id="set-reset">Reset Save</button>
         <button class="btn btn-go" id="set-close">Close</button>
       </div>
-      <p class="muted-note">Star Baron · Phase 1 · saves to this browser only.</p>
+      <p class="muted-note">Star Baron · saves to this browser only.</p>
     </div>
   </div>
 
-  <!-- Data first (no fetch), then engine, then UI/bootstrap. -->
   <script src="js/data.js"></script>
   <script src="js/flavor.js"></script>
   <script src="js/store.js"></script>
   <script src="js/market.js"></script>
   <script src="js/galaxy.js"></script>
+  <script src="js/items.js"></script>
   <script src="js/fleet.js"></script>
   <script src="js/economy.js"></script>
+  <script src="js/missions.js"></script>
+  <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>
   <script src="js/ui.js"></script>

@@ -1,105 +1,97 @@
-/* ui.js — all DOM rendering. Reads game state + modules, writes the screen.
-   Static structure lives in index.html; this builds the dynamic bits and
-   updates them each tick. No game logic here.                                 */
+/* ui.js — all DOM rendering across the tabbed pages (Exchange, Fleet, Star
+   Systems, Bazaar, Milestones) plus the persistent broadcast/feed sidebar and
+   the modals. No game logic here — it reads modules and writes the screen.     */
 
 const UI = {
   refs: {},
-  rows: {},          // commodity id -> {tr, cells...} for cheap per-tick updates
-  lastPrice: {},     // for flash coloring
-  feedPaused: false, // true when user scrolls up
+  rows: {},
+  lastPrice: {},
+  feedPaused: false,
+  page: "exchange",
+  _missionSig: "",
+  _reportSig: "",
+  _pending: null,        // pending contract awaiting ship selection
+  _equipItem: null,
 
   s() { return window.Game.state; },
+  el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; },
+  sysName(id) { const s = SYSTEMS.find(x => x.id === id); return s ? s.name : (Galaxy.get(id)?.name || id); },
+  rarityColor(id) { return (Items.rarity(id) || {}).color || "#9aa9c8"; },
 
-  el(tag, cls, html) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (html != null) e.innerHTML = html;
-    return e;
-  },
-
-  sysName(id) { const s = SYSTEMS.find(x => x.id === id); return s ? s.name : id; },
-
-  // ---- bootstrap ----------------------------------------------------------
   init() {
     const $ = id => document.getElementById(id);
     this.refs = {
       credits: $("hud-credits"), networth: $("hud-networth"), system: $("hud-system"),
       sentiment: $("hud-sentiment-fill"), tier: $("hud-tier"), clock: $("hud-clock"),
-      exchangeSub: $("exchange-sub"), marketBody: $("market-body"),
-      dShip: $("d-ship"), dComm: $("d-comm"), dQty: $("d-qty"), dDest: $("d-dest"),
-      dHint: $("d-hint"), shipList: $("ship-list"), systemList: $("system-list"),
+      exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"),
+      tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
+      fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
+      fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
+      fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
+      fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
+      systemList: $("system-list"), bazaarBody: $("bazaar-body"),
       achList: $("ach-list"), achCount: $("ach-count"),
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"),
       wywa: $("wywa-modal"), wywaBody: $("wywa-body"), wywaClose: $("wywa-close"),
-      settings: $("settings-modal"),
-      setMute: $("set-mute"), setReduced: $("set-reduced"),
-      setFastNews: $("set-fastnews"), setFast: $("set-fast"),
-      setReset: $("set-reset"), setClose: $("set-close"),
+      mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
+      mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
+      equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
+      settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
+      setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
     };
     this.buildExchange();
     this.wireControls();
     this.wireBus();
-    this.refreshDispatch();
     this.renderSystems();
     this.renderAchievements();
     this.applySettings();
   },
 
-  // ---- exchange -----------------------------------------------------------
+  // ===== tabs ==============================================================
+  showPage(name) {
+    this.page = name;
+    for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
+    for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
+    if (name === "fleet") this.renderFleet();
+    else if (name === "bazaar") this.renderBazaar();
+    else if (name === "systems") this.renderSystems();
+    else if (name === "ach") this.renderAchievements();
+  },
+
+  // ===== exchange ==========================================================
   buildExchange() {
-    const body = this.refs.marketBody;
-    body.innerHTML = "";
-    this.rows = {};
+    const body = this.refs.marketBody; body.innerHTML = ""; this.rows = {};
     for (const c of COMMODITIES) {
-      const tr = this.el("tr");
-      tr.dataset.id = c.id;
+      const tr = this.el("tr"); tr.dataset.id = c.id;
       const icon = this.el("td", "ico");
-      const img = new Image();
-      img.src = ASSET.commodity(c.id);
-      img.alt = "";
-      img.onerror = () => { img.replaceWith(this.tintBox(c)); };
-      icon.appendChild(img);
+      const img = new Image(); img.src = ASSET.commodity(c.id); img.alt = "";
+      img.onerror = () => img.replaceWith(this.tintBox(c)); icon.appendChild(img);
       const name = this.el("td", "name", `${c.name}<span class="cat cat-${c.cat}">${c.cat}</span>`);
-      const price = this.el("td", "num price");
-      const chg = this.el("td", "num chg");
-      const trend = this.el("td", "trend");
-      const held = this.el("td", "num held");
-      const pnl = this.el("td", "num pnl");
-      const act = this.el("td", "actions");
-      act.innerHTML =
-        `<div class="qrow">
-           <input type="number" class="qin" min="1" value="10" aria-label="quantity for ${c.name}" />
-           <button class="btn btn-buy" data-act="buy">Buy</button>
-           <button class="btn btn-sell" data-act="sell">Sell</button>
-           <button class="btn btn-mini" data-act="max">Max</button>
-           <button class="btn btn-mini" data-act="all">All</button>
-         </div>`;
+      const price = this.el("td", "num price"), chg = this.el("td", "num chg"), trend = this.el("td", "trend");
+      const held = this.el("td", "num held"), pnl = this.el("td", "num pnl"), act = this.el("td", "actions");
+      act.innerHTML = `<div class="qrow">
+        <input type="number" class="qin" min="1" value="10" aria-label="qty ${c.name}" />
+        <button class="btn btn-buy" data-act="buy">Buy</button>
+        <button class="btn btn-sell" data-act="sell">Sell</button>
+        <button class="btn btn-mini" data-act="max">Max</button>
+        <button class="btn btn-mini" data-act="all">All</button></div>`;
       tr.append(icon, name, price, chg, trend, held, pnl, act);
       body.appendChild(tr);
       this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin: act.querySelector(".qin") };
     }
-    // one delegated handler for all trade buttons
     body.addEventListener("click", e => {
-      const btn = e.target.closest("button[data-act]");
-      if (!btn) return;
-      const id = btn.closest("tr").dataset.id;
-      const qin = this.rows[id].qin;
-      const act = btn.dataset.act;
+      const btn = e.target.closest("button[data-act]"); if (!btn) return;
+      const id = btn.closest("tr").dataset.id, qin = this.rows[id].qin, act = btn.dataset.act;
       if (act === "buy") this.doTrade("buy", id, parseInt(qin.value, 10) || 0);
       else if (act === "sell") this.doTrade("sell", id, parseInt(qin.value, 10) || 0);
       else if (act === "max") this.doTrade("buy", id, Economy.maxBuy(id));
       else if (act === "all") this.doTrade("sell", id, this.s().positions[id] || 0);
     });
   },
-
-  tintBox(c) {
-    const d = this.el("div", "tintbox");
-    d.textContent = c.name.slice(0, 2);
-    return d;
-  },
+  tintBox(c) { const d = this.el("div", "tintbox"); d.textContent = (c.name || "?").slice(0, 2); return d; },
 
   doTrade(side, id, qty) {
     const r = side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty);
@@ -107,362 +99,511 @@ const UI = {
     const comm = COMMODITIES.find(c => c.id === id);
     if (side === "buy") this.toast(`Bought ${r.qty} ${comm.name} for ${Util.credits(r.cost)}c`, "buy");
     else this.toast(`Sold ${r.qty} ${comm.name} for ${Util.credits(r.proceeds)}c (${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)})`, r.realized >= 0 ? "good" : "bad");
-    this.flashCredits();
-    window.Game.requestSave();
-    this.updateExchange();
-    this.refreshDispatch();
+    this.flashCredits(); window.Game.requestSave(); this.updateExchange();
   },
 
   updateExchange() {
     const sys = this.s().currentSystem;
     this.refs.exchangeSub.textContent = `· prices at ${this.sysName(sys)}`;
+    // transit overlay
+    if (this.s().travel) {
+      const t = this.s().travel;
+      this.refs.transit.classList.remove("hidden");
+      this.refs.transit.innerHTML =
+        `<div class="transit-card"><div class="transit-h">In transit</div>
+         <div class="transit-sub">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b></div>
+         <div class="bar"><span style="width:${(Economy.travelProgress() * 100).toFixed(1)}%"></span></div>
+         <div class="transit-eta">arriving in ${Util.duration(Economy.travelRemaining())}</div>
+         <div class="muted-note">the exchange opens when you dock</div></div>`;
+    } else this.refs.transit.classList.add("hidden");
+
     for (const c of COMMODITIES) {
       const r = this.rows[c.id];
-      const p = Market.systemPrice(c.id, sys);
-      const prev = this.lastPrice[c.id];
+      const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
-      if (prev != null && Math.abs(p - prev) > 1e-6) {
-        r.price.classList.remove("up", "down");
-        void r.price.offsetWidth;
-        r.price.classList.add(p > prev ? "up" : "down");
-      }
+      if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
       this.lastPrice[c.id] = p;
-
       const pct = Market.changePct(c.id);
       r.chg.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
       r.chg.className = "num chg " + (pct > 0.1 ? "up" : pct < -0.1 ? "down" : "");
-
       r.trend.innerHTML = this.spark(Market.history(c.id), pct >= 0);
-
       const q = this.s().positions[c.id] || 0;
       r.held.textContent = q ? q : "·";
-      if (q) {
-        const cost = this.s().avgCost[c.id] || 0;
-        const upl = (p - cost) * q;
-        r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl);
-        r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down");
-      } else {
-        r.pnl.textContent = "·";
-        r.pnl.className = "num pnl";
-      }
+      if (q) { const cost = this.s().avgCost[c.id] || 0, upl = (p - cost) * q;
+        r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
+      else { r.pnl.textContent = "·"; r.pnl.className = "num pnl"; }
     }
   },
 
   spark(hist, up) {
-    const w = 96, h = 24, n = hist.length;
-    if (n < 2) return "";
+    const w = 96, h = 24, n = hist.length; if (n < 2) return "";
     const min = Math.min(...hist), max = Math.max(...hist), span = max - min || 1;
-    const pts = hist.map((v, i) =>
-      `${(i / (n - 1) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 4) - 2).toFixed(1)}`).join(" ");
-    const col = up ? "var(--up)" : "var(--down)";
-    return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none">
-      <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5"/></svg>`;
+    const pts = hist.map((v, i) => `${(i / (n - 1) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 4) - 2).toFixed(1)}`).join(" ");
+    return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${up ? "var(--up)" : "var(--down)"}" stroke-width="1.5"/></svg>`;
   },
 
-  // ---- header -------------------------------------------------------------
+  // ===== header ============================================================
   updateHeader() {
     const s = this.s();
     this.refs.credits.textContent = Util.credits(s.credits);
     this.refs.networth.textContent = Util.credits(Economy.netWorth());
-    this.refs.system.textContent = this.sysName(s.currentSystem);
+    this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = s.prestige.tier;
-    const sent = Market.sentiment();
-    const pct = (sent + 1) / 2 * 100;
+    const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
     this.refs.sentiment.style.width = pct.toFixed(0) + "%";
     this.refs.sentiment.style.background = sent >= 0 ? "var(--up)" : "var(--down)";
     this.refs.btnPrestige.classList.toggle("hidden", !Economy.canPrestige());
+    const missionsN = s.missions.length, reportsN = s.reports.length;
+    const badge = this.refs.fleetBadge;
+    if (missionsN + reportsN > 0) { badge.classList.remove("hidden"); badge.textContent = missionsN + reportsN; }
+    else badge.classList.add("hidden");
   },
-
-  flashCredits() {
-    const el = this.refs.credits;
-    el.classList.remove("flash");
-    void el.offsetWidth;
-    el.classList.add("flash");
-  },
-
-  // galactic clock: 5-min cycles. Shows cycle # and progress.
+  flashCredits() { const e = this.refs.credits; e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); },
   updateClock() {
-    const cycleMs = 5 * 60 * 1000;
-    const cycle = Math.floor(Date.now() / cycleMs);
-    const into = Date.now() % cycleMs;
-    const remain = cycleMs - into;
+    const cycleMs = 5 * 60 * 1000, cycle = Math.floor(Date.now() / cycleMs), remain = cycleMs - (Date.now() % cycleMs);
     this.refs.clock.textContent = `${cycle % 10000} · ${Util.duration(remain)}`;
   },
 
-  // ---- fleet --------------------------------------------------------------
-  refreshDispatch() {
+  // ===== FLEET page ========================================================
+  statChips(st) {
+    return `<span class="sc sc-fp">⚔ ${st.firepower}</span><span class="sc sc-hl">❤ ${st.hull}</span>` +
+      `<span class="sc sc-ar">🛡 ${st.armor}</span><span class="sc sc-sh">✦ ${st.shields}</span>` +
+      `<span class="sc sc-cg">▣ ${st.cargo}</span><span class="sc sc-sp">» ${st.speed}</span>`;
+  },
+
+  renderFleet() {
     const s = this.s();
-    const idle = Fleet.idleShips();
-    const dShip = this.refs.dShip, dComm = this.refs.dComm, dDest = this.refs.dDest;
-    const keepShip = dShip.value, keepComm = dComm.value, keepDest = dDest.value;
-
-    dShip.innerHTML = idle.length
-      ? idle.map(sh => {
-          const t = Fleet.shipType(sh.type);
-          return `<option value="${sh.uid}">${t.name} · hold ${t.hold} · @ ${this.sysName(sh.at)}</option>`;
-        }).join("")
-      : `<option value="">— no idle ships —</option>`;
-    dComm.innerHTML = COMMODITIES.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-    dDest.innerHTML = s.unlockedSystems.map(id =>
-      `<option value="${id}">${this.sysName(id)}</option>`).join("");
-
-    if ([...dShip.options].some(o => o.value === keepShip)) dShip.value = keepShip;
-    if (keepComm) dComm.value = keepComm;
-    if ([...dDest.options].some(o => o.value === keepDest)) dDest.value = keepDest;
-    this.updateDispatchHint();
+    // main ship
+    const md = Fleet.mainDef();
+    const pas = md.passive ? `+${(md.passive.pct * 100).toFixed(0)}% ${md.passive.stat} to fleet` : "—";
+    this.refs.fleetMain.innerHTML =
+      `<h2>Flagship</h2>
+       <div class="mainship">
+         <img src="${ASSET.ship(md.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
+         <div><div class="ship-name">${md.name}</div>
+         <div class="ship-route">transfer speed ${md.travelSpeed} · passive: <b>${pas}</b></div>
+         <div class="muted-note">your private ship — sets sector travel time. Upgrade in the Bazaar.</div></div>
+       </div>`;
+    // ships
+    this.refs.fleetCount.textContent = `${s.ships.length}`;
+    if (!s.ships.length) this.refs.fleetShips.innerHTML = `<p class="muted-note">No ships yet. Buy transports & escorts in the Bazaar.</p>`;
+    else this.refs.fleetShips.innerHTML = s.ships.map(sh => this.shipCard(sh)).join("");
+    this.refs.fleetShips.onclick = e => this.onFleetClick(e);
+    // inventory
+    this.renderInventory();
+    // missions + reports
+    this._missionSig = ""; this.renderMissions();
+    this.renderReports();
   },
 
-  updateDispatchHint() {
-    const ship = this.s().ships.find(x => x.uid === this.refs.dShip.value);
-    if (!ship) { this.refs.dHint.textContent = "Buy or free up a ship to run cargo."; return; }
-    const t = Fleet.shipType(ship.type);
-    const commId = this.refs.dComm.value, destId = this.refs.dDest.value;
-    if (!destId || destId === ship.at) {
-      this.refs.dHint.textContent = `Loading at ${this.sysName(ship.at)}. Choose a different destination.`;
-      return;
+  shipCard(sh) {
+    const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
+    const slots = def.slots || 2, used = (sh.accessories || []).length;
+    const acc = (sh.accessories || []).map(uid => {
+      const it = this.s().items[uid]; if (!it) return "";
+      return `<span class="acc-chip" style="border-color:${this.rarityColor(it.rarity)}">${it.name} <button class="x" data-unequip="${sh.uid}:${uid}">✕</button></span>`;
+    }).join("");
+    let status;
+    if (sh.status === "mission") status = `<span class="badge">on mission</span>`;
+    else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
+    else status = `<span class="badge idle">idle</span>`;
+    const merc = sh.mercenary ? `<span class="badge merc">merc · ${Util.duration((sh.expiresAt || 0) - Date.now())}</span>` : "";
+    const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
+    const equipBtn = sh.status === "idle" && used < slots
+      ? `<button class="btn btn-mini" data-equip-ship="${sh.uid}">+ Equip</button>` : "";
+    return `<div class="ship cls-${def.cls}">
+      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
+      <div class="ship-info">
+        <div class="ship-name">${sh.name} ${status} ${merc}</div>
+        <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
+        <div class="statline">${this.statChips(st)}</div>
+        <div class="acc-row">${acc}${equipBtn}</div>
+      </div></div>`;
+  },
+
+  onFleetClick(e) {
+    const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]"); const rt = e.target.closest("[data-retrieve]");
+    if (un) { const [shipU, itemU] = un.dataset.unequip.split(":"); Fleet.unequip(shipU, itemU); window.Game.requestSave(); this.renderFleet(); }
+    else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
+    else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+  },
+
+  renderInventory() {
+    const inv = Bazaar.inventoryItems(), listed = this.s().listings;
+    this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
+    let html = "";
+    if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories in the Bazaar, or win them from contracts.</p>`;
+    html += inv.map(it => `<div class="item" style="border-left-color:${this.rarityColor(it.rarity)}">
+        <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
+        <div class="item-stat">${Items.label(it)}</div>
+        <div class="item-acts">
+          <span class="item-val">${Util.credits(it.value)}c</span>
+          <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
+          <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * 0.55))}c</button>
+          <button class="btn btn-mini" data-list="${it.uid}">List</button>
+        </div></div>`).join("");
+    if (listed.length) {
+      html += `<div class="inv-sub">Listed on the market</div>` + listed.map(l => {
+        const it = this.s().items[l.itemUid]; if (!it) return "";
+        return `<div class="item listed" style="border-left-color:${this.rarityColor(it.rarity)}">
+          <div class="item-top"><b>${it.name}</b><span class="rar">listed · ${Util.credits(l.listPrice)}c</span></div>
+          <div class="item-stat">${Items.label(it)} <span class="muted-note">— awaiting a buyer…</span></div>
+          <div class="item-acts"><button class="btn btn-mini" data-cancel="${l.itemUid}">Cancel listing</button></div></div>`;
+      }).join("");
     }
-    const buy = Market.systemPrice(commId, ship.at);
-    const sell = Market.systemPrice(commId, destId);
-    const eta = Fleet.travelMs(ship.at, destId, t);
-    const per = sell - buy;
-    const comm = COMMODITIES.find(c => c.id === commId);
-    this.refs.dHint.innerHTML =
-      `Buy ${comm.name} @ <b>${Util.price(buy)}</b> → sell @ <b>${Util.price(sell)}</b> ` +
-      `(<span class="${per >= 0 ? "up" : "down"}">${per >= 0 ? "+" : ""}${Util.price(per)}/unit</span>) · ETA ${Util.duration(eta)}`;
-  },
-
-  fillMaxQty() {
-    const ship = this.s().ships.find(x => x.uid === this.refs.dShip.value);
-    if (!ship) return;
-    const t = Fleet.shipType(ship.type);
-    const buy = Market.systemPrice(this.refs.dComm.value, ship.at);
-    const afford = buy > 0 ? Math.floor(this.s().credits / buy) : 0;
-    this.refs.dQty.value = Math.max(1, Math.min(t.hold, afford));
-    this.updateDispatchHint();
-  },
-
-  doDispatch() {
-    const uid = this.refs.dShip.value;
-    if (!uid) { this.toast("No idle ship selected.", "warn"); return; }
-    const r = Fleet.dispatch(uid, this.refs.dComm.value, parseInt(this.refs.dQty.value, 10) || 0, this.refs.dDest.value);
-    if (!r.ok) { this.toast(r.msg, "warn"); return; }
-    this.toast("Ship dispatched. Timer running ▸", "good");
-    this.flashCredits();
-    window.Game.requestSave();
-    this.refreshDispatch();
-    this.renderShips();
-  },
-
-  renderShips() {
-    const s = this.s();
-    const ul = this.refs.shipList;
-    ul.innerHTML = "";
-    for (const ship of s.ships) {
-      const t = Fleet.shipType(ship.type);
-      const li = this.el("li", "ship " + ship.status);
-      const img = new Image(); img.src = ASSET.ship(t.sprite); img.alt = "";
-      img.onerror = () => { img.replaceWith(this.el("div", "tintbox", t.name.slice(0, 1))); };
-      const info = this.el("div", "ship-info");
-      if (ship.status === "transit") {
-        const p = Fleet.progress(ship) * 100;
-        const comm = COMMODITIES.find(c => c.id === ship.cargo.id);
-        info.innerHTML =
-          `<div class="ship-name">${t.name} <span class="badge">in transit</span></div>
-           <div class="ship-route">${this.sysName(ship.from)} → ${this.sysName(ship.to)} · ${ship.cargo.qty} ${comm.name}</div>
-           <div class="bar"><span style="width:${p.toFixed(1)}%"></span></div>
-           <div class="ship-eta">ETA ${Util.duration(Fleet.etaRemaining(ship))}</div>`;
-      } else {
-        info.innerHTML =
-          `<div class="ship-name">${t.name} <span class="badge idle">idle</span></div>
-           <div class="ship-route">docked @ ${this.sysName(ship.at)} · hold ${t.hold} · speed ${t.speed}</div>`;
-      }
-      li.append(img, info);
-      ul.appendChild(li);
-    }
-  },
-
-  updateShipProgress() {
-    // cheap per-tick update of transit bars/etas without full rebuild
-    const lis = this.refs.shipList.children;
-    let i = 0;
-    for (const ship of this.s().ships) {
-      const li = lis[i++];
-      if (!li || ship.status !== "transit") continue;
-      const bar = li.querySelector(".bar span");
-      const eta = li.querySelector(".ship-eta");
-      if (bar) bar.style.width = (Fleet.progress(ship) * 100).toFixed(1) + "%";
-      if (eta) eta.textContent = "ETA " + Util.duration(Fleet.etaRemaining(ship));
-    }
-  },
-
-  // ---- systems ------------------------------------------------------------
-  renderSystems() {
-    const s = this.s();
-    const ul = this.refs.systemList;
-    ul.innerHTML = "";
-    for (const sys of SYSTEMS) {
-      const unlocked = s.unlockedSystems.includes(sys.id);
-      const here = s.currentSystem === sys.id;
-      const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
-      const mods = Object.entries(sys.mods)
-        .map(([k, v]) => `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}">${k} ${v.toFixed(2)}</span>`)
-        .join("");
-      let action;
-      if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}">Unlock ${Util.credits(sys.unlock)}c</button>`;
-      else if (here) action = `<span class="badge">docked</span>`;
-      else action = `<button class="btn btn-mini" data-dock="${sys.id}">Dock here</button>`;
-      li.innerHTML =
-        `<div class="system-head"><b>${sys.name}</b><span class="dist">dist ${sys.distance}</span>${action}</div>
-         <div class="mods">${mods}</div>`;
-      ul.appendChild(li);
-    }
-    ul.onclick = e => {
-      const u = e.target.closest("[data-unlock]"); const d = e.target.closest("[data-dock]");
-      if (u) {
-        const r = Economy.unlockSystem(u.dataset.unlock);
-        if (!r.ok) return this.toast(r.msg, "warn");
-        this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good");
-        this.flashCredits(); window.Game.requestSave();
-        this.renderSystems(); this.refreshDispatch();
-      } else if (d) {
-        Economy.dockAt(d.dataset.dock);
-        this.toast(`Docked at ${this.sysName(d.dataset.dock)}.`, "good");
-        window.Game.requestSave();
-        this.renderSystems(); this.updateExchange(); this.updateHeader();
-      }
+    this.refs.fleetInventory.innerHTML = html;
+    this.refs.fleetInventory.onclick = e => {
+      const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), li = e.target.closest("[data-list]"), ca = e.target.closest("[data-cancel]");
+      if (eq) this.openEquipForItem(eq.dataset.equip);
+      else if (sn) { const r = Bazaar.sellNow(sn.dataset.sellnow); if (!r.ok) return this.toast(r.msg || "Can't sell.", "warn"); this.toast(`Sold for ${Util.credits(r.credits)}c`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+      else if (li) { const r = Bazaar.list(li.dataset.list); if (!r.ok) return this.toast(r.msg || "Can't list.", "warn"); this.toast(`Listed for ${Util.credits(r.listPrice)}c — a buyer will come.`, "buy"); window.Game.requestSave(); this.renderInventory(); }
+      else if (ca) { Bazaar.cancelListing(ca.dataset.cancel); this.toast("Listing cancelled.", "info"); window.Game.requestSave(); this.renderInventory(); }
     };
   },
 
-  // ---- achievements -------------------------------------------------------
+  // ---- missions -----------------------------------------------------------
+  renderMissions() {
+    const ms = this.s().missions;
+    const sig = ms.map(m => m.uid).join(",");
+    if (sig === this._missionSig) { this.updateMissions(); return; }
+    this._missionSig = sig;
+    if (!ms.length) { this.refs.fleetMissions.innerHTML = `<p class="muted-note">No active missions. Take a contract in the Bazaar.</p>`; return; }
+    this.refs.fleetMissions.innerHTML = ms.map(m => {
+      const icons = m.shipUids.map(u => { const sh = Fleet.ship(u); if (!sh) return ""; const def = Fleet.shipDef(sh.type); const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite); return `<img class="mi" src="${sprite}" alt="" title="${sh.name}" onerror="this.style.display='none'"/>`; }).join("");
+      return `<div class="mission" data-m="${m.uid}">
+        <div class="m-head"><b>${m.title}</b><span class="m-chance">${(m.successChance * 100).toFixed(0)}% success</span></div>
+        <div class="m-ships">${icons}</div>
+        <div class="mbar"><span class="mbar-fill"></span></div>
+        <div class="m-foot"><span class="m-phase"></span><span class="m-eta"></span></div>
+      </div>`;
+    }).join("");
+    this.updateMissions();
+  },
+
+  updateMissions() {
+    for (const m of this.s().missions) {
+      const node = this.refs.fleetMissions.querySelector(`[data-m="${m.uid}"]`); if (!node) continue;
+      const ph = Missions.phaseAt(m);
+      const fill = node.querySelector(".mbar-fill"), bar = node.querySelector(".mbar");
+      bar.classList.toggle("work", ph.dir === "work");
+      bar.classList.toggle("rtl", ph.dir === "in");
+      let w = ph.dir === "out" ? ph.phaseProgress * 100 : ph.dir === "in" ? (1 - ph.phaseProgress) * 100 : 100;
+      fill.style.width = w.toFixed(1) + "%";
+      node.querySelector(".m-phase").textContent = (ph.dir === "out" ? "▸ " : ph.dir === "in" ? "◂ " : "● ") + ph.label;
+      node.querySelector(".m-eta").textContent = "ETA " + Util.duration(ph.remaining);
+    }
+  },
+
+  renderReports() {
+    const reps = this.s().reports;
+    if (!reps.length) { this.refs.fleetReportsPanel.classList.add("hidden"); return; }
+    this.refs.fleetReportsPanel.classList.remove("hidden");
+    this.refs.fleetReports.innerHTML = reps.map(r => {
+      let detail = "";
+      if (r.success) {
+        detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
+        if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
+        if (r.items.length) detail += ` · ${r.items.length} item${r.items.length > 1 ? "s" : ""} won`;
+      } else {
+        detail = `<span class="down">FAILED</span>`;
+        if (r.lost.length) detail += ` · lost ${r.lost.map(x => x.name).join(", ")}`;
+        if (r.impounded.length) detail += ` · ${r.impounded.length} ship(s) impounded — pay in Owned Ships to retrieve`;
+        if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
+      }
+      return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
+        <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
+    }).join("");
+    this.refs.fleetReports.onclick = e => {
+      const d = e.target.closest("[data-dismiss]"); if (!d) return;
+      this.s().reports = this.s().reports.filter(r => r.uid !== d.dataset.dismiss);
+      window.Game.requestSave(); this.renderReports(); this.updateHeader();
+    };
+  },
+
+  // ===== modals: mission launch & equip ===================================
+  openMission(contract) {
+    this._pending = contract;
+    this.refs.mmTitle.textContent = contract.title;
+    const idle = Fleet.idle();
+    const danger = DANGER.find(d => d.id === contract.danger);
+    let head = `<div class="mm-req"><span>Danger: <b class="dgr-${contract.danger}">${danger.label}</b></span>`;
+    if (contract.minFirepower) head += `<span>Min firepower: <b>${contract.minFirepower}</b></span>`;
+    if (contract.cargoRequired) head += `<span>Cargo needed: <b>${contract.cargoRequired}</b></span>`;
+    head += `<span>Reward: <b>${Util.credits(contract.reward.credits)}c</b></span></div>`;
+    head += `<p class="muted-note">${contract.desc}${contract.impound ? " Failure risks impound." : ""}</p>`;
+    if (!idle.length) head += `<p class="down">No idle ships available.</p>`;
+    const list = idle.map(sh => { const st = Fleet.stats(sh); const def = Fleet.shipDef(sh.type);
+      return `<label class="mm-ship"><input type="checkbox" data-ship="${sh.uid}"/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span> ⚔${st.firepower} ▣${st.cargo}</label>`;
+    }).join("");
+    this.refs.mmBody.innerHTML = head + `<div class="mm-list">${list}</div><div class="mm-calc" id="mm-calc"></div>`;
+    this.refs.mmBody.querySelectorAll("input[data-ship]").forEach(cb => cb.onchange = () => this.updateMissionCalc());
+    this.updateMissionCalc();
+    this.refs.mission.classList.remove("hidden");
+  },
+  selectedShipUids() { return [...this.refs.mmBody.querySelectorAll("input[data-ship]:checked")].map(c => c.dataset.ship); },
+  updateMissionCalc() {
+    const c = this._pending; if (!c) return;
+    const uids = this.selectedShipUids();
+    const fp = Fleet.power(uids), cap = Fleet.cargoCap(uids);
+    const chance = uids.length ? Missions.successChance(c, uids) : 0;
+    const dur = uids.length ? c.durationMs / (window.Game.timeScale || 1) : c.durationMs;
+    document.getElementById("mm-calc").innerHTML =
+      `Selected firepower <b>${fp}</b>${c.cargoRequired ? ` · cargo <b class="${cap >= c.cargoRequired ? "up" : "down"}">${cap}</b>/${c.cargoRequired}` : ""} · ` +
+      `success <b class="${chance > 0.6 ? "up" : chance < 0.4 ? "down" : ""}">${(chance * 100).toFixed(0)}%</b> · ETA ~${Util.duration(dur)}`;
+    this.refs.mmLaunch.disabled = !uids.length;
+  },
+  launchMission() {
+    const c = this._pending; if (!c) return;
+    const r = Missions.launch(c, this.selectedShipUids());
+    if (!r.ok) return this.toast(r.msg, "warn");
+    this.toast("Mission launched ▸", "good");
+    this._pending = null; this.refs.mission.classList.add("hidden");
+    window.Game.requestSave(); this.renderFleet(); this.renderBazaar(); this.updateHeader();
+  },
+
+  openEquipForItem(itemUid) {
+    this._equipItem = itemUid; this._equipShip = null;
+    const it = this.s().items[itemUid];
+    this.refs.eqTitle.textContent = "Equip: " + it.name;
+    const cands = Fleet.idle().filter(sh => (sh.accessories || []).length < (Fleet.shipDef(sh.type).slots || 2));
+    this.refs.eqBody.innerHTML = it
+      ? `<p class="muted-note">${Items.label(it)}</p>` + (cands.length
+        ? cands.map(sh => `<button class="btn eq-pick" data-ship="${sh.uid}">${sh.name} <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> (${(sh.accessories || []).length}/${Fleet.shipDef(sh.type).slots} slots)</button>`).join("")
+        : `<p class="down">No idle ship with a free slot.</p>`)
+      : "";
+    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = () => {
+      const r = Fleet.equip(b.dataset.ship, itemUid);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Equipped.", "good"); this.refs.equip.classList.add("hidden");
+      window.Game.requestSave(); this.renderFleet();
+    });
+    this.refs.equip.classList.remove("hidden");
+  },
+  openEquipForShip(shipUid) {
+    const inv = Bazaar.inventoryItems();
+    this.refs.eqTitle.textContent = "Equip a slot — " + Fleet.ship(shipUid).name;
+    this.refs.eqBody.innerHTML = inv.length
+      ? inv.map(it => `<button class="btn eq-pick" data-item="${it.uid}" style="border-left:3px solid ${this.rarityColor(it.rarity)}">${it.name} — ${Items.label(it)}</button>`).join("")
+      : `<p class="muted-note">No accessories in inventory. Buy some in the Bazaar.</p>`;
+    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = () => {
+      const r = Fleet.equip(shipUid, b.dataset.item);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Equipped.", "good"); this.refs.equip.classList.add("hidden");
+      window.Game.requestSave(); this.renderFleet();
+    });
+    this.refs.equip.classList.remove("hidden");
+  },
+
+  // ===== BAZAAR page =======================================================
+  renderBazaar() {
+    if (this.page !== "bazaar") return;
+    const b = this.s().bazaar;
+    const shipCardBuy = (def, sprite) => `<div class="buy-card">
+      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
+      <div class="bc-name">${def.name} <span class="cls-tag">${def.cls}</span></div>
+      <div class="bc-stats">⚔${def.firepower} ❤${def.hull} 🛡${def.armor} ✦${def.shields} ▣${def.cargo} »${def.speed}</div>
+      <button class="btn btn-go" data-buyship="${def.id}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
+
+    const yard = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort]
+      .map(d => shipCardBuy(d, d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite))).join("");
+
+    const mains = SHIP_CATALOG.main.map(d => {
+      const owned = this.s().mainShip.type === d.id;
+      const pas = d.passive ? `+${(d.passive.pct * 100).toFixed(0)}% ${d.passive.stat}` : "";
+      return `<div class="buy-card">
+        <img src="${ASSET.ship(d.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
+        <div class="bc-name">${d.name}</div>
+        <div class="bc-stats">transfer »${d.travelSpeed} · ${pas}</div>
+        ${owned ? `<span class="badge">current flagship</span>` : `<button class="btn btn-go" data-buymain="${d.id}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button>`}</div>`;
+    }).join("");
+
+    const mercs = (b.mercs || []).map(m => `<div class="buy-card merc">
+        <div class="bc-name">${m.name} <span class="cls-tag">merc</span></div>
+        <div class="bc-stats">${Fleet.shipDef(m.shipType).name} · ⚔${m.firepower} ❤${m.hull}</div>
+        <div class="muted-note">serves ${Util.duration(m.serviceMs)} · offer ends ${Util.duration(m.availUntil - Date.now())}</div>
+        <button class="btn btn-go" data-hire="${m.id}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
+
+    const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
+    const contracts = (b.contracts || []).map(c => {
+      if (c.status === "taken_npc") return `<div class="contract taken"><div class="c-head"><b>${c.title}</b><span class="badge bad">Contract taken</span></div></div>`;
+      if (c.status !== "open") return "";
+      if (c.kind === "tip") return `<div class="contract tip"><div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
+        <div class="c-desc">${c.desc}</div>
+        <div class="c-foot"><span>expires ${Util.duration(c.expiresAt - Date.now())}</span>
+        <button class="btn btn-go" data-take="${c.id}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
+      const danger = DANGER.find(d => d.id === c.danger);
+      const ok = idlePower >= (c.minFirepower || 0);
+      return `<div class="contract"><div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
+        <div class="c-desc">${c.desc}</div>
+        <div class="c-tags"><span class="dgr-${c.danger}">${danger.label}</span>
+          ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
+          ${c.cargoRequired ? `<span>▣ ${c.cargoRequired}</span>` : ""}
+          <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
+          <span class="up">${Util.credits(c.reward.credits)}c</span></div>
+        <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
+          <button class="btn btn-go" data-take="${c.id}">Take contract</button></div></div>`;
+    }).join("") || `<p class="muted-note">The contract board is quiet…</p>`;
+
+    const acc = (b.accessories || []).map(a => {
+      const it = a.item;
+      return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
+        <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
+        <div class="item-stat">${Items.label(it)}</div>
+        <div class="item-acts"><span class="item-val">${Util.credits(a.price)}c</span>
+        <button class="btn btn-mini" data-buyacc="${a.id}">Buy</button></div></div>`;
+    }).join("") || `<p class="muted-note">Restocking the accessory stalls…</p>`;
+
+    const invCost = Bazaar.upgradeInventoryCost();
+
+    this.refs.bazaarBody.innerHTML =
+      `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>
+       <div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>
+       <div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2><div class="buy-grid">${mercs}</div></div>
+       <div class="panel"><h2>Contract Board</h2><div class="contract-list">${contracts}</div></div>
+       <div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2><div class="item-grid">${acc}</div></div>
+       <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
+         <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`;
+
+    this.refs.bazaarBody.onclick = e => this.onBazaarClick(e);
+  },
+
+  onBazaarClick(e) {
+    const t = e.target;
+    const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
+      ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
+      ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
+      ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."]];
+    for (const [attr, fn, msg] of map) {
+      const el = t.closest(`[data-${attr}]`);
+      if (el) { const r = fn(el.dataset[attr.replace("buy", "buy")] || el.getAttribute(`data-${attr}`)); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader(); return; }
+    }
+    const take = t.closest("[data-take]");
+    if (take) {
+      const r = Bazaar.takeContract(take.dataset.take);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      if (r.tip) { this.toast("Insider tip secured 👀", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); return; }
+      if (r.contract) { this.renderBazaar(); this.openMission(r.contract); }
+      return;
+    }
+    if (t.closest("#buy-inv")) { const r = Bazaar.buyInventoryUpgrade(); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Inventory expanded.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); }
+  },
+
+  // ===== systems ===========================================================
+  renderSystems() {
+    const s = this.s(); const ul = this.refs.systemList; ul.innerHTML = "";
+    for (const sys of SYSTEMS) {
+      const unlocked = s.unlockedSystems.includes(sys.id), here = s.currentSystem === sys.id && !s.travel;
+      const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
+      const mods = Object.entries(sys.mods).map(([k, v]) => `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}">${k} ${v.toFixed(2)}</span>`).join("");
+      let action;
+      if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}">Unlock ${Util.credits(sys.unlock)}c</button>`;
+      else if (here) action = `<span class="badge">docked</span>`;
+      else if (s.travel && s.travel.to === sys.id) action = `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
+      else action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(Fleet.dockTravelMs(s.currentSystem, sys.id))})</button>`;
+      li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
+      ul.appendChild(li);
+    }
+    ul.onclick = e => {
+      const u = e.target.closest("[data-unlock]"), d = e.target.closest("[data-dock]");
+      if (u) { const r = Economy.unlockSystem(u.dataset.unlock); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderSystems(); }
+      else if (d) { const r = Economy.dockAt(d.dataset.dock); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}`, "good"); window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); }
+    };
+  },
+
+  // ===== milestones ========================================================
   renderAchievements() {
     const got = this.s().achievements;
     this.refs.achCount.textContent = `${got.length}/${ACHIEVEMENTS.length}`;
-    this.refs.achList.innerHTML = ACHIEVEMENTS.map(a => {
-      const have = got.includes(a.id);
-      return `<li class="ach ${have ? "got" : ""}"><b>${have ? "★" : "☆"} ${a.name}</b><span>${a.desc}</span></li>`;
-    }).join("");
+    this.refs.achList.innerHTML = ACHIEVEMENTS.map(a => { const have = got.includes(a.id);
+      return `<li class="ach ${have ? "got" : ""}"><b>${have ? "★" : "☆"} ${a.name}</b><span>${a.desc}</span></li>`; }).join("");
   },
 
-  // ---- broadcast / feed ---------------------------------------------------
+  // ===== broadcast / feed ==================================================
   setBroadcast({ channel, title, caption }) {
-    const img = this.refs.bcFrame;
-    img.onerror = () => { img.style.visibility = "hidden"; };
-    img.style.visibility = "visible";
-    img.src = ASSET.broadcast(channel);
-    this.refs.bcTitle.textContent = title;
-    this.refs.bcCaption.textContent = caption;
+    const img = this.refs.bcFrame; img.onerror = () => { img.style.visibility = "hidden"; };
+    img.style.visibility = "visible"; img.src = ASSET.broadcast(channel);
+    this.refs.bcTitle.textContent = title; this.refs.bcCaption.textContent = caption;
   },
-
   showNews(entry) {
     this.setBroadcast({ channel: "news", title: entry.headline, caption: entry.body });
     const scr = document.getElementById("broadcast-screen");
     scr.classList.remove("klaxon"); void scr.offsetWidth; scr.classList.add("klaxon");
     this.refs.tickerText.textContent = `${(FACTIONS[entry.faction]?.name || "GBN")}: ${entry.headline} — ${entry.body}`;
-    this.renderNewswire();
-    window.Game.audio("news");
+    this.renderNewswire(); window.Game.audio("news");
   },
-
   renderNewswire() {
-    this.refs.newswireList.innerHTML = this.s().newswire.map(n => {
-      const f = FACTIONS[n.faction];
+    this.refs.newswireList.innerHTML = this.s().newswire.map(n => { const f = FACTIONS[n.faction];
       return `<li class="wire ${n.dir}"><span class="wire-time">${Util.ago(n.ts)}</span>
         <span class="wire-faction" style="color:${f ? f.color : "#9aa"}">${f ? f.name : "GBN"}</span>
-        <b>${n.headline}</b><span class="wire-body">${n.body}</span></li>`;
-    }).join("") || "<li class='muted-note'>No bulletins yet.</li>";
+        <b>${n.headline}</b><span class="wire-body">${n.body}</span></li>`; }).join("") || "<li class='muted-note'>No bulletins yet.</li>";
   },
-
   addChat({ portrait, handle, text, kind }) {
-    const ul = this.refs.feedList;
-    const li = this.el("li", "msg msg-" + kind);
-    const img = new Image(); img.src = ASSET.portrait(portrait); img.alt = "";
-    img.className = "pfp";
+    const ul = this.refs.feedList; const li = this.el("li", "msg msg-" + kind);
+    const img = new Image(); img.src = ASSET.portrait(portrait); img.alt = ""; img.className = "pfp";
     img.onerror = () => { const b = this.el("div", "pfp tintbox", handle.slice(0, 1).toUpperCase()); img.replaceWith(b); };
     const body = this.el("div", "msg-body");
-    const tag = kind === "omen" ? `<span class="tag tag-omen">tip</span>`
-      : kind === "scam" ? `<span class="tag tag-scam">tip</span>`
-      : kind === "reaction" ? `<span class="tag tag-react">live</span>` : "";
+    const tag = kind === "omen" ? `<span class="tag tag-omen">tip</span>` : kind === "scam" ? `<span class="tag tag-scam">tip</span>` : kind === "reaction" ? `<span class="tag tag-react">live</span>` : "";
     body.innerHTML = `<div class="msg-head"><span class="msg-handle">${handle}</span>${tag}</div><div class="msg-text"></div>`;
     body.querySelector(".msg-text").textContent = text;
-    li.append(img, body);
-    ul.appendChild(li);
+    li.append(img, body); ul.appendChild(li);
     while (ul.children.length > CONFIG.chatMaxMessages) ul.removeChild(ul.firstChild);
     if (!this.feedPaused) ul.scrollTop = ul.scrollHeight;
   },
 
-  // ---- toasts -------------------------------------------------------------
   toast(text, kind = "info", ms = 3200) {
-    const t = this.el("div", "toast toast-" + kind, text);
-    this.refs.toast.appendChild(t);
+    const t = this.el("div", "toast toast-" + kind, text); this.refs.toast.appendChild(t);
     requestAnimationFrame(() => t.classList.add("show"));
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
   },
 
-  // ---- while you were away ------------------------------------------------
-  showWYWA({ elapsedMs, runs }) {
-    if (elapsedMs < 60000 && runs.length === 0) return; // not worth a modal
-    const total = runs.reduce((a, r) => a + r.proceeds, 0);
-    const profit = runs.reduce((a, r) => a + r.profit, 0);
+  // ===== while you were away ==============================================
+  showWYWA({ elapsedMs, reports, sold }) {
+    if (elapsedMs < 60000 && !reports.length && !sold.length) return;
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
-    if (runs.length) {
-      html += `<ul class="wywa-runs">` + runs.map(r =>
-        `<li>${r.shipName}: <b>${r.qty} ${r.commName}</b> → ${r.toName} for <b>${Util.credits(r.proceeds)}c</b> ` +
-        `(<span class="${r.profit >= 0 ? "up" : "down"}">${r.profit >= 0 ? "+" : ""}${Util.credits(r.profit)}</span>)</li>`
-      ).join("") + `</ul>`;
-      html += `<p class="wywa-total">Collected <b>${Util.credits(total)}c</b> · profit ` +
-        `<span class="${profit >= 0 ? "up" : "down"}">${profit >= 0 ? "+" : ""}${Util.credits(profit)}c</span></p>`;
-    } else {
-      html += `<p>The market drifted while you were gone. No ships had returned yet.</p>`;
+    if (reports.length) {
+      html += `<ul class="wywa-runs">` + reports.map(r => r.success
+        ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}</li>`
+        : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}</li>`).join("") + `</ul>`;
     }
-    this.refs.wywaBody.innerHTML = html;
-    this.refs.wywa.classList.remove("hidden");
+    if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
+    if (!reports.length && !sold.length) html += `<p>The market drifted while you were gone.</p>`;
+    this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
   },
 
-  // ---- settings -----------------------------------------------------------
+  // ===== settings ==========================================================
   applySettings() {
     const set = this.s().settings;
     document.body.classList.toggle("muted", !!set.muted);
     document.body.classList.toggle("reduced", !!set.reduced);
-    this.refs.setMute.checked = !!set.muted;
-    this.refs.setReduced.checked = !!set.reduced;
-    this.refs.setFastNews.checked = !!CONFIG.fastNews;
-    this.refs.setFast.checked = (window.Game.timeScale || 1) > 1;
+    this.refs.setMute.checked = !!set.muted; this.refs.setReduced.checked = !!set.reduced;
+    this.refs.setFastNews.checked = !!CONFIG.fastNews; this.refs.setFast.checked = (window.Game.timeScale || 1) > 1;
   },
 
-  // ---- wiring -------------------------------------------------------------
   wireControls() {
     const r = this.refs;
-    r.dShip.onchange = () => this.updateDispatchHint();
-    r.dComm.onchange = () => this.updateDispatchHint();
-    r.dDest.onchange = () => this.updateDispatchHint();
-    document.getElementById("d-go").onclick = () => this.doDispatch();
-    document.getElementById("d-max").onclick = () => this.fillMaxQty();
-
+    this.refs.tabs.onclick = e => { const t = e.target.closest(".tab"); if (t) this.showPage(t.dataset.page); };
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
     r.wywaClose.onclick = () => r.wywa.classList.add("hidden");
+    r.mmCancel.onclick = () => { this._pending = null; r.mission.classList.add("hidden"); };
+    r.mmLaunch.onclick = () => this.launchMission();
+    r.eqCancel.onclick = () => r.equip.classList.add("hidden");
 
     r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
-    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); this.refreshDispatch(); };
-    r.setReset.onclick = () => {
-      if (confirm("Wipe your Star Baron save and start over?")) window.Game.reset();
-    };
+    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
+    r.setReset.onclick = () => { if (confirm("Wipe your Star Baron save and start over?")) window.Game.reset(); };
 
     r.btnPrestige.onclick = () => {
       if (!Economy.canPrestige()) return;
       if (!confirm(`Retire and sell the empire? You'll reset to Baron Tier ${this.s().prestige.tier + 1} with a permanent +${((this.s().prestige.tier + 1) * PRESTIGE.bonusPerTier * 100).toFixed(0)}% edge.`)) return;
       const res = Economy.prestige();
-      if (res.ok) {
-        this.toast(`Empire sold. Welcome to Baron Tier ${res.tier}.`, "good", 5000);
-        this.fullRender();
-      }
+      if (res.ok) { this.toast(`Empire sold. Welcome to Baron Tier ${res.tier}.`, "good", 5000); this.fullRender(); }
     };
 
-    // feed auto-scroll pause when user scrolls up
     this.refs.feedList.addEventListener("scroll", () => {
-      const el = this.refs.feedList;
-      this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
+      const el = this.refs.feedList; this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
     });
   },
 
@@ -470,29 +611,32 @@ const UI = {
     Bus.on("chat", m => this.addChat(m));
     Bus.on("tv", m => { if (!Broadcast.newsLive()) this.setBroadcast(m); });
     Bus.on("news", n => this.showNews(n));
-    Bus.on("achievement", a => { this.toast(`★ ${a.name} — ${a.desc}`, "good", 4500); this.renderAchievements(); window.Game.audio("good"); });
-    Bus.on("runDone", d => { /* live arrivals (not offline) toast via main */ });
-    Bus.on("dispatch", () => this.renderShips());
+    Bus.on("achievement", a => { this.toast(`★ ${a.name} — ${a.desc}`, "good", 4500); if (this.page === "ach") this.renderAchievements(); window.Game.audio("good"); });
+    Bus.on("missionDone", r => {
+      if (window.Game._booting) return;
+      this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`, r.success ? "good" : "bad", 5000);
+      if (this.page === "fleet") this.renderFleet(); this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
+    });
+    Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
+    Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
   },
+  audioSafe(t) { try { window.Game.audio(t); } catch (e) {} },
 
-  // ---- composite renders --------------------------------------------------
+  // ===== composite =========================================================
   tick() {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    this.updateShipProgress();
+    if (this.page === "fleet") { this.renderMissions(); }
+    if (this.page === "bazaar") this.renderBazaar();
+    if (this.page === "systems" && this.s().travel) this.renderSystems();
   },
 
   fullRender() {
-    this.buildExchange();
-    this.updateExchange();
-    this.updateHeader();
-    this.renderShips();
-    this.refreshDispatch();
-    this.renderSystems();
-    this.renderAchievements();
-    this.renderNewswire();
-    this.applySettings();
+    this.buildExchange(); this.updateExchange(); this.updateHeader();
+    this.renderSystems(); this.renderAchievements(); this.renderNewswire(); this.applySettings();
+    if (this.page === "fleet") this.renderFleet();
+    if (this.page === "bazaar") this.renderBazaar();
   },
 };
 

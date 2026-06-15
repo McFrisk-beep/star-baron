@@ -96,12 +96,75 @@ const SYSTEMS = [
 ];
 
 /* ---- SHIPS ----------------------------------------------------------------
-   speed = distance units cleared per minute. travelMin = distance/speed.      */
-const SHIP_TYPES = [
-  { id: "shuttle",   name: "Mule-class Shuttle", hold: 12,  speed: 1.5, price: 0,     sprite: "shuttle" },
-  { id: "hauler",    name: "Drift Hauler",       hold: 40,  speed: 1.2, price: 4200,  sprite: "hauler" },
-  { id: "freighter", name: "Bulk Freighter",     hold: 120, speed: 1.0, price: 16000, sprite: "freighter" },
-  { id: "leviathan", name: "Leviathan Barge",    hold: 400, speed: 0.8, price: 60000, sprite: "leviathan" },
+   Ships are persistent assets with combat stats. Transports carry cargo and
+   are cheap; escorts bring firepower and are pricey but permanent (until
+   destroyed). The "main" ship is your private flagship: it sets sector-transfer
+   speed and grants a passive bonus to the whole fleet. speed = relative.       */
+const SHIP_CATALOG = {
+  transport: [
+    { id: "mule",      name: "Mule Shuttle",     cls: "transport", cargo: 12,  firepower: 1,  hull: 40,  armor: 5,   shields: 0,   speed: 1.5, slots: 2, price: 0,     sprite: "shuttle" },
+    { id: "drift",     name: "Drift Hauler",     cls: "transport", cargo: 40,  firepower: 2,  hull: 80,  armor: 10,  shields: 0,   speed: 1.2, slots: 2, price: 4200,  sprite: "hauler" },
+    { id: "bulk",      name: "Bulk Freighter",   cls: "transport", cargo: 120, firepower: 3,  hull: 160, armor: 20,  shields: 5,   speed: 1.0, slots: 3, price: 16000, sprite: "freighter" },
+    { id: "leviathan", name: "Leviathan Barge",  cls: "transport", cargo: 400, firepower: 5,  hull: 320, armor: 40,  shields: 10,  speed: 0.8, slots: 3, price: 60000, sprite: "leviathan" },
+  ],
+  escort: [
+    { id: "corvette",  name: "Corvette",   cls: "escort", cargo: 4,  firepower: 25,  hull: 120, armor: 30,  shields: 20,  speed: 1.8, slots: 2, price: 9000,   sprite: "voidkin" },
+    { id: "frigate",   name: "Frigate",    cls: "escort", cargo: 8,  firepower: 55,  hull: 240, armor: 60,  shields: 45,  speed: 1.5, slots: 3, price: 28000,  sprite: "glorthi" },
+    { id: "cruiser",   name: "Cruiser",    cls: "escort", cargo: 14, firepower: 120, hull: 480, armor: 120, shields: 90,  speed: 1.2, slots: 4, price: 85000,  sprite: "krell" },
+    { id: "battleship",name: "Battleship", cls: "escort", cargo: 20, firepower: 260, hull: 900, armor: 240, shields: 180, speed: 1.0, slots: 4, price: 240000, sprite: "aurelian" },
+  ],
+  // Main/flagship: travelSpeed drives sector docking time; passive buffs fleet.
+  main: [
+    { id: "pinnace",     name: "Baron's Pinnace",    cls: "main", travelSpeed: 1.0, passive: { stat: "firepower", pct: 0.05 }, hull: 200,  price: 0,      sprite: "shuttle" },
+    { id: "yacht",       name: "Void Yacht",         cls: "main", travelSpeed: 1.6, passive: { stat: "speed",     pct: 0.10 }, hull: 320,  price: 22000,  sprite: "hauler" },
+    { id: "flagship",    name: "Command Flagship",   cls: "main", travelSpeed: 2.2, passive: { stat: "firepower", pct: 0.15 }, hull: 640,  price: 130000, sprite: "freighter" },
+    { id: "dreadnought", name: "Baron Dreadnought",  cls: "main", travelSpeed: 3.0, passive: { stat: "all",       pct: 0.12 }, hull: 1300, price: 550000, sprite: "leviathan" },
+  ],
+};
+const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...SHIP_CATALOG.main];
+
+/* ---- SHIP ACCESSORIES -----------------------------------------------------
+   Procedurally named/statted items (see items.js). Each kind buffs one stat;
+   pct stats scale the ship, flat stats add. Legendaries get a 2nd bonus stat. */
+const ACCESSORY_KINDS = {
+  engine:  { label: "Engine",   stat: "speed",     pct: true,  base: 0.04,  sprite: "engine" },
+  reactor: { label: "Reactor",  stat: "firepower", pct: true,  base: 0.06,  sprite: "reactor" },
+  cannon:  { label: "Cannon",   stat: "firepower", pct: false, base: 12,    sprite: "cannon" },
+  plating: { label: "Plating",  stat: "armor",     pct: false, base: 18,    sprite: "plating" },
+  shield:  { label: "Shield",   stat: "shields",   pct: false, base: 16,    sprite: "shield" },
+  hold:    { label: "Cargo Pod",stat: "cargo",     pct: false, base: 8,     sprite: "hold" },
+};
+// rarity → stat multiplier, price multiplier, drop weight, color, label.
+const RARITIES = [
+  { id: "common",    mult: 1.0, price: 1.0, weight: 50, color: "#9aa9c8", label: "Common" },
+  { id: "uncommon",  mult: 1.5, price: 2.2, weight: 28, color: "#46d39a", label: "Uncommon" },
+  { id: "rare",      mult: 2.3, price: 5,   weight: 14, color: "#5aa9ff", label: "Rare" },
+  { id: "epic",      mult: 3.4, price: 12,  weight: 6,  color: "#c07bff", label: "Epic" },
+  { id: "legendary", mult: 5.0, price: 30,  weight: 2,  color: "#ffb43a", label: "Legendary" },
+];
+
+/* ---- BAZAAR / CONTRACTS ---------------------------------------------------*/
+const BAZAARCFG = {
+  mercSlots: 4,            // how many mercs are on offer at once
+  contractSlots: 6,        // how many contracts on the board
+  accessorySlots: 8,       // how many accessories for sale
+  mercTickMs: 90 * 1000,   // how often merc offers churn
+  accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
+  contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this
+  contractNpcTakeMs: 4 * 60 * 1000,  // ~when an NPC may grab an untaken job
+  contractTakenShowMs: 2 * 60 * 1000,// "Contract taken" lingers this long
+  listingMinMs: 60 * 1000,           // your market listing sells no sooner than
+  listingMaxMs: 12 * 60 * 1000,      // …and no later than (hidden from player)
+  inventoryUpgradeStep: 10,          // +slots per upgrade
+  inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
+};
+// danger tiers drive contract risk → base success + reward scaling.
+const DANGER = [
+  { id: "safe",     label: "Safe",     baseSuccess: 0.98, reward: 1.0,  fpScale: 0 },
+  { id: "low",      label: "Low",      baseSuccess: 0.85, reward: 1.6,  fpScale: 30 },
+  { id: "moderate", label: "Moderate", baseSuccess: 0.6,  reward: 3.0,  fpScale: 90 },
+  { id: "high",     label: "High",     baseSuccess: 0.4,  reward: 6.0,  fpScale: 200 },
+  { id: "extreme",  label: "Extreme",  baseSuccess: 0.25, reward: 12.0, fpScale: 450 },
 ];
 
 /* ---- FACTIONS -------------------------------------------------------------
@@ -185,7 +248,12 @@ const ASSET = {
 window.CONFIG = CONFIG;
 window.COMMODITIES = COMMODITIES;
 window.SYSTEMS = SYSTEMS;
-window.SHIP_TYPES = SHIP_TYPES;
+window.SHIP_CATALOG = SHIP_CATALOG;
+window.ALL_SHIPS = ALL_SHIPS;
+window.ACCESSORY_KINDS = ACCESSORY_KINDS;
+window.RARITIES = RARITIES;
+window.BAZAARCFG = BAZAARCFG;
+window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.PRESTIGE = PRESTIGE;
 window.GALAXY = GALAXY;

@@ -377,6 +377,77 @@ window.INDUSTRIES = INDUSTRIES;
 window.LOCAL_NEWS = LOCAL_NEWS;
 window.LOCAL_EVENTS = LOCAL_EVENTS;
 
+/* ===========================================================================
+   BAZAAR / FLEET / CONTRACT CONTENT
+   =========================================================================== */
+
+// Names for individual ships you own.
+const SHIP_NAME_A = ["Iron", "Crimson", "Silent", "Void", "Star", "Ghost", "Onyx", "Gilded",
+  "Howling", "Drift", "Pale", "Hollow", "Burning", "Twin", "Last", "Lucky", "Black", "Wandering"];
+const SHIP_NAME_B = ["Widow", "Vagrant", "Lance", "Verdict", "Sparrow", "Maw", "Comet", "Promise",
+  "Reaver", "Mistral", "Talon", "Harbinger", "Sovereign", "Drake", "Errant", "Petrel", "Coil", "Wake"];
+
+// Procedural accessory naming.
+const ITEM_BRANDS = ["Vex", "Korr", "Aether", "Nyx", "Helion", "Dragoon", "Orbital", "Mechan",
+  "Solar", "Pulse", "Grav", "Volt", "Hadron", "Quark", "Tachy", "Umbra"];
+const ITEM_SUFFIXES = ["Howl", "Vanguard", "Reaver", "Whisper", "Tempest", "Wraith", "Sovereign",
+  "Verdict", "Eclipse", "Onslaught", "Paragon", "Nemesis", "Requiem", "Zenith"];
+
+// Mercenary company flavor.
+const MERC_PREFIX = ["Red", "Iron", "Ash", "Storm", "Void", "Grim", "Gilt", "Razor", "Black", "Free"];
+const MERC_UNIT = ["Talons", "Lances", "Wolves", "Reavers", "Hounds", "Vultures", "Sabres", "Corsairs", "Jackals", "Ravens"];
+
+// Contract generators. tokens filled in bazaar.js: {SYS} {COMM} {CAT} {NAME}.
+const CONTRACT_TEMPLATES = [
+  { type: "transport",  kind: "job", danger: ["safe", "low"],
+    titles: ["Haul {COMM} to {SYS}", "Supply run: {COMM} for {SYS}", "Freight contract — {SYS}"],
+    desc: "A routine hauling job. Load up and deliver.",
+    cargo: [20, 120], fp: 0, dur: [3, 8],
+    reward: { credits: [2200, 9000], itemChance: 0.12, stockChance: 0.3 } },
+  { type: "escort",     kind: "job", danger: ["low", "moderate"],
+    titles: ["Escort a convoy through {SYS}", "Guard duty: {SYS} lane"],
+    desc: "Shield a convoy from opportunists. Bring guns.",
+    cargo: 0, fp: [40, 150], dur: [4, 9],
+    reward: { credits: [7000, 22000], itemChance: 0.3, stockChance: 0.1 } },
+  { type: "combat",     kind: "job", danger: ["moderate", "high"],
+    titles: ["Clear raiders near {SYS}", "Bounty: pirate cell at {SYS}", "Break the siege of {SYS}"],
+    desc: "A shooting job. Expect resistance.",
+    cargo: 0, fp: [90, 320], dur: [5, 10],
+    reward: { credits: [14000, 48000], itemChance: 0.5, stockChance: 0.1 } },
+  { type: "smuggle",    kind: "job", danger: ["moderate", "high", "extreme"],
+    titles: ["Smuggle {COMM} past {SYS} customs", "Run contraband into {SYS}"],
+    desc: "Slip the cargo through. If it goes wrong, your ships get impounded.",
+    cargo: [10, 60], fp: [20, 120], dur: [5, 12],
+    reward: { credits: [16000, 65000], itemChance: 0.45, stockChance: 0.1 }, impound: true },
+  { type: "assassinate", kind: "job", danger: ["high", "extreme"],
+    titles: ["Eliminate {NAME}, broker at {SYS}", "Black job: silence {NAME}"],
+    desc: "Discreet, lethal, well paid. Heavy firepower advised.",
+    cargo: 0, fp: [150, 520], dur: [6, 12],
+    reward: { credits: [26000, 95000], itemChance: 0.7, stockChance: 0 } },
+  { type: "insider",    kind: "tip", danger: ["safe"],
+    titles: ["Insider whisper: {CAT} out of {SYS}", "Tip-off: {CAT} moves at {SYS}"],
+    desc: "Pay for a tip and front-run the newswire — a {CAT} story is brewing.",
+    cost: [1500, 9000] },
+];
+
+// Work-phase flavor (the on-site sub-phases between the outbound/return legs).
+const MISSION_PHASES = {
+  transport:   ["Docking at {SYS}", "Cargo unloading", "Processing import duties", "Stowing return freight"],
+  escort:      ["Forming up", "Holding formation", "Repelling a probing attack", "Convoy delivered"],
+  combat:      ["Closing to range", "Engaging hostiles", "Mopping up survivors", "Securing the field"],
+  smuggle:     ["Running dark", "Slipping the patrol", "Greasing the dockmaster", "Offloading quietly"],
+  assassinate: ["Infiltrating {SYS}", "Stalking the target", "Taking the shot", "Exfiltrating"],
+};
+
+window.SHIP_NAME_A = SHIP_NAME_A;
+window.SHIP_NAME_B = SHIP_NAME_B;
+window.ITEM_BRANDS = ITEM_BRANDS;
+window.ITEM_SUFFIXES = ITEM_SUFFIXES;
+window.MERC_PREFIX = MERC_PREFIX;
+window.MERC_UNIT = MERC_UNIT;
+window.CONTRACT_TEMPLATES = CONTRACT_TEMPLATES;
+window.MISSION_PHASES = MISSION_PHASES;
+
 // Make flavor available as globals.
 window.NAME_PARTS = NAME_PARTS;
 window.DIRWORDS = DIRWORDS;

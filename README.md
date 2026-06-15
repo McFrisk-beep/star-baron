@@ -22,9 +22,22 @@ pattern.
 - **The Galactic Exchange** — ~12 commodities with live prices (noise + mean
   reversion + slow sector drift), sparklines, % change, held quantity and
   unrealized P&L. One-click Buy / Sell / Max / All.
-- **The Fleet** — buy cheap in one system, dispatch a ship, sell dear in
-  another. Real-time ETAs, **offline catch-up** ("While You Were Away" payout),
-  bigger/faster ships, and gated systems to unlock.
+- **The Fleet** — a roster of **persistent ships with combat stats** (hull,
+  armor, shields, firepower) plus cargo and speed, modified by equipped
+  accessories and your flagship's passive bonus. A separate **main/flagship**
+  sets sector-transfer time and buffs the whole fleet. Ships fly **contract
+  missions** with phased progress (outbound → on-site work → return), and on
+  failure you get a report: ships lost, or impounded (pay to retrieve).
+- **The Bazaar** — buy transports & permanent **escort warships**, upgrade your
+  flagship, **hire time-limited mercenaries**, work a live **contract board**
+  (jobs + insider tips; listings expire or get taken by NPCs), and trade a
+  **procedural accessory market** (thousands of varied names/stats, rarity tiers
+  up to legendary). Plus an upgradable **inventory** — sell items now, or list
+  them and wait for an NPC buyer (cancellable).
+- **Timed docking** — moving between systems takes real time, set by your
+  flagship's speed; the exchange opens when you arrive. **Offline catch-up**
+  resolves missions, market drift, and listing sales into a "While You Were
+  Away" summary.
 - **The Alien Chat Feed** — templated banter that references the *current*
   market, recurring named NPCs, a feed that **reacts to your trades**, and the
   differentiator: **omens** — rare tip lines that precede a real news event
@@ -58,12 +71,15 @@ star-baron/
 │   ├── flavor.js         # chat/news/TV/NPC content — grow this freely
 │   ├── store.js          # the ONLY storage layer (localStorage) + Util + Bus
 │   ├── market.js         # price simulation, news modifiers, mean reversion
-│   ├── fleet.js          # ships, runs, ETA, offline catch-up
-│   ├── economy.js        # credits, trades, purchases, achievements, prestige
+│   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
+│   ├── items.js          # procedural ship accessories (rarity, naming, value)
+│   ├── fleet.js          # persistent ships, combat stats, flagship, equipping
+│   ├── economy.js        # credits, exchange, timed docking, achievements, prestige
+│   ├── missions.js       # contract missions: phases, success, rewards, losses
+│   ├── bazaar.js         # ships/mercs/contracts/accessories market + listings
 │   ├── feed.js           # chat scheduler, templating, reactions, omens
 │   ├── broadcast.js      # TV rotation + news→price pipeline + newswire
-│   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
-│   ├── ui.js             # main-screen DOM rendering
+│   ├── ui.js             # tabbed-page DOM rendering (exchange/fleet/bazaar/…)
 │   ├── starmap.js        # galaxy view + animated system view (canvas)
 │   └── main.js           # bootstrap, game loop, schedulers, save
 ├── assets/               # placeholder PNGs (swap freely, keep filenames)

@@ -10,18 +10,24 @@ const Game = {
 
   defaultState() {
     return {
-      v: 1,
+      v: 2,
       credits: CONFIG.startingCredits,
       currentSystem: "navos",
       positions: {},
       avgCost: {},
-      ships: [{ uid: "s1", type: "shuttle", status: "idle", at: "navos" }],
+      mainShip: { type: "pinnace" },
+      ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
+        status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
+      missions: [], reports: [], listings: [], items: {},
+      inventory: { capacity: 6, upgrades: 0 },
+      bazaar: { mercs: [], contracts: [], accessories: [] },
+      travel: null,
       seq: 1,
       unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
       reputation: {},
       achievements: [],
       prestige: { tier: 0, multiplier: 1.0 },
-      stats: { trades: 0, runs: 0, peakNetWorth: CONFIG.startingCredits, biggestTrade: 0, runProfit: 0 },
+      stats: { trades: 0, contractsDone: 0, peakNetWorth: CONFIG.startingCredits, biggestTrade: 0 },
       newswire: [],
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches },
       lastSeenAt: Date.now(),
@@ -37,8 +43,17 @@ const Game = {
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
-    // legacy ships without `at`
-    for (const sh of s.ships) if (sh.status === "idle" && !sh.at) sh.at = "navos";
+    // v1 → v2: the fleet model changed shape; reset fleet/bazaar/items but keep
+    // credits, positions, unlocks, achievements, prestige, stats, world.
+    if ((loaded.v || 1) < 2) {
+      s.mainShip = def.mainShip; s.ships = def.ships; s.missions = []; s.reports = [];
+      s.listings = []; s.items = {}; s.inventory = def.inventory; s.bazaar = def.bazaar;
+      s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
+      delete s.avgCost; s.avgCost = loaded.avgCost || {};
+    }
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.items ||= {};
+    s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
+    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= [];
     return s;
   },
 
@@ -54,12 +69,17 @@ const Game = {
     // Build the (deterministic) galaxy, then restore its local-news history.
     Galaxy.build();
     Galaxy.hydrate(this.state.galaxy);
+    Bazaar.ensure();
 
     // ---- offline catch-up (before any feed listeners are wired) ----
+    this._booting = true;
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    const offlineRuns = Fleet.resolveMatured(now);
+    Economy.checkArrival(now);
+    const offlineReports = Missions.resolveMatured(now);
+    Fleet.pruneMercs(now);
+    const offlineSold = Bazaar.tick(now);
     this.state.lastSeenAt = now;
 
     // ---- UI + flavor wiring ----
@@ -79,16 +99,10 @@ const Game = {
       }
     });
 
-    // live arrival toasts (offline ones go in the WYWA modal instead)
-    Bus.on("runDone", d => {
-      if (this._booting) return;
-      UI.toast(`${d.shipName} docked at ${d.toName}: ${d.qty} ${d.commName} (+${Util.credits(d.profit)}c)`, d.profit >= 0 ? "good" : "bad", 4500);
-      UI.renderShips();
-      this.audio("good");
-      this.requestSave();
-    });
+    Bus.on("missionDone", () => this.requestSave());
 
-    UI.showWYWA({ elapsedMs: elapsed, runs: offlineRuns });
+    UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold });
+    this._booting = false;
 
     // ---- schedulers ----
     Feed.start();
@@ -97,6 +111,7 @@ const Game = {
     this.scheduleLocalFlavor();
     setInterval(() => this.loop(), CONFIG.marketTickMs);
     setInterval(() => this.save(), CONFIG.autosaveMs);
+    setInterval(() => { const sold = Bazaar.tick(Date.now()); if (sold.length) this.requestSave(); }, 12000);
     // slow refresh so relative "X ago" stamps stay current
     setInterval(() => { UI.renderNewswire(); StarMap.refreshFeed(); }, 30000);
 
@@ -112,7 +127,10 @@ const Game = {
     const now = Date.now();
     Market.tick(now);
     this.detectMoves();
-    Fleet.resolveMatured(now);   // live arrivals
+    Economy.checkArrival(now);
+    const done = Missions.resolveMatured(now);
+    Fleet.pruneMercs(now);
+    if (done.length) this.requestSave();
     UI.tick();
   },
 
@@ -121,7 +139,7 @@ const Game = {
     const now = Date.now();
     for (const c of COMMODITIES) {
       const pct = Market.changePct(c.id);
-      if (Math.abs(pct) < 12) continue;
+      if (Math.abs(pct) < 6) continue;
       if (now - (this._moveAt[c.id] || 0) < 45000) continue;
       this._moveAt[c.id] = now;
       Bus.emit("marketMove", { commId: c.id, kind: pct > 0 ? "newHigh" : "crash" });
