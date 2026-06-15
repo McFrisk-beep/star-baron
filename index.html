@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Star Baron — Galactic Exchange</title>
+  <meta name="description" content="A browser-based interstellar trading game. Read the market, run the fleet, become a galactic trade baron." />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="muted">
+  <!-- ===== TOP BAR ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">STAR BARON</span>
+      <span class="brand-sub">galactic exchange</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><label>Credits</label><span id="hud-credits">—</span></div>
+      <div class="stat"><label>Net Worth</label><span id="hud-networth">—</span></div>
+      <div class="stat"><label>Docked At</label><span id="hud-system">—</span></div>
+      <div class="stat" title="Market sentiment"><label>Sentiment</label>
+        <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
+      <div class="stat"><label>Baron Tier</label><span id="hud-tier">0</span></div>
+      <div class="stat"><label>Cycle</label><span id="hud-clock">—</span></div>
+    </div>
+    <div class="topbtns">
+      <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
+      <button id="btn-settings" class="btn">⚙ Settings</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ===== LEFT: GAMEPLAY ===== -->
+    <div class="col-main">
+      <section class="panel" id="panel-exchange">
+        <h2>Galactic Exchange <small id="exchange-sub"></small></h2>
+        <div class="table-wrap">
+          <table class="market" id="market-table">
+            <thead>
+              <tr>
+                <th></th><th>Commodity</th><th class="num">Price</th>
+                <th class="num">Δ</th><th>Trend</th>
+                <th class="num">Held</th><th class="num">P&amp;L</th>
+                <th class="actions">Trade</th>
+              </tr>
+            </thead>
+            <tbody id="market-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-fleet">
+        <h2>The Fleet</h2>
+        <div class="dispatch" id="dispatch-form">
+          <div class="dispatch-row">
+            <label>Ship<select id="d-ship"></select></label>
+            <label>Buy<select id="d-comm"></select></label>
+            <label>Qty<input type="number" id="d-qty" min="1" value="10" /></label>
+            <button class="btn btn-mini" id="d-max">Max</button>
+            <label>Send to<select id="d-dest"></select></label>
+            <button class="btn btn-go" id="d-go">Dispatch ▸</button>
+          </div>
+          <div class="dispatch-hint" id="d-hint"></div>
+        </div>
+        <ul class="ship-list" id="ship-list"></ul>
+      </section>
+
+      <section class="panel" id="panel-systems">
+        <h2>Star Systems</h2>
+        <ul class="system-list" id="system-list"></ul>
+      </section>
+
+      <section class="panel" id="panel-ach">
+        <h2>Milestones <small id="ach-count"></small></h2>
+        <ul class="ach-list" id="ach-list"></ul>
+      </section>
+    </div>
+
+    <!-- ===== RIGHT: FLAVOR ===== -->
+    <aside class="col-side">
+      <section class="panel" id="panel-broadcast">
+        <h2>Broadcast</h2>
+        <div class="screen" id="broadcast-screen">
+          <img id="bc-frame" alt="broadcast" />
+          <div class="screen-overlay">
+            <div class="screen-title" id="bc-title">SIGNAL ACQUIRING…</div>
+            <div class="screen-caption" id="bc-caption"></div>
+          </div>
+          <div class="screen-scanlines"></div>
+        </div>
+        <div class="ticker"><span class="ticker-tag">NEWSWIRE</span>
+          <div class="ticker-track"><span id="ticker-text">Standby for galactic bulletins…</span></div>
+        </div>
+        <details class="newswire">
+          <summary>GBN Newswire log</summary>
+          <ul id="newswire-list"></ul>
+        </details>
+      </section>
+
+      <section class="panel panel-feed" id="panel-feed">
+        <h2>Trader Chat <small>live</small></h2>
+        <ul class="feed" id="feed-list"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <!-- ===== TOASTS ===== -->
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <!-- ===== MODALS ===== -->
+  <div class="modal-backdrop hidden" id="wywa-modal">
+    <div class="modal">
+      <h3>While You Were Away</h3>
+      <div id="wywa-body"></div>
+      <button class="btn btn-go" id="wywa-close">Collect &amp; Trade</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="settings-modal">
+    <div class="modal">
+      <h3>Settings</h3>
+      <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
+      <label class="toggle"><input type="checkbox" id="set-reduced" /> Reduce motion</label>
+      <label class="toggle"><input type="checkbox" id="set-fastnews" /> Dev: fast news (~20s)</label>
+      <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (runs/news ×60)</label>
+      <div class="settings-actions">
+        <button class="btn btn-danger" id="set-reset">Reset Save</button>
+        <button class="btn btn-go" id="set-close">Close</button>
+      </div>
+      <p class="muted-note">Star Baron · Phase 1 · saves to this browser only.</p>
+    </div>
+  </div>
+
+  <!-- Data first (no fetch), then engine, then UI/bootstrap. -->
+  <script src="js/data.js"></script>
+  <script src="js/flavor.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/market.js"></script>
+  <script src="js/fleet.js"></script>
+  <script src="js/economy.js"></script>
+  <script src="js/feed.js"></script>
+  <script src="js/broadcast.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
