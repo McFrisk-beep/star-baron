@@ -43,7 +43,9 @@ const Economy = {
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
     qty = Math.floor(qty);
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
-    const price = this.priceHere(commId), cost = price * qty;
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const price = this.priceHere(commId) * (1 - Rep.edgeForCategory(cat)); // friendly → cheaper
+    const cost = price * qty;
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
     const held = s.positions[commId] || 0, prevCost = s.avgCost[commId] || 0;
@@ -59,7 +61,9 @@ const Economy = {
     const held = s.positions[commId] || 0;
     qty = Math.min(Math.floor(qty), held);
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
-    const price = this.priceHere(commId), proceeds = price * qty;
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const price = this.priceHere(commId) * (1 + Rep.edgeForCategory(cat)); // friendly → dearer
+    const proceeds = price * qty;
     const realized = (price - (s.avgCost[commId] || 0)) * qty;
     s.credits += proceeds;
     s.positions[commId] = held - qty;
@@ -72,6 +76,8 @@ const Economy = {
     const s = this.s();
     s.stats.trades += 1;
     s.stats.biggestTrade = Math.max(s.stats.biggestTrade || 0, value);
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    Rep.onTrade(cat, value, side);
     this.refreshNetWorth();
     Bus.emit("trade", { commId, side, qty, value, price, realized });
     this.checkAchievements();
@@ -159,6 +165,7 @@ const Economy = {
     s.missions = []; s.reports = []; s.listings = []; s.items = {};
     s.inventory = { capacity: 6, upgrades: 0 };
     s.bazaar = { mercs: [], contracts: [], accessories: [] };
+    s.reputation = Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0]));
     s.travel = null;
     s.currentSystem = "navos";
     s.unlockedSystems = SYSTEMS.filter(x => x.unlock === 0).map(x => x.id);

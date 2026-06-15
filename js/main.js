@@ -24,7 +24,7 @@ const Game = {
       travel: null,
       seq: 1,
       unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
-      reputation: {},
+      reputation: Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])),
       achievements: [],
       prestige: { tier: 0, multiplier: 1.0 },
       stats: { trades: 0, contractsDone: 0, peakNetWorth: CONFIG.startingCredits, biggestTrade: 0 },
@@ -54,6 +54,7 @@ const Game = {
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.items ||= {};
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= [];
+    s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     return s;
   },
 
@@ -100,6 +101,18 @@ const Game = {
     });
 
     Bus.on("missionDone", () => this.requestSave());
+
+    // Faction standing crossed a tier — toast + a little in-character chatter.
+    Bus.on("rep", e => {
+      if (this._booting) return;
+      const fac = FACTIONS[e.faction], tier = REP.tiers.find(t => t.id === e.tier);
+      UI.toast(`${fac.name}: now ${tier.label}`, e.up ? "good" : "warn", 4000);
+      Feed.emit(e.up
+        ? `the ${fac.name} are warming to a certain baron — ${tier.label.toLowerCase()} standing now`
+        : `you've slipped out of favor with the ${fac.name}…`, { kind: "reaction" });
+      this.requestSave();
+      if (UI.page === "bazaar") UI.renderBazaar();
+    });
 
     UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold });
     this._booting = false;

@@ -170,12 +170,35 @@ const DANGER = [
 ];
 
 /* ---- FACTIONS -------------------------------------------------------------
-   Used to theme the newswire so it reads as a living galaxy.                  */
+   Themes the newswire AND is the reputation axis. `domain` = the commodity
+   categories a faction controls; `rival` = who you annoy when you help them.  */
 const FACTIONS = {
-  syndicate:      { name: "The Syndicate",       color: "#ff5d73" },
-  mining_combine: { name: "Mining Combine",      color: "#9aa9c8" },
-  free_trade:     { name: "Free-Trade League",   color: "#3ad6a0" },
-  agri_collective:{ name: "Agri-Collective",     color: "#78d278" },
+  syndicate:      { name: "The Syndicate",     color: "#ff5d73", domain: ["illicit"],          rival: "free_trade" },
+  mining_combine: { name: "Mining Combine",    color: "#9aa9c8", domain: ["mineral", "gas"],   rival: "agri_collective" },
+  free_trade:     { name: "Free-Trade League", color: "#3ad6a0", domain: ["tech"],             rival: "syndicate" },
+  agri_collective:{ name: "Agri-Collective",   color: "#78d278", domain: ["agri", "luxury"],   rival: "mining_combine" },
+};
+// which faction controls each commodity category
+const CATEGORY_FACTION = { mineral: "mining_combine", gas: "mining_combine", agri: "agri_collective", luxury: "agri_collective", tech: "free_trade", illicit: "syndicate" };
+
+/* ---- REPUTATION -----------------------------------------------------------
+   Standing −100..+100 with each faction. Earned from contracts & trades; spends
+   as exchange price edges, bazaar discounts, contract reward bonuses, and gates
+   the top jobs behind being Friendly with the sponsor.                         */
+const REP = {
+  min: -100, max: 100,
+  maxEdge: 0.06,        // ±6% exchange execution edge at ±100 standing
+  discountMax: 0.10,    // up to 10% off ships/accessories from your best ally
+  rewardMaxBonus: 0.25, // up to +25% contract pay from a friendly sponsor
+  gateTier: "friendly", // assassinate / extreme jobs need this with the sponsor
+  tiers: [
+    { at: -100, id: "hostile",  label: "Hostile",  color: "#ff5d73" },
+    { at: -50,  id: "disliked", label: "Disliked", color: "#ff9a4b" },
+    { at: -15,  id: "neutral",  label: "Neutral",  color: "#9aa9c8" },
+    { at: 15,   id: "friendly", label: "Friendly", color: "#46d39a" },
+    { at: 50,   id: "allied",   label: "Allied",   color: "#5aa9ff" },
+    { at: 85,   id: "exalted",  label: "Exalted",  color: "#ffb43a" },
+  ],
 };
 
 /* ---- PRESTIGE -------------------------------------------------------------
@@ -257,6 +280,8 @@ window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
+window.CATEGORY_FACTION = CATEGORY_FACTION;
+window.REP = REP;
 window.PRESTIGE = PRESTIGE;
 window.GALAXY = GALAXY;
 window.RACES = RACES;

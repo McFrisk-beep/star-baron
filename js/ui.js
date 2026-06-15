@@ -428,25 +428,36 @@ const UI = {
         <button class="btn btn-go" data-hire="${m.id}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
 
     const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
+    const sponChip = f => { const fac = FACTIONS[f]; if (!fac) return ""; const t = Rep.tierOf(f);
+      return `<span class="c-spon" style="color:${fac.color}">◆ ${fac.name}</span><span class="c-stand" style="color:${t.color}">${t.label}</span>`; };
     const contracts = (b.contracts || []).map(c => {
       if (c.status === "taken_npc") return `<div class="contract taken"><div class="c-head"><b>${c.title}</b><span class="badge bad">Contract taken</span></div></div>`;
       if (c.status !== "open") return "";
       if (c.kind === "tip") return `<div class="contract tip"><div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
         <div class="c-desc">${c.desc}</div>
-        <div class="c-foot"><span>expires ${Util.duration(c.expiresAt - Date.now())}</span>
+        <div class="c-tags">${sponChip(c.faction)}</div>
+        <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
         <button class="btn btn-go" data-take="${c.id}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
+      const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
       return `<div class="contract"><div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
         <div class="c-desc">${c.desc}</div>
-        <div class="c-tags"><span class="dgr-${c.danger}">${danger.label}</span>
+        <div class="c-tags">${sponChip(c.faction)}<span class="dgr-${c.danger}">${danger.label}</span>
           ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
           ${c.cargoRequired ? `<span>▣ ${c.cargoRequired}</span>` : ""}
           <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
-          <span class="up">${Util.credits(c.reward.credits)}c</span></div>
+          <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
           <button class="btn btn-go" data-take="${c.id}">Take contract</button></div></div>`;
     }).join("") || `<p class="muted-note">The contract board is quiet…</p>`;
+
+    const standing = `<div class="panel"><h2>Faction Standing <small>ally discount ${(Rep.discount() * 100).toFixed(0)}% off ships &amp; gear</small></h2><div class="rep-grid">` +
+      Rep.ids().map(f => { const fac = FACTIONS[f], v = Rep.get(f), t = Rep.tier(v);
+        return `<div class="rep-row"><div class="rep-head"><b style="color:${fac.color}">${fac.name}</b>
+          <span class="rep-tier" style="color:${t.color}">${t.label} ${v >= 0 ? "+" : ""}${Math.round(v)}</span></div>
+          <div class="rep-bar"><span class="rep-mid"></span><span class="rep-fill" style="width:${((v - REP.min) / (REP.max - REP.min) * 100).toFixed(0)}%;background:${t.color}"></span></div>
+          <div class="muted-note">${fac.domain.join(" · ")}</div></div>`; }).join("") + `</div></div>`;
 
     const acc = (b.accessories || []).map(a => {
       const it = a.item;
@@ -460,6 +471,7 @@ const UI = {
     const invCost = Bazaar.upgradeInventoryCost();
 
     this.refs.bazaarBody.innerHTML =
+      standing +
       `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>
        <div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>
        <div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2><div class="buy-grid">${mercs}</div></div>

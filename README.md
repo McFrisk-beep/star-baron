@@ -44,6 +44,13 @@ pattern.
   (some are scams planted by a con-NPC). Reading the feed is an edge.
 - **Broadcast & News** — Alien TV between bulletins; **news events that actually
   move the market**, with a klaxon, a scrolling ticker, and the GBN Newswire log.
+- **Faction reputation** — four factions (Syndicate, Mining Combine, Free-Trade
+  League, Agri-Collective) each control commodity categories and sponsor
+  contracts. Completing their jobs (and trading their goods) raises your
+  standing and annoys their rival. Standing spends as **exchange price edges**,
+  **bazaar discounts**, **bigger contract payouts**, and **gates the top jobs**
+  (assassinations / extreme-danger work) behind being Friendly with the sponsor —
+  so you pick who to serve.
 - **Progression** — credits, ship tiers, system unlocks, achievements, a market
   sentiment gauge, a galactic clock, and **prestige** ("Retire Empire") for the
   long tail.

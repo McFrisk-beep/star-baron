@@ -18,6 +18,7 @@ const Missions = {
       const cap = Fleet.cargoCap(uids);
       if (cap < contract.cargoRequired) chance -= 0.45 * (1 - cap / contract.cargoRequired);
     }
+    if (contract.faction) chance += Rep.successBonus(contract.faction); // friendly sponsor helps
     return Util.clamp(chance, 0.03, 0.99);
   },
 
@@ -48,7 +49,7 @@ const Missions = {
       shipUids: uids.slice(), phases, totalMs, startedAt: Date.now(),
       successChance: this.successChance(contract, uids),
       reward: contract.reward, impound: !!contract.impound, danger: contract.danger,
-      resolved: false,
+      faction: contract.faction, resolved: false,
     };
     for (const u of uids) Fleet.ship(u).status = "mission";
     s.missions.push(mission);
@@ -86,9 +87,10 @@ const Missions = {
 
       if (success) {
         const mult = s.prestige.multiplier || 1;
-        report.credits = Math.round(m.reward.credits * mult);
+        report.credits = Math.round(m.reward.credits * mult * (m.faction ? Rep.rewardMult(m.faction) : 1));
         s.credits += report.credits;
         s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
+        if (m.faction) Rep.onContract(m.faction, m.type, m.danger);
         const bias = { safe: 0, low: 0.1, moderate: 0.25, high: 0.45, extreme: 0.7 }[m.danger] || 0;
         if (Math.random() < (m.reward.itemChance || 0)) {
           const it = Items.gen({ bias });

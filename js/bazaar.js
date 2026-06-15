@@ -51,10 +51,14 @@ const Bazaar = {
       createdAt: now, expiresAt: now + BAZAARCFG.contractExpiryMs, status: "open" };
     if (tpl.kind === "tip") {
       base.cat = comm.cat;
+      base.faction = Rep.factionForCategory(comm.cat);
       base.cost = Util.randInt(tpl.cost[0], tpl.cost[1]);
       return base;
     }
     const danger = Util.pick(tpl.danger);
+    base.faction = Rep.sponsor(tpl.type, comm.cat);
+    // top-tier jobs require you to be Friendly with the sponsor first
+    if (Rep.gated(tpl.type, danger) && !Rep.meetsGate(base.faction)) return null;
     const pay = (DANGER.find(d => d.id === danger) || { pay: 1 }).pay;
     base.danger = danger;
     base.minFirepower = tpl.fp ? Util.randInt(tpl.fp[0], tpl.fp[1]) : 0;
@@ -76,7 +80,11 @@ const Bazaar = {
     while (b.mercs.length < BAZAARCFG.mercSlots) b.mercs.push(this.genMerc(now));
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
     const openCount = () => b.contracts.filter(c => c.status === "open").length;
-    while (openCount() < BAZAARCFG.contractSlots) b.contracts.push(this.genContract(now));
+    let tries = 0;
+    while (openCount() < BAZAARCFG.contractSlots && tries++ < 60) {
+      const c = this.genContract(now);
+      if (c) b.contracts.push(c);
+    }
   },
 
   tick(now = Date.now()) {
@@ -116,8 +124,9 @@ const Bazaar = {
   buyShip(catalogId) {
     const def = Fleet.shipDef(catalogId); const s = this.s();
     if (!def || def.cls === "main") return { ok: false, msg: "Unknown ship." };
-    if (def.price > s.credits) return { ok: false, msg: "Not enough credits." };
-    s.credits -= def.price;
+    const price = Math.round(def.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    s.credits -= price;
     s.ships.push(Fleet.makeShip(catalogId));
     Economy.refreshNetWorth(); Economy.checkAchievements();
     Bus.emit("shipBuy", { type: catalogId });
@@ -128,8 +137,9 @@ const Bazaar = {
     const def = SHIP_CATALOG.main.find(x => x.id === catalogId); const s = this.s();
     if (!def) return { ok: false, msg: "Unknown flagship." };
     if (def.id === s.mainShip.type) return { ok: false, msg: "Already your flagship." };
-    if (def.price > s.credits) return { ok: false, msg: "Not enough credits." };
-    s.credits -= def.price;
+    const price = Math.round(def.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    s.credits -= price;
     s.mainShip = { type: def.id };
     Economy.refreshNetWorth();
     return { ok: true };
@@ -154,8 +164,9 @@ const Bazaar = {
     const offer = b.accessories.find(a => a.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
     if (this.inventoryUsed() >= this.capacity()) return { ok: false, msg: "Inventory full." };
-    if (offer.price > s.credits) return { ok: false, msg: "Not enough credits." };
-    s.credits -= offer.price;
+    const price = Math.round(offer.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    s.credits -= price;
     s.items[offer.item.uid] = offer.item;
     b.accessories = b.accessories.filter(a => a.id !== offerId);
     Economy.refreshNetWorth();
