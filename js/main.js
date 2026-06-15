@@ -31,7 +31,7 @@ const Game = {
       newswire: [],
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
-      settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches },
+      settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
@@ -122,8 +122,12 @@ const Game = {
       if (UI.page === "bazaar") UI.renderBazaar();
     });
 
-    UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold });
+    // First-run tutorial: show it now for a fresh baron, or queue it to open
+    // once the "While You Were Away" modal is dismissed for a returning one.
+    this._tutorialPending = !this.state.settings.tutorialSeen;
+    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold });
     this._booting = false;
+    if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
 
     // ---- schedulers ----
     Feed.start();

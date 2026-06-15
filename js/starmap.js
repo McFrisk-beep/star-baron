@@ -313,7 +313,20 @@ const StarMap = {
     const particles = [];
     const raceImg = r => this.img(ASSET.raceship(r));
     const shipSpeed = () => Util.randFloat(SYSTEMVIEW.shipSpeedMin, SYSTEMVIEW.shipSpeedMax);
-    const say = (sh, pool) => { const lines = SHIP_RADIO[pool]; if (lines) sh.bubble = { text: Util.pick(lines), t: SYSTEMVIEW.bubbleMs / 1000 }; };
+    const fillShip = t => t
+      .replace(/\{SYS\}/g, sys.name)
+      .replace(/\{RACE\}/g, RACES[Util.pick(raceKeys)].name)
+      .replace(/\{COMM\}/g, Util.pick(COMMODITIES).name)
+      .replace(/\{PLANET\}/g, sys.planets.length ? Util.pick(sys.planets).name : sys.name);
+    const say = (sh, pool) => { const lines = SHIP_RADIO[pool]; if (lines) sh.bubble = { text: fillShip(Util.pick(lines)), t: SYSTEMVIEW.bubbleMs / 1000 }; };
+    // Queued multi-turn conversations: each entry is one utterance due at `at`.
+    const convo = [];
+    const startDialogue = (a, b, baseNow) => {
+      const lines = Util.pick(SHIP_DIALOGUES);
+      let at = baseNow;
+      lines.forEach((ln, i) => { convo.push({ sh: (i % 2 === 0) ? a : b, text: fillShip(ln), at }); at += Util.randFloat(1500, 2300); });
+      return at;   // when the exchange wraps (used to gate the next one)
+    };
 
     const dockPoints = () => {
       const pts = planets.map((pl, i) => ({ x: pl._x ?? W() / 2, y: pl._y ?? H() / 2, kind: "planet", idx: i }));
@@ -433,19 +446,26 @@ const StarMap = {
             combatCooldown = Util.randFloat(14, 34);
           }
         }
-        // ambient radio: someone hails, a nearby ship answers
+        // ambient radio: a ship strikes up a conversation with a nearby ship
         if (now - lastChatterAt > SYSTEMVIEW.chatterMinGapMs && Math.random() < dt * SYSTEMVIEW.chatterRate) {
           const talkers = ships.filter(s => (s.state === "travel" || s.state === "dock") && !s.bubble);
           if (talkers.length) {
-            const a = Util.pick(talkers); say(a, "hail");
+            const a = Util.pick(talkers);
             let b = null, bd = 1e9;
             for (const o of ships) {
-              if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut") continue;
+              if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut" || o.state === "warpIn") continue;
               const dd = Math.hypot(o.x - a.x, o.y - a.y); if (dd < bd) { bd = dd; b = o; }
             }
-            if (b && bd < Math.min(w, h) * 0.6) { b._replyIn = Util.randFloat(0.7, 1.4); b._replyPool = "reply"; }
-            lastChatterAt = now;
+            if (b && bd < Math.min(w, h) * 0.7) lastChatterAt = startDialogue(a, b, now);  // multi-turn exchange
+            else { say(a, "hail"); lastChatterAt = now; }                                   // solo radio call
           }
+        }
+        // deliver any queued conversation turns whose moment has arrived
+        for (let i = convo.length - 1; i >= 0; i--) {
+          const u = convo[i];
+          if (now < u.at) continue;
+          if (u.sh.state !== "dead" && u.sh.state !== "warpOut") u.sh.bubble = { text: u.text, t: SYSTEMVIEW.bubbleMs / 1000 };
+          convo.splice(i, 1);
         }
       }
       const env = { targetPos, pickTarget, explode, spark, say, warpFlash, gatePos, sx, sy };

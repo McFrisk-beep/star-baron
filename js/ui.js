@@ -8,6 +8,7 @@ const UI = {
   lastPrice: {},
   feedPaused: false,
   page: "exchange",
+  tutStep: 0,
   _missionSig: "",
   _reportSig: "",
   _pending: null,        // pending contract awaiting ship selection
@@ -35,7 +36,10 @@ const UI = {
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
-      btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"),
+      btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
+      tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
+      tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
+      tutBack: $("tut-back"), tutNext: $("tut-next"),
       wywa: $("wywa-modal"), wywaBody: $("wywa-body"), wywaClose: $("wywa-close"),
       mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
@@ -602,8 +606,10 @@ const UI = {
   },
 
   // ===== while you were away ==============================================
+  // Returns true if the modal was actually shown (so boot can sequence the
+  // first-run tutorial after it).
   showWYWA({ elapsedMs, reports, sold }) {
-    if (elapsedMs < 60000 && !reports.length && !sold.length) return;
+    if (elapsedMs < 60000 && !reports.length && !sold.length) return false;
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => r.success
@@ -613,6 +619,38 @@ const UI = {
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
     if (!reports.length && !sold.length) html += `<p>The market drifted while you were gone.</p>`;
     this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
+    return true;
+  },
+
+  // ===== tutorial / help ===================================================
+  openTutorial() {
+    this.tutStep = 0;
+    this.refs.tutorial.classList.remove("hidden");
+    this.renderTutorial();
+  },
+  renderTutorial() {
+    const steps = window.TUTORIAL_STEPS || [];
+    const i = Util.clamp(this.tutStep, 0, steps.length - 1);
+    const step = steps[i]; if (!step) return;
+    this.refs.tutIcon.textContent = step.icon;
+    this.refs.tutTitle.textContent = step.title;
+    this.refs.tutBody.innerHTML = step.body;
+    this.refs.tutDots.innerHTML = steps.map((_, k) =>
+      `<span class="tut-dot ${k === i ? "on" : ""}"></span>`).join("");
+    this.refs.tutBack.disabled = i === 0;
+    const last = i === steps.length - 1;
+    this.refs.tutNext.textContent = last ? "Got it ✓" : "Next ▸";
+    this.refs.tutSkip.classList.toggle("hidden", last);
+  },
+  tutorialNext() {
+    const steps = window.TUTORIAL_STEPS || [];
+    if (this.tutStep >= steps.length - 1) return this.closeTutorial();
+    this.tutStep++; this.renderTutorial();
+  },
+  tutorialBack() { if (this.tutStep > 0) { this.tutStep--; this.renderTutorial(); } },
+  closeTutorial() {
+    this.refs.tutorial.classList.add("hidden");
+    if (!this.s().settings.tutorialSeen) { this.s().settings.tutorialSeen = true; window.Game.requestSave(); }
   },
 
   // ===== settings ==========================================================
@@ -629,7 +667,15 @@ const UI = {
     this.refs.tabs.onclick = e => { const t = e.target.closest(".tab"); if (t) this.showPage(t.dataset.page); };
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
-    r.wywaClose.onclick = () => r.wywa.classList.add("hidden");
+    r.btnHelp.onclick = () => this.openTutorial();
+    r.tutNext.onclick = () => this.tutorialNext();
+    r.tutBack.onclick = () => this.tutorialBack();
+    r.tutSkip.onclick = () => this.closeTutorial();
+    r.wywaClose.onclick = () => {
+      r.wywa.classList.add("hidden");
+      // first-run tutorial waits for the welcome-back modal to clear
+      if (window.Game._tutorialPending) { window.Game._tutorialPending = false; this.openTutorial(); }
+    };
     r.mmCancel.onclick = () => { this._pending = null; r.mission.classList.add("hidden"); };
     r.mmLaunch.onclick = () => this.launchMission();
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");

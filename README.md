@@ -73,6 +73,13 @@ pattern.
   **local events** (riots halting an export, a fresh seam, a customs lockdown)
   actually move that system's prices — "valuable insight" for whoever's reading.
   Trading/fleet stay on the curated unlockable capitals (one per sector).
+- **New-player onboarding** — a skippable, eight-step **tutorial carousel** walks
+  a fresh baron through the Exchange, travel, fleet, Bazaar, reading the
+  feed/news, and the rival ladder. A **❔ Help** button reopens it anytime.
+- **Deep flavor** — hundreds of templated trader-chat lines, recurring NPC
+  personalities, omens vs. scams, market-moving news events, alien TV, per-system
+  local chatter and events, and — on the Star Map — ships that hold **multi-turn
+  conversations** with each other. All content lives in `flavor.js`, easy to grow.
 - **Quality floor** — responsive to phone width, keyboard focus, missing-art
   fallbacks (tinted boxes), `prefers-reduced-motion` support, opt-in audio, and
   a settings panel (reset save, mute, reduced motion, dev speed/news toggles).

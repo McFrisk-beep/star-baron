@@ -28,6 +28,7 @@
     <div class="topbtns">
       <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
+      <button id="btn-help" class="btn">❔ Help</button>
       <button id="btn-settings" class="btn">⚙ Settings</button>
     </div>
   </header>
@@ -175,6 +176,24 @@
   <div class="modal-backdrop hidden" id="equip-modal">
     <div class="modal"><h3 id="eq-title">Equip Accessory</h3><div id="eq-body"></div>
       <button class="btn" id="eq-cancel">Cancel</button></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="tutorial-modal">
+    <div class="modal modal-wide tutorial">
+      <div class="tut-step">
+        <div class="tut-icon" id="tut-icon">◆</div>
+        <h3 id="tut-title">Welcome</h3>
+      </div>
+      <div class="tut-body" id="tut-body"></div>
+      <div class="tut-dots" id="tut-dots"></div>
+      <div class="settings-actions tut-actions">
+        <button class="btn" id="tut-skip">Skip ✕</button>
+        <span class="tut-nav">
+          <button class="btn" id="tut-back">◂ Back</button>
+          <button class="btn btn-go" id="tut-next">Next ▸</button>
+        </span>
+      </div>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="settings-modal">

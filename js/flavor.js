@@ -16,9 +16,12 @@ const NAME_PARTS = {
 
 // Directional verbs, keyed by sign of recent move (feed.js picks the bucket).
 const DIRWORDS = {
-  up:   ["mooning", "ripping", "pumping", "melting up", "going parabolic", "on a tear"],
-  down: ["dumping", "bleeding", "tanking", "in freefall", "cratering", "getting rekt"],
-  flat: ["crabbing", "chopping", "going sideways", "doing absolutely nothing", "asleep"],
+  up:   ["mooning", "ripping", "pumping", "melting up", "going parabolic", "on a tear",
+         "sending it", "blasting off", "vertical", "printing", "ascending", "unstoppable"],
+  down: ["dumping", "bleeding", "tanking", "in freefall", "cratering", "getting rekt",
+         "imploding", "nuking", "circling the drain", "face-melting", "capitulating", "folding"],
+  flat: ["crabbing", "chopping", "going sideways", "doing absolutely nothing", "asleep",
+         "flatlining", "comatose", "stuck in the mud", "meditating", "playing dead"],
 };
 
 // Anonymous market banter. {tokens} fill from live state. Most lines are NOISE.
@@ -88,6 +91,45 @@ const CHAT_LINES = [
   "watching {COMM} so you don't have to (i have to, i'm all in)",
   "spent my whole shift staring at {COMM} and i'd do it again",
   "the {COMM} chart is a Rorschach test and i see bankruptcy",
+  "accidentally became a {COMM} maximalist, send help and credits",
+  "{HANDLE} swears by {COMM} but {HANDLE} also eats hull insulation",
+  "the {SYS} dockmaster gave me a look like he KNOWS about my {COMM} bags",
+  "{COMM} up {PCT} and suddenly everyone's a genius again",
+  "i don't trust a market where {COMM} is this quiet",
+  "selling a kidney (not mine) to average down on {COMM}",
+  "the {COMM} bulls are typing. i can hear the keyboards from here.",
+  "every {COMM} top has the same vibe and we never learn",
+  "{SYS} just delisted my favorite {COMM} pair, we riot at dawn",
+  "my entire trading edge is panic and a coin i found in a crater",
+  "bought {COMM} at {PRICE}, it is now a personality trait",
+  "the {COMM2} whales are circling {SYS} again, mind your ankles",
+  "i asked the station oracle about {COMM}. it just laughed.",
+  "holding {COMM} through this is either conviction or a coma",
+  "{COMM} liquidity dried up faster than a hull breach in vacuum",
+  "shoutout {HANDLE} for calling {COMM} {DIR}, you absolute oracle",
+  "they say buy when there's blood in the streets. {SYS} is very red.",
+  "moved my {COMM} stack three times today, accomplished nothing, thriving",
+  "the {COMM}/{COMM2} ratio is the only thing i pray to now",
+  "customs flagged my {COMM} 'for inspection' aka they want a cut",
+  "every cycle i swear off {COMM} and every cycle {COMM} wins",
+  "watching {SYS} volume like it owes me money. it does.",
+  "{COMM} bagholders rise up (we cannot, we are too heavy)",
+  "i have a spreadsheet, a dream, and 400 units of {COMM} i regret",
+  "the calm before the {COMM} storm is my favorite kind of dread",
+  "told my crew {COMM} was a sure thing. morale is now a rumor.",
+  "if {COMM} hits {PRICE} i'm naming my next ship after the candle",
+  "somebody at {SYS} is painting the tape and it's not even subtle",
+  "{COMM} {DIR}, the feed's on fire, and i've never felt more alive",
+  "long {COMM2}, short sleep, zero regrets (many regrets)",
+  "the void doesn't care about your {COMM} thesis, larva",
+  "i read one {SYS} order book and now i have opinions and enemies",
+  "{COMM} did a thing. i don't know what. i'm in anyway.",
+  "rumor is {HANDLE} cornered {COMM2}. rumor is also {HANDLE} is broke.",
+  "my risk management is closing my eyes when {COMM} dips",
+  "the {SYS} exchange runs on caffeine, spite, and {COMM} dreams",
+  "we don't 'lose' on {COMM}, we 'pre-gain' for a future cycle",
+  "every {COMM} pump leaves a trail of regret and at least one new yacht",
+  "i'm not addicted to trading {COMM}, i can stop after this one fill",
 ];
 
 // Reaction pools keyed to PLAYER actions/events — makes the feed notice you.
@@ -96,23 +138,37 @@ const REACTIONS = {
            "who just bought all the {COMM}?? hello???",
            "{COMM} moving on size. i'm following the whale, let's ride",
            "some baron just market-bought {COMM} like it's free, respect",
-           "the {COMM} ask just got vaporized. who ARE you"],
+           "the {COMM} ask just got vaporized. who ARE you",
+           "that {COMM} buy wall just walked itself up, somebody's hungry",
+           "front-running the whale on {COMM}, this never goes wrong (it does)",
+           "{COMM} bid stack just lit up like a star going nova"],
   bigSell: ["someone just nuked {COMM}, RIP the order book",
             "paperhands detected on {COMM} smh",
             "thank you for the cheap {COMM}, kind stranger",
             "that {COMM} dump had no survivors, brutal",
-            "whoever sold that {COMM} block, i'm catching your knives"],
+            "whoever sold that {COMM} block, i'm catching your knives",
+            "{COMM} just got carpet-bombed, who hurt you",
+            "a {COMM} seller just speedran bankruptcy, godspeed",
+            "buying that {COMM} fire sale with a smile and a tremor"],
   newHigh: ["{COMM} ALL TIME HIGH let's GOOO", "told you. {COMM}. screenshot this.",
-            "{COMM} printing new highs, the doubters are silent now"],
+            "{COMM} printing new highs, the doubters are silent now",
+            "{COMM} at the top of the chart and i'm at the top of my lungs",
+            "new {COMM} high just dropped, somewhere a bear is crying"],
   crash: ["{COMM} is in freefall, abandon ship", "blood in the {SYS} streets over {COMM}",
-          "{COMM} {PCT}, this is not a drill, this is a derail"],
+          "{COMM} {PCT}, this is not a drill, this is a derail",
+          "{COMM} just fell through the floor and found a basement",
+          "the {COMM} chart just became a cliff, mind the edge"],
   runDone: ["another hauler docks at {SYS}, the magnate grinds on",
             "fresh {COMM} hitting {SYS} docks, supply incoming",
-            "saw a cargo run land at {SYS}, somebody's eating well tonight"],
+            "saw a cargo run land at {SYS}, somebody's eating well tonight",
+            "a fat cargo hold just cracked open at {SYS}, {COMM} everywhere",
+            "the lanes to {SYS} are busy, somebody's building an empire"],
   unlock: ["new lane to {SYS} just opened, the brave get richer",
-           "someone bought passage to {SYS}, room at the top i guess"],
+           "someone bought passage to {SYS}, room at the top i guess",
+           "a fresh route to {SYS} just lit up, frontier's calling"],
   shipBuy: ["fresh hull on the dock, somebody's expanding the fleet",
-            "new ship spotted leaving the yards, the empire grows"],
+            "new ship spotted leaving the yards, the empire grows",
+            "saw that new hull undock at {SYS}, somebody's flexing"],
 };
 
 // OMENS: rare lines that PRECEDE a news event of a given category (the signal).
@@ -133,6 +189,16 @@ const OMENS = [
   { cat: "tech",    real: false, line: "insider here. nanochips dumping hard tomorrow. sell sell sell" }, // SCAM
   { cat: "luxury",  real: false, line: "festival's CANCELLED, dump your spice now before everyone finds out" }, // SCAM
   { cat: "mineral", real: false, line: "ore's done for, the belt's tapped out, get out while you can" }, // SCAM
+  { cat: "agri",    real: true,  line: "{SYS} grain silos went quiet overnight. somebody's hoarding food." },
+  { cat: "tech",    real: true,  line: "the League just classified a whole {SYS} fab line. chips are about to move." },
+  { cat: "illicit", real: true,  line: "patrol rotations doubling near {SYS}. contraband's about to get pricey." },
+  { cat: "gas",     real: true,  line: "fuel depots at {SYS} are topping off like they know something" },
+  { cat: "luxury",  real: true,  line: "every noble courier in {SYS} is buying spice. quietly. you didn't hear it from me." },
+  { cat: "mineral", real: true,  line: "Combine survey ships swarming a {SYS} rock. big ore news incoming." },
+  { cat: "agri",    real: false, line: "harvest is RUINED, dump all your food now, definitely don't ask why 😉" }, // SCAM
+  { cat: "tech",    real: false, line: "antimatter's worthless after the {SYS} 'breakthrough', sell before the crowd" }, // SCAM
+  { cat: "gas",     real: false, line: "free helium for everyone soon, the prices are DONE, trust the plan" }, // SCAM
+  { cat: "luxury",  real: false, line: "spice is a bubble and i'm the only one brave enough to say it (give me credits)" }, // SCAM
 ];
 
 // NEWS: fires every 1–2h; effect distorts the market for CONFIG.newsEffectMs.
@@ -202,6 +268,38 @@ const NEWS_EVENTS = [
     headline: "HYDROGEN SUBSIDIES SLASH PRICES",
     body: "A league fuel subsidy floods the market with cheap hydrogen.",
     effect: { target: "hydrogen", mult: 0.6 } },
+  { id: "famine_scare", faction: "agri_collective", cat: "agri",
+    headline: "FAMINE SCARE GRIPS THE INNER WORLDS",
+    body: "Hoarding panic empties the food markets. Foodstuffs prices climb hard.",
+    effect: { target: "foodstuffs", mult: 1.7 } },
+  { id: "silicon_boom", faction: "mining_combine", cat: "mineral",
+    headline: "SILICON RUSH AT THE KORRIN BELT",
+    body: "A new wafer-grade silicon strike floods the lanes. Prices soften across minerals.",
+    effect: { target: "silicon", mult: 0.6 } },
+  { id: "syndicate_war", faction: "syndicate", cat: "illicit",
+    headline: "SYNDICATE TURF WAR ERUPTS",
+    body: "Open warfare between crime houses chokes the shadow markets. Contraband spikes.",
+    effect: { target: "contraband", mult: 1.9 } },
+  { id: "ai_breakthrough", faction: "free_trade", cat: "tech",
+    headline: "NANOCHIP ARCHITECTURE BREAKTHROUGH",
+    body: "A leap in fabrication doubles yields overnight. Nanochip prices slide on plenty.",
+    effect: { target: "nanochips", mult: 0.55 } },
+  { id: "noble_wedding", faction: "agri_collective", cat: "luxury",
+    headline: "GRAND DUCAL WEDDING ANNOUNCED",
+    body: "A royal union sends synthsilk and spice demand into orbit across the sector.",
+    effect: { target: "luxury", mult: 1.65 } },
+  { id: "fusion_mandate", faction: "free_trade", cat: "gas",
+    headline: "FUSION MANDATE DRIVES HELIUM-3 BID",
+    body: "A sweeping clean-fusion mandate sends helium-3 buyers scrambling.",
+    effect: { target: "helium3", mult: 1.7 } },
+  { id: "comet_iron", faction: "mining_combine", cat: "mineral",
+    headline: "METAL-RICH COMET CAPTURED OFF NAVOS",
+    body: "A captured comet glut sends iron ore tumbling across the core worlds.",
+    effect: { target: "iron_ore", mult: 0.55 } },
+  { id: "gala_season", faction: "agri_collective", cat: "luxury",
+    headline: "GALA SEASON DESCENDS ON SABLE REACH",
+    body: "The reach's endless galas drain every spice cellar in reach. Prices soar.",
+    effect: { target: "spice", mult: 1.75 } },
 ];
 
 // Recurring named NPCs with fixed portraits + personalities (aliveness anchor).
@@ -251,6 +349,36 @@ const NPCS = [
     lines: ["bought {COMM} because the ticker spelled something funny",
             "{COMM} go {DIR} haha number move brain happy",
             "financial plan: {COMM}. that's it. that's the plan."] },
+  { handle: "Tann_Surveyor", portrait: 1, mood: "veteran",
+    lines: ["i've mapped every rock from here to {SYS}. {COMM} always follows the ore.",
+            "old surveyor's rule: when {SYS} goes quiet, {COMM} gets loud",
+            "watch the survey ships, not the chart. they get there first.",
+            "{COMM} {PCT}? saw bigger swings before your station had gravity"] },
+  { handle: "ContrabandKay", portrait: 4, mood: "tipster",
+    lines: ["the quiet lanes near {SYS} are talking. {COMM} talking.",
+            "i move what others won't. and right now i'm moving toward {COMM}.",
+            "patrols thin out at {SYS} next cycle. you didn't hear it from me.",
+            "every customs form hides a tell. {SYS}'s are screaming."] },
+  { handle: "OneEyed_Oss", portrait: 2, mood: "scammer",
+    lines: ["psst, double your {COMM} overnight, just wire the 'processing fee' first",
+            "exclusive {SYS} signal, normally 9999cr, for YOU just 8888",
+            "my uncle runs {SYS} customs, send {COMM} and i'll 'expedite' it 🤝",
+            "totally real insider tip: {COMM} {DIR} forever, no takebacks"] },
+  { handle: "QuartzQueen", portrait: 10, mood: "socialite",
+    lines: ["the {SYS} set is simply DONE with {COMM}, it's all {COMM2} this season",
+            "heard at the gala: a baron lost a moon on {COMM}. delicious.",
+            "one simply does not wear last cycle's {COMM} to the festival, darling",
+            "i invest purely on aesthetics and {COMM} is looking gauche"] },
+  { handle: "deadpan_dax", portrait: 6, mood: "quant",
+    lines: ["{COMM} z-score is off the chart. literally. i need a bigger chart.",
+            "ran the numbers on {COMM}. the numbers ran back screaming.",
+            "{COMM}/{COMM2} cointegration broke at {SYS}. someone's arbing us.",
+            "my model is 200 lines of regret and one buy signal on {COMM}"] },
+  { handle: "Hox_Hauler", portrait: 3, mood: "everyman",
+    lines: ["just a simple hauler trying to move {COMM} to {SYS} in peace",
+            "fuel's up, tolls are up, my patience is {DIR}",
+            "thirty cycles hauling {COMM} and the docks still lose my manifest",
+            "you barons fight over {COMM}, i just want to make rent on my berth"] },
 ];
 
 // Alien TV — plays between news. Pure flavor; pick a frame + rotate captions.
@@ -291,6 +419,26 @@ const TV_SHOWS = [
     "But WAIT — order now and we'll throw in a second sentient nebula FREE!",
     "Operators are standing by. They are also unionizing. Call fast.",
     "How much would YOU pay for peace of mind? Wrong. It's 9,999 credits."] },
+  { channel: "tv_drama", title: "GALACTIC MARKETS LIVE", captions: [
+    "“And the spice complex is, frankly, a circus, Brenda.”",
+    "“Our next guest lost three fleets and calls it a 'learning cycle.'”",
+    "“Bears are calling a top. Bears are always calling a top.”",
+    "“Breaking: a man bought high and sold low. We go live.”",
+    "“The chart? It's a vibe, Jonathan. It's a vibe with teeth.”",
+    "“Remember: it's not a loss until your accountant cries.”"] },
+  { channel: "tv_weather", title: "COSMIC COOKERY", captions: [
+    "Today: searing a comet over an open reactor. Bold. Illegal. Delicious.",
+    "Whisk the protein vat until it forgives you.",
+    "A pinch of spice — the LEGAL amount, inspectors are watching.",
+    "Let the foodstuffs rest. They've had a hard cycle. We all have.",
+    "Plate it on recycled hull. Garnish with regret. Serve to a baron.",
+    "Chef's tip: if it's still moving, it's 'artisanal.'"] },
+  { channel: "tv_ads", title: "PUBLIC SERVICE", captions: [
+    "Remember: hull breaches are everyone's problem, but mostly yours.",
+    "Report unlicensed jump-gates. Or don't. We're a station, not your mother.",
+    "This cycle's safety theme: 'Maybe Don't Lick That.'",
+    "Lost in hyperspace? Stay calm. Then panic. Then file form 12-C.",
+    "Customs reminds you: smuggling is wrong, and also we will find it."] },
 ];
 
 /* ===========================================================================
@@ -338,6 +486,31 @@ const LOCAL_NEWS = [
   "{SYS} traffic control blames delays on 'space'",
   "a {RACE} merchant prince throws a gala aboard {SYS} station",
   "{PLANET} announces ambitious plan to be slightly less foggy",
+  "{SYS} station elevator stuck between decks again, romance blooms",
+  "{RACE} elders declare {PLANET} 'spiritually adequate' this cycle",
+  "{PLANET} wins galactic award for 'most average atmosphere'",
+  "feral cargo drones unionize in the {SYS} loading bays",
+  "{PLANET} mayor caught feeding the local void-eels, approval soars",
+  "{SYS} dockworkers stage interpretive dance over pension dispute",
+  "{RACE} cuisine festival on {PLANET} sends three diners to the clinic",
+  "{PLANET} time zone changed for the fourth time, nobody is on schedule",
+  "a {RACE} poet recites the {SYS} tariff schedule, somehow it's beautiful",
+  "{PLANET} hull-painting contest ends in a tasteful brawl",
+  "{SYS} station cat (a small nebula) declared honorary harbormaster",
+  "{PLANET} announces it will 'look into' the missing moon, eventually",
+  "{RACE} tourists overwhelm {PLANET}, gift shops report record looting",
+  "{SYS} traffic lights achieve sentience, immediately resign",
+  "{PLANET} celebrates 100 cycles without a major decompression, knock on hull",
+  "rumor: the {SYS} stationmaster hasn't slept since the last festival",
+  "{PLANET} schoolchildren build a working reactor, parents 'concerned'",
+  "{RACE} monks on {PLANET} take a vow of moderate silence",
+  "{SYS} bar runs out of synth-ale, planet declares state of emergency",
+  "{PLANET} weather control paints a sunset, charges admission",
+  "a {RACE} merchant on {PLANET} sells the same crate twice, gets knighted",
+  "{SYS} station gym now 80% people watching the docking feed",
+  "{PLANET} renames its main street after a comet that ghosted it",
+  "{RACE} council on {PLANET} debates whether {SYS} is 'too loud' lately",
+  "local legend says {PLANET}'s fog hides a baron's lost fortune",
 ];
 
 // MECHANICAL local events — distort the system's local prices. ~half are
@@ -370,6 +543,18 @@ const LOCAL_EVENTS = [
   { id: "dump",     scope: "comm", dir: "down", mult: 0.62,
     headline: "FIRE SALE: {PLANET} DUMPS {COMM} STOCKPILES",
     body: "A liquidation crashes the local {COMM} price." },
+  { id: "embargo",  scope: "cat",  dir: "up",   mult: 1.5,
+    headline: "{SYS} SLAPS EMBARGO ON {CAT} IMPORTS",
+    body: "A political spat seals the {SYS} lanes. {CAT} grows scarce and dear here." },
+  { id: "pirates",  scope: "comm", dir: "up",   mult: 1.5,
+    headline: "RAIDERS PREY ON {SYS} {COMM} CONVOYS",
+    body: "Pirate packs pick off {COMM} freighters near {PLANET}; supply tightens locally." },
+  { id: "boom",     scope: "cat",  dir: "down", mult: 0.6,
+    headline: "{RACE} INVESTORS POUR INTO {PLANET}",
+    body: "An investment rush spins up {CAT} capacity around {SYS}; prices ease." },
+  { id: "discovery",scope: "comm", dir: "down", mult: 0.58,
+    headline: "{PLANET} SURVEY UNLOCKS NEW {COMM} FIELD",
+    body: "A fresh field comes online overnight, flooding {SYS} with cheap {COMM}." },
 ];
 
 window.GALAXY_NAMES = GALAXY_NAMES;
@@ -488,15 +673,19 @@ const RIVAL_BARBS = {
 const SHIP_RADIO = {
   hail: [
     "Anyone got eyes on that patrol?",
-    "Hauling spice to the inner belt.",
+    "Hauling {COMM} to the inner belt.",
     "Clear vector ahead — looking good.",
     "Long way between stars out here.",
     "Trade winds are kind today.",
     "Watch your spacing, friend.",
     "Picking up chatter on the old channels.",
     "Coffee's cold and the void's colder.",
-    "Customs gave me grief at the last hub.",
+    "Customs gave me grief back at {SYS}.",
     "She handles like a brick today.",
+    "Beautiful star {SYS} has, never gets old.",
+    "Cargo's heavy, conscience light. Good run.",
+    "Any {RACE} ships seen raiders this side?",
+    "Third loop of {SYS} today. The credits, though.",
   ],
   reply: [
     "Copy that. Safe travels.",
@@ -507,6 +696,9 @@ const SHIP_RADIO = {
     "Loud and clear.",
     "Mind the asteroids out there.",
     "Catch you at the next station.",
+    "Negative on raiders. Stay sharp anyway.",
+    "Fly safe. The void keeps the careless.",
+    "You and me both, friend.",
   ],
   combat: [
     "Under attack! Under attack!",
@@ -517,28 +709,103 @@ const SHIP_RADIO = {
     "Shields buckling!",
     "Where'd that come from?!",
     "Get off my tail!",
+    "All ships, hostiles at {SYS}!",
+    "They want the {COMM}! Not today!",
+    "Hull's screaming — hold together!",
   ],
   win: [
     "Splash one. Threat clear.",
     "That's that — resuming course.",
     "Scratch one hostile.",
     "Told you to break off.",
+    "Lanes are clear again. You're welcome.",
+    "And THAT is why you escort the {COMM}.",
   ],
   warpIn: [
     "Dropping out of hyperspace.",
-    "Jump complete — hello, system.",
+    "Jump complete — hello, {SYS}.",
     "Made it through the gate.",
     "Long jump. Good to see a star.",
+    "Fresh in from three systems over.",
+    "Gate transit nominal. {SYS}, at last.",
   ],
   warpOut: [
     "Spinning up the jump drive.",
     "Next system, here I come.",
     "Punching out — see you, spacers.",
     "Gate's hot. Jumping.",
+    "Done with {SYS}. Onward.",
+    "Coordinates locked. Goodbye, {SYS}.",
   ],
 };
 
+// Interactive multi-turn exchanges for the system scene. Speakers alternate
+// A, B, A, B…; the scene assigns A (a cruising ship) and a nearby B, then plays
+// the turns with a beat between each. Tokens fill from the open system.
+const SHIP_DIALOGUES = [
+  ["Long haul today?", "Three systems and counting. You?", "Just local loops. Easy credits.", "Lucky. Save me a docking ring."],
+  ["That {COMM} cargo legal?", "Define 'legal'.", "…carry on, friend.", "Knew I liked you."],
+  ["You see the gate flicker just now?", "Yeah. Maintenance is a rumor out here.", "One day it eats a ship.", "Not mine. I jump fast."],
+  ["New paint job?", "Took a graze off raiders near {SYS}.", "Wear it proud.", "Trying to. Hurts to look at, though."],
+  ["Heard {SYS} prices went wild.", "Made a fortune, lost it by lunch.", "Classic {SYS}.", "I'm framing the loss. Art."],
+  ["Watch that asteroid drift.", "Got it — thanks, eyes.", "We look out here, or we don't last.", "Owe you a drink at the station."],
+  ["Any work going?", "Escort gig out of {SYS}. Dangerous.", "Pays?", "Enough to fix what it breaks."],
+  ["Is it me or is the star prettier today?", "It's you. Same star.", "Let me have this.", "…fine. It's gorgeous. Happy?"],
+  ["Customs board you yet?", "Twice. They found nothing.", "Was there nothing?", "There is now."],
+  ["First time through {SYS}?", "That obvious?", "You're flying like the planets bite.", "Do they?", "…just dock carefully."],
+  ["Carrying {COMM} again?", "It's all anyone buys lately.", "Markets are fickle.", "So's my fuel gauge. Gotta run."],
+  ["Race you to the station.", "We're cargo haulers.", "…race you slowly to the station.", "You're on."],
+  ["Quiet system, this one.", "Too quiet. I don't trust quiet.", "You don't trust anything.", "Kept me alive this long."],
+  ["Tell the {RACE} dockmaster I said hi.", "He'll pretend not to remember you.", "He always does.", "That's how you know he does."],
+];
+
 window.SHIP_RADIO = SHIP_RADIO;
+window.SHIP_DIALOGUES = SHIP_DIALOGUES;
+
+/* ===========================================================================
+   TUTORIAL — the new-player onboarding carousel (UI renders these steps).
+   Plain content; the Help button reopens it any time.
+   =========================================================================== */
+const TUTORIAL_STEPS = [
+  { icon: "◆", title: "Welcome, Baron",
+    body: `You're a fledgling trade baron in a living galaxy. Your job: <b>buy low, sell high, grow your net worth</b>, build a fleet, and climb past your rivals.
+      <p class="tut-tip">This guide is quick. Hit <b>Skip</b> to dive in, or <b>Next</b> to learn the ropes. You can reopen it anytime from <b>❔ Help</b> up top.</p>` },
+  { icon: "₵", title: "The Exchange",
+    body: `The <b>Exchange</b> tab is the heart of the game. Each commodity has a <b>live price</b> that drifts and reacts to news.
+      <ul><li><b>Buy</b> where a good is cheap, <b>Sell</b> where it's dear.</li>
+      <li><b>Δ</b> shows the recent move; the sparkline shows the trend.</li>
+      <li><b>P&amp;L</b> tracks profit on what you're holding.</li></ul>
+      Prices differ by <b>system</b> — the whole game is moving goods to where they're worth more.` },
+  { icon: "🗺", title: "Travel the galaxy",
+    body: `Open the <b>Star Map</b> (top right) to see the galaxy, or use the <b>Star Systems</b> tab to travel.
+      <ul><li>Each system favors different goods — a system that's <i>cheap</i> in minerals is a great place to <b>buy</b> them.</li>
+      <li><b>Docking takes time</b>, set by your flagship's speed. You can't trade while in transit.</li>
+      <li>Locked systems can be <b>unlocked</b> with credits for richer routes.</li></ul>` },
+  { icon: "🚀", title: "Your fleet",
+    body: `In the <b>Fleet</b> tab you command real ships:
+      <ul><li><b>Transports</b> haul cargo; <b>escorts</b> bring firepower.</li>
+      <li>Your <b>flagship</b> sets travel speed and grants a passive bonus to the whole fleet.</li>
+      <li>Send ships on <b>missions</b> (from the Bazaar) for credits and loot — riskier jobs pay far more.</li></ul>` },
+  { icon: "🛰", title: "The Bazaar",
+    body: `The <b>Bazaar</b> is where you spend your winnings:
+      <ul><li>Buy <b>ships</b>, hire <b>mercenaries</b>, and grab rare <b>accessories</b> that buff your ships.</li>
+      <li>Take <b>contracts</b> from the board — transport, escort, combat, smuggling, and more.</li>
+      <li><b>Faction standing</b> earns you discounts, bigger payouts, and unlocks the top jobs.</li></ul>` },
+  { icon: "📡", title: "Read the room",
+    body: `Information is an edge. Watch the side panels:
+      <ul><li><b>Trader Chat</b> is mostly noise — but rare <b>omens</b> (👀 tip) hint at real news coming. Beware <b>scams</b>.</li>
+      <li><b>Broadcast</b> news events actually <b>move the market</b> — buy ahead of the crowd.</li>
+      <li>On the Star Map, <b>local events</b> (riots, strikes, fresh strikes) shift a single system's prices — real, actionable insight.</li></ul>` },
+  { icon: "👑", title: "Rivals & the long game",
+    body: `Check the <b>Barons</b> tab for the leaderboard. Twelve AI barons get richer over time — <b>climb past them</b>, and don't go idle or you'll slip.
+      <p>When your net worth is vast enough, <b>Retire Empire</b> (prestige) for a permanent bonus and a fresh, harder, richer run.</p>` },
+  { icon: "✦", title: "You're ready",
+    body: `That's the loop: <b>trade → grow → expand → outgrow your rivals → retire → repeat</b>.
+      <p class="tut-tip">Start small on the Exchange, take a safe contract or two, and build from there. Reopen this guide anytime via <b>❔ Help</b>.</p>
+      <p>Good luck out there, Baron.</p>` },
+];
+
+window.TUTORIAL_STEPS = TUTORIAL_STEPS;
 window.RIVAL_BARBS = RIVAL_BARBS;
 window.SHIP_NAME_A = SHIP_NAME_A;
 window.SHIP_NAME_B = SHIP_NAME_B;
