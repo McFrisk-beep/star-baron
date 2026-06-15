@@ -115,12 +115,62 @@ const PRESTIGE = {
   volPerTier: 0.05,        // +5% market volatility per tier (harder + richer)
 };
 
+/* ---- GALAXY / SECTORS -----------------------------------------------------
+   The map is generated procedurally (galaxy.js) from GALAXY.seed so it is the
+   same universe every load. Each sector has a theme, a galaxy-view position
+   (0–1 space), a specialty category (cheap = a source), a dominant race, and a
+   nebula backdrop. Each existing tradeable SYSTEM becomes that sector's named
+   capital; the rest of the sector's 9–18 systems are generated, priced, and
+   alive with local news — but trading/fleet stay on the curated capitals.     */
+const GALAXY = {
+  seed: 0xBADCAFE,
+  sectorMinSystems: 9,
+  sectorMaxSystems: 18,
+  localEventMinMs: 8 * 60 * 1000,   // a local event somewhere this often…
+  localEventMaxMs: 16 * 60 * 1000,
+  localEffectMs: 30 * 60 * 1000,    // …and it distorts that system for this long
+};
+
+const RACES = {
+  voidkin:  { name: "Voidkin",  color: "#7b8cff", nameStyle: "soft" },
+  glorthi:  { name: "Glorthi",  color: "#3ad6a0", nameStyle: "guttural" },
+  aurelian: { name: "Aurelian", color: "#ffc24b", nameStyle: "regal" },
+  krell:    { name: "Krell",    color: "#ff5d73", nameStyle: "harsh" },
+  mechanim: { name: "Mechanim", color: "#9aa9c8", nameStyle: "code" },
+  syndics:  { name: "Syndics",  color: "#a078ff", nameStyle: "slick" },
+};
+
+// One sector per existing capital system. pos = center in galaxy-view 0–1 space.
+const SECTORS = [
+  { id: "core",   name: "Core Worlds",   capital: "navos",  specialty: null,      race: "voidkin",
+    nebula: "void",   star: "white",  pos: { x: 0.50, y: 0.50 } },
+  { id: "belt",   name: "Korrin Belt",   capital: "korrin", specialty: "mineral", race: "mechanim",
+    nebula: "blue",   star: "blue",   pos: { x: 0.24, y: 0.34 } },
+  { id: "tide",   name: "Tide Reaches",  capital: "velm",   specialty: "gas",     race: "glorthi",
+    nebula: "green",  star: "yellow", pos: { x: 0.76, y: 0.30 } },
+  { id: "green",  name: "Green Expanse", capital: "thessa", specialty: "agri",    race: "aurelian",
+    nebula: "gold",   star: "orange", pos: { x: 0.20, y: 0.72 } },
+  { id: "forge",  name: "Forge Reach",   capital: "orin",   specialty: "tech",    race: "krell",
+    nebula: "red",    star: "red",    pos: { x: 0.80, y: 0.70 } },
+  { id: "sprawl", name: "Sable Sprawl",  capital: "sable",  specialty: "luxury",  race: "syndics",
+    nebula: "purple", star: "neutron",pos: { x: 0.52, y: 0.86 } },
+];
+
+const STAR_TYPES = ["yellow", "blue", "red", "white", "orange", "neutron", "binary"];
+const PLANET_TYPES = ["rocky", "terran", "ocean", "ice", "lava", "gas_giant", "barren", "ringed", "toxic"];
+
 // asset path helpers — change these if you reorganize /assets
 const ASSET = {
   portrait: i => `assets/portraits/alien_${String(i).padStart(2, "0")}.png`,
   commodity: id => `assets/commodities/${id}.png`,
   ship: sprite => `assets/ships/${sprite}.png`,
   broadcast: name => `assets/broadcast/${name}.png`,
+  star: type => `assets/stars/${type}.png`,
+  planet: type => `assets/planets/${type}.png`,
+  station: race => `assets/stations/${race}.png`,
+  raceship: race => `assets/raceships/${race}.png`,
+  nebula: name => `assets/nebula/${name}.png`,
+  asteroids: () => `assets/space/asteroids.png`,
 };
 
 // Make data available as globals (works on file:// and GitHub Pages, no fetch).
@@ -130,4 +180,9 @@ window.SYSTEMS = SYSTEMS;
 window.SHIP_TYPES = SHIP_TYPES;
 window.FACTIONS = FACTIONS;
 window.PRESTIGE = PRESTIGE;
+window.GALAXY = GALAXY;
+window.RACES = RACES;
+window.SECTORS = SECTORS;
+window.STAR_TYPES = STAR_TYPES;
+window.PLANET_TYPES = PLANET_TYPES;
 window.ASSET = ASSET;

@@ -11,7 +11,8 @@
 const Market = {
   prices: {},        // id -> current global price
   hist: {},          // id -> [recent prices] for sparklines
-  effects: [],       // active news effects: {target, mult, startedAt, durationMs, id}
+  effects: [],       // active galactic news effects: {target, mult, startedAt, durationMs, id}
+  localEffects: [],  // active LOCAL events: {systemId, target, mult, startedAt, durationMs, id}
   volMult: 1,        // bumped by prestige tier
   histLen: 60,
 
@@ -21,6 +22,7 @@ const Market = {
     this.prices = {};
     this.hist = {};
     this.effects = [];
+    this.localEffects = [];
     for (const c of COMMODITIES) {
       this.prices[c.id] = c.base;
       this.hist[c.id] = [c.base];
@@ -52,8 +54,31 @@ const Market = {
     this.effects.push({ target, mult, startedAt: now, durationMs, id });
   },
 
+  // A LOCAL event: distorts one system's prices only (see galaxy.js).
+  applyLocal(systemId, target, mult, durationMs, now, id) {
+    this.localEffects.push({ systemId, target, mult, startedAt: now, durationMs, id });
+  },
+
+  // Combined decaying multiplier from local events at a given system+commodity.
+  localMult(comm, systemId, now) {
+    let m = 1;
+    for (const e of this.localEffects) {
+      if (e.systemId !== systemId) continue;
+      if (e.target !== comm.id && e.target !== comm.cat) continue;
+      const elapsed = now - e.startedAt;
+      if (elapsed >= e.durationMs) continue;
+      m *= 1 + (e.mult - 1) * (1 - elapsed / e.durationMs);
+    }
+    return m;
+  },
+
+  activeLocal(systemId, now = Date.now()) {
+    return this.localEffects.filter(e => e.systemId === systemId && now - e.startedAt < e.durationMs);
+  },
+
   pruneEffects(now) {
     this.effects = this.effects.filter(e => now - e.startedAt < e.durationMs);
+    this.localEffects = this.localEffects.filter(e => now - e.startedAt < e.durationMs);
   },
 
   // Advance one market tick.
@@ -85,12 +110,16 @@ const Market = {
 
   price(id) { return this.prices[id]; },
 
-  // Price at a given system = global price × that system's category multiplier.
-  systemPrice(id, systemId) {
+  // Price at a given system = global price × that system's category multiplier
+  // × any active local-event distortion at that system. Works for curated
+  // capitals (SYSTEMS) and generated galaxy systems (Galaxy.modsFor).
+  systemPrice(id, systemId, now = Date.now()) {
     const c = this.byId(id);
+    let mod = 1;
     const sys = SYSTEMS.find(s => s.id === systemId);
-    const mod = sys ? (sys.mods[c.cat] ?? 1) : 1;
-    return this.prices[id] * mod;
+    if (sys) mod = sys.mods[c.cat] ?? 1;
+    else if (window.Galaxy) mod = Galaxy.modsFor(systemId)[c.cat] ?? 1;
+    return this.prices[id] * mod * this.localMult(c, systemId, now);
   },
 
   history(id) { return this.hist[id] || []; },
@@ -120,13 +149,14 @@ const Market = {
   // Snapshot for save (optional — prices are regenerated, but persisting them
   // keeps the chart continuous across reloads).
   serialize() {
-    return { prices: this.prices, hist: this.hist, effects: this.effects };
+    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects };
   },
   hydrate(snap) {
     if (!snap) return;
     if (snap.prices) this.prices = snap.prices;
     if (snap.hist) this.hist = snap.hist;
     if (snap.effects) this.effects = snap.effects;
+    if (snap.localEffects) this.localEffects = snap.localEffects;
     // Repair any missing commodities (config may have grown since save).
     for (const c of COMMODITIES) {
       if (this.prices[c.id] == null) this.prices[c.id] = c.base;

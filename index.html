@@ -25,6 +25,7 @@
       <div class="stat"><label>Cycle</label><span id="hud-clock">—</span></div>
     </div>
     <div class="topbtns">
+      <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
       <button id="btn-settings" class="btn">⚙ Settings</button>
     </div>
@@ -105,6 +106,38 @@
     </aside>
   </main>
 
+  <!-- ===== STAR MAP OVERLAY ===== -->
+  <div class="starmap hidden" id="starmap-overlay">
+    <div class="starmap-bar">
+      <div class="starmap-crumbs" id="sm-crumbs">
+        <button class="crumb" id="sm-to-galaxy">Galaxy</button>
+        <span id="sm-crumb-sys"></span>
+      </div>
+      <div class="starmap-title" id="sm-title">GALACTIC CHART</div>
+      <button class="btn" id="sm-close">✕ Close</button>
+    </div>
+
+    <!-- galaxy view -->
+    <div class="galaxy-view" id="galaxy-view">
+      <svg id="galaxy-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="galaxy-tip" id="galaxy-tip"></div>
+      <div class="galaxy-legend">
+        <span><i class="dot up"></i> rising</span>
+        <span><i class="dot down"></i> falling</span>
+        <span><i class="dot evt"></i> local event</span>
+        <span><i class="dot cap"></i> trade hub</span>
+      </div>
+    </div>
+
+    <!-- system view -->
+    <div class="system-view hidden" id="system-view">
+      <div class="system-scene">
+        <canvas id="system-canvas"></canvas>
+      </div>
+      <aside class="system-info" id="system-info"></aside>
+    </div>
+  </div>
+
   <!-- ===== TOASTS ===== -->
   <div class="toast-stack" id="toast-stack"></div>
 
@@ -137,11 +170,13 @@
   <script src="js/flavor.js"></script>
   <script src="js/store.js"></script>
   <script src="js/market.js"></script>
+  <script src="js/galaxy.js"></script>
   <script src="js/fleet.js"></script>
   <script src="js/economy.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
