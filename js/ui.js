@@ -8,6 +8,7 @@ const UI = {
   lastPrice: {},
   feedPaused: false,
   page: "exchange",
+  bazaarTab: "shipyard",
   tutStep: 0,
   _missionSig: "",
   _reportSig: "",
@@ -36,6 +37,7 @@ const UI = {
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
+      colSide: document.querySelector(".col-side"), newswireDetails: $("newswire-details"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -476,22 +478,44 @@ const UI = {
     }).join("") || `<p class="muted-note">Restocking the accessory stalls…</p>`;
 
     const invCost = Bazaar.upgradeInventoryCost();
+    const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
 
+    // Each Bazaar area is its own sub-tab so the page never grows past one screen.
+    const sections = {
+      shipyard: `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>`,
+      flagships: `<div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>`,
+      mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2><div class="buy-grid">${mercs}</div></div>`,
+      contracts: `<div class="panel"><h2>Contract Board</h2><div class="contract-list">${contracts}</div></div>`,
+      gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2><div class="item-grid">${acc}</div></div>
+             <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
+               <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
+      standing,
+    };
+    const tabs = [["shipyard", "Shipyard"], ["flagships", "Flagships"], ["mercs", "Mercenaries"],
+      ["contracts", "Contracts"], ["gear", "Gear"], ["standing", "Standing"]];
+    if (!sections[this.bazaarTab]) this.bazaarTab = "shipyard";
+    const subtabs = tabs.map(([k, label]) =>
+      `<button class="subtab ${k === this.bazaarTab ? "active" : ""}" data-bz="${k}">${label}` +
+      `${k === "contracts" && openContracts ? ` <span class="tab-badge">${openContracts}</span>` : ""}</button>`).join("");
+
+    // preserve scroll position across the frequent re-renders (tick / purchases)
+    const prev = this.refs.bazaarBody.querySelector(".bz-scroll");
+    const keep = prev ? prev.scrollTop : 0;
     this.refs.bazaarBody.innerHTML =
-      standing +
-      `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>
-       <div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>
-       <div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2><div class="buy-grid">${mercs}</div></div>
-       <div class="panel"><h2>Contract Board</h2><div class="contract-list">${contracts}</div></div>
-       <div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2><div class="item-grid">${acc}</div></div>
-       <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
-         <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`;
-
+      `<nav class="subtabs bz-subtabs">${subtabs}</nav>
+       <div class="bz-scroll">${sections[this.bazaarTab]}</div>`;
+    const ns = this.refs.bazaarBody.querySelector(".bz-scroll"); if (ns) ns.scrollTop = keep;
     this.refs.bazaarBody.onclick = e => this.onBazaarClick(e);
   },
 
   onBazaarClick(e) {
     const t = e.target;
+    const sub = t.closest("[data-bz]");
+    if (sub) {
+      this.bazaarTab = sub.dataset.bz; this.renderBazaar();
+      const sc = this.refs.bazaarBody.querySelector(".bz-scroll"); if (sc) sc.scrollTop = 0;
+      return;
+    }
     const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
       ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
@@ -696,6 +720,13 @@ const UI = {
     this.refs.feedList.addEventListener("scroll", () => {
       const el = this.refs.feedList; this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
     });
+
+    // Expanding the GBN newswire log takes over the sidebar and hides the chat.
+    if (r.newswireDetails && r.colSide) {
+      r.newswireDetails.addEventListener("toggle", () => {
+        r.colSide.classList.toggle("news-open", r.newswireDetails.open);
+      });
+    }
   },
 
   wireBus() {

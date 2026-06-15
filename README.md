@@ -80,9 +80,12 @@ pattern.
   personalities, omens vs. scams, market-moving news events, alien TV, per-system
   local chatter and events, and — on the Star Map — ships that hold **multi-turn
   conversations** with each other. All content lives in `flavor.js`, easy to grow.
-- **Quality floor** — responsive to phone width, keyboard focus, missing-art
-  fallbacks (tinted boxes), `prefers-reduced-motion` support, opt-in audio, and
-  a settings panel (reset save, mute, reduced motion, dev speed/news toggles).
+- **Quality floor** — a fixed **app-shell layout** (the page never scrolls;
+  each region — pages, the sub-tabbed Bazaar, the trader chat — scrolls on its
+  own), responsive down to phone width (where it relaxes into a natural stack),
+  keyboard focus, missing-art fallbacks (tinted boxes), `prefers-reduced-motion`
+  support, opt-in audio, and a settings panel (reset save, mute, reduced motion,
+  dev speed/news toggles).
 
 ## Project layout
 
