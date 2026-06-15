@@ -34,6 +34,15 @@ pattern.
 - **Progression** — credits, ship tiers, system unlocks, achievements, a market
   sentiment gauge, a galactic clock, and **prestige** ("Retire Empire") for the
   long tail.
+- **Star Map** — a navigable galaxy of **6 sectors × ~9–18 systems** (~80 total,
+  procedurally generated from a fixed seed = the same universe every load). Every
+  node is anchored to the galactic market and pulses green/red with its local
+  prices. Click a system for a big animated scene — a star, orbiting planets, a
+  space station, and tiny race-varied ships — plus planet industries, what each
+  planet imports, and a **local news feed**. Most local news is flavor, but
+  **local events** (riots halting an export, a fresh seam, a customs lockdown)
+  actually move that system's prices — "valuable insight" for whoever's reading.
+  Trading/fleet stay on the curated unlockable capitals (one per sector).
 - **Quality floor** — responsive to phone width, keyboard focus, missing-art
   fallbacks (tinted boxes), `prefers-reduced-motion` support, opt-in audio, and
   a settings panel (reset save, mute, reduced motion, dev speed/news toggles).
@@ -53,11 +62,17 @@ star-baron/
 │   ├── economy.js        # credits, trades, purchases, achievements, prestige
 │   ├── feed.js           # chat scheduler, templating, reactions, omens
 │   ├── broadcast.js      # TV rotation + news→price pipeline + newswire
-│   ├── ui.js             # all DOM rendering
+│   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
+│   ├── ui.js             # main-screen DOM rendering
+│   ├── starmap.js        # galaxy view + animated system view (canvas)
 │   └── main.js           # bootstrap, game loop, schedulers, save
 ├── assets/               # placeholder PNGs (swap freely, keep filenames)
+├── docs/GRAPHICS_SPEC.md # art drop-in guide: sizes, paths, races, how to add
 └── tools/gen_placeholders.py   # regenerate placeholder art (pip install pillow)
 ```
+
+See **`docs/GRAPHICS_SPEC.md`** to drop in your own PNGs (planets, race ships,
+stations, nebulae, asteroids, stars) — same filename in, real art out, no code.
 
 ## Design notes
 

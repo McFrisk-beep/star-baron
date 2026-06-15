@@ -26,6 +26,7 @@ const Game = {
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches },
       lastSeenAt: Date.now(),
       market: null,
+      galaxy: null,
     };
   },
 
@@ -50,6 +51,10 @@ const Game = {
     Market.volMult = 1 + this.state.prestige.tier * PRESTIGE.volPerTier;
     Market.hydrate(this.state.market);
 
+    // Build the (deterministic) galaxy, then restore its local-news history.
+    Galaxy.build();
+    Galaxy.hydrate(this.state.galaxy);
+
     // ---- offline catch-up (before any feed listeners are wired) ----
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
@@ -59,9 +64,20 @@ const Game = {
 
     // ---- UI + flavor wiring ----
     UI.init();
+    StarMap.init();
     Feed.wire();
     UI.fullRender();
     UI.renderNewswire();
+
+    // Local galaxy events: route to the map, and let big trade-hub events leak
+    // a "valuable insight" hint into the main chat feed.
+    Bus.on("localEvent", entry => {
+      StarMap.onLocalEvent(entry);
+      if (this._booting) return;
+      if (entry.tradeable && Math.random() < 0.7) {
+        Feed.emit(`word from ${entry.sysName}: ${entry.headline.toLowerCase()}`, { kind: "omen" });
+      }
+    });
 
     // live arrival toasts (offline ones go in the WYWA modal instead)
     Bus.on("runDone", d => {
@@ -77,6 +93,7 @@ const Game = {
     // ---- schedulers ----
     Feed.start();
     Broadcast.start();
+    this.scheduleLocalEvent();
     setInterval(() => this.loop(), CONFIG.marketTickMs);
     setInterval(() => this.save(), CONFIG.autosaveMs);
 
@@ -108,9 +125,23 @@ const Game = {
     }
   },
 
+  // A local event fires somewhere in the galaxy every few minutes (scaled by
+  // fast-time). fastNews also speeds these up so the pipeline is testable.
+  scheduleLocalEvent() {
+    clearTimeout(this._localTimer);
+    const base = CONFIG.fastNews
+      ? Util.randInt(8000, 16000)
+      : Util.randInt(GALAXY.localEventMinMs, GALAXY.localEventMaxMs);
+    this._localTimer = setTimeout(() => {
+      Galaxy.fireLocalEvent();
+      this.scheduleLocalEvent();
+    }, base / this.timeScale);
+  },
+
   snapshot() {
     this.state.lastSeenAt = Date.now();
     this.state.market = Market.serialize();
+    this.state.galaxy = Galaxy.serialize();
     return this.state;
   },
 

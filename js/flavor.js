@@ -293,6 +293,90 @@ const TV_SHOWS = [
     "How much would YOU pay for peace of mind? Wrong. It's 9,999 credits."] },
 ];
 
+/* ===========================================================================
+   GALAXY / STAR-MAP CONTENT
+   Names, planet industries, and local news. Local news is MOSTLY flavor, but
+   LOCAL_EVENTS are mechanical "valuable insight": they distort that system's
+   local prices for a while (e.g. riots halt an export → it gets scarce/dear).
+   Tokens: {SYS} {PLANET} {COMM} {CAT} {RACE}.
+   =========================================================================== */
+
+const GALAXY_NAMES = {
+  pre: ["Xal", "Vor", "Tann", "Ysm", "Korr", "Bael", "Druu", "Eph", "Grith", "Hox",
+        "Iro", "Jen", "Kael", "Lum", "Myr", "Nox", "Oss", "Pra", "Quel", "Rho",
+        "Syl", "Tor", "Umb", "Vex", "Wru", "Yarn", "Zeph", "Cind", "Dax", "Fel"],
+  suf: ["os", "ara", "ix", "une", "eth", "or", "is", "yx", "ade", "um",
+        "een", "ock", "ith", "ay", "oon", "esh", "ula", "arn", "ode", "yr"],
+  tags: ["Reach", "Drift", "Gate", "Hollow", "Spur", "Verge", "Cradle", "Span",
+         "Hub", "Wash", "Expanse", "Crossing", "Anchorage", "Hold", "Run"],
+};
+
+// Industry label per category — a planet's industry ties to a commodity category.
+const INDUSTRIES = {
+  mineral: ["deep-core mining", "ore refinery", "asteroid smeltery", "strip-mining colony"],
+  gas:     ["gas skimming", "fuel refinery", "ice-harvesting rig", "atmosphere tap"],
+  agri:    ["hydro-farms", "protein vats", "agri-domes", "fungal plantations"],
+  tech:    ["chip fabrication", "fabrication yards", "research arcology", "drone foundry"],
+  luxury:  ["spice plantations", "couture ateliers", "pleasure resorts", "vintners' guild"],
+  illicit: ["shadow ports", "unlicensed clinics", "black-market bazaars", "smuggling dens"],
+};
+
+// Pure-flavor local chatter for the system feed.
+const LOCAL_NEWS = [
+  "{PLANET} council bickers over docking fees again",
+  "tourist season opens on {PLANET} — brace for {RACE} cruise liners",
+  "{SYS} station reports record traffic this cycle",
+  "a local {RACE} band tops the {SYS} charts",
+  "{PLANET} weather control 'mostly working,' officials insist",
+  "rival dockworker guilds trade insults across {SYS}",
+  "{PLANET} unveils a statue of a beloved {RACE} tax collector",
+  "minor hull-rot outbreak quarantined at {SYS} docks",
+  "{PLANET} declares a public holiday for no stated reason",
+  "love is in the recycled air at the {SYS} station gardens",
+  "{RACE} pilgrims gather on {PLANET} for the long dark",
+  "{PLANET} school children name a comet 'Mr. Comet'",
+  "{SYS} traffic control blames delays on 'space'",
+  "a {RACE} merchant prince throws a gala aboard {SYS} station",
+  "{PLANET} announces ambitious plan to be slightly less foggy",
+];
+
+// MECHANICAL local events — distort the system's local prices. ~half are
+// up-shocks (scarcity), half down-shocks (glut). dir up = price rises.
+const LOCAL_EVENTS = [
+  { id: "riot",     scope: "comm", dir: "up",   mult: 1.55,
+    headline: "RIOTS ON {PLANET} HALT {COMM} EXPORTS",
+    body: "Unrest shuts the {PLANET} docks. {COMM} supply dries up here — prices climb." },
+  { id: "strike",   scope: "cat",  dir: "up",   mult: 1.4,
+    headline: "{PLANET} {CAT} WORKERS DOWN TOOLS",
+    body: "A wildcat strike cripples {CAT} output across {SYS}." },
+  { id: "lockdown", scope: "comm", dir: "up",   mult: 1.6,
+    headline: "CUSTOMS LOCKDOWN AT {SYS}",
+    body: "Inspectors choke the lanes. {COMM} grows scarce and dear in-system." },
+  { id: "blight",   scope: "cat",  dir: "up",   mult: 1.45,
+    headline: "BLIGHT SWEEPS {PLANET}",
+    body: "Contamination guts {CAT} stocks around {SYS}." },
+  { id: "festival", scope: "cat",  dir: "up",   mult: 1.5,
+    headline: "FESTIVAL ON {PLANET} DRIVES {CAT} DEMAND",
+    body: "Revellers flood {SYS}; {CAT} demand spikes locally." },
+  { id: "seam",     scope: "comm", dir: "down", mult: 0.6,
+    headline: "RICH {COMM} SEAM FOUND NEAR {PLANET}",
+    body: "A fresh strike floods {SYS} with cheap {COMM}." },
+  { id: "harvest",  scope: "cat",  dir: "down", mult: 0.58,
+    headline: "BUMPER {CAT} HARVEST AT {PLANET}",
+    body: "Record yields glut the {SYS} market; {CAT} prices tumble." },
+  { id: "subsidy",  scope: "cat",  dir: "down", mult: 0.65,
+    headline: "{RACE} GUILD SUBSIDISES {CAT} AT {SYS}",
+    body: "Subsidies flood {SYS} with cheap {CAT}." },
+  { id: "dump",     scope: "comm", dir: "down", mult: 0.62,
+    headline: "FIRE SALE: {PLANET} DUMPS {COMM} STOCKPILES",
+    body: "A liquidation crashes the local {COMM} price." },
+];
+
+window.GALAXY_NAMES = GALAXY_NAMES;
+window.INDUSTRIES = INDUSTRIES;
+window.LOCAL_NEWS = LOCAL_NEWS;
+window.LOCAL_EVENTS = LOCAL_EVENTS;
+
 // Make flavor available as globals.
 window.NAME_PARTS = NAME_PARTS;
 window.DIRWORDS = DIRWORDS;

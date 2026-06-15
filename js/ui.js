@@ -445,8 +445,8 @@ const UI = {
 
     r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
-    r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); };
-    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); this.refreshDispatch(); };
+    r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); };
+    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); this.refreshDispatch(); };
     r.setReset.onclick = () => {
       if (confirm("Wipe your Star Baron save and start over?")) window.Game.reset();
     };
