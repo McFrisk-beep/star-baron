@@ -65,7 +65,7 @@ const Broadcast = {
     };
     const s = this.s();
     s.newswire.unshift(entry);
-    if (s.newswire.length > 40) s.newswire.length = 40;
+    if (s.newswire.length > CONFIG.newswireMax) s.newswire.length = CONFIG.newswireMax;
 
     Bus.emit("news", entry);
     // Resume TV once the news frame times out.

@@ -8,7 +8,7 @@ const Galaxy = {
   sectors: [],          // [{...SECTORS def, systems:[ids]}]
   systems: {},          // id -> system object
   list: [],             // flat list of system objects
-  eventLog: [],         // recent LOCAL events (persisted), newest first
+  localLog: {},         // systemId -> [news entries] (persisted), newest first
 
   // ---- seeded PRNG (mulberry32) -----------------------------------------
   _mk(seed) {
@@ -158,27 +158,50 @@ const Galaxy = {
       .replace(/\{COMM\}/g, commName).replace(/\{CAT\}/g, cat)
       .replace(/\{RACE\}/g, RACES[sys.race].name);
     const entry = {
-      systemId: sys.id, sysName: sys.name, headline: fill(ev.headline), body: fill(ev.body),
+      systemId: sys.id, sysName: sys.name, mechanical: true,
+      headline: fill(ev.headline), body: fill(ev.body),
       dir: ev.dir, ts: now, tradeable: sys.tradeable,
     };
-    this.eventLog.unshift(entry);
-    if (this.eventLog.length > 40) this.eventLog.length = 40;
+    this.addLocalNews(sys.id, entry);
     Bus.emit("localEvent", entry);
     return entry;
   },
 
-  eventsFor(id) { return this.eventLog.filter(e => e.systemId === id); },
+  // ---- local news log (persisted, newest first, capped) -----------------
+  addLocalNews(id, entry) {
+    const log = (this.localLog[id] ||= []);
+    log.unshift(entry);
+    if (log.length > CONFIG.localFeedMax) log.length = CONFIG.localFeedMax;
+  },
+  newsFor(id) { return this.localLog[id] || []; },
 
-  // A live flavor line for a system (not persisted).
+  // A flavor post for a system (the slow background chatter). Persisted.
   flavorLine(sys) {
     const planet = sys.planets.length ? Util.pick(sys.planets).name : sys.name + " I";
     return Util.pick(LOCAL_NEWS).replace(/\{SYS\}/g, sys.name)
       .replace(/\{PLANET\}/g, planet).replace(/\{RACE\}/g, RACES[sys.race].name);
   },
+  flavorPost(sys, now = Date.now()) {
+    const entry = { systemId: sys.id, mechanical: false, text: this.flavorLine(sys), ts: now };
+    this.addLocalNews(sys.id, entry);
+    return entry;
+  },
+
+  // Give a freshly-opened system a little backfilled history so it reads alive.
+  ensureSeeded(sys, now = Date.now()) {
+    const log = (this.localLog[sys.id] ||= []);
+    if (log.length >= 3) return;
+    for (let i = log.length; i < 3; i++) {
+      log.push({ systemId: sys.id, mechanical: false, text: this.flavorLine(sys),
+        ts: now - Util.randInt(2, 300) * 60000 });
+    }
+    log.sort((a, b) => b.ts - a.ts);
+    if (log.length > CONFIG.localFeedMax) log.length = CONFIG.localFeedMax;
+  },
 
   // ---- persistence (structure is from seed; only history is saved) ------
-  serialize() { return { eventLog: this.eventLog }; },
-  hydrate(snap) { if (snap && Array.isArray(snap.eventLog)) this.eventLog = snap.eventLog; },
+  serialize() { return { localLog: this.localLog }; },
+  hydrate(snap) { if (snap && snap.localLog) this.localLog = snap.localLog; },
 };
 
 window.Galaxy = Galaxy;

@@ -238,35 +238,42 @@ const StarMap = {
       window.Game.requestSave(); this.renderInfo(sys);
     };
 
-    // seed local feed with recent mechanical events for this system
+    // backfill a little history, then render the persisted local log
+    Galaxy.ensureSeeded(sys);
+    this.renderFeedList(sys);
+  },
+
+  // Render the whole local feed (newest first) with relative timestamps.
+  renderFeedList(sys) {
     const feed = document.getElementById("sm-local-feed");
-    for (const e of Galaxy.eventsFor(sys.id).slice(0, 6).reverse()) this.addLocalLine(feed, e, true);
-  },
-
-  addLocalLine(feed, entry, mechanical) {
     if (!feed) return;
-    const li = document.createElement("li");
-    if (mechanical) {
-      li.className = "lf mech " + entry.dir;
-      li.innerHTML = `<span class="lf-tag">BULLETIN</span><b>${entry.headline}</b><span class="lf-body">${entry.body}</span>`;
-    } else {
-      li.className = "lf";
-      li.textContent = entry;
-    }
-    feed.appendChild(li);
-    while (feed.children.length > 24) feed.removeChild(feed.firstChild);
-    feed.scrollTop = feed.scrollHeight;
+    const items = Galaxy.newsFor(sys.id);
+    if (!items.length) { feed.innerHTML = `<li class="lf">station channel quiet…</li>`; return; }
+    feed.innerHTML = items.map(e => {
+      const t = `<span class="lf-time">${Util.ago(e.ts)}</span>`;
+      if (e.mechanical)
+        return `<li class="lf mech ${e.dir}"><span class="lf-tag">BULLETIN</span>${t}<b>${e.headline}</b><span class="lf-body">${e.body}</span></li>`;
+      return `<li class="lf"><span class="lf-text">${e.text}</span>${t}</li>`;
+    }).join("");
   },
 
+  // While a system is open it gets occasional fresh posts; we also re-render to
+  // keep the "X ago" stamps current.
   startLocalFeed(sys) {
     clearInterval(this.feedTimer);
     const tick = () => {
       if (!this.open || this.current !== sys.id) return;
-      const feed = document.getElementById("sm-local-feed");
-      this.addLocalLine(feed, Galaxy.flavorLine(sys), false);
+      if (Math.random() < 0.8) { Galaxy.flavorPost(sys); window.Game.requestSave(); }
+      this.renderFeedList(sys);
     };
-    this.feedTimer = setInterval(tick, Util.randInt(4500, 8000));
-    setTimeout(tick, 1500);
+    this.feedTimer = setInterval(tick, Util.randInt(9000, 14000));
+  },
+
+  // Called by the slow background refresh so timestamps stay current.
+  refreshFeed() {
+    if (!this.open || this.refs.systemView.classList.contains("hidden") || !this.current) return;
+    const sys = Galaxy.get(this.current);
+    if (sys) this.renderFeedList(sys);
   },
 
   // ===== animated scene (canvas) =========================================
@@ -295,18 +302,52 @@ const StarMap = {
     const neb = this.img(ASSET.nebula(sys.nebula));
     const aster = sys.asteroidBelt ? this.img(ASSET.asteroids()) : null;
 
-    const targets = () => {
-      const cx = W() / 2, cy = H() / 2, R = Math.min(W(), H()) * 0.42;
-      const pts = planets.map(pl => ({ x: cx + Math.cos(pl.angle) * pl.orbit * R, y: cy + Math.sin(pl.angle) * pl.orbit * R }));
-      pts.push({ x: cx + Math.cos(station.angle) * station.orbit * R, y: cy + Math.sin(station.angle) * station.orbit * R });
+    // ---- ambient ship traffic (with behaviour) ----
+    const raceKeys = Object.keys(RACES);
+    const targetPop = reduced ? 4 : 9;
+    const ships = [];
+    const particles = [];
+    const raceImg = r => this.img(ASSET.raceship(r));
+
+    const dockPoints = () => {
+      const pts = planets.map((pl, i) => ({ x: pl._x ?? W() / 2, y: pl._y ?? H() / 2, kind: "planet", idx: i }));
+      pts.push({ x: station._x ?? W() / 2, y: station._y ?? H() / 2, kind: "station" });
       return pts;
     };
-    const ships = [];
-    const nShips = reduced ? 4 : 9;
-    for (let i = 0; i < nShips; i++) {
-      ships.push({ x: Math.random() * W(), y: Math.random() * H(), tx: 0, ty: 0,
-        spd: Util.randFloat(0.6, 1.4), img: this.img(ASSET.raceship(Util.pick(Object.keys(RACES)))), retarget: true });
+    const targetPos = t => {
+      if (!t) return { x: W() / 2, y: H() / 2 };
+      if (t.kind === "planet") { const pl = planets[t.idx]; return { x: pl?._x ?? W() / 2, y: pl?._y ?? H() / 2 }; }
+      if (t.kind === "station") return { x: station._x ?? W() / 2, y: station._y ?? H() / 2 };
+      return { x: t.x, y: t.y };
+    };
+    const pickTarget = avoid => {
+      const docks = dockPoints();
+      let t = Util.pick(docks);
+      if (avoid && t.kind === avoid.kind && t.idx === avoid.idx && docks.length > 1) t = Util.pick(docks);
+      return t.kind === "planet" ? { kind: "planet", idx: t.idx } : { kind: "station" };
+    };
+    const spawnShip = () => {
+      const d = Util.pick(dockPoints());
+      const r = Util.pick(raceKeys);
+      ships.push({ x: d.x, y: d.y, race: r, img: raceImg(r), alpha: 0, state: "spawn",
+        spd: Util.randFloat(42, 90), ang: Math.random() * 6.28, target: null, dwell: 0 });
+    };
+    const explode = (x, y, color) => {
+      for (let i = 0; i < 16; i++) {
+        const a = Math.random() * 6.28, s = Util.randFloat(30, 130);
+        particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: Util.randFloat(.4, .9), max: .9, color });
+      }
+    };
+    const spark = (x, y) => {
+      const a = Math.random() * 6.28, s = Util.randFloat(20, 60);
+      particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .25, max: .25, color: "rgba(255,220,140," });
+    };
+    for (let i = 0; i < targetPop; i++) {   // start with traffic already underway
+      const r = Util.pick(raceKeys);
+      ships.push({ x: Math.random() * W(), y: Math.random() * H(), race: r, img: raceImg(r),
+        alpha: 1, state: "travel", spd: Util.randFloat(42, 90), ang: Math.random() * 6.28, target: null, dwell: 0 });
     }
+    let combatCooldown = 5;
 
     const stars = [];
     for (let i = 0; i < 120; i++) stars.push({ x: Math.random(), y: Math.random(), b: Math.random() });
@@ -355,17 +396,44 @@ const StarMap = {
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
 
-      // ships
-      const tg = targets();
+      // ---- ships: behaviour + render ----
+      station._x = sx; station._y = sy;
+      if (!reduced) {
+        const alive = ships.reduce((n, s) => n + (s.state !== "dead" ? 1 : 0), 0);
+        if (alive < targetPop && Math.random() < dt * 2.5) spawnShip();
+        // occasionally a dogfight breaks out between two cruising ships
+        combatCooldown -= dt;
+        if (combatCooldown <= 0 && Math.random() < dt * 0.05) {
+          const cand = ships.filter(s => s.state === "travel");
+          if (cand.length >= 2) {
+            const a = Util.pick(cand); let b = Util.pick(cand);
+            if (b === a) b = cand[(cand.indexOf(a) + 1) % cand.length];
+            const ccx = (a.x + b.x) / 2, ccy = (a.y + b.y) / 2;
+            for (const s of [a, b]) { s.state = "combat"; s.foe = (s === a ? b : a); s.combatT = Util.randFloat(3, 6); s.cx = ccx; s.cy = ccy; s.orbA = Math.random() * 6.28; }
+            const ally = ships.find(s => s.state === "travel" && (s.race === a.race || s.race === b.race));
+            if (ally && Math.random() < 0.6) { ally.target = { kind: "roam", x: ccx, y: ccy }; ally._interfere = 2.5; }
+            combatCooldown = Util.randFloat(14, 34);
+          }
+        }
+      }
+      const env = { targetPos, pickTarget, explode, spark, sx, sy };
       for (const sh of ships) {
-        if (sh.retarget) { const t = Util.pick(tg); sh.tx = t.x; sh.ty = t.y; sh.retarget = false; }
-        const dx = sh.tx - sh.x, dy = sh.ty - sh.y, d = Math.hypot(dx, dy);
-        if (d < 6) { sh.retarget = true; }
-        else if (!reduced) { const v = sh.spd * 60 * dt; sh.x += dx / d * v; sh.y += dy / d * v; sh._ang = Math.atan2(dy, dx); }
-        ctx.save(); ctx.translate(sh.x, sh.y); ctx.rotate(sh._ang || 0);
-        if (sh.img.ok) ctx.drawImage(sh.img, -10, -6, 20, 12);
-        else { ctx.fillStyle = "#cdd6f5"; ctx.fillRect(-4, -2, 8, 4); }
+        if (!reduced) this._stepShip(sh, dt, env);
+        const a = Util.clamp(sh.alpha, 0, 1);
+        if (a <= 0) continue;
+        ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
+        if (sh.img && sh.img.ok) ctx.drawImage(sh.img, -10, -6, 20, 12);
+        else { ctx.fillStyle = RACES[sh.race] ? RACES[sh.race].color : "#cdd6f5"; ctx.fillRect(-4, -2, 8, 4); }
         ctx.restore();
+      }
+      for (let i = ships.length - 1; i >= 0; i--) if (ships[i].state === "dead") ships.splice(i, 1);
+      // explosion / muzzle particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i]; p.life -= dt;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        ctx.fillStyle = p.color + (p.life / p.max).toFixed(2) + ")";
+        ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
       }
 
       if (!reduced) this.raf = requestAnimationFrame(draw);
@@ -373,6 +441,72 @@ const StarMap = {
     if (reduced) { draw(performance.now()); }   // single static frame
     else this.raf = requestAnimationFrame(draw);
     this.scene = { canvas };
+  },
+
+  // One ship's behaviour for a frame. States: spawn → travel → (dock | land) →
+  // travel … with rare combat. Docked ships linger; landed ships fade into a
+  // planet and despawn; combat ends with one ship exploding.
+  _stepShip(sh, dt, env) {
+    const { targetPos, pickTarget, explode, spark, sx, sy } = env;
+    const moveTo = (tx, ty, slow) => {
+      const dx = tx - sh.x, dy = ty - sh.y, d = Math.hypot(dx, dy) || 1;
+      const v = sh.spd * (slow ? 0.5 : 1) * dt;
+      sh.x += dx / d * v; sh.y += dy / d * v; sh.ang = Math.atan2(dy, dx);
+      return d;
+    };
+    switch (sh.state) {
+      case "spawn":
+        sh.alpha += dt * 0.8;
+        if (sh.alpha >= 1) { sh.alpha = 1; sh.state = "travel"; sh.target = pickTarget(); }
+        break;
+      case "travel": {
+        if (!sh.target) sh.target = pickTarget();
+        const p = targetPos(sh.target);
+        const d = moveTo(p.x, p.y);
+        if (d < 8) {
+          if (sh.target.kind === "station") { sh.state = "dock"; sh.dwell = Util.randFloat(2.5, 7); }
+          else if (sh.target.kind === "planet") { sh.state = "land"; sh.landRef = sh.target; }
+          else sh.target = pickTarget();   // roam point reached → new errand
+        }
+        break;
+      }
+      case "dock": {   // linger near the (moving) station
+        sh.x += ((sx + 16) - sh.x) * Math.min(1, dt * 3);
+        sh.y += ((sy + 16) - sh.y) * Math.min(1, dt * 3);
+        sh.dwell -= dt;
+        if (sh.dwell <= 0) { sh.state = "travel"; sh.target = pickTarget({ kind: "station" }); }
+        break;
+      }
+      case "land": {   // settle onto the planet and fade out
+        const p = targetPos(sh.landRef);
+        moveTo(p.x, p.y, true);
+        sh.alpha -= dt * 0.9;
+        if (sh.alpha <= 0) sh.state = "dead";
+        break;
+      }
+      case "combat": {   // orbit the fight, spit sparks, then resolve
+        sh.orbA += dt * 3.2;
+        const rr = 18 + Math.sin(sh.orbA * 1.7) * 8;
+        sh.x = sh.cx + Math.cos(sh.orbA) * rr;
+        sh.y = sh.cy + Math.sin(sh.orbA) * rr;
+        sh.ang = sh.orbA + Math.PI / 2;
+        if (Math.random() < dt * 4) spark(sh.x, sh.y);
+        sh.combatT -= dt;
+        if (sh.combatT <= 0) {
+          if (sh.foe && sh.foe.state === "combat") {
+            if (sh.x <= sh.foe.x) {   // left ship resolves the duel (once)
+              const loser = Math.random() < 0.5 ? sh : sh.foe;
+              const winner = loser === sh ? sh.foe : sh;
+              explode(loser.x, loser.y, "rgba(255,150,70,");
+              loser.state = "dead";
+              winner.state = "travel"; winner.target = null; winner.foe = null;
+            }
+          } else { sh.state = "travel"; sh.target = null; sh.foe = null; }
+        }
+        break;
+      }
+    }
+    if (sh._interfere != null) { sh._interfere -= dt; if (sh._interfere <= 0) sh._interfere = null; }
   },
 
   stopScene() {
@@ -389,9 +523,8 @@ const StarMap = {
   // live mechanical event landed: if its system view is open, show it; refresh nodes
   onLocalEvent(entry) {
     if (this.open && !this.refs.systemView.classList.contains("hidden") && this.current === entry.systemId) {
-      this.addLocalLine(document.getElementById("sm-local-feed"), entry, true);
       const sys = Galaxy.get(entry.systemId);
-      if (sys) this.renderInfo(sys);
+      if (sys) this.renderInfo(sys);   // refreshes effects banner + feed list
     }
     if (this.open && !this.refs.galaxyView.classList.contains("hidden")) this.updateGalaxyNodes();
   },

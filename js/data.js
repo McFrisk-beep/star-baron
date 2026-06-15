@@ -14,7 +14,11 @@ const CONFIG = {
   // Chat feed: a new alien message every 4–8s (randomized per message).
   chatMinMs: 4000,
   chatMaxMs: 8000,
-  chatMaxMessages: 60,        // how many to keep on screen
+  chatMaxMessages: 100,       // trader chat: keep the last N on screen
+
+  // Feed-log caps.
+  newswireMax: 30,            // GBN newswire log: keep the last N
+  localFeedMax: 15,           // per-system local feed: keep the last N
 
   // Broadcast: NEWS fires every 1–2h (randomized). Between news = TV shows.
   newsMinMs: 60 * 60 * 1000,  // 1 hour
@@ -37,8 +41,12 @@ const CONFIG = {
   priceFloorMult: 0.3,
   priceCeilMult: 3.0,
   meanReversion: 0.02,        // per-tick pull back toward base (0–1)
-  driftAmp: 0.12,             // amplitude of the slow per-category secular drift
-  driftPeriodMs: 20 * 60 * 1000, // one full sector-rotation cycle
+  // Per-tick wiggle = gauss(vol × volScale). Keep this small for a "chill"
+  // market: at volScale 0.03 even the jumpiest commodity moves ~0.5%/tick,
+  // most far less. Raise for a wilder market.
+  volScale: 0.03,
+  driftAmp: 0.06,             // amplitude of the slow per-category secular drift
+  driftPeriodMs: 30 * 60 * 1000, // one full sector-rotation cycle
 
   // Offline catch-up: cap how much real time we simulate forward on return.
   maxOfflineMs: 7 * 24 * 60 * 60 * 1000, // 7 days

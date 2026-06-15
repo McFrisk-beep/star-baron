@@ -365,9 +365,7 @@ const UI = {
   renderNewswire() {
     this.refs.newswireList.innerHTML = this.s().newswire.map(n => {
       const f = FACTIONS[n.faction];
-      const t = new Date(n.ts);
-      const time = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-      return `<li class="wire ${n.dir}"><span class="wire-time">${time}</span>
+      return `<li class="wire ${n.dir}"><span class="wire-time">${Util.ago(n.ts)}</span>
         <span class="wire-faction" style="color:${f ? f.color : "#9aa"}">${f ? f.name : "GBN"}</span>
         <b>${n.headline}</b><span class="wire-body">${n.body}</span></li>`;
     }).join("") || "<li class='muted-note'>No bulletins yet.</li>";
@@ -445,8 +443,8 @@ const UI = {
 
     r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
-    r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); };
-    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); this.refreshDispatch(); };
+    r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
+    r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); this.refreshDispatch(); };
     r.setReset.onclick = () => {
       if (confirm("Wipe your Star Baron save and start over?")) window.Game.reset();
     };

@@ -94,8 +94,11 @@ const Game = {
     Feed.start();
     Broadcast.start();
     this.scheduleLocalEvent();
+    this.scheduleLocalFlavor();
     setInterval(() => this.loop(), CONFIG.marketTickMs);
     setInterval(() => this.save(), CONFIG.autosaveMs);
+    // slow refresh so relative "X ago" stamps stay current
+    setInterval(() => { UI.renderNewswire(); StarMap.refreshFeed(); }, 30000);
 
     document.addEventListener("visibilitychange", () => { if (document.hidden) this.save(); });
     window.addEventListener("beforeunload", () => this.save());
@@ -138,6 +141,17 @@ const Game = {
     }, base / this.timeScale);
   },
 
+  // Slow background chatter: a random system gets a flavor post now and then,
+  // so local feeds keep filling even when you're not looking.
+  scheduleLocalFlavor() {
+    clearTimeout(this._flavorTimer);
+    const base = CONFIG.fastNews ? Util.randInt(4000, 9000) : Util.randInt(20000, 45000);
+    this._flavorTimer = setTimeout(() => {
+      Galaxy.flavorPost(Util.pick(Galaxy.list));
+      this.scheduleLocalFlavor();
+    }, base / this.timeScale);
+  },
+
   snapshot() {
     this.state.lastSeenAt = Date.now();
     this.state.market = Market.serialize();
@@ -153,6 +167,10 @@ const Game = {
 
   async reset() {
     await Store.clear();
+    // Clear in-memory logs too (the reload re-initializes, this is belt-and-braces).
+    if (this.state) this.state.newswire = [];
+    Galaxy.localLog = {};
+    Market.effects = []; Market.localEffects = [];
     location.reload();
   },
 

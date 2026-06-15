@@ -63,6 +63,17 @@ const Util = {
   price(n) {
     return n >= 1000 ? Math.round(n).toLocaleString() : n.toFixed(n < 10 ? 2 : 1);
   },
+  // ts → "just now" / "5 min ago" / "3 hr ago" / "2 days ago" / "4 months ago".
+  ago(ts) {
+    const s = Math.max(0, (Date.now() - ts) / 1000);
+    if (s < 45) return "just now";
+    const m = s / 60; if (m < 60) return `${Math.floor(m)} min ago`;
+    const h = m / 60; if (h < 24) return `${Math.floor(h)} hr ago`;
+    const d = h / 24; if (d < 30) { const n = Math.floor(d); return `${n} day${n > 1 ? "s" : ""} ago`; }
+    const mo = d / 30; if (mo < 12) { const n = Math.floor(mo); return `${n} month${n > 1 ? "s" : ""} ago`; }
+    const y = Math.floor(mo / 12); return `${y} yr${y > 1 ? "s" : ""} ago`;
+  },
+
   // ms → "3m 12s" / "1h 04m".
   duration(ms) {
     if (ms <= 0) return "now";
