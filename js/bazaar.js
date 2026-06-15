@@ -30,7 +30,7 @@ const Bazaar = {
       name: `${Util.pick(MERC_PREFIX)} ${Util.pick(MERC_UNIT)}`,
       firepower: esc.firepower, hull: esc.hull,
       serviceMs: Util.randInt(15, 40) * 60 * 1000,
-      hireCost: Math.round(esc.price * 0.18 + esc.firepower * 40),
+      hireCost: Math.round(esc.price * 0.2 + esc.firepower * 55),
       availUntil: now + Util.randInt(BAZAARCFG.mercTickMs, BAZAARCFG.mercTickMs * 3),
     };
   },
@@ -55,13 +55,14 @@ const Bazaar = {
       return base;
     }
     const danger = Util.pick(tpl.danger);
+    const pay = (DANGER.find(d => d.id === danger) || { pay: 1 }).pay;
     base.danger = danger;
     base.minFirepower = tpl.fp ? Util.randInt(tpl.fp[0], tpl.fp[1]) : 0;
     base.cargoRequired = (tpl.cargo && tpl.cargo !== 0) ? Util.randInt(tpl.cargo[0], tpl.cargo[1]) : 0;
     base.durationMs = Util.randInt(tpl.dur[0], tpl.dur[1]) * 60 * 1000;
     base.impound = !!tpl.impound;
     base.reward = {
-      credits: Util.randInt(tpl.reward.credits[0], tpl.reward.credits[1]),
+      credits: Math.round(Util.randInt(tpl.reward.credits[0], tpl.reward.credits[1]) * pay / 10) * 10,
       itemChance: tpl.reward.itemChance || 0,
       stockChance: tpl.reward.stockChance || 0,
     };

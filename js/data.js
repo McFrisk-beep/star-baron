@@ -108,17 +108,17 @@ const SHIP_CATALOG = {
     { id: "leviathan", name: "Leviathan Barge",  cls: "transport", cargo: 400, firepower: 5,  hull: 320, armor: 40,  shields: 10,  speed: 0.8, slots: 3, price: 60000, sprite: "leviathan" },
   ],
   escort: [
-    { id: "corvette",  name: "Corvette",   cls: "escort", cargo: 4,  firepower: 25,  hull: 120, armor: 30,  shields: 20,  speed: 1.8, slots: 2, price: 9000,   sprite: "voidkin" },
-    { id: "frigate",   name: "Frigate",    cls: "escort", cargo: 8,  firepower: 55,  hull: 240, armor: 60,  shields: 45,  speed: 1.5, slots: 3, price: 28000,  sprite: "glorthi" },
-    { id: "cruiser",   name: "Cruiser",    cls: "escort", cargo: 14, firepower: 120, hull: 480, armor: 120, shields: 90,  speed: 1.2, slots: 4, price: 85000,  sprite: "krell" },
-    { id: "battleship",name: "Battleship", cls: "escort", cargo: 20, firepower: 260, hull: 900, armor: 240, shields: 180, speed: 1.0, slots: 4, price: 240000, sprite: "aurelian" },
+    { id: "corvette",  name: "Corvette",   cls: "escort", cargo: 4,  firepower: 25,  hull: 120, armor: 30,  shields: 20,  speed: 1.8, slots: 2, price: 11000,  sprite: "voidkin" },
+    { id: "frigate",   name: "Frigate",    cls: "escort", cargo: 8,  firepower: 55,  hull: 240, armor: 60,  shields: 45,  speed: 1.5, slots: 3, price: 32000,  sprite: "glorthi" },
+    { id: "cruiser",   name: "Cruiser",    cls: "escort", cargo: 14, firepower: 120, hull: 480, armor: 120, shields: 90,  speed: 1.2, slots: 4, price: 95000,  sprite: "krell" },
+    { id: "battleship",name: "Battleship", cls: "escort", cargo: 20, firepower: 260, hull: 900, armor: 240, shields: 180, speed: 1.0, slots: 4, price: 270000, sprite: "aurelian" },
   ],
   // Main/flagship: travelSpeed drives sector docking time; passive buffs fleet.
   main: [
     { id: "pinnace",     name: "Baron's Pinnace",    cls: "main", travelSpeed: 1.0, passive: { stat: "firepower", pct: 0.05 }, hull: 200,  price: 0,      sprite: "shuttle" },
-    { id: "yacht",       name: "Void Yacht",         cls: "main", travelSpeed: 1.6, passive: { stat: "speed",     pct: 0.10 }, hull: 320,  price: 22000,  sprite: "hauler" },
-    { id: "flagship",    name: "Command Flagship",   cls: "main", travelSpeed: 2.2, passive: { stat: "firepower", pct: 0.15 }, hull: 640,  price: 130000, sprite: "freighter" },
-    { id: "dreadnought", name: "Baron Dreadnought",  cls: "main", travelSpeed: 3.0, passive: { stat: "all",       pct: 0.12 }, hull: 1300, price: 550000, sprite: "leviathan" },
+    { id: "yacht",       name: "Void Yacht",         cls: "main", travelSpeed: 1.6, passive: { stat: "speed",     pct: 0.10 }, hull: 320,  price: 24000,  sprite: "hauler" },
+    { id: "flagship",    name: "Command Flagship",   cls: "main", travelSpeed: 2.2, passive: { stat: "firepower", pct: 0.15 }, hull: 640,  price: 140000, sprite: "freighter" },
+    { id: "dreadnought", name: "Baron Dreadnought",  cls: "main", travelSpeed: 3.0, passive: { stat: "all",       pct: 0.12 }, hull: 1300, price: 650000, sprite: "leviathan" },
   ],
 };
 const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...SHIP_CATALOG.main];
@@ -159,12 +159,14 @@ const BAZAARCFG = {
   inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
 };
 // danger tiers drive contract risk → base success + reward scaling.
+// `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
+// need real firepower) pay much more than the safe early grind.
 const DANGER = [
-  { id: "safe",     label: "Safe",     baseSuccess: 0.98, reward: 1.0,  fpScale: 0 },
-  { id: "low",      label: "Low",      baseSuccess: 0.85, reward: 1.6,  fpScale: 30 },
-  { id: "moderate", label: "Moderate", baseSuccess: 0.6,  reward: 3.0,  fpScale: 90 },
-  { id: "high",     label: "High",     baseSuccess: 0.4,  reward: 6.0,  fpScale: 200 },
-  { id: "extreme",  label: "Extreme",  baseSuccess: 0.25, reward: 12.0, fpScale: 450 },
+  { id: "safe",     label: "Safe",     baseSuccess: 0.98, pay: 1.0, fpScale: 0 },
+  { id: "low",      label: "Low",      baseSuccess: 0.85, pay: 1.4, fpScale: 30 },
+  { id: "moderate", label: "Moderate", baseSuccess: 0.6,  pay: 2.0, fpScale: 90 },
+  { id: "high",     label: "High",     baseSuccess: 0.4,  pay: 2.8, fpScale: 200 },
+  { id: "extreme",  label: "Extreme",  baseSuccess: 0.25, pay: 3.8, fpScale: 450 },
 ];
 
 /* ---- FACTIONS -------------------------------------------------------------
