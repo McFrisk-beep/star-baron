@@ -59,6 +59,17 @@ const Feed = {
   },
   stop() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } },
 
+  // Fill the feed with a burst of chatter on load so returning players never
+  // arrive to an empty channel (purely cosmetic; omens are excluded so we don't
+  // schedule phantom news). Called once at boot.
+  prime(n = 16) {
+    for (let i = 0; i < n; i++) {
+      const roll = Math.random();
+      if (roll < 0.3) this.postNPC();
+      else this.emit(this.fill(Util.pick(CHAT_LINES)), { kind: "banter" });
+    }
+  },
+
   tickOne() {
     const roll = Math.random();
     if (roll < 0.07 && Date.now() - this.lastOmenAt > this.omenMinGapMs) {

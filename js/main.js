@@ -90,6 +90,7 @@ const Game = {
     Fleet.pruneMercs(now);
     const offlineSold = Bazaar.tick(now);
     Rivals.tick(now);             // catch the leaderboard up over offline time
+    Broadcast.backfill(now, elapsed);   // populate the newswire as if it kept running
     this.state.lastSeenAt = now;
 
     // ---- UI + flavor wiring ----
@@ -98,6 +99,7 @@ const Game = {
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
     Feed.wire();
+    Feed.prime();                 // fill the chat so it isn't empty on arrival
     UI.fullRender();
     UI.renderNewswire();
 

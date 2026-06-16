@@ -71,6 +71,28 @@ const Broadcast = {
     // Resume TV once the news frame times out.
     setTimeout(() => { if (!this.newsLive()) this.rotateTV(); }, CONFIG.newsScreenMs / this.ts() + 50);
   },
+
+  // Backfill the newswire so the world looks like it kept running while the
+  // player was away: top up to a baseline, plus ~1 extra bulletin per ~40 min
+  // offline, each stamped at a believable past time. Log-only flavor (the market
+  // itself already fast-forwarded via Market.advance). Called once at boot.
+  backfill(now = Date.now(), elapsedMs = 0) {
+    const s = this.s();
+    s.newswire ||= [];
+    const span = Util.clamp(elapsedMs, 0, 12 * 3600 * 1000);
+    const desired = Math.min(CONFIG.newswireMax, 6 + Math.floor(span / (40 * 60 * 1000)));
+    const need = desired - s.newswire.length;
+    if (need <= 0) return;
+    const window = Math.max(span, 2 * 3600 * 1000);   // spread across the away window (or last 2h)
+    const made = [];
+    for (let i = 0; i < need; i++) {
+      const ev = Util.pick(NEWS_EVENTS);
+      const ts = now - Util.randInt(60 * 1000, window);
+      made.push({ id: ev.id + "_" + ts, headline: ev.headline, body: ev.body,
+        faction: ev.faction, cat: ev.cat, ts, dir: ev.effect.mult >= 1 ? "up" : "down" });
+    }
+    s.newswire = [...s.newswire, ...made].sort((a, b) => b.ts - a.ts).slice(0, CONFIG.newswireMax);
+  },
 };
 
 window.Broadcast = Broadcast;
