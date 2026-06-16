@@ -90,14 +90,15 @@ const UI = {
       body.appendChild(tr);
       this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin: act.querySelector(".qin") };
     }
-    body.addEventListener("click", e => {
+    // assignment (not addEventListener) so re-building on prestige can't stack handlers
+    body.onclick = e => {
       const btn = e.target.closest("button[data-act]"); if (!btn) return;
       const id = btn.closest("tr").dataset.id, qin = this.rows[id].qin, act = btn.dataset.act;
       if (act === "buy") this.doTrade("buy", id, parseInt(qin.value, 10) || 0);
       else if (act === "sell") this.doTrade("sell", id, parseInt(qin.value, 10) || 0);
       else if (act === "max") this.doTrade("buy", id, Economy.maxBuy(id));
       else if (act === "all") this.doTrade("sell", id, this.s().positions[id] || 0);
-    });
+    };
   },
   tintBox(c) { const d = this.el("div", "tintbox"); d.textContent = (c.name || "?").slice(0, 2); return d; },
 

@@ -86,6 +86,12 @@ pattern.
   keyboard focus, missing-art fallbacks (tinted boxes), `prefers-reduced-motion`
   support, opt-in audio, and a settings panel (reset save, mute, reduced motion,
   dev speed/news toggles).
+- **Light over long sessions** — every data pool is bounded (chat 100, newswire
+  30, local feeds 15/system, price history 60/commodity, market effects pruned
+  each tick), so memory doesn't grow. When the tab is backgrounded the game
+  **suspends all timers and the star-map animation** (after a save) and
+  **fast-forwards the simulation on return**, so an open tab costs ~nothing while
+  you're away.
 
 ## Project layout
 

@@ -130,17 +130,14 @@ const Game = {
     if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
 
     // ---- schedulers ----
-    Feed.start();
-    Broadcast.start();
-    this.scheduleLocalEvent();
-    this.scheduleLocalFlavor();
-    setInterval(() => this.loop(), CONFIG.marketTickMs);
-    setInterval(() => this.save(), CONFIG.autosaveMs);
-    setInterval(() => { const sold = Bazaar.tick(Date.now()); if (sold.length) this.requestSave(); }, 12000);
-    // slow refresh so relative "X ago" stamps stay current
-    setInterval(() => { UI.renderNewswire(); StarMap.refreshFeed(); }, 30000);
+    this.startSchedulers();
 
-    document.addEventListener("visibilitychange", () => { if (document.hidden) this.save(); });
+    // When the tab is backgrounded we suspend ALL work (timers + the star-map
+    // animation) so an open tab costs ~nothing over long idle periods; on return
+    // we fast-forward the simulation to "now". Keeps the game light indefinitely.
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) this.suspend(); else this.resume();
+    });
     window.addEventListener("beforeunload", () => this.save());
 
     // first paint
@@ -158,6 +155,58 @@ const Game = {
     Rivals.tick(now);
     if (done.length) this.requestSave();
     UI.tick();
+  },
+
+  // ---- lifecycle: run only while the tab is visible -----------------------
+  startSchedulers() {
+    this.stopSchedulers();   // never double up
+    Feed.start();
+    Broadcast.start();
+    this.scheduleLocalEvent();
+    this.scheduleLocalFlavor();
+    this._loopTimer = setInterval(() => this.loop(), CONFIG.marketTickMs);
+    this._autosaveTimer = setInterval(() => this.save(), CONFIG.autosaveMs);
+    this._bazaarTimer = setInterval(() => { const sold = Bazaar.tick(Date.now()); if (sold.length) this.requestSave(); }, 12000);
+    // slow refresh so relative "X ago" stamps stay current
+    this._refreshTimer = setInterval(() => { UI.renderNewswire(); StarMap.refreshFeed(); }, 30000);
+  },
+  stopSchedulers() {
+    Feed.stop();
+    if (window.Broadcast) Broadcast.stop();
+    clearTimeout(this._localTimer); clearTimeout(this._flavorTimer);
+    clearInterval(this._loopTimer); clearInterval(this._autosaveTimer);
+    clearInterval(this._bazaarTimer); clearInterval(this._refreshTimer);
+    this._loopTimer = this._autosaveTimer = this._bazaarTimer = this._refreshTimer = null;
+  },
+
+  // Tab hidden → freeze everything (zero CPU/animation) after a final save.
+  suspend() {
+    if (this._suspended) return;
+    this._suspended = true;
+    this.save();
+    this.stopSchedulers();
+    if (window.StarMap) StarMap.suspend();
+  },
+  // Tab visible again → catch the simulation up to real time, then resume.
+  resume() {
+    if (!this._suspended) return;
+    this._suspended = false;
+    const now = Date.now();
+    const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
+    if (elapsed > CONFIG.marketTickMs) {
+      this._booting = true;   // suppress catch-up chatter/toasts
+      Market.advance(elapsed, now);
+      Economy.checkArrival(now);
+      Missions.resolveMatured(now);
+      Fleet.pruneMercs(now);
+      Bazaar.tick(now);
+      Rivals.tick(now);
+      this._booting = false;
+    }
+    this.state.lastSeenAt = now;
+    this.startSchedulers();
+    UI.tick(); UI.renderNewswire();
+    if (window.StarMap) StarMap.resume();
   },
 
   // Emit newHigh/crash chatter when a commodity moves hard (throttled).

@@ -648,6 +648,17 @@ const StarMap = {
     this.raf = null;
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._onResize = null; }
   },
+
+  // Pause the animation when the tab is backgrounded; rebuild it on return.
+  suspend() {
+    if (this.raf && this.current) { this._resumeScene = true; this.stopScene(); }
+  },
+  resume() {
+    if (!this._resumeScene) return;
+    this._resumeScene = false;
+    const sys = this.current && Galaxy.get(this.current);
+    if (this.open && sys && !this.refs.systemView.classList.contains("hidden")) this.startScene(sys);
+  },
   stopSystem() {
     this.stopScene();
     clearInterval(this.feedTimer); this.feedTimer = null;
