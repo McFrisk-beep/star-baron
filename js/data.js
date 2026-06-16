@@ -174,6 +174,18 @@ const INCIDENTCFG = {
   minMs: 6 * 60 * 1000,    // soonest between incidents
   maxMs: 13 * 60 * 1000,   // latest between incidents
 };
+
+/* ---- FACTION WARS ---------------------------------------------------------
+   Rival factions periodically go to war, shocking their domain categories and
+   spawning bonus-paying "war effort" contracts (wars.js).                      */
+const WARCFG = {
+  minMs: 25 * 60 * 1000,   // soonest between wars
+  maxMs: 50 * 60 * 1000,   // latest between wars
+  durationMs: 22 * 60 * 1000,
+  spike: 1.45,             // aggressor's goods get scarce/dear
+  slump: 0.68,             // defender's goods slump in the chaos
+  contractBonus: 0.5,      // war-effort contracts pay +50%
+};
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
 // need real firepower) pay much more than the safe early grind.
@@ -345,6 +357,7 @@ window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
+window.WARCFG = WARCFG;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;

@@ -36,7 +36,7 @@ const UI = {
     this.refs = {
       credits: $("hud-credits"), networth: $("hud-networth"), system: $("hud-system"),
       sentiment: $("hud-sentiment-fill"), tier: $("hud-tier"), clock: $("hud-clock"),
-      exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"),
+      exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"), warBanner: $("war-banner"),
       tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
       fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
       fleetRoutes: $("fleet-routes"), routesSub: $("routes-sub"),
@@ -161,6 +161,17 @@ const UI = {
         r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
       else { r.pnl.textContent = "·"; r.pnl.className = "num pnl"; }
     }
+    this.renderWarBanner();
+  },
+
+  renderWarBanner() {
+    const b = this.refs.warBanner; if (!b) return;
+    const w = window.Wars && Wars.active();
+    if (!w) { b.classList.add("hidden"); return; }
+    b.classList.remove("hidden");
+    b.innerHTML = `<span class="war-mark">⚔</span> <b>${FACTIONS[w.a].name}</b> vs <b>${FACTIONS[w.b].name}</b> — ` +
+      `<span class="up">${w.catA} spiking</span> · <span class="down">${w.catB} slumping</span> · ` +
+      `<span class="war-eta">ends ${Util.duration(w.endsAt - Date.now())}</span>`;
   },
 
   spark(hist, up) {
@@ -632,7 +643,7 @@ const UI = {
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
       return `<div class="contract"><div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
         <div class="c-desc">${c.desc}</div>
-        <div class="c-tags">${sponChip(c.faction)}<span class="dgr-${c.danger}">${danger.label}</span>
+        <div class="c-tags">${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
           ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
           ${c.cargoRequired ? `<span>▣ ${c.cargoRequired}</span>` : ""}
           <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
@@ -1013,6 +1024,12 @@ const UI = {
       else this.toast(`Order filled — ${e.side === "buy" ? "bought" : "sold"} ${e.qty} ${e.comm.name} @ ${Util.price(e.price)}`, e.side === "buy" ? "buy" : "good", 4500);
       if (this.page === "exchange") { this.renderOrders(); this.updateExchange(); }
       this.updateHeader();
+    });
+    Bus.on("war", e => {
+      if (e.kind === "start") this.toast(`⚔ War breaks out: ${FACTIONS[e.war.a].name} vs ${FACTIONS[e.war.b].name}`, "warn", 5000);
+      else if (e.kind === "end" && e.winner) this.toast(`Peace settles — ${FACTIONS[e.winner].name} prevailed.`, "info", 4500);
+      this.renderWarBanner();
+      if (this.page === "bazaar") this.renderBazaar();
     });
     Bus.on("rivalPass", e => {
       const r = Rivals.data(e.rival); if (!r) return;

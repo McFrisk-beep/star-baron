@@ -70,6 +70,11 @@ const Bazaar = {
       itemChance: tpl.reward.itemChance || 0,
       stockChance: tpl.reward.stockChance || 0,
     };
+    // contracts raised while their sponsor is at war pay a "war effort" bonus
+    if (window.Wars && Wars.atWar(base.faction, now)) {
+      base.warEffort = true;
+      base.reward.credits = Math.round(base.reward.credits * (1 + WARCFG.contractBonus));
+    }
     return base;
   },
 

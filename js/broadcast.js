@@ -62,19 +62,22 @@ const Broadcast = {
   },
 
   fire(event, now = Date.now()) {
-    const dur = CONFIG.newsEffectMs / this.ts();
-    Market.applyNews(event.effect.target, event.effect.mult, dur, now, event.id);
-    this.newsUntil = now + CONFIG.newsScreenMs / this.ts();
-
     const entry = {
       id: event.id, headline: event.headline, body: event.body,
       faction: event.faction, cat: event.cat, ts: now,
       dir: event.effect.mult >= 1 ? "up" : "down",
     };
+    this.announce(entry, [event.effect], CONFIG.newsEffectMs / this.ts(), now);
+  },
+
+  // Pin a pre-built newswire entry to the screen/ticker/log and apply its market
+  // effects for durMs. Shared by ordinary news (fire) and faction wars (wars.js).
+  announce(entry, effects, durMs, now = Date.now()) {
+    for (const e of effects) Market.applyNews(e.target, e.mult, durMs, now, entry.id + ":" + e.target);
+    this.newsUntil = now + CONFIG.newsScreenMs / this.ts();
     const s = this.s();
     s.newswire.unshift(entry);
     if (s.newswire.length > CONFIG.newswireMax) s.newswire.length = CONFIG.newswireMax;
-
     Bus.emit("news", entry);
     // Resume TV once the news frame times out.
     setTimeout(() => { if (!this.newsLive()) this.rotateTV(); }, CONFIG.newsScreenMs / this.ts() + 50);

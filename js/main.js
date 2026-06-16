@@ -91,6 +91,7 @@ const Game = {
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
     const offlineOrders = Orders.process();      // fill standing orders that crossed while away
+    Wars.tick(now);               // resolve a faction war that ended while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
     Broadcast.backfill(now, elapsed);   // populate the newswire as if it kept running
     this.state.lastSeenAt = now;
@@ -161,6 +162,7 @@ const Game = {
     const now = Date.now();
     Market.tick(now);
     this.detectMoves();
+    Wars.tick(now);
     Economy.checkArrival(now);
     const done = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
@@ -180,6 +182,7 @@ const Game = {
     this.scheduleLocalEvent();
     this.scheduleLocalFlavor();
     this.scheduleIncident();
+    this.scheduleWar();
     this._loopTimer = setInterval(() => this.loop(), CONFIG.marketTickMs);
     this._autosaveTimer = setInterval(() => this.save(), CONFIG.autosaveMs);
     this._bazaarTimer = setInterval(() => { const sold = Bazaar.tick(Date.now()); if (sold.length) this.requestSave(); }, 12000);
@@ -189,7 +192,7 @@ const Game = {
   stopSchedulers() {
     Feed.stop();
     if (window.Broadcast) Broadcast.stop();
-    clearTimeout(this._localTimer); clearTimeout(this._flavorTimer); clearTimeout(this._incidentTimer);
+    clearTimeout(this._localTimer); clearTimeout(this._flavorTimer); clearTimeout(this._incidentTimer); clearTimeout(this._warTimer);
     clearInterval(this._loopTimer); clearInterval(this._autosaveTimer);
     clearInterval(this._bazaarTimer); clearInterval(this._refreshTimer);
     this._loopTimer = this._autosaveTimer = this._bazaarTimer = this._refreshTimer = null;
@@ -220,6 +223,7 @@ const Game = {
       Bazaar.tick(now);
       Routes.resolve(now);
       Orders.process();
+      Wars.tick(now);
       Rivals.tick(now);
       this._booting = false;
     }
@@ -277,6 +281,13 @@ const Game = {
     if (this._booting || !window.Incidents) return;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return;   // don't interrupt another modal
     UI.showIncident(Util.pick(INCIDENTS));
+  },
+
+  // Periodic faction war (wars.js). Active-play only, like the other schedulers.
+  scheduleWar() {
+    clearTimeout(this._warTimer);
+    const base = CONFIG.fastNews ? Util.randInt(40000, 80000) : Util.randInt(WARCFG.minMs, WARCFG.maxMs);
+    this._warTimer = setTimeout(() => { if (!this._booting && window.Wars) Wars.start(); this.scheduleWar(); }, base / this.timeScale);
   },
 
   snapshot() {

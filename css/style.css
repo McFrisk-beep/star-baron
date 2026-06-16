@@ -146,6 +146,14 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ord-alert { background: #2a2f4a; color: var(--accent); }
 .ord-now { margin-left: auto; color: var(--ink-dim); font-size: 11px; }
 
+/* ===== faction wars ===== */
+.war-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px;
+  background: linear-gradient(90deg, rgba(255,93,115,.16), rgba(255,194,75,.10));
+  border: 1px solid #5a2a36; border-radius: 8px; padding: 8px 11px; font-size: 12.5px; }
+.war-mark { color: var(--down); font-size: 15px; }
+.war-eta { font-family: var(--mono); color: var(--ink-dim); margin-left: auto; }
+.war-effort { font-size: 11px; font-family: var(--mono); color: var(--warn); font-weight: 700; }
+
 /* ===== fleet ===== */
 .dispatch { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .dispatch-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
