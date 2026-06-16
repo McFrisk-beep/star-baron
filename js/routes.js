@@ -12,6 +12,17 @@ const Routes = {
 
   active() { return this.s().ships.filter(sh => sh.status === "trading" && sh.route); },
 
+  // Round-trip time: scales with the distance between systems and inversely with
+  // the assigned ship's own speed (a fast hauler runs the loop quicker). Computed
+  // live (not baked into the route) so speed upgrades + tuning apply immediately.
+  cycleMsFor(ship, from, to) {
+    const a = SYSTEMS.find(s => s.id === from), b = SYSTEMS.find(s => s.id === to);
+    const dist = Math.max(1, Math.abs((a?.distance ?? 0) - (b?.distance ?? 0)));
+    const speed = Fleet.stats(ship).speed || 1;
+    const seconds = (2 * dist * ROUTECFG.legSecondsPerDist) / speed;
+    return Math.max(1000, seconds * 1000 / (window.Game.timeScale || 1));
+  },
+
   // Per-round-trip economics at current prices. spread is clamped ≥0 so a bad
   // route just earns ~nothing rather than draining credits.
   estimate(ship, comm, from, to) {
@@ -19,7 +30,7 @@ const Routes = {
     const buy = Market.systemPrice(comm, from);
     const sell = Market.systemPrice(comm, to);
     const spread = Math.max(0, sell - buy);
-    const cycleMs = Math.max(1000, 2 * Fleet.dockTravelMs(from, to));   // there and back
+    const cycleMs = this.cycleMsFor(ship, from, to);
     const profit = Math.round(spread * cargo * ROUTECFG.margin);
     return { cargo, buy, sell, spread, cycleMs, profit, perHour: profit * 3600000 / cycleMs };
   },
@@ -32,9 +43,8 @@ const Routes = {
     if (!comm || from === to) return { ok: false, msg: "Pick two different systems." };
     const u = this.s().unlockedSystems;
     if (!u.includes(from) || !u.includes(to)) return { ok: false, msg: "Both systems must be unlocked." };
-    const cycleMs = Math.max(1000, 2 * Fleet.dockTravelMs(from, to));
     sh.status = "trading";
-    sh.route = { comm, from, to, cycleMs, nextAt: now + cycleMs };
+    sh.route = { comm, from, to, nextAt: now + this.cycleMsFor(sh, from, to) };
     return { ok: true };
   },
 
@@ -53,12 +63,13 @@ const Routes = {
     const u = this.s().unlockedSystems;
     for (const sh of this.active()) {
       const r = sh.route;
-      if (!u.includes(r.from) || !u.includes(r.to)) { if (now >= r.nextAt) r.nextAt = now + r.cycleMs; continue; }
+      const cycleMs = this.cycleMsFor(sh, r.from, r.to);
+      if (!u.includes(r.from) || !u.includes(r.to)) { if (now >= r.nextAt) r.nextAt = now + cycleMs; continue; }
       if (now < r.nextAt) continue;
-      let cycles = Math.min(Math.floor((now - r.nextAt) / r.cycleMs) + 1, ROUTECFG.maxCyclesPerResolve);
+      const cycles = Math.min(Math.floor((now - r.nextAt) / cycleMs) + 1, ROUTECFG.maxCyclesPerResolve);
       const gain = this.estimate(sh, r.comm, r.from, r.to).profit * cycles;
       if (gain > 0) { total += gain; runs.push({ ship: sh.name, comm: r.comm, gain, cycles }); }
-      r.nextAt = now + r.cycleMs;   // schedule the next trip a full cycle out
+      r.nextAt = now + cycleMs;   // schedule the next trip a full cycle out
     }
     if (total) { this.s().credits += total; Economy.refreshNetWorth(); }
     return { total, runs };

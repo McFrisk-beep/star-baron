@@ -164,6 +164,7 @@ const BAZAARCFG = {
    it banks the price spread × cargo every round trip while you're away.        */
 const ROUTECFG = {
   margin: 0.5,              // ship keeps this × (spread × cargo) per round trip (the rest is "friction/fuel")
+  legSecondsPerDist: 150,   // round-trip seconds = 2 × distance × this ÷ ship speed (tune transit length here)
   maxCyclesPerResolve: 50,  // cap round trips banked in a single catch-up (anti-windfall on long idles)
 };
 
