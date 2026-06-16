@@ -145,9 +145,9 @@ const RARITIES = [
 
 /* ---- BAZAAR / CONTRACTS ---------------------------------------------------*/
 const BAZAARCFG = {
-  mercSlots: 4,            // how many mercs are on offer at once
-  contractSlots: 6,        // how many contracts on the board
-  accessorySlots: 8,       // how many accessories for sale
+  mercSlots: 8,            // how many mercs are on offer at once
+  contractSlots: 14,       // how many contracts on the board
+  accessorySlots: 18,      // how many accessories for sale
   mercTickMs: 90 * 1000,   // how often merc offers churn
   accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
   contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this

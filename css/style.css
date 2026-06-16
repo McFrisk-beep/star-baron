@@ -168,6 +168,9 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .mod { font-family: var(--mono); font-size: 10px; padding: 1px 6px; border-radius: 5px; background: #1a2138; color: var(--ink-dim); }
 .mod.cheap { color: var(--up); background: #142b22; }
 .mod.dear { color: var(--warn); background: #2c2616; }
+.sys-legend { font-size: 11.5px; color: var(--ink-dim); line-height: 1.8; margin: 0 0 10px; }
+.sys-legend .mod { vertical-align: middle; }
+.system-head .dist, .mod { cursor: help; }
 
 /* ===== achievements ===== */
 .ach-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -217,7 +220,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .col-side.news-open .panel-feed { display: none; }
 .col-side.news-open #panel-broadcast { flex: 1; }
 .col-side.news-open .newswire { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.col-side.news-open #newswire-list { flex: 1; max-height: none; }
+.col-side.news-open #newswire-list { flex: 1; min-height: 0; max-height: none; }
 .msg { display: flex; gap: 9px; animation: msgin .25s ease; }
 @keyframes msgin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
 .pfp { width: 30px; height: 30px; border-radius: 7px; flex: none; }
@@ -478,6 +481,13 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .subtab.active { background: linear-gradient(180deg, var(--panel), var(--bg2)); color: #fff; border-color: var(--accent); }
 .bz-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; gap: 14px; padding-right: 3px; }
+/* bazaar filter/sort toolbar */
+.bz-tools { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 12px; }
+.bz-tools label { display: flex; align-items: center; gap: 6px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--ink-dim); }
+.bz-filter { background: #0c1020; border: 1px solid var(--line); color: var(--ink); border-radius: 6px;
+  padding: 4px 7px; font-family: var(--sans); font-size: 12px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.bz-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ===== transit overlay (exchange) ===== */
 .transit-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -545,11 +555,14 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .item.listed { opacity: .8; }
 
 /* ===== bazaar ===== */
-.buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .buy-card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; }
 .buy-card img, .buy-card .tintbox { width: 52px; height: 40px; object-fit: contain; margin: 0 auto 4px; }
 .bc-name { font-weight: 700; font-size: 12.5px; }
 .bc-stats { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); margin: 4px 0 8px; }
+/* labeled stat chips inside a buy card: centered + a touch tighter than the fleet list */
+.bc-statline { justify-content: center; margin: 6px 0 8px; }
+.bc-statline .sc { font-size: 10px; padding: 1px 5px; }
 .contract-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
 .contract { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
 .contract.tip { border-left: 3px solid var(--up); }
@@ -578,6 +591,16 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .c-spon { font-size: 10px; font-weight: 700; }
 .c-stand { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
 .rep-bonus { color: var(--gold); font-size: 10px; }
+/* standing: tier legend + per-faction effect summary */
+.rep-legend { margin-bottom: 12px; }
+.rep-legend .muted-note { margin: 0 0 8px; line-height: 1.6; }
+.rep-tiers { display: flex; flex-wrap: wrap; gap: 6px; }
+.rep-tierchip { font-size: 10px; font-weight: 700; background: #11192c; border: 1px solid var(--line);
+  border-radius: 12px; padding: 2px 9px; }
+.rt-at { color: var(--ink-faint); font-family: var(--mono); font-weight: 400; margin-left: 5px; }
+.rep-eff { list-style: none; margin: 7px 0 5px; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.rep-eff li { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--ink-dim); }
+.rep-eff li b { font-family: var(--mono); }
 
 /* ---- Barons / leaderboard ---- */
 .lb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }

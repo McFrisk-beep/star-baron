@@ -9,6 +9,8 @@ const UI = {
   feedPaused: false,
   page: "exchange",
   bazaarTab: "shipyard",
+  bzSort: { contracts: "reward", gear: "value", mercs: "power" },
+  bzFilt: { contracts: "all", gear: "all" },
   tutStep: 0,
   _missionSig: "",
   _reportSig: "",
@@ -19,6 +21,14 @@ const UI = {
   el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; },
   sysName(id) { const s = SYSTEMS.find(x => x.id === id); return s ? s.name : (Galaxy.get(id)?.name || id); },
   rarityColor(id) { return (Items.rarity(id) || {}).color || "#9aa9c8"; },
+  _titly(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; },
+  // Render a Bazaar filter/sort toolbar from [label, "kind.tab", value, [[v,label]…]] rows.
+  bzTools(rows) {
+    return `<div class="bz-tools">` + rows.map(([label, name, value, opts]) =>
+      `<label>${label} <select class="bz-filter" data-bzf="${name}">` +
+      opts.map(([v, l]) => `<option value="${v}"${v === value ? " selected" : ""}>${l}</option>`).join("") +
+      `</select></label>`).join("") + `</div>`;
+  },
 
   init() {
     const $ = id => document.getElementById(id);
@@ -175,10 +185,20 @@ const UI = {
   },
 
   // ===== FLEET page ========================================================
-  statChips(st) {
-    return `<span class="sc sc-fp">⚔ ${st.firepower}</span><span class="sc sc-hl">❤ ${st.hull}</span>` +
-      `<span class="sc sc-ar">🛡 ${st.armor}</span><span class="sc sc-sh">✦ ${st.shields}</span>` +
-      `<span class="sc sc-cg">▣ ${st.cargo}</span><span class="sc sc-sp">» ${st.speed}</span>`;
+  // symbol + readable label per ship stat, so chips read "⚔ Firepower 25"
+  // rather than a bare glyph. Reused by ship cards, the shipyard, mercs & missions.
+  STAT_META: {
+    firepower: { sym: "⚔", label: "Firepower", cls: "sc-fp" },
+    hull:      { sym: "❤", label: "Hull",      cls: "sc-hl" },
+    armor:     { sym: "🛡", label: "Armor",     cls: "sc-ar" },
+    shields:   { sym: "✦", label: "Shields",   cls: "sc-sh" },
+    cargo:     { sym: "▣", label: "Cargo",     cls: "sc-cg" },
+    speed:     { sym: "»", label: "Speed",     cls: "sc-sp" },
+  },
+  statChips(obj, keys = ["firepower", "hull", "armor", "shields", "cargo", "speed"]) {
+    return keys.map(k => { const m = this.STAT_META[k];
+      return `<span class="sc ${m.cls}" title="${m.label}">${m.sym} ${m.label} ${obj[k]}</span>`;
+    }).join("");
   },
 
   renderFleet() {
@@ -343,7 +363,7 @@ const UI = {
     head += `<p class="muted-note">${contract.desc}${contract.impound ? " Failure risks impound." : ""}</p>`;
     if (!idle.length) head += `<p class="down">No idle ships available.</p>`;
     const list = idle.map(sh => { const st = Fleet.stats(sh); const def = Fleet.shipDef(sh.type);
-      return `<label class="mm-ship"><input type="checkbox" data-ship="${sh.uid}"/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span> ⚔${st.firepower} ▣${st.cargo}</label>`;
+      return `<label class="mm-ship"><input type="checkbox" data-ship="${sh.uid}"/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span> ${this.statChips(st, ["firepower", "cargo"])}</label>`;
     }).join("");
     this.refs.mmBody.innerHTML = head + `<div class="mm-list">${list}</div><div class="mm-calc" id="mm-calc"></div>`;
     this.refs.mmBody.querySelectorAll("input[data-ship]").forEach(cb => cb.onchange = () => this.updateMissionCalc());
@@ -411,7 +431,7 @@ const UI = {
     const shipCardBuy = (def, sprite) => `<div class="buy-card">
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="bc-name">${def.name} <span class="cls-tag">${def.cls}</span></div>
-      <div class="bc-stats">⚔${def.firepower} ❤${def.hull} 🛡${def.armor} ✦${def.shields} ▣${def.cargo} »${def.speed}</div>
+      <div class="statline bc-statline">${this.statChips(def)}</div>
       <button class="btn btn-go" data-buyship="${def.id}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
 
     // The free starter ship only shows when the player has no ships at all
@@ -427,27 +447,54 @@ const UI = {
       return `<div class="buy-card">
         <img src="${ASSET.ship(d.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
         <div class="bc-name">${d.name}</div>
-        <div class="bc-stats">transfer »${d.travelSpeed} · ${pas}</div>
+        <div class="bc-stats" title="sector transfer speed — sets how fast you dock between systems">» Transfer speed ${d.travelSpeed} · ${pas}</div>
         ${owned ? `<span class="badge">current flagship</span>` : `<button class="btn btn-go" data-buymain="${d.id}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button>`}</div>`;
     }).join("");
 
-    const mercs = (b.mercs || []).map(m => `<div class="buy-card merc">
+    const mercSorters = {
+      power: (a, z) => z.firepower - a.firepower,
+      cost: (a, z) => a.hireCost - z.hireCost,
+      expiry: (a, z) => a.availUntil - z.availUntil,
+    };
+    const mercTools = this.bzTools([["Sort", "sort.mercs", this.bzSort.mercs,
+      [["power", "Firepower"], ["cost", "Cost"], ["expiry", "Offer ending"]]]]);
+    const mercs = [...(b.mercs || [])].sort(mercSorters[this.bzSort.mercs] || mercSorters.power)
+      .map(m => `<div class="buy-card merc">
         <div class="bc-name">${m.name} <span class="cls-tag">merc</span></div>
-        <div class="bc-stats">${Fleet.shipDef(m.shipType).name} · ⚔${m.firepower} ❤${m.hull}</div>
+        <div class="bc-stats">${Fleet.shipDef(m.shipType).name}</div>
+        <div class="statline bc-statline">${this.statChips(m, ["firepower", "hull"])}</div>
         <div class="muted-note">serves ${Util.duration(m.serviceMs)} · offer ends ${Util.duration(m.availUntil - Date.now())}</div>
         <button class="btn btn-go" data-hire="${m.id}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
 
     const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
     const sponChip = f => { const fac = FACTIONS[f]; if (!fac) return ""; const t = Rep.tierOf(f);
       return `<span class="c-spon" style="color:${fac.color}">◆ ${fac.name}</span><span class="c-stand" style="color:${t.color}">${t.label}</span>`; };
-    const contracts = (b.contracts || []).map(c => {
-      if (c.status === "taken_npc") return `<div class="contract taken"><div class="c-head"><b>${c.title}</b><span class="badge bad">Contract taken</span></div></div>`;
-      if (c.status !== "open") return "";
-      if (c.kind === "tip") return `<div class="contract tip"><div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
+    const typeOf = c => c.kind === "tip" ? "tip" : c.type;
+    const openC = (b.contracts || []).filter(c => c.status === "open");
+    const takenC = (b.contracts || []).filter(c => c.status === "taken_npc");
+    const dIdx = c => DANGER.findIndex(d => d.id === c.danger);
+    const cSorters = {
+      reward: (a, z) => (z.reward?.credits || 0) - (a.reward?.credits || 0),
+      danger: (a, z) => dIdx(z) - dIdx(a),
+      expiry: (a, z) => a.expiresAt - z.expiresAt,
+    };
+    const cFilt = this.bzFilt.contracts;
+    const cTypes = [...new Set(openC.map(typeOf))];
+    if (cFilt !== "all" && !cTypes.includes(cFilt)) this.bzFilt.contracts = "all";  // reset if the filtered type churned away
+    const shownC = [...(this.bzFilt.contracts === "all" ? openC : openC.filter(c => typeOf(c) === this.bzFilt.contracts))]
+      .sort(cSorters[this.bzSort.contracts] || cSorters.reward);
+    const contractTools = this.bzTools([
+      ["Type", "filt.contracts", this.bzFilt.contracts,
+        [["all", "All"], ...cTypes.map(t => [t, t === "tip" ? "Insider tips" : this._titly(t)])]],
+      ["Sort", "sort.contracts", this.bzSort.contracts,
+        [["reward", "Reward"], ["danger", "Danger"], ["expiry", "Expiring soon"]]],
+    ]);
+    const tipCard = c => `<div class="contract tip"><div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
         <div class="c-desc">${c.desc}</div>
         <div class="c-tags">${sponChip(c.faction)}</div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
         <button class="btn btn-go" data-take="${c.id}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
+    const jobCard = c => {
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
@@ -460,23 +507,56 @@ const UI = {
           <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
           <button class="btn btn-go" data-take="${c.id}">Take contract</button></div></div>`;
-    }).join("") || `<p class="muted-note">The contract board is quiet…</p>`;
+    };
+    const contracts = (shownC.map(c => c.kind === "tip" ? tipCard(c) : jobCard(c)).join("")
+      + takenC.map(c => `<div class="contract taken"><div class="c-head"><b>${c.title}</b><span class="badge bad">Contract taken</span></div></div>`).join(""))
+      || `<p class="muted-note">${openC.length ? "No contracts match this filter." : "The contract board is quiet…"}</p>`;
 
-    const standing = `<div class="panel"><h2>Faction Standing <small>ally discount ${(Rep.discount() * 100).toFixed(0)}% off ships &amp; gear</small></h2><div class="rep-grid">` +
+    const fmtPct = (n, dp) => (n >= 0 ? "+" : "") + n.toFixed(dp) + "%";
+    const repLegend = `<div class="rep-legend">
+        <p class="muted-note">Standing runs <b>−100 to +100</b> with each faction. Raise it by completing their
+          contracts and trading their goods. It spends as the perks listed under each faction below; your best ally
+          also gives <b>${(Rep.discount() * 100).toFixed(0)}% off</b> ships &amp; gear right now. Top jobs (assassinate /
+          extreme danger) need <b>Friendly+</b> with the sponsor, and helping a faction annoys its rival.</p>
+        <div class="rep-tiers">${REP.tiers.map(t =>
+          `<span class="rep-tierchip" style="color:${t.color}">${t.label}<span class="rt-at">${t.at > 0 ? "+" : ""}${t.at}</span></span>`).join("")}</div>
+      </div>`;
+    const standing = `<div class="panel"><h2>Faction Standing <small>what your reputation buys you</small></h2>${repLegend}<div class="rep-grid">` +
       Rep.ids().map(f => { const fac = FACTIONS[f], v = Rep.get(f), t = Rep.tier(v);
+        const edge = Rep.edge(f) * 100, reward = (Rep.rewardMult(f) - 1) * 100, succ = Rep.successBonus(f) * 100;
+        const rival = fac.rival ? FACTIONS[fac.rival].name : "—";
         return `<div class="rep-row"><div class="rep-head"><b style="color:${fac.color}">${fac.name}</b>
           <span class="rep-tier" style="color:${t.color}">${t.label} ${v >= 0 ? "+" : ""}${Math.round(v)}</span></div>
           <div class="rep-bar"><span class="rep-mid"></span><span class="rep-fill" style="width:${((v - REP.min) / (REP.max - REP.min) * 100).toFixed(0)}%;background:${t.color}"></span></div>
-          <div class="muted-note">${fac.domain.join(" · ")}</div></div>`; }).join("") + `</div></div>`;
+          <ul class="rep-eff">
+            <li><span>Exchange edge · ${fac.domain.join(", ")}</span><b class="${edge >= 0 ? "up" : "down"}">${fmtPct(edge, 1)}</b></li>
+            <li><span>Contract rewards</span><b class="${reward > 0 ? "up" : ""}">${fmtPct(reward, 0)}</b></li>
+            <li><span>Mission success</span><b class="${succ >= 0 ? "up" : "down"}">${fmtPct(succ, 0)}</b></li>
+          </ul>
+          <div class="muted-note">controls ${fac.domain.join(" · ")} · rival: ${rival}</div></div>`; }).join("") + `</div></div>`;
 
-    const acc = (b.accessories || []).map(a => {
-      const it = a.item;
-      return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
+    const rIdx = id => RARITIES.findIndex(r => r.id === id);
+    const accSorters = {
+      value: (a, z) => z.item.value - a.item.value,
+      price: (a, z) => a.price - z.price,
+      rarity: (a, z) => rIdx(z.item.rarity) - rIdx(a.item.rarity),
+    };
+    const allAcc = b.accessories || [];
+    const gFilt = this.bzFilt.gear;
+    const gearTools = this.bzTools([
+      ["Rarity", "filt.gear", gFilt, [["all", "All"], ...RARITIES.map(r => [r.id, r.label])]],
+      ["Sort", "sort.gear", this.bzSort.gear, [["value", "Value"], ["price", "Price"], ["rarity", "Rarity"]]],
+    ]);
+    const acc = [...(gFilt === "all" ? allAcc : allAcc.filter(a => a.item.rarity === gFilt))]
+      .sort(accSorters[this.bzSort.gear] || accSorters.value)
+      .map(a => {
+        const it = a.item;
+        return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
         <div class="item-stat">${Items.label(it)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(a.price)}c</span>
         <button class="btn btn-mini" data-buyacc="${a.id}">Buy</button></div></div>`;
-    }).join("") || `<p class="muted-note">Restocking the accessory stalls…</p>`;
+      }).join("") || `<p class="muted-note">${allAcc.length ? "No gear matches this filter." : "Restocking the accessory stalls…"}</p>`;
 
     const invCost = Bazaar.upgradeInventoryCost();
     const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
@@ -485,9 +565,9 @@ const UI = {
     const sections = {
       shipyard: `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>`,
       flagships: `<div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>`,
-      mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2><div class="buy-grid">${mercs}</div></div>`,
-      contracts: `<div class="panel"><h2>Contract Board</h2><div class="contract-list">${contracts}</div></div>`,
-      gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2><div class="item-grid">${acc}</div></div>
+      mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2>${mercTools}<div class="buy-grid">${mercs}</div></div>`,
+      contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`,
+      gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       standing,
@@ -507,6 +587,15 @@ const UI = {
        <div class="bz-scroll">${sections[this.bazaarTab]}</div>`;
     const ns = this.refs.bazaarBody.querySelector(".bz-scroll"); if (ns) ns.scrollTop = keep;
     this.refs.bazaarBody.onclick = e => this.onBazaarClick(e);
+    this.refs.bazaarBody.onchange = e => this.onBazaarFilter(e);
+  },
+
+  // Bazaar filter/sort selects. data-bzf = "sort.<tab>" | "filt.<tab>".
+  onBazaarFilter(e) {
+    const sel = e.target.closest("[data-bzf]"); if (!sel) return;
+    const [kind, tab] = sel.dataset.bzf.split(".");
+    (kind === "sort" ? this.bzSort : this.bzFilt)[tab] = sel.value;
+    this.renderBazaar();
   },
 
   onBazaarClick(e) {
@@ -542,13 +631,18 @@ const UI = {
     for (const sys of SYSTEMS) {
       const unlocked = s.unlockedSystems.includes(sys.id), here = s.currentSystem === sys.id && !s.travel;
       const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
-      const mods = Object.entries(sys.mods).map(([k, v]) => `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}">${k} ${v.toFixed(2)}</span>`).join("");
+      const mods = Object.entries(sys.mods).map(([k, v]) => {
+        const tip = v < 1 ? `${k}: ${((1 - v) * 100).toFixed(0)}% cheaper to buy here`
+          : v > 1 ? `${k}: ${((v - 1) * 100).toFixed(0)}% pricier — good to sell here`
+          : `${k}: average price`;
+        return `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
+      }).join("");
       let action;
       if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}">Unlock ${Util.credits(sys.unlock)}c</button>`;
       else if (here) action = `<span class="badge">docked</span>`;
       else if (s.travel && s.travel.to === sys.id) action = `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
       else action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(Fleet.dockTravelMs(s.currentSystem, sys.id))})</button>`;
-      li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
+      li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist" title="distance from Navos Junction — sets docking travel time">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
       ul.appendChild(li);
     }
     ul.onclick = e => {
@@ -758,7 +852,8 @@ const UI = {
     this.updateHeader();
     this.updateClock();
     if (this.page === "fleet") { this.renderMissions(); }
-    if (this.page === "bazaar") this.renderBazaar();
+    // skip the periodic re-render while a filter <select> is focused, so an open dropdown isn't nuked
+    if (this.page === "bazaar") { const a = document.activeElement; if (!(a && a.classList && a.classList.contains("bz-filter"))) this.renderBazaar(); }
     if (this.page === "barons") this.renderLeaderboard();
     if (this.page === "systems" && this.s().travel) this.renderSystems();
   },
