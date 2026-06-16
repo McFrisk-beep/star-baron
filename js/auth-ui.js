@@ -87,31 +87,34 @@ const AuthUI = {
       } else {
         await Cloud.signIn(email, pass);
       }
-      await this.syncOnLogin();
+      const how = await this.syncOnLogin();
       // freeze local writes so the reload loads the synced/cloud save cleanly
       // instead of beforeunload overwriting it with the pre-login state.
       if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
-      UI.toast("Signed in — syncing your save…", "good");
-      setTimeout(() => location.reload(), 350);
+      const msg = how === "cloud" ? "Signed in — loading your saved progress…"
+        : how === "uploaded" ? "Signed in — your current progress is now saved to this account…"
+        : how === "error" ? "Signed in, but cloud is unreachable — check the 'saves' table."
+        : "Signed in.";
+      UI.toast(msg, how === "error" ? "warn" : "good");
+      setTimeout(() => location.reload(), how === "error" ? 1300 : 350);
     } catch (e) {
       this.setBusy(false);
       this.showErr(this.friendly(e));
     }
   },
 
-  // Reconcile local vs cloud saves: keep whichever is newer; upload local if the
-  // cloud has none yet. The reload afterwards loads the winner (load() prefers cloud).
+  // On login: the account's CLOUD save always wins if it exists (the reload then
+  // loads it). We only upload the local game when the account has no cloud save
+  // yet — i.e. a brand-new account claiming the progress you're holding. This
+  // avoids ever clobbering real cloud progress with a fresh post-logout game.
   async syncOnLogin() {
-    let remote = null;
-    try { remote = await Cloud.loadRemote(); } catch (e) { console.warn("[Auth] remote load failed:", e); }
+    let remote;
+    try { remote = await Cloud.loadRemote(); }
+    catch (e) { console.warn("[Auth] remote load failed — leaving cloud untouched:", e); return "error"; }
+    if (remote) return "cloud";                       // account has a save → use it
     const local = Store.localLoad();
-    if (!remote && local) { await Cloud.saveRemote(local); return "uploaded"; }
-    if (remote && local) {
-      const rt = remote.lastSeenAt || 0, lt = local.lastSeenAt || 0;
-      if (lt > rt) { await Cloud.saveRemote(local); return "local-newer"; }
-      return "cloud-newer";
-    }
-    return remote ? "cloud-only" : "fresh";
+    if (local) { try { await Cloud.saveRemote(local); } catch (e) {} return "uploaded"; }
+    return "fresh";
   },
 
   async doSignOut() {
