@@ -133,6 +133,33 @@ const Bazaar = {
     return { ok: true };
   },
 
+  // Resale value of an owned ship: a fraction of its catalog price (the free
+  // starter hull is 0) plus the resale value of everything bolted to it — the
+  // gear is sold along with the hull.
+  shipSaleValue(sh) {
+    if (!sh) return 0;
+    const def = Fleet.shipDef(sh.type);
+    const hull = (def?.price || 0) * BAZAARCFG.shipResaleMult;
+    const gear = (sh.accessories || []).reduce((n, uid) => {
+      const it = this.s().items[uid]; return n + (it ? it.value * BAZAARCFG.itemResaleMult : 0);
+    }, 0);
+    return Math.round(hull + gear);
+  },
+  sellShip(uid) {
+    const s = this.s();
+    const sh = Fleet.ship(uid);
+    if (!sh) return { ok: false, msg: "Ship not found." };
+    if (sh.mercenary) return { ok: false, msg: "Mercenaries are rented, not owned." };
+    if (sh.status !== "idle") return { ok: false, msg: "Ship is busy — recall it first." };
+    const credits = this.shipSaleValue(sh);
+    const soldGear = (sh.accessories || []).length;
+    for (const itemUid of sh.accessories || []) delete s.items[itemUid];  // installed gear goes with the ship
+    s.ships = s.ships.filter(x => x.uid !== uid);
+    s.credits += credits;
+    Economy.refreshNetWorth();
+    return { ok: true, credits, soldGear };
+  },
+
   buyMain(catalogId) {
     const def = SHIP_CATALOG.main.find(x => x.id === catalogId); const s = this.s();
     if (!def) return { ok: false, msg: "Unknown flagship." };
@@ -211,7 +238,7 @@ const Bazaar = {
   sellNow(itemUid) {
     const it = this.s().items[itemUid]; if (!it) return { ok: false };
     if (this.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
-    const credits = Math.round(it.value * 0.55);
+    const credits = Math.round(it.value * BAZAARCFG.itemResaleMult);
     this.s().credits += credits; delete this.s().items[itemUid];
     Economy.refreshNetWorth();
     return { ok: true, credits };

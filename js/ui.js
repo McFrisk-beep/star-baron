@@ -241,21 +241,35 @@ const UI = {
     const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
     const equipBtn = sh.status === "idle" && used < slots
       ? `<button class="btn btn-mini" data-equip-ship="${sh.uid}">+ Equip</button>` : "";
+    // mercs are rented (not owned), and a busy ship can't be sold mid-job
+    const sellBtn = sh.status === "idle" && !sh.mercenary
+      ? `<button class="btn btn-mini btn-sellship" data-sellship="${sh.uid}" title="sells with its equipped gear">Sell ${Util.credits(Bazaar.shipSaleValue(sh))}c</button>` : "";
     return `<div class="ship cls-${def.cls}">
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
         <div class="statline">${this.statChips(st)}</div>
-        <div class="acc-row">${acc}${equipBtn}</div>
+        <div class="acc-row">${acc}${equipBtn}${sellBtn}</div>
       </div></div>`;
   },
 
   onFleetClick(e) {
-    const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]"); const rt = e.target.closest("[data-retrieve]");
+    const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]");
+    const rt = e.target.closest("[data-retrieve]"); const sl = e.target.closest("[data-sellship]");
     if (un) { const [shipU, itemU] = un.dataset.unequip.split(":"); Fleet.unequip(shipU, itemU); window.Game.requestSave(); this.renderFleet(); }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
     else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+    else if (sl) {
+      const sh = Fleet.ship(sl.dataset.sellship); if (!sh) return;
+      const val = Bazaar.shipSaleValue(sh), n = (sh.accessories || []).length, name = sh.name;
+      const extra = n ? ` and its ${n} equipped item${n > 1 ? "s" : ""}` : "";
+      if (!confirm(`Sell ${name}${extra} for ${Util.credits(val)}c? This can't be undone.`)) return;
+      const r = Bazaar.sellShip(sl.dataset.sellship);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Sold ${name} for ${Util.credits(r.credits)}c`, "good");
+      this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader();
+    }
   },
 
   renderInventory() {
@@ -269,7 +283,7 @@ const UI = {
         <div class="item-acts">
           <span class="item-val">${Util.credits(it.value)}c</span>
           <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
-          <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * 0.55))}c</button>
+          <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
           <button class="btn btn-mini" data-list="${it.uid}">List</button>
         </div></div>`).join("");
     if (listed.length) {

@@ -157,6 +157,8 @@ const BAZAARCFG = {
   listingMaxMs: 12 * 60 * 1000,      // …and no later than (hidden from player)
   inventoryUpgradeStep: 10,          // +slots per upgrade
   inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
+  itemResaleMult: 0.55,              // instant "Sell now" payout = this × an item's value
+  shipResaleMult: 0.5,               // sell a ship for this × its catalog price (40–60% band); gear adds its resale value
 };
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
