@@ -27,6 +27,7 @@ const Cloud = {
         this._user = session ? session.user : null;
         if (window.Bus) Bus.emit("auth", this._user);
       });
+      console.log("[Cloud] online accounts enabled (Supabase). Use the Sign in button.");
     } catch (e) {
       console.warn("[Cloud] init failed — staying local:", e);
       this.enabled = false;

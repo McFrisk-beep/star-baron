@@ -39,7 +39,7 @@ const AuthUI = {
   refresh() {
     if (!this.r.btn) return;
     const inUser = Cloud.signedIn();
-    this.r.btn.textContent = inUser ? `👤 ${this.short(Cloud.email())}` : "Sign in";
+    this.r.btn.textContent = inUser ? `👤 ${this.short(Cloud.email())}` : "👤 Sign in";
     this.r.btn.classList.toggle("signed-in", inUser);
   },
   short(email) { return email && email.length > 16 ? email.slice(0, 14) + "…" : (email || "account"); },
