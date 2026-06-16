@@ -63,7 +63,11 @@ const Cloud = {
     return data;
   },
   async signOut() {
-    try { await this.client.auth.signOut(); } finally { this._user = null; }
+    // scope:"local" always clears the local session (even offline) so a reload
+    // can't silently re-authenticate; we also null our cached user regardless.
+    try { await this.client.auth.signOut({ scope: "local" }); }
+    catch (e) { console.warn("[Cloud] signOut:", e); }
+    finally { this._user = null; }
   },
 
   // ---- save row (one JSONB blob per user) --------------------------------
