@@ -1,36 +1,67 @@
-/* store.js — the ONLY thing that knows where saves live.
-   Phase 1: localStorage. Phase 2: reimplement these same signatures against a
-   backend (fetch + auth token). Nothing else in the codebase touches storage. */
+/* store.js — the ONLY thing that knows where saves live. Local-first: every save
+   is written to localStorage immediately (fast, offline-safe). When the player
+   is signed in (see cloud.js), saves are ALSO pushed to the cloud on a debounce,
+   and load() prefers the cloud copy. Nothing else in the codebase touches
+   storage — it just calls load/save/clear.                                      */
 
 const SAVE_KEY = "starbaron";
 
 const Store = {
+  _cloudTimer: null,
+  _cloudMs: 20000,        // debounce window for cloud pushes (local is instant)
+
+  // ---- local (always available) -----------------------------------------
+  localLoad() {
+    try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; }
+    catch (e) { console.warn("[Store] local load failed:", e); return null; }
+  },
+  localSave(state) {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); return true; }
+    catch (e) { console.warn("[Store] local save failed:", e); return false; }
+  },
+  localClear() {
+    try { localStorage.removeItem(SAVE_KEY); return true; }
+    catch (e) { console.warn("[Store] local clear failed:", e); return false; }
+  },
+
+  signedIn() { return !!(window.Cloud && Cloud.signedIn()); },
+
+  // ---- public API (unchanged signatures) --------------------------------
   async load() {
-    try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      console.warn("[Store] load failed:", e);
-      return null;
+    if (this.signedIn()) {
+      try {
+        const remote = await Cloud.loadRemote();
+        if (remote) { this.localSave(remote); return remote; }   // cache cloud locally
+      } catch (e) { console.warn("[Store] cloud load failed, using local copy:", e); }
     }
+    return this.localLoad();
   },
+
   async save(state) {
-    try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(state));
-      return true;
-    } catch (e) {
-      console.warn("[Store] save failed:", e);
-      return false;
-    }
+    this.localSave(state);                          // always cache locally first
+    if (this.signedIn()) this._queueCloud(state);   // …then sync to cloud (debounced)
+    return true;
   },
+
+  // Coalesce frequent autosaves into one cloud write every _cloudMs.
+  _queueCloud(state) {
+    clearTimeout(this._cloudTimer);
+    this._cloudTimer = setTimeout(() => {
+      Cloud.saveRemote(state).catch(e => console.warn("[Store] cloud save failed:", e));
+    }, this._cloudMs);
+  },
+
+  // Push the latest state to the cloud right now (on logout / tab hide / unload).
+  async flush(state) {
+    clearTimeout(this._cloudTimer);
+    if (!this.signedIn()) return;
+    try { if (state) await Cloud.saveRemote(state); } catch (e) { console.warn("[Store] cloud flush failed:", e); }
+  },
+
   async clear() {
-    try {
-      localStorage.removeItem(SAVE_KEY);
-      return true;
-    } catch (e) {
-      console.warn("[Store] clear failed:", e);
-      return false;
-    }
+    this.localClear();
+    if (this.signedIn()) { try { await Cloud.clearRemote(); } catch (e) { console.warn("[Store] cloud clear failed:", e); } }
+    return true;
   },
 };
 

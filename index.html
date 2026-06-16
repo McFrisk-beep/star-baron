@@ -27,6 +27,7 @@
     </div>
     <div class="topbtns">
       <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
+      <button id="btn-account" class="btn hidden">Sign in</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
       <button id="btn-help" class="btn">❔ Help</button>
       <button id="btn-settings" class="btn">⚙ Settings</button>
@@ -196,6 +197,36 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="auth-modal">
+    <div class="modal auth-modal">
+      <h3 id="auth-title">Sign in / Register</h3>
+      <div id="auth-signedout">
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-auth="login">Log in</button>
+          <button class="auth-tab" data-auth="register">Register</button>
+        </div>
+        <label class="auth-field">Email
+          <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" /></label>
+        <label class="auth-field">Password
+          <input type="password" id="auth-pass" autocomplete="current-password" placeholder="at least 6 characters" /></label>
+        <p class="auth-err hidden" id="auth-err"></p>
+        <div class="settings-actions">
+          <button class="btn btn-go" id="auth-submit">Log in</button>
+          <button class="btn" id="auth-cancel">Play as guest</button>
+        </div>
+        <p class="muted-note" id="auth-note">Your cloud save syncs across every device you log in on.</p>
+      </div>
+      <div id="auth-signedin" class="hidden">
+        <p>Signed in as <b id="auth-who"></b>.</p>
+        <p class="muted-note">Your progress saves to the cloud automatically.</p>
+        <div class="settings-actions">
+          <button class="btn btn-danger" id="auth-signout">Sign out</button>
+          <button class="btn btn-go" id="auth-close2">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="settings-modal">
     <div class="modal"><h3>Settings</h3>
       <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
@@ -210,9 +241,13 @@
     </div>
   </div>
 
+  <!-- Supabase SDK (loads from CDN; if blocked/offline the game stays local). -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/data.js"></script>
   <script src="js/flavor.js"></script>
+  <script src="js/cloud-config.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/market.js"></script>
   <script src="js/galaxy.js"></script>
   <script src="js/items.js"></script>
@@ -225,6 +260,7 @@
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/auth-ui.js"></script>
   <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 </body>

@@ -271,6 +271,21 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .wywa-runs { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .wywa-total { font-size: 14px; margin-top: 8px; }
 
+/* ---- account / auth ---- */
+#btn-account.signed-in { border-color: var(--accent2); color: var(--accent2); }
+.auth-modal { max-width: 420px; }
+.auth-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.auth-tab { flex: 1; background: #131826; border: 1px solid var(--line); color: var(--ink-dim);
+  padding: 8px 0; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--sans); }
+.auth-tab:hover { color: var(--ink); }
+.auth-tab.active { background: linear-gradient(180deg, var(--panel), var(--bg2)); color: #fff; border-color: var(--accent); }
+.auth-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .5px; color: var(--ink-dim); margin-bottom: 12px; }
+.auth-field input { background: #0c1020; border: 1px solid var(--line); color: var(--ink);
+  border-radius: 8px; padding: 9px 10px; font-family: var(--sans); font-size: 14px; text-transform: none; letter-spacing: 0; }
+.auth-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.auth-err { color: var(--down); font-size: 12.5px; margin: 0 0 10px; }
+
 /* ===== responsive ===== */
 /* On narrow screens the fixed app-shell is dropped: the page scrolls normally,
    columns stack, and each region gets a sensible height instead of fighting

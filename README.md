@@ -102,7 +102,10 @@ star-baron/
 ├── js/
 │   ├── data.js           # economy config — DATA, not logic
 │   ├── flavor.js         # chat/news/TV/NPC content — grow this freely
-│   ├── store.js          # the ONLY storage layer (localStorage) + Util + Bus
+│   ├── store.js          # the ONLY storage layer (local-first + cloud) + Util + Bus
+│   ├── cloud-config.js   # your Supabase URL + anon key (blank = local-only)
+│   ├── cloud.js          # Supabase wrapper: auth + per-user save row (RLS)
+│   ├── auth-ui.js        # account button + register/login modal + save sync
 │   ├── market.js         # price simulation, news modifiers, mean reversion
 │   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
 │   ├── items.js          # procedural ship accessories (rarity, naming, value)
@@ -127,9 +130,12 @@ stations, nebulae, asteroids, stars) — same filename in, real art out, no code
 
 ## Design notes
 
-- **Persistence** is hidden behind `Store` (localStorage in Phase 1). Phase 2
-  swaps it for a backend without touching game logic — the market/fleet
-  resolution functions are kept pure and portable for that move.
+- **Persistence** is hidden behind `Store` — **local-first**: every save writes
+  to `localStorage` instantly, and when a player is signed in it also syncs to
+  the cloud. **Optional online accounts** use Supabase (auth + a per-user save
+  row guarded by Row-Level Security); leave `js/cloud-config.js` blank to stay
+  fully local/offline. The rest of the game never touches storage directly. See
+  **`docs/CLOUD_SETUP.md`** for the 5-minute, free setup.
 - **Content is data, not code.** Add commodities/systems/ships in `data.js` and
   chat/news/NPCs/TV in `flavor.js`; the engine adapts. Templating tokens
   (`{COMM}`, `{SYS}`, `{DIR}`, `{HANDLE}`, `{PRICE}`, `{PCT}`) make a small line

@@ -61,6 +61,9 @@ const Game = {
   },
 
   async init() {
+    // Bring up cloud auth first (if configured) so Store.load can prefer the
+    // signed-in player's cloud save; otherwise this is a no-op and we go local.
+    if (window.Cloud) { Cloud.init(); await Cloud.restore(); }
     const loaded = await Store.load();
     this.state = loaded ? this.migrate(loaded) : this.defaultState();
     this.timeScale = 1;
@@ -89,6 +92,7 @@ const Game = {
 
     // ---- UI + flavor wiring ----
     UI.init();
+    if (window.AuthUI) AuthUI.init();
     StarMap.init();
     Feed.wire();
     UI.fullRender();
@@ -183,7 +187,8 @@ const Game = {
   suspend() {
     if (this._suspended) return;
     this._suspended = true;
-    this.save();
+    this.save();                            // local cache + queue cloud
+    Store.flush(this.snapshot());           // push to cloud now (best-effort)
     this.stopSchedulers();
     if (window.StarMap) StarMap.suspend();
   },
