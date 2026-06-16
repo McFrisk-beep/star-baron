@@ -97,11 +97,13 @@ const Galaxy = {
       const cat = (rng() < 0.5 && sec.specialty) ? sec.specialty : pick(cats);
       const otherCat = pick(cats.filter(c => c !== cat));
       const imp = pick(COMMODITIES.filter(c => c.cat === otherCat)) || pick(COMMODITIES);
+      const prod = pick(COMMODITIES.filter(c => c.cat === cat)) || pick(COMMODITIES);
       out.push({
         name: `${sysName} ${roman[i]}`,
         type: pick(PLANET_TYPES),
         industry: pick(INDUSTRIES[cat]),
         cat,
+        commodity: prod.id,            // what an industry here produces (into your tradeable stock)
         importing: imp.name,
       });
     }

@@ -187,6 +187,22 @@ const WARCFG = {
   slump: 0.68,             // defender's goods slump in the chaos
   contractBonus: 0.5,      // war-effort contracts pay +50%
 };
+
+/* ---- INDUSTRIES -----------------------------------------------------------
+   Build factories/mines/farms on star-map planets; they slowly produce that
+   planet's commodity into your tradeable stock (industries.js). Licensed by
+   your standing with the commodity's controlling faction; halted by local
+   disruptions (strikes) and faction-war slumps.                               */
+const INDUSTRYCFG = {
+  cycleMs: 5 * 60 * 1000,   // one batch every ~5 min (slow & passive)
+  outputPerCycle: 1,        // units of the planet's commodity per batch
+  startupMult: 80,          // build cost = commodity.base × this (× a standing discount)
+  repDiscountMax: 0.3,      // up to 30% off startup at +100 with the controlling faction
+  licenseMinTier: "neutral",// must be at least this tier with the controlling faction to license
+  warBoost: 2,              // production ×this when its category is a war's spiking side
+  maxPerPlayer: 12,         // how many industries you may license at once
+  maxCyclesPerResolve: 48,  // offline batch cap per industry (anti-windfall)
+};
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
 // need real firepower) pay much more than the safe early grind.
@@ -359,6 +375,7 @@ window.BAZAARCFG = BAZAARCFG;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
+window.INDUSTRYCFG = INDUSTRYCFG;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;

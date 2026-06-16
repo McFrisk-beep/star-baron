@@ -203,13 +203,30 @@ const StarMap = {
       return `<div class="local-effect ${e.mult > 1 ? "up" : "down"}">⚠ ${label} ${e.mult > 1 ? "scarce — prices up" : "glut — prices down"} here</div>`;
     }).join("");
 
-    const planets = sys.planets.map(p => {
+    const planets = sys.planets.map((p, i) => {
       const im = ASSET.planet(p.type);
+      const comm = COMMODITIES.find(c => c.id === p.commodity);
+      const commName = comm ? comm.name : p.commodity;
+      let action = "";
+      if (window.Industries) {
+        const ind = Industries.at(sys.id, i);
+        if (ind) {
+          const st = Industries.status(ind);
+          action = `<div class="p-ind"><span class="ind-stat ind-${st}">${st}</span> producing <b>${commName}</b>
+            <button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>`;
+        } else {
+          const chk = Industries.canBuild(sys, i);
+          action = chk.ok
+            ? `<div class="p-ind"><button class="btn btn-mini" data-build="${sys.id}:${i}">Build ${commName} works — ${Util.credits(Industries.startupCost(p))}c</button></div>`
+            : `<div class="p-ind ind-locked" title="${chk.msg}">🔒 ${chk.msg}</div>`;
+        }
+      }
       return `<li class="planet">
         <img src="${im}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${p.type[0].toUpperCase()}'}))"/>
         <div><b>${p.name}</b><span class="ptype">${p.type.replace("_", " ")}</span>
-        <div class="pind">${p.industry}</div>
-        <div class="pimp">importing <b>${p.importing}</b></div></div></li>`;
+        <div class="pind">${p.industry} · <span class="cat cat-${p.cat}">${p.cat}</span></div>
+        <div class="pimp">importing <b>${p.importing}</b></div>
+        ${action}</div></li>`;
     }).join("");
 
     this.refs.info.innerHTML =
@@ -234,9 +251,22 @@ const StarMap = {
     if (unlock) unlock.onclick = () => {
       const r = Economy.unlockSystem(sys.id);
       if (!r.ok) return UI.toast(r.msg, "warn");
-      UI.toast(`Unlocked ${sys.name}!`, "good"); UI.renderSystems(); UI.refreshDispatch();
+      UI.toast(`Unlocked ${sys.name}!`, "good"); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys);
     };
+
+    // build / close offworld industries from the planet list
+    this.refs.info.querySelectorAll("[data-build]").forEach(b => b.onclick = () => {
+      const [sid, idx] = b.dataset.build.split(":");
+      const r = Industries.build(sid, +idx);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Industry licensed — ${Util.credits(r.cost)}c.`, "good"); UI.flashCredits();
+      window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
+    });
+    this.refs.info.querySelectorAll("[data-demolish]").forEach(b => b.onclick = () => {
+      Industries.demolish(b.dataset.demolish); UI.toast("Industry closed.", "info");
+      window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
+    });
 
     // backfill a little history, then render the persisted local log
     Galaxy.ensureSeeded(sys);

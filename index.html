@@ -42,6 +42,7 @@
         <button class="tab" data-page="fleet">Fleet <span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
         <button class="tab" data-page="systems">Star Systems</button>
         <button class="tab" data-page="bazaar">Bazaar</button>
+        <button class="tab" data-page="industries">Industries</button>
         <button class="tab" data-page="barons">Barons</button>
         <button class="tab" data-page="ach">Milestones</button>
       </nav>
@@ -109,6 +110,15 @@
       <!-- BAZAAR -->
       <section class="page hidden" id="page-bazaar">
         <div id="bazaar-body"></div>
+      </section>
+
+      <!-- INDUSTRIES -->
+      <section class="page hidden" id="page-industries">
+        <div class="panel">
+          <h2>Industries <small id="ind-count"></small></h2>
+          <p class="sys-legend">Build factories, mines &amp; farms on planets from the <b>Star Map</b> (open a system, pick a planet). They produce that planet's commodity slowly into your tradeable stock while you're away. Licences depend on your standing with the controlling faction; strikes &amp; faction wars can halt a line.</p>
+          <div id="industry-list"></div>
+        </div>
       </section>
 
       <!-- BARONS / LEADERBOARD -->
@@ -338,6 +348,7 @@
   <script src="js/routes.js"></script>
   <script src="js/incidents.js"></script>
   <script src="js/orders.js"></script>
+  <script src="js/industries.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>

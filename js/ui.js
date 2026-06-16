@@ -46,6 +46,7 @@ const UI = {
       systemList: $("system-list"), bazaarBody: $("bazaar-body"),
       rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"),
       achList: $("ach-list"), achCount: $("ach-count"),
+      indList: $("industry-list"), indCount: $("ind-count"),
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
@@ -85,6 +86,7 @@ const UI = {
     else if (name === "systems") this.renderSystems();
     else if (name === "barons") this.renderLeaderboard();
     else if (name === "ach") this.renderAchievements();
+    else if (name === "industries") this.renderIndustries();
     else if (name === "exchange") this.renderOrders();
   },
 
@@ -812,6 +814,35 @@ const UI = {
       return `<li class="ach ${have ? "got" : ""}"><b>${have ? "★" : "☆"} ${a.name}</b><span>${a.desc}</span></li>`; }).join("");
   },
 
+  // ===== industries ========================================================
+  renderIndustries() {
+    const list = Industries.list();
+    this.refs.indCount.textContent = `${list.length}/${INDUSTRYCFG.maxPerPlayer}`;
+    if (!list.length) {
+      this.refs.indList.innerHTML = `<p class="muted-note">No industries yet. Open the <b>Star Map</b>, pick a system, and build a factory/mine/farm on a planet — it produces into your tradeable stock while you're away.</p>`;
+      this.refs.indList.onclick = null; return;
+    }
+    const perHr = (INDUSTRYCFG.outputPerCycle * 3600000 / INDUSTRYCFG.cycleMs).toFixed(1);
+    this.refs.indList.innerHTML = list.map(ind => {
+      const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+      const comm = COMMODITIES.find(c => c.id === ind.commodity);
+      const st = Industries.status(ind), eta = Math.max(0, ind.nextAt - Date.now());
+      const fac = FACTIONS[Industries.controllingFaction(ind.cat)];
+      const running = st === "running" || st === "boom";
+      return `<div class="industry"><div class="ind-head"><b>${planet ? planet.name : ind.systemId}</b>
+          <span class="ind-stat ind-${st}">${st}</span>
+          <button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>
+        <div class="ind-foot">produces <b>${comm ? comm.name : ind.commodity}</b> → stock · ~${perHr}/hr${st === "boom" ? ` <span class="up">×${INDUSTRYCFG.warBoost}</span>` : ""} · ` +
+        `${running ? `next batch ${Util.duration(eta)}` : `<span class="down">halted</span>`} · ` +
+        `<span class="ind-fac" style="color:${fac.color}">◆ ${fac.name}</span></div></div>`;
+    }).join("");
+    this.refs.indList.onclick = e => {
+      const d = e.target.closest("[data-demolish]"); if (!d) return;
+      Industries.demolish(d.dataset.demolish); this.toast("Industry closed.", "info");
+      window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
+    };
+  },
+
   // ===== BARONS / leaderboard ==============================================
   renderLeaderboard() {
     if (this.page !== "barons") return;
@@ -905,10 +936,11 @@ const UI = {
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
-  showWYWA({ elapsedMs, reports, sold, routed, orders }) {
+  showWYWA({ elapsedMs, reports, sold, routed, orders, industry }) {
     const routeTotal = (routed && routed.total) || 0;
     const fills = (orders || []).filter(e => e.type === "filled");
-    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal && !fills.length) return false;
+    const made = industry || [];
+    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal && !fills.length && !made.length) return false;
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => r.success
@@ -917,8 +949,13 @@ const UI = {
     }
     if (routeTotal) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
+    if (made.length) {
+      const agg = {};
+      for (const m of made) agg[m.commodity] = (agg[m.commodity] || 0) + m.qty;
+      html += `<p>Industries produced: ${Object.entries(agg).map(([id, q]) => `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`).join(", ")} (now in your stock).</p>`;
+    }
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
-    if (!reports.length && !sold.length && !routeTotal && !fills.length) html += `<p>The market drifted while you were gone.</p>`;
+    if (!reports.length && !sold.length && !routeTotal && !fills.length && !made.length) html += `<p>The market drifted while you were gone.</p>`;
     this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
     return true;
   },
@@ -1057,6 +1094,7 @@ const UI = {
     this.updateClock();
     if (this.page === "fleet") { this.renderMissions(); this.renderRoutes(); }
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
+    if (this.page === "industries") this.renderIndustries();
     // skip the periodic re-render while a filter <select> is focused, so an open dropdown isn't nuked
     if (this.page === "bazaar") { const a = document.activeElement; if (!(a && a.classList && a.classList.contains("bz-filter"))) this.renderBazaar(); }
     if (this.page === "barons") this.renderLeaderboard();
