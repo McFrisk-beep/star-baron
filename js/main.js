@@ -140,6 +140,7 @@ const Game = {
 
     // ---- schedulers ----
     this.startSchedulers();
+    if (window.WorldFeed) WorldFeed.init();   // shared, always-on world chat (Supabase cron)
 
     // When the tab is backgrounded we suspend ALL work (timers + the star-map
     // animation) so an open tab costs ~nothing over long idle periods; on return
@@ -195,6 +196,7 @@ const Game = {
     this.save();                            // local cache + queue cloud
     Store.flush(this.snapshot());           // push to cloud now (best-effort)
     this.stopSchedulers();
+    if (window.WorldFeed) WorldFeed.stop();
     if (window.StarMap) StarMap.suspend();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
@@ -215,6 +217,7 @@ const Game = {
     }
     this.state.lastSeenAt = now;
     this.startSchedulers();
+    if (window.WorldFeed) { WorldFeed.poll(); WorldFeed.start(); }   // catch up shared feed
     UI.tick(); UI.renderNewswire();
     if (window.StarMap) StarMap.resume();
   },
