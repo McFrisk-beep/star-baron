@@ -585,6 +585,10 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
   letter-spacing: .5px; color: var(--ink-dim); }
 .rt-form select { background: #0c1020; border: 1px solid var(--line); color: var(--ink); border-radius: 6px;
   padding: 6px 8px; font-family: var(--sans); font-size: 13px; }
+.rt-ships { display: flex; flex-direction: column; gap: 4px; max-height: 210px; overflow-y: auto; margin-bottom: 8px; }
+.rt-ship { display: flex; align-items: center; gap: 8px; background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 9px; font-size: 12px; cursor: pointer; font-family: var(--mono); }
+.route-ships { font-size: 11px; color: var(--ink-dim); font-family: var(--mono); margin-top: 3px; }
 
 /* inventory + items */
 .item { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--line);

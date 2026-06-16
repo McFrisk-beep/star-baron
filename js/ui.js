@@ -287,66 +287,75 @@ const UI = {
 
   // ---- trade routes -------------------------------------------------------
   renderRoutes() {
-    const routes = Routes.active();
+    const routes = Routes.list();
     this.refs.routesSub.textContent = routes.length ? `${routes.length} running` : "";
     if (!routes.length) {
-      this.refs.fleetRoutes.innerHTML = `<p class="muted-note">No trade routes. Put an idle ship on a buy-low → sell-high loop with “⇄ Set route” — it banks the spread while you're away.</p>`;
+      this.refs.fleetRoutes.innerHTML = `<p class="muted-note">No trade routes. Put one or more idle ships on a buy-low → sell-high loop with “⇄ Set route” — they pool cargo and bank the spread while you're away.</p>`;
       this.refs.fleetRoutes.onclick = null; return;
     }
-    this.refs.fleetRoutes.innerHTML = routes.map(sh => {
-      const r = sh.route, e = Routes.estimate(sh, r.comm, r.from, r.to);
-      const cn = (COMMODITIES.find(c => c.id === r.comm) || {}).name || r.comm;
-      const eta = Math.max(0, r.nextAt - Date.now());
-      return `<div class="route"><div class="route-head"><b>${sh.name}</b>
-          <span class="route-leg">${cn}: ${this.sysName(r.from)} → ${this.sysName(r.to)}</span>
-          <button class="btn btn-mini" data-stoproute="${sh.uid}">Stop</button></div>
+    this.refs.fleetRoutes.innerHTML = routes.map(route => {
+      const e = Routes.estimate(route), ships = Routes.shipsOf(route);
+      const cn = (COMMODITIES.find(c => c.id === route.comm) || {}).name || route.comm;
+      const eta = Math.max(0, route.nextAt - Date.now());
+      return `<div class="route"><div class="route-head"><b>${ships.length} ship${ships.length > 1 ? "s" : ""}</b>
+          <span class="route-leg">${cn}: ${this.sysName(route.from)} → ${this.sysName(route.to)}</span>
+          <button class="btn btn-mini" data-stoproute="${route.id}">Stop</button></div>
+        <div class="route-ships">${ships.map(s => s.name).join(", ")}</div>
         <div class="route-foot"><b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip ·
-          ~${Util.credits(Math.round(e.perHour))}c/hr · <span class="muted-note">next delivery ${Util.duration(eta)}</span></div></div>`;
+          ~${Util.credits(Math.round(e.perHour))}c/hr · cargo ${e.cargo} · <span class="muted-note">next ${Util.duration(eta)}</span></div></div>`;
     }).join("");
     this.refs.fleetRoutes.onclick = ev => {
       const st = ev.target.closest("[data-stoproute]"); if (!st) return;
-      Routes.stop(st.dataset.stoproute); this.toast("Route stopped — ship is idle.", "info");
+      Routes.stop(st.dataset.stoproute); this.toast("Route stopped — ships idle.", "info");
       window.Game.requestSave(); this.renderFleet();
     };
   },
 
   openRoute(shipUid) {
-    const sh = Fleet.ship(shipUid); if (!sh) return;
-    this._routeShip = shipUid;
-    this.refs.rtTitle.textContent = "Trade route — " + sh.name;
+    this.refs.rtTitle.textContent = "New trade route";
     const unlocked = SYSTEMS.filter(s => this.s().unlockedSystems.includes(s.id));
+    const idle = Fleet.idle().filter(sh => !sh.mercenary);
     if (unlocked.length < 2) {
       this.refs.rtBody.innerHTML = `<p class="down">Unlock at least two systems first (Star Systems tab).</p>`;
       this.refs.rtStart.disabled = true; this.refs.route.classList.remove("hidden"); return;
     }
-    const opts = (list, val, key = "id", label = "name") => list.map(o =>
-      `<option value="${o[key]}"${o[key] === val ? " selected" : ""}>${o[label]}</option>`).join("");
+    if (!idle.length) {
+      this.refs.rtBody.innerHTML = `<p class="down">No idle ships available.</p>`;
+      this.refs.rtStart.disabled = true; this.refs.route.classList.remove("hidden"); return;
+    }
+    const opts = (list, val) => list.map(o => `<option value="${o.id}"${o.id === val ? " selected" : ""}>${o.name}</option>`).join("");
     const from0 = unlocked[0].id, to0 = unlocked[1].id;
+    const shipRows = idle.map(sh => { const st = Fleet.stats(sh);
+      return `<label class="rt-ship"><input type="checkbox" data-rtship="${sh.uid}"${sh.uid === shipUid ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> ▣ ${st.cargo} » ${st.speed}</label>`;
+    }).join("");
     this.refs.rtBody.innerHTML =
       `<div class="rt-form">
          <label>Commodity <select id="rt-comm">${opts(COMMODITIES, COMMODITIES[0].id)}</select></label>
          <label>Buy at <select id="rt-from">${opts(unlocked, from0)}</select></label>
          <label>Sell at <select id="rt-to">${opts(unlocked, to0)}</select></label>
        </div>
-       <p class="muted-note">Cargo capacity <b>${Fleet.stats(sh).cargo}</b> — ${sh.name} runs the loop and banks the spread while you're away.</p>
+       <p class="muted-note">Pick the ships to run this loop — their cargo pools and they move at the slowest one's speed.</p>
+       <div class="rt-ships">${shipRows}</div>
        <div class="mm-calc" id="rt-calc"></div>`;
-    this.refs.rtBody.querySelectorAll("select").forEach(s => s.onchange = () => this.updateRouteCalc());
+    this.refs.rtBody.querySelectorAll("select, input[data-rtship]").forEach(el => el.onchange = () => this.updateRouteCalc());
     this.updateRouteCalc();
     this.refs.route.classList.remove("hidden");
   },
+  selectedRouteShips() { return [...this.refs.rtBody.querySelectorAll("input[data-rtship]:checked")].map(c => c.dataset.rtship); },
   _routeSel() {
     const q = id => (this.refs.rtBody.querySelector(id) || {}).value;
     return { comm: q("#rt-comm"), from: q("#rt-from"), to: q("#rt-to") };
   },
   updateRouteCalc() {
-    const sh = Fleet.ship(this._routeShip); if (!sh) return;
-    const { comm, from, to } = this._routeSel();
     const calc = document.getElementById("rt-calc"); if (!calc) return;
+    const { comm, from, to } = this._routeSel();
+    const ships = this.selectedRouteShips();
     if (from === to) { calc.innerHTML = `<span class="down">Pick two different systems.</span>`; this.refs.rtStart.disabled = true; return; }
-    const e = Routes.estimate(sh, comm, from, to);
+    if (!ships.length) { calc.innerHTML = `<span class="down">Select at least one ship.</span>`; this.refs.rtStart.disabled = true; return; }
+    const e = Routes.preview(ships, comm, from, to);
     const cn = (COMMODITIES.find(c => c.id === comm) || {}).name || comm;
     calc.innerHTML =
-      `Buy ${cn} @ <b>${Util.price(e.buy)}</b> · sell @ <b>${Util.price(e.sell)}</b> · spread <b class="${e.spread > 0 ? "up" : "down"}">${Util.price(e.spread)}</b><br>` +
+      `Pooled cargo <b>${e.cargo}</b> · buy ${cn} @ <b>${Util.price(e.buy)}</b> · sell @ <b>${Util.price(e.sell)}</b> · spread <b class="${e.spread > 0 ? "up" : "down"}">${Util.price(e.spread)}</b><br>` +
       `round trip ~${Util.duration(e.cycleMs)} · <b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip · ~<b>${Util.credits(Math.round(e.perHour))}c/hr</b>`;
     this.refs.rtStart.disabled = e.profit <= 0;
   },
@@ -975,10 +984,10 @@ const UI = {
     r.incClose.onclick = () => r.incident.classList.add("hidden");
     r.rtStart.onclick = () => {
       const { comm, from, to } = this._routeSel();
-      const res = Routes.start(this._routeShip, comm, from, to);
+      const res = Routes.start(this.selectedRouteShips(), comm, from, to);
       if (!res.ok) return this.toast(res.msg, "warn");
       this.toast("Trade route started ▸", "good");
-      this._routeShip = null; r.route.classList.add("hidden");
+      r.route.classList.add("hidden");
       window.Game.requestSave(); this.renderFleet();
     };
 
