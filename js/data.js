@@ -153,8 +153,6 @@ const BAZAARCFG = {
   contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this
   contractNpcTakeMs: 4 * 60 * 1000,  // ~when an NPC may grab an untaken job
   contractTakenShowMs: 2 * 60 * 1000,// "Contract taken" lingers this long
-  listingMinMs: 60 * 1000,           // your market listing sells no sooner than
-  listingMaxMs: 12 * 60 * 1000,      // …and no later than (hidden from player)
   inventoryUpgradeStep: 10,          // +slots per upgrade
   inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
   itemResaleMult: 0.55,              // instant "Sell now" payout = this × an item's value

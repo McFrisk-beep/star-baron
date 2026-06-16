@@ -284,7 +284,6 @@ const UI = {
           <span class="item-val">${Util.credits(it.value)}c</span>
           <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
           <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
-          <button class="btn btn-mini" data-list="${it.uid}">List</button>
         </div></div>`).join("");
     if (listed.length) {
       html += `<div class="inv-sub">Listed on the market</div>` + listed.map(l => {
@@ -297,10 +296,9 @@ const UI = {
     }
     this.refs.fleetInventory.innerHTML = html;
     this.refs.fleetInventory.onclick = e => {
-      const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), li = e.target.closest("[data-list]"), ca = e.target.closest("[data-cancel]");
+      const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
       if (eq) this.openEquipForItem(eq.dataset.equip);
       else if (sn) { const r = Bazaar.sellNow(sn.dataset.sellnow); if (!r.ok) return this.toast(r.msg || "Can't sell.", "warn"); this.toast(`Sold for ${Util.credits(r.credits)}c`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
-      else if (li) { const r = Bazaar.list(li.dataset.list); if (!r.ok) return this.toast(r.msg || "Can't list.", "warn"); this.toast(`Listed for ${Util.credits(r.listPrice)}c — a buyer will come.`, "buy"); window.Game.requestSave(); this.renderInventory(); }
       else if (ca) { Bazaar.cancelListing(ca.dataset.cancel); this.toast("Listing cancelled.", "info"); window.Game.requestSave(); this.renderInventory(); }
     };
   },

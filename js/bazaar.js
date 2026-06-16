@@ -234,7 +234,10 @@ const Bazaar = {
     return { ok: true, contract: c };
   },
 
-  // ---- player item listings ----------------------------------------------
+  // ---- player item sales -------------------------------------------------
+  // Listing items for sale was retired; you sell instantly via sellNow. The
+  // tick() resolver + cancelListing remain so any listings already saved before
+  // the feature was removed still pay out or can be cancelled (no stranded gear).
   sellNow(itemUid) {
     const it = this.s().items[itemUid]; if (!it) return { ok: false };
     if (this.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
@@ -242,15 +245,6 @@ const Bazaar = {
     this.s().credits += credits; delete this.s().items[itemUid];
     Economy.refreshNetWorth();
     return { ok: true, credits };
-  },
-  list(itemUid, now = Date.now()) {
-    const it = this.s().items[itemUid]; if (!it) return { ok: false };
-    if (this.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
-    if (this.listedSet().has(itemUid)) return { ok: false, msg: "Already listed." };
-    const listPrice = Math.round(it.value * Util.randFloat(1.1, 1.45));
-    const sellAt = now + Util.randInt(BAZAARCFG.listingMinMs, BAZAARCFG.listingMaxMs);
-    this.s().listings.push({ itemUid, listPrice, sellAt });
-    return { ok: true, listPrice };
   },
   cancelListing(itemUid) {
     this.s().listings = this.s().listings.filter(l => l.itemUid !== itemUid);
