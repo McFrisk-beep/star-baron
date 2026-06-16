@@ -73,6 +73,12 @@ pattern.
   **local events** (riots halting an export, a fresh seam, a customs lockdown)
   actually move that system's prices — "valuable insight" for whoever's reading.
   Trading/fleet stay on the curated unlockable capitals (one per sector).
+- **Accounts & admin tools** — optional online accounts (Supabase) with two roles:
+  **players** get the game (dev toggles hidden), while **admins** get an in-game
+  **content editor** to add/modify/delete flavor and item data live — chat lines,
+  NPCs, news, ship dialogue, commodities, rarities, and more — stored in Supabase
+  (public-read / admin-write) and overlaid on the built-in defaults. Roles are set
+  server-side, so a player can't grant themselves access. See `docs/ADMIN_SETUP.md`.
 - **New-player onboarding** — a skippable, eight-step **tutorial carousel** walks
   a fresh baron through the Exchange, travel, fleet, Bazaar, reading the
   feed/news, and the rival ladder. A **❔ Help** button reopens it anytime.
@@ -104,8 +110,10 @@ star-baron/
 │   ├── flavor.js         # chat/news/TV/NPC content — grow this freely
 │   ├── store.js          # the ONLY storage layer (local-first + cloud) + Util + Bus
 │   ├── cloud-config.js   # your Supabase URL + anon key (blank = local-only)
-│   ├── cloud.js          # Supabase wrapper: auth + per-user save row (RLS)
+│   ├── cloud.js          # Supabase wrapper: auth + roles + per-user save row (RLS)
+│   ├── content.js        # admin-editable content overrides (loaded over defaults)
 │   ├── auth-ui.js        # account button + register/login modal + save sync
+│   ├── admin-ui.js       # admin gate (roles) + in-game content editor
 │   ├── market.js         # price simulation, news modifiers, mean reversion
 │   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
 │   ├── items.js          # procedural ship accessories (rarity, naming, value)

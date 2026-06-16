@@ -8,6 +8,7 @@ const Cloud = {
   client: null,
   enabled: false,
   _user: null,
+  _role: "player",
 
   // Build the client if (and only if) we're configured and the SDK is present.
   init() {
@@ -25,7 +26,7 @@ const Cloud = {
       this.enabled = true;
       this.client.auth.onAuthStateChange((_evt, session) => {
         this._user = session ? session.user : null;
-        if (window.Bus) Bus.emit("auth", this._user);
+        this.fetchRole().finally(() => { if (window.Bus) Bus.emit("auth", this._user); });
       });
       console.log("[Cloud] online accounts enabled (Supabase). Use the Sign in button.");
     } catch (e) {
@@ -42,12 +43,28 @@ const Cloud = {
       const { data } = await this.client.auth.getSession();
       this._user = data && data.session ? data.session.user : null;
     } catch (e) { console.warn("[Cloud] session restore failed:", e); this._user = null; }
+    await this.fetchRole();
     return this._user;
   },
 
   signedIn() { return this.enabled && !!this._user; },
   user() { return this._user; },
   email() { return this._user ? this._user.email : null; },
+
+  // Role comes from the server-side `profiles` table (set by you in the
+  // dashboard) — never from anything the client can edit. Defaults to player.
+  async fetchRole() {
+    if (!this.enabled || !this._user) { this._role = "player"; return this._role; }
+    try {
+      const { data, error } = await this.client
+        .from("profiles").select("role").eq("user_id", this._user.id).maybeSingle();
+      if (error) throw error;
+      this._role = (data && data.role) || "player";
+    } catch (e) { console.warn("[Cloud] role fetch failed:", e); this._role = "player"; }
+    return this._role;
+  },
+  isAdmin() { return this.signedIn() && this._role === "admin"; },
+  role() { return this.signedIn() ? this._role : "guest"; },
 
   // ---- auth --------------------------------------------------------------
   async signUp(email, password) {
@@ -60,6 +77,7 @@ const Cloud = {
     const { data, error } = await this.client.auth.signInWithPassword({ email, password });
     if (error) throw error;
     this._user = data.user;
+    await this.fetchRole();
     return data;
   },
   async signOut() {

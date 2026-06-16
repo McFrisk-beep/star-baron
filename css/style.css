@@ -286,6 +286,18 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .auth-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .auth-err { color: var(--down); font-size: 12.5px; margin: 0 0 10px; }
 
+/* ---- admin content panel ---- */
+#btn-admin { border-color: var(--gold); color: var(--gold); }
+.admin-panel { max-width: 640px; }
+.admin-panel select { background: #0c1020; border: 1px solid var(--line); color: var(--ink);
+  border-radius: 8px; padding: 8px 10px; font-family: var(--sans); font-size: 13px; width: 100%; }
+.admin-json { width: 100%; background: #0a0e1a; border: 1px solid var(--line); color: var(--ink);
+  border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 12px; line-height: 1.45;
+  resize: vertical; margin: 10px 0 6px; min-height: 240px; }
+.admin-json:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.admin-status { font-size: 12px; min-height: 16px; margin: 0 0 4px; color: var(--ink-dim); font-family: var(--mono); }
+.admin-status.good { color: var(--up); } .admin-status.bad { color: var(--down); }
+
 /* ===== responsive ===== */
 /* On narrow screens the fixed app-shell is dropped: the page scrolls normally,
    columns stack, and each region gets a sensible height instead of fighting

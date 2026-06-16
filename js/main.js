@@ -64,6 +64,8 @@ const Game = {
     // Bring up cloud auth first (if configured) so Store.load can prefer the
     // signed-in player's cloud save; otherwise this is a no-op and we go local.
     if (window.Cloud) { Cloud.init(); await Cloud.restore(); }
+    // Apply admin content overrides before anything reads the collections.
+    if (window.Content) await Content.load();
     const loaded = await Store.load();
     this.state = loaded ? this.migrate(loaded) : this.defaultState();
     this.timeScale = 1;
@@ -93,6 +95,7 @@ const Game = {
     // ---- UI + flavor wiring ----
     UI.init();
     if (window.AuthUI) AuthUI.init();
+    if (window.AdminUI) AdminUI.init();
     StarMap.init();
     Feed.wire();
     UI.fullRender();

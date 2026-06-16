@@ -28,6 +28,7 @@
     <div class="topbtns">
       <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
       <button id="btn-account" class="btn hidden">Sign in</button>
+      <button id="btn-admin" class="btn hidden">🛠 Admin</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
       <button id="btn-help" class="btn">❔ Help</button>
       <button id="btn-settings" class="btn">⚙ Settings</button>
@@ -227,12 +228,31 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="admin-modal">
+    <div class="modal modal-wide admin-panel">
+      <h3>🛠 Admin · Content</h3>
+      <p class="muted-note">Edit the game's content live. Flavor changes apply immediately; item/rule changes apply after a reload. Stored in your Supabase project for all players.</p>
+      <label class="auth-field">Collection
+        <select id="admin-collection"></select></label>
+      <textarea id="admin-json" class="admin-json" spellcheck="false" rows="16"></textarea>
+      <p class="admin-status" id="admin-status"></p>
+      <div class="settings-actions">
+        <button class="btn" id="admin-validate">Validate</button>
+        <button class="btn btn-go" id="admin-save">Save</button>
+        <button class="btn btn-danger" id="admin-reset">Reset to default</button>
+        <button class="btn" id="admin-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="settings-modal">
     <div class="modal"><h3>Settings</h3>
       <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
       <label class="toggle"><input type="checkbox" id="set-reduced" /> Reduce motion</label>
-      <label class="toggle"><input type="checkbox" id="set-fastnews" /> Dev: fast news (~20s)</label>
-      <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (×60)</label>
+      <div id="dev-toggles" class="hidden">
+        <label class="toggle"><input type="checkbox" id="set-fastnews" /> Dev: fast news (~20s)</label>
+        <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (×60)</label>
+      </div>
       <div class="settings-actions">
         <button class="btn btn-danger" id="set-reset">Reset Save</button>
         <button class="btn btn-go" id="set-close">Close</button>
@@ -248,6 +268,7 @@
   <script src="js/cloud-config.js"></script>
   <script src="js/store.js"></script>
   <script src="js/cloud.js"></script>
+  <script src="js/content.js"></script>
   <script src="js/market.js"></script>
   <script src="js/galaxy.js"></script>
   <script src="js/items.js"></script>
@@ -261,6 +282,7 @@
   <script src="js/broadcast.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/auth-ui.js"></script>
+  <script src="js/admin-ui.js"></script>
   <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 </body>
