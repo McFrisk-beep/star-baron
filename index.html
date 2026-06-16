@@ -68,6 +68,7 @@
       <!-- FLEET -->
       <section class="page hidden" id="page-fleet">
         <div class="panel" id="fleet-main"></div>
+        <div class="panel"><h2>Trade Routes <small id="routes-sub"></small></h2><div id="fleet-routes"></div></div>
         <div class="panel"><h2>Active Missions</h2><div id="fleet-missions"></div></div>
         <div class="panel hidden" id="fleet-reports-panel"><h2>Mission Reports</h2><div id="fleet-reports"></div></div>
         <div class="panel"><h2>Owned Ships <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
@@ -178,6 +179,14 @@
       <div class="settings-actions">
         <button class="btn btn-go" id="mm-launch">Launch ▸</button>
         <button class="btn" id="mm-cancel">Cancel</button>
+      </div></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="route-modal">
+    <div class="modal modal-wide"><h3 id="rt-title">Set Trade Route</h3><div id="rt-body"></div>
+      <div class="settings-actions">
+        <button class="btn btn-go" id="rt-start">Start route ▸</button>
+        <button class="btn" id="rt-cancel">Cancel</button>
       </div></div>
   </div>
 
@@ -299,6 +308,7 @@
   <script src="js/reputation.js"></script>
   <script src="js/rivals.js"></script>
   <script src="js/missions.js"></script>
+  <script src="js/routes.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>

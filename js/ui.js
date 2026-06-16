@@ -16,6 +16,7 @@ const UI = {
   _reportSig: "",
   _pending: null,        // pending contract awaiting ship selection
   _equipItem: null,
+  _routeShip: null,      // ship uid awaiting trade-route configuration
 
   s() { return window.Game.state; },
   el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; },
@@ -38,6 +39,7 @@ const UI = {
       exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"),
       tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
       fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
+      fleetRoutes: $("fleet-routes"), routesSub: $("routes-sub"),
       fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
       fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
@@ -56,6 +58,7 @@ const UI = {
       mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
       equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
+      route: $("route-modal"), rtTitle: $("rt-title"), rtBody: $("rt-body"), rtStart: $("rt-start"), rtCancel: $("rt-cancel"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
     };
@@ -221,9 +224,76 @@ const UI = {
     this.refs.fleetShips.onclick = e => this.onFleetClick(e);
     // inventory
     this.renderInventory();
-    // missions + reports
+    // trade routes + missions + reports
+    this.renderRoutes();
     this._missionSig = ""; this.renderMissions();
     this.renderReports();
+  },
+
+  // ---- trade routes -------------------------------------------------------
+  renderRoutes() {
+    const routes = Routes.active();
+    this.refs.routesSub.textContent = routes.length ? `${routes.length} running` : "";
+    if (!routes.length) {
+      this.refs.fleetRoutes.innerHTML = `<p class="muted-note">No trade routes. Put an idle ship on a buy-low → sell-high loop with “⇄ Set route” — it banks the spread while you're away.</p>`;
+      this.refs.fleetRoutes.onclick = null; return;
+    }
+    this.refs.fleetRoutes.innerHTML = routes.map(sh => {
+      const r = sh.route, e = Routes.estimate(sh, r.comm, r.from, r.to);
+      const cn = (COMMODITIES.find(c => c.id === r.comm) || {}).name || r.comm;
+      const eta = Math.max(0, r.nextAt - Date.now());
+      return `<div class="route"><div class="route-head"><b>${sh.name}</b>
+          <span class="route-leg">${cn}: ${this.sysName(r.from)} → ${this.sysName(r.to)}</span>
+          <button class="btn btn-mini" data-stoproute="${sh.uid}">Stop</button></div>
+        <div class="route-foot"><b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip ·
+          ~${Util.credits(Math.round(e.perHour))}c/hr · <span class="muted-note">next delivery ${Util.duration(eta)}</span></div></div>`;
+    }).join("");
+    this.refs.fleetRoutes.onclick = ev => {
+      const st = ev.target.closest("[data-stoproute]"); if (!st) return;
+      Routes.stop(st.dataset.stoproute); this.toast("Route stopped — ship is idle.", "info");
+      window.Game.requestSave(); this.renderFleet();
+    };
+  },
+
+  openRoute(shipUid) {
+    const sh = Fleet.ship(shipUid); if (!sh) return;
+    this._routeShip = shipUid;
+    this.refs.rtTitle.textContent = "Trade route — " + sh.name;
+    const unlocked = SYSTEMS.filter(s => this.s().unlockedSystems.includes(s.id));
+    if (unlocked.length < 2) {
+      this.refs.rtBody.innerHTML = `<p class="down">Unlock at least two systems first (Star Systems tab).</p>`;
+      this.refs.rtStart.disabled = true; this.refs.route.classList.remove("hidden"); return;
+    }
+    const opts = (list, val, key = "id", label = "name") => list.map(o =>
+      `<option value="${o[key]}"${o[key] === val ? " selected" : ""}>${o[label]}</option>`).join("");
+    const from0 = unlocked[0].id, to0 = unlocked[1].id;
+    this.refs.rtBody.innerHTML =
+      `<div class="rt-form">
+         <label>Commodity <select id="rt-comm">${opts(COMMODITIES, COMMODITIES[0].id)}</select></label>
+         <label>Buy at <select id="rt-from">${opts(unlocked, from0)}</select></label>
+         <label>Sell at <select id="rt-to">${opts(unlocked, to0)}</select></label>
+       </div>
+       <p class="muted-note">Cargo capacity <b>${Fleet.stats(sh).cargo}</b> — ${sh.name} runs the loop and banks the spread while you're away.</p>
+       <div class="mm-calc" id="rt-calc"></div>`;
+    this.refs.rtBody.querySelectorAll("select").forEach(s => s.onchange = () => this.updateRouteCalc());
+    this.updateRouteCalc();
+    this.refs.route.classList.remove("hidden");
+  },
+  _routeSel() {
+    const q = id => (this.refs.rtBody.querySelector(id) || {}).value;
+    return { comm: q("#rt-comm"), from: q("#rt-from"), to: q("#rt-to") };
+  },
+  updateRouteCalc() {
+    const sh = Fleet.ship(this._routeShip); if (!sh) return;
+    const { comm, from, to } = this._routeSel();
+    const calc = document.getElementById("rt-calc"); if (!calc) return;
+    if (from === to) { calc.innerHTML = `<span class="down">Pick two different systems.</span>`; this.refs.rtStart.disabled = true; return; }
+    const e = Routes.estimate(sh, comm, from, to);
+    const cn = (COMMODITIES.find(c => c.id === comm) || {}).name || comm;
+    calc.innerHTML =
+      `Buy ${cn} @ <b>${Util.price(e.buy)}</b> · sell @ <b>${Util.price(e.sell)}</b> · spread <b class="${e.spread > 0 ? "up" : "down"}">${Util.price(e.spread)}</b><br>` +
+      `round trip ~${Util.duration(e.cycleMs)} · <b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip · ~<b>${Util.credits(Math.round(e.perHour))}c/hr</b>`;
+    this.refs.rtStart.disabled = e.profit <= 0;
   },
 
   shipCard(sh) {
@@ -236,12 +306,16 @@ const UI = {
     let status;
     if (sh.status === "mission") status = `<span class="badge">on mission</span>`;
     else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
+    else if (sh.status === "trading") status = `<span class="badge trade">trading</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const merc = sh.mercenary ? `<span class="badge merc">merc · ${Util.duration((sh.expiresAt || 0) - Date.now())}</span>` : "";
     const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
     const equipBtn = sh.status === "idle" && used < slots
       ? `<button class="btn btn-mini" data-equip-ship="${sh.uid}">+ Equip</button>` : "";
-    // mercs are rented (not owned), and a busy ship can't be sold mid-job
+    // idle, owned ships can be put on a trade route or sold (mercs are rented;
+    // a busy ship can't do either mid-job)
+    const routeBtn = sh.status === "idle" && !sh.mercenary
+      ? `<button class="btn btn-mini" data-route-ship="${sh.uid}">⇄ Set route</button>` : "";
     const sellBtn = sh.status === "idle" && !sh.mercenary
       ? `<button class="btn btn-mini btn-sellship" data-sellship="${sh.uid}" title="sells with its equipped gear">Sell ${Util.credits(Bazaar.shipSaleValue(sh))}c</button>` : "";
     return `<div class="ship cls-${def.cls}">
@@ -250,15 +324,17 @@ const UI = {
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
         <div class="statline">${this.statChips(st)}</div>
-        <div class="acc-row">${acc}${equipBtn}${sellBtn}</div>
+        <div class="acc-row">${acc}${equipBtn}${routeBtn}${sellBtn}</div>
       </div></div>`;
   },
 
   onFleetClick(e) {
     const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]");
     const rt = e.target.closest("[data-retrieve]"); const sl = e.target.closest("[data-sellship]");
+    const ro = e.target.closest("[data-route-ship]");
     if (un) { const [shipU, itemU] = un.dataset.unequip.split(":"); Fleet.unequip(shipU, itemU); window.Game.requestSave(); this.renderFleet(); }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
+    else if (ro) { this.openRoute(ro.dataset.routeShip); }
     else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (sl) {
       const sh = Fleet.ship(sl.dataset.sellship); if (!sh) return;
@@ -739,16 +815,18 @@ const UI = {
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
-  showWYWA({ elapsedMs, reports, sold }) {
-    if (elapsedMs < 60000 && !reports.length && !sold.length) return false;
+  showWYWA({ elapsedMs, reports, sold, routed }) {
+    const routeTotal = (routed && routed.total) || 0;
+    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal) return false;
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => r.success
         ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}</li>`
         : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}</li>`).join("") + `</ul>`;
     }
+    if (routeTotal) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
-    if (!reports.length && !sold.length) html += `<p>The market drifted while you were gone.</p>`;
+    if (!reports.length && !sold.length && !routeTotal) html += `<p>The market drifted while you were gone.</p>`;
     this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
     return true;
   },
@@ -810,6 +888,15 @@ const UI = {
     r.mmCancel.onclick = () => { this._pending = null; r.mission.classList.add("hidden"); };
     r.mmLaunch.onclick = () => this.launchMission();
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
+    r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
+    r.rtStart.onclick = () => {
+      const { comm, from, to } = this._routeSel();
+      const res = Routes.start(this._routeShip, comm, from, to);
+      if (!res.ok) return this.toast(res.msg, "warn");
+      this.toast("Trade route started ▸", "good");
+      this._routeShip = null; r.route.classList.add("hidden");
+      window.Game.requestSave(); this.renderFleet();
+    };
 
     r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
@@ -863,7 +950,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "fleet") { this.renderMissions(); }
+    if (this.page === "fleet") { this.renderMissions(); this.renderRoutes(); }
     // skip the periodic re-render while a filter <select> is focused, so an open dropdown isn't nuked
     if (this.page === "bazaar") { const a = document.activeElement; if (!(a && a.classList && a.classList.contains("bz-filter"))) this.renderBazaar(); }
     if (this.page === "barons") this.renderLeaderboard();

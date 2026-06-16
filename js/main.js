@@ -89,6 +89,7 @@ const Game = {
     const offlineReports = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
     const offlineSold = Bazaar.tick(now);
+    const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
     Broadcast.backfill(now, elapsed);   // populate the newswire as if it kept running
     this.state.lastSeenAt = now;
@@ -134,7 +135,7 @@ const Game = {
     // First-run tutorial: show it now for a fresh baron, or queue it to open
     // once the "While You Were Away" modal is dismissed for a returning one.
     this._tutorialPending = !this.state.settings.tutorialSeen;
-    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold });
+    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold, routed: offlineRoutes });
     this._booting = false;
     if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
 
@@ -163,7 +164,8 @@ const Game = {
     const done = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
     Rivals.tick(now);
-    if (done.length) this.requestSave();
+    const routed = Routes.resolve(now);
+    if (done.length || routed.total) this.requestSave();
     UI.tick();
   },
 
@@ -212,6 +214,7 @@ const Game = {
       Missions.resolveMatured(now);
       Fleet.pruneMercs(now);
       Bazaar.tick(now);
+      Routes.resolve(now);
       Rivals.tick(now);
       this._booting = false;
     }

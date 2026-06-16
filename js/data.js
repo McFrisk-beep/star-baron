@@ -158,6 +158,14 @@ const BAZAARCFG = {
   itemResaleMult: 0.55,              // instant "Sell now" payout = this × an item's value
   shipResaleMult: 0.5,               // sell a ship for this × its catalog price (40–60% band); gear adds its resale value
 };
+
+/* ---- TRADE ROUTES ---------------------------------------------------------
+   Assign an idle ship to ferry a commodity from a cheap system to a dear one;
+   it banks the price spread × cargo every round trip while you're away.        */
+const ROUTECFG = {
+  margin: 0.5,              // ship keeps this × (spread × cargo) per round trip (the rest is "friction/fuel")
+  maxCyclesPerResolve: 50,  // cap round trips banked in a single catch-up (anti-windfall on long idles)
+};
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
 // need real firepower) pay much more than the safe early grind.
@@ -327,6 +335,7 @@ window.ALL_SHIPS = ALL_SHIPS;
 window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
+window.ROUTECFG = ROUTECFG;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;
