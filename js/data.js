@@ -298,18 +298,24 @@ const SYSTEMVIEW = {
   bubbleMs: 2900,                        // how long a speech bubble lingers
 };
 
+// Admin-uploaded sprite overrides ("category:name" -> custom URL), loaded from
+// Supabase by content.js. _asset() returns the override if present, else the
+// built-in /assets path — so swapping a sprite is just setting a key here.
+const ASSET_OVERRIDES = {};
+const _asset = (key, path) => ASSET_OVERRIDES[key] || path;
+
 // asset path helpers — change these if you reorganize /assets
 const ASSET = {
-  portrait: i => `assets/portraits/alien_${String(i).padStart(2, "0")}.png`,
-  commodity: id => `assets/commodities/${id}.png`,
-  ship: sprite => `assets/ships/${sprite}.png`,
-  broadcast: name => `assets/broadcast/${name}.png`,
-  star: type => `assets/stars/${type}.png`,
-  planet: type => `assets/planets/${type}.png`,
-  station: race => `assets/stations/${race}.png`,
-  raceship: race => `assets/raceships/${race}.png`,
-  nebula: name => `assets/nebula/${name}.png`,
-  asteroids: () => `assets/space/asteroids.png`,
+  portrait: i => _asset(`portrait:${i}`, `assets/portraits/alien_${String(i).padStart(2, "0")}.png`),
+  commodity: id => _asset(`commodity:${id}`, `assets/commodities/${id}.png`),
+  ship: sprite => _asset(`ship:${sprite}`, `assets/ships/${sprite}.png`),
+  broadcast: name => _asset(`broadcast:${name}`, `assets/broadcast/${name}.png`),
+  star: type => _asset(`star:${type}`, `assets/stars/${type}.png`),
+  planet: type => _asset(`planet:${type}`, `assets/planets/${type}.png`),
+  station: race => _asset(`station:${race}`, `assets/stations/${race}.png`),
+  raceship: race => _asset(`raceship:${race}`, `assets/raceships/${race}.png`),
+  nebula: name => _asset(`nebula:${name}`, `assets/nebula/${name}.png`),
+  asteroids: () => _asset(`asteroids:_`, `assets/space/asteroids.png`),
 };
 
 // Make data available as globals (works on file:// and GitHub Pages, no fetch).
@@ -335,3 +341,4 @@ window.STAR_TYPES = STAR_TYPES;
 window.PLANET_TYPES = PLANET_TYPES;
 window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;
+window.ASSET_OVERRIDES = ASSET_OVERRIDES;

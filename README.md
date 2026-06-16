@@ -75,10 +75,13 @@ pattern.
   Trading/fleet stay on the curated unlockable capitals (one per sector).
 - **Accounts & admin tools** — optional online accounts (Supabase) with two roles:
   **players** get the game (dev toggles hidden), while **admins** get an in-game
-  **content editor** to add/modify/delete flavor and item data live — chat lines,
-  NPCs, news, ship dialogue, commodities, rarities, and more — stored in Supabase
-  (public-read / admin-write) and overlaid on the built-in defaults. Roles are set
-  server-side, so a player can't grant themselves access. See `docs/ADMIN_SETUP.md`.
+  **CMS**: a **📝 Content** editor that renders each collection with the friendliest
+  widget for its shape — **tables** (commodities, ships, danger, rarities, NPCs,
+  news…), **line lists** (chat), **grouped lists** (ship/rival lines), or raw JSON —
+  and an **🖼 Images** gallery to upload/replace any sprite (portraits, ships,
+  planets, …) to Supabase Storage. All overlaid on the built-in defaults
+  (public-read / admin-write); roles are set server-side so a player can't grant
+  themselves access. See `docs/ADMIN_SETUP.md`.
 - **New-player onboarding** — a skippable, eight-step **tutorial carousel** walks
   a fresh baron through the Exchange, travel, fleet, Bazaar, reading the
   feed/news, and the rival ladder. A **❔ Help** button reopens it anytime.

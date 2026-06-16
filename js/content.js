@@ -27,16 +27,20 @@ const Content = {
     { key: "INDUSTRIES",      label: "Planet industries",     group: "flavor" },
     { key: "MISSION_PHASES",  label: "Mission phases",        group: "flavor" },
     { key: "COMMODITIES",     label: "Commodities (items)",   group: "data" },
+    { key: "SHIP_CATALOG",    label: "Ships (transport/escort/flagship)", group: "data" },
     { key: "CONTRACT_TEMPLATES", label: "Contract templates", group: "data" },
     { key: "DANGER",          label: "Danger tiers",          group: "data" },
     { key: "RARITIES",        label: "Item rarities",         group: "data" },
     { key: "ACCESSORY_KINDS", label: "Accessory kinds",       group: "data" },
   ],
+  // Non-collection keys that are also persisted in the content table (managed by
+  // the image manager, not the JSON editor).
+  EXTRA_KEYS: ["ASSET_OVERRIDES"],
   _defaults: {},
   _snapped: false,
   loaded: false,
 
-  has(key) { return this.COLLECTIONS.some(c => c.key === key); },
+  has(key) { return this.COLLECTIONS.some(c => c.key === key) || this.EXTRA_KEYS.includes(key); },
   meta(key) { return this.COLLECTIONS.find(c => c.key === key); },
   current(key) { return window[key]; },
   default(key) { return this._defaults[key]; },
@@ -44,9 +48,20 @@ const Content = {
   // Deep-copy the pristine defaults once, before any override is applied.
   snapshotDefaults() {
     if (this._snapped) return; this._snapped = true;
-    for (const c of this.COLLECTIONS) {
-      const v = window[c.key];
-      if (v !== undefined) { try { this._defaults[c.key] = JSON.parse(JSON.stringify(v)); } catch (e) {} }
+    const keys = this.COLLECTIONS.map(c => c.key).concat(this.EXTRA_KEYS);
+    for (const k of keys) {
+      const v = window[k];
+      if (v !== undefined) { try { this._defaults[k] = JSON.parse(JSON.stringify(v)); } catch (e) {} }
+    }
+  },
+
+  // Some globals are derived from editable ones (ALL_SHIPS from SHIP_CATALOG);
+  // rebuild them in place after overrides are applied.
+  rederive() {
+    if (window.SHIP_CATALOG && Array.isArray(window.ALL_SHIPS)) {
+      const sc = window.SHIP_CATALOG;
+      const all = [...(sc.transport || []), ...(sc.escort || []), ...(sc.main || [])];
+      window.ALL_SHIPS.length = 0; window.ALL_SHIPS.push(...all);
     }
   },
 
@@ -76,6 +91,7 @@ const Content = {
       const { data, error } = await Cloud.client.from("content").select("key,data");
       if (error) throw error;
       for (const row of (data || [])) if (this.has(row.key)) this.apply(row.key, row.data);
+      this.rederive();
       this.loaded = true;
     } catch (e) { console.warn("[Content] load failed (using built-in defaults):", e); }
   },
@@ -88,6 +104,7 @@ const Content = {
       .upsert({ key, data: value, updated_at: new Date().toISOString() });
     if (error) throw error;
     this.apply(key, value);
+    this.rederive();
   },
 
   // Admin: drop the override and restore the built-in default.

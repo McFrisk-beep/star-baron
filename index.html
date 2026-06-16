@@ -230,17 +230,32 @@
 
   <div class="modal-backdrop hidden" id="admin-modal">
     <div class="modal modal-wide admin-panel">
-      <h3>🛠 Admin · Content</h3>
-      <p class="muted-note">Edit the game's content live. Flavor changes apply immediately; item/rule changes apply after a reload. Stored in your Supabase project for all players.</p>
-      <label class="auth-field">Collection
-        <select id="admin-collection"></select></label>
-      <textarea id="admin-json" class="admin-json" spellcheck="false" rows="16"></textarea>
-      <p class="admin-status" id="admin-status"></p>
-      <div class="settings-actions">
-        <button class="btn" id="admin-validate">Validate</button>
-        <button class="btn btn-go" id="admin-save">Save</button>
-        <button class="btn btn-danger" id="admin-reset">Reset to default</button>
-        <button class="btn" id="admin-close">Close</button>
+      <h3>🛠 Admin</h3>
+      <div class="admin-nav">
+        <button class="admin-navbtn active" data-view="content">📝 Content</button>
+        <button class="admin-navbtn" data-view="images">🖼 Images</button>
+      </div>
+
+      <div id="admin-view-content">
+        <div class="admin-row">
+          <label class="auth-field admin-collection-field">Collection
+            <select id="admin-collection"></select></label>
+          <label class="admin-mode"><input type="checkbox" id="admin-rawjson" /> Raw JSON</label>
+        </div>
+        <div id="admin-editor"></div>
+        <p class="admin-status" id="admin-status"></p>
+        <div class="settings-actions">
+          <button class="btn" id="admin-validate">Validate</button>
+          <button class="btn btn-go" id="admin-save">Save</button>
+          <button class="btn btn-danger" id="admin-reset">Reset to default</button>
+          <button class="btn admin-close">Close</button>
+        </div>
+      </div>
+
+      <div id="admin-view-images" class="hidden">
+        <p class="muted-note" id="admin-img-note"></p>
+        <div id="admin-gallery"></div>
+        <div class="settings-actions"><button class="btn admin-close">Close</button></div>
       </div>
     </div>
   </div>

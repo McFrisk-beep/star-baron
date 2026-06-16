@@ -297,6 +297,40 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .admin-json:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .admin-status { font-size: 12px; min-height: 16px; margin: 0 0 4px; color: var(--ink-dim); font-family: var(--mono); }
 .admin-status.good { color: var(--up); } .admin-status.bad { color: var(--down); }
+.admin-panel { max-width: min(860px, 96vw); }
+.admin-nav { display: flex; gap: 6px; margin-bottom: 12px; }
+.admin-navbtn { background: #131826; border: 1px solid var(--line); color: var(--ink-dim);
+  padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--sans); }
+.admin-navbtn.active { background: linear-gradient(180deg, var(--panel), var(--bg2)); color: #fff; border-color: var(--accent); }
+.admin-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+.admin-collection-field { flex: 1; min-width: 220px; }
+.admin-mode { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); padding-bottom: 8px; cursor: pointer; }
+#admin-editor { margin: 10px 0 6px; max-height: 56vh; overflow: auto; }
+.admin-hint, .admin-subhead { font-size: 11px; color: var(--ink-dim); margin: 8px 0 4px; }
+.admin-subhead { text-transform: uppercase; letter-spacing: 1px; color: var(--accent); font-weight: 700; }
+.admin-table-wrap { overflow-x: auto; margin-bottom: 8px; }
+.admin-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.admin-table th { text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--ink-dim); padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.admin-table td { padding: 3px 5px; border-bottom: 1px solid #1a2034; vertical-align: top; }
+.admin-table input[type=text], .admin-table input[type=number], .admin-table textarea {
+  background: #0c1020; border: 1px solid var(--line); color: var(--ink); border-radius: 5px;
+  padding: 4px 6px; font-family: var(--mono); font-size: 12px; width: 100%; min-width: 70px; resize: vertical; }
+.admin-table textarea { min-width: 200px; }
+.admin-x { background: none; border: none; color: var(--ink-dim); cursor: pointer; font-size: 12px; padding: 4px; }
+.admin-x:hover { color: var(--down); }
+.admin-groups { display: flex; flex-direction: column; gap: 4px; }
+.admin-group-label { font-size: 11px; color: var(--accent); font-family: var(--mono); margin-top: 6px; }
+.admin-lines, .admin-group { width: 100%; }
+/* image gallery */
+.admin-gallery-h { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-dim);
+  border-bottom: 1px solid var(--line); padding-bottom: 6px; margin: 14px 0 8px; }
+.admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.admin-card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px; text-align: center; }
+.admin-card.custom { border-color: var(--accent2); }
+.admin-thumb { width: 56px; height: 56px; object-fit: contain; image-rendering: auto; display: block; margin: 0 auto 6px; background: #05070e; border-radius: 6px; }
+.admin-card-name { font-size: 10px; color: var(--ink-dim); margin-bottom: 6px; word-break: break-word; }
+.admin-card-reset { margin-top: 4px; color: var(--down); }
 
 /* ===== responsive ===== */
 /* On narrow screens the fixed app-shell is dropped: the page scrolls normally,

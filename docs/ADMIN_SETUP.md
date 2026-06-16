@@ -80,27 +80,67 @@ top bar, and the dev toggles inside **⚙ Settings**.
 
 ---
 
-## Using the content editor
+## 3b. Storage bucket for sprite uploads (for the Images tab)
 
-**🛠 Admin** → pick a collection (e.g. *Trader chat lines*, *Commodities (items)*)
-→ edit the JSON → **Validate** → **Save**.
+To replace character/ship/planet sprites from the admin panel, create a public
+**`sprites`** bucket and let admins write to it. In **SQL Editor**:
 
-- **Flavor** collections (chat, omens, news, NPCs, ship lines, tutorial, …) apply
-  **live** — new lines start showing right away.
-- **Items & rules** (commodities, danger tiers, rarities, accessory kinds, contract
-  templates) apply **after a reload** (the market/economy reads them at startup).
-- **Reset to default** removes your override and restores the built-in content.
-- Keep the JSON **shape** intact (same field names/types as the default you see) —
-  malformed or wrong-typed overrides are ignored at boot and the default is used,
-  so a bad edit can't brick the game.
+```sql
+-- public bucket (or create it in Dashboard → Storage → New bucket, name "sprites", Public)
+insert into storage.buckets (id, name, public)
+  values ('sprites', 'sprites', true) on conflict (id) do nothing;
+
+-- anyone can read; only admins can upload/replace/delete
+create policy "public read sprites" on storage.objects
+  for select using (bucket_id = 'sprites');
+create policy "admin write sprites" on storage.objects
+  for insert to authenticated with check (
+    bucket_id = 'sprites' and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'));
+create policy "admin update sprites" on storage.objects
+  for update to authenticated using (
+    bucket_id = 'sprites' and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'));
+create policy "admin delete sprites" on storage.objects
+  for delete to authenticated using (
+    bucket_id = 'sprites' and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'));
+```
+
+---
+
+## Using the admin panel
+
+**🛠 Admin** opens two tabs:
+
+### 📝 Content
+Pick a collection. Most are shown as a **friendly editor**, no JSON needed:
+
+- **Tables** for structured lists — *Commodities (items)*, *Ships*, *Danger tiers*,
+  *Rarities*, *Omens*, *Tutorial steps*. Edit cells inline; **+ row** / **✕** to
+  add/remove entries.
+- **Line lists** for simple text pools — *Trader chat lines*, *Local chatter* —
+  one entry per line.
+- **Grouped lists** for keyed pools — *Ship voice lines*, *Reactions*, *Rival barbs*.
+- **Raw JSON** checkbox — switch any collection to direct JSON for full control
+  (needed for the few nested ones like *News events*, *NPCs*, *Ship dialogues*).
+
+Then **Validate** → **Save**.
+- **Flavor** edits apply **live**. **Items & rules** (commodities, ships, …) apply
+  **after a reload** (the market/economy reads them at startup).
+- **Reset to default** removes your override.
+- Malformed or wrong-typed overrides are ignored at boot (the built-in default is
+  used), so a bad edit **can't brick the game**.
+
+### 🖼 Images
+A gallery of every sprite slot — portraits, ship hulls, race ships, planets, stars,
+stations, commodities, nebulae, broadcast screens. **Upload** (or **Replace**) a
+PNG/JPG; it's stored in your `sprites` bucket and the game points at it. **Reset**
+reverts a slot to the built-in art. Changes show on **reload**.
 
 ## Notes & limits
 
-- **Character/ship sprites** are image files, not JSON, so they aren't in this
-  editor yet. Editing those means uploading images to **Supabase Storage** and
-  pointing the game at them — a planned follow-up. For now, swapping the PNGs in
-  `/assets` (same filenames) still works.
-- Content is shared by **all** players (it's your canonical game content), so edits
-  are global. There's no per-player content.
+- Content & sprites are shared by **all** players (your canonical game content), so
+  edits are global. There's no per-player content.
 - Defaults always ship in the code, so the game still works fully offline / for
   guests, and as a fallback if Supabase is unreachable.
+- Edits live in **Supabase, not Git** — that's what makes them instantly
+  server-wide for everyone without a redeploy. (Want a backup in Git? Use Raw JSON
+  to copy a collection out, or ask for an Export button.)
