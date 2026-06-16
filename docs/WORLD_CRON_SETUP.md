@@ -89,6 +89,83 @@ select cron.schedule('world-tick', '* * * * *', $$ select public.world_tick(); $
 > `select cron.unschedule('world-tick');` then re-run the `cron.schedule(...)` line.
 > You can also manage this under **Dashboard → Integrations → Cron**.
 
+## 1b. Shared news + market (optional, recommended)
+
+This makes **galactic news server-driven and shared**: a cron job emits a news
+event into a `world_news` table on a schedule; every client applies the *same*
+effect with the *same* start time, so the market reacts **identically** for
+everyone, and each client switches off its own news generator. Run this in the
+**SQL Editor** too:
+
+```sql
+create table if not exists public.world_news (
+  id          bigint generated always as identity primary key,
+  event_id    text not null,
+  target      text not null,          -- commodity id OR category
+  mult        numeric not null,       -- >1 price up, <1 down
+  duration_ms bigint not null,
+  headline    text not null,
+  body        text not null,
+  faction     text,
+  cat         text,
+  dir         text,
+  created_at  timestamptz not null default now()
+);
+create index if not exists world_news_id_idx on public.world_news (id desc);
+alter table public.world_news enable row level security;
+create policy "read world news" on public.world_news for select using (true);
+
+create or replace function public.news_tick()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  evs jsonb;
+  ev  jsonb;
+  m   numeric;
+begin
+  -- prefer your admin-edited NEWS_EVENTS (Admin → Content), else a built-in set
+  select data into evs from public.content where key = 'NEWS_EVENTS';
+  if evs is null or jsonb_array_length(evs) = 0 then
+    evs := '[
+      {"id":"velm_blockade","faction":"syndicate","cat":"gas","headline":"BLOCKADE AT VELM TIDE","body":"Syndicate raiders choke the Velm gas lanes; gas surges.","effect":{"target":"gas","mult":1.6}},
+      {"id":"belt_strike","faction":"mining_combine","cat":"mineral","headline":"MINERS STRIKE THE KORRIN BELT","body":"Ore output craters as drillers down tools.","effect":{"target":"mineral","mult":1.5}},
+      {"id":"chip_glut","faction":"free_trade","cat":"tech","headline":"ORIN FORGE FLOODS THE CHIP MARKET","body":"A nanochip surplus drags tech lower.","effect":{"target":"nanochips","mult":0.6}},
+      {"id":"festival","faction":"agri_collective","cat":"luxury","headline":"GREAT VOID FESTIVAL DECLARED","body":"Luxury demand soars sector-wide.","effect":{"target":"luxury","mult":1.7}},
+      {"id":"bumper_harvest","faction":"agri_collective","cat":"agri","headline":"BUMPER HARVEST AT THESSA GREENS","body":"Record yields glut the food market.","effect":{"target":"agri","mult":0.55}},
+      {"id":"antimatter_recall","faction":"free_trade","cat":"tech","headline":"ANTIMATTER CONTAINMENT RECALL","body":"Scarcity sends antimatter vertical.","effect":{"target":"antimatter","mult":2.0}},
+      {"id":"pirate_surge","faction":"syndicate","cat":"illicit","headline":"PIRATE FLEETS RAID THE LANES","body":"Contraband demand swells in the shadows.","effect":{"target":"contraband","mult":1.5}},
+      {"id":"helium_find","faction":"mining_combine","cat":"gas","headline":"MASSIVE HELIUM-3 STRIKE","body":"A record gas pocket collapses helium-3.","effect":{"target":"helium3","mult":0.5}}
+    ]'::jsonb;
+  end if;
+
+  ev := evs -> floor(random() * jsonb_array_length(evs))::int;
+  m  := (ev -> 'effect' ->> 'mult')::numeric;
+
+  insert into public.world_news(event_id, target, mult, duration_ms, headline, body, faction, cat, dir)
+  values (
+    coalesce(ev ->> 'id', 'news'),
+    ev -> 'effect' ->> 'target',
+    m,
+    45 * 60 * 1000,                       -- 45-minute market effect (matches the game)
+    ev ->> 'headline', ev ->> 'body', ev ->> 'faction', ev ->> 'cat',
+    case when m >= 1 then 'up' else 'down' end
+  );
+
+  delete from public.world_news where created_at < now() - interval '6 hours';
+end;
+$$;
+
+-- a fresh galactic story roughly every 20 minutes
+select cron.schedule('news-tick', '*/20 * * * *', $$ select public.news_tick(); $$);
+```
+
+> Tune frequency with the schedule (`*/20` = every 20 min). The client reads
+> `world_news` automatically — no code/config changes. Once the table exists, the
+> client stops firing its own news so the shared events are the single source.
+
 ## 2. That's it
 
 The client already reads `world_feed` (see `js/worldfeed.js`): it loads the recent

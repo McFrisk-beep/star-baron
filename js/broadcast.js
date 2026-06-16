@@ -6,6 +6,7 @@ const Broadcast = {
   tvTimer: null,
   newsTimer: null,
   newsUntil: 0,
+  shared: false,   // true once a shared (cron) news source takes over
 
   s() { return window.Game.state; },
   ts() { return window.Game.timeScale || 1; },
@@ -13,12 +14,18 @@ const Broadcast = {
   start() {
     this.stop();
     this.rotateTV();
-    this.scheduleNextNews();
+    if (!this.shared) this.scheduleNextNews();   // shared news is driven by WorldFeed instead
   },
   stop() {
     if (this.tvTimer) clearTimeout(this.tvTimer);
     if (this.newsTimer) clearTimeout(this.newsTimer);
     this.tvTimer = this.newsTimer = null;
+  },
+
+  // Hand news over to the shared world source: stop the local generator.
+  disableLocalNews() {
+    this.shared = true;
+    if (this.newsTimer) { clearTimeout(this.newsTimer); this.newsTimer = null; }
   },
 
   newsLive() { return Date.now() < this.newsUntil; },
@@ -48,6 +55,7 @@ const Broadcast = {
 
   // Fire a news event for a given category soon (called by a real omen).
   scheduleNews(cat, delayMs) {
+    if (this.shared) return;   // shared world drives news; omens become flavor-only hints
     const candidates = NEWS_EVENTS.filter(e => e.cat === cat);
     const event = candidates.length ? Util.pick(candidates) : Util.pick(NEWS_EVENTS);
     setTimeout(() => this.fire(event), Math.max(0, delayMs));

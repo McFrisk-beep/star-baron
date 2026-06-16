@@ -82,6 +82,13 @@ pattern.
   planets, …) to Supabase Storage. All overlaid on the built-in defaults
   (public-read / admin-write); roles are set server-side so a player can't grant
   themselves access. See `docs/ADMIN_SETUP.md`.
+- **Persistent shared world** (optional, Supabase Cron) — a once-a-minute job
+  appends ambient **trader chat**, and a periodic job emits **galactic news** into
+  shared tables every client reads. News applies the same market effect with the
+  same start time on everyone, so the market reacts identically galaxy-wide, and
+  the world keeps "running" (and the free project stays awake) with nobody online.
+  Missions are timestamped, so you can launch one, leave, and return to it
+  completed or mid-flight depending on elapsed time. See `docs/WORLD_CRON_SETUP.md`.
 - **New-player onboarding** — a skippable, eight-step **tutorial carousel** walks
   a fresh baron through the Exchange, travel, fleet, Bazaar, reading the
   feed/news, and the rival ladder. A **❔ Help** button reopens it anytime.
