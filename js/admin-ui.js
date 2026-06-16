@@ -11,6 +11,7 @@ const AdminUI = {
   key: null,
   kind: "json",
   view: "content",
+  imgCat: 0,
 
   // ---- tiny DOM helper (createElement-based to avoid HTML-escaping user text) -
   el(tag, props = {}, kids = []) {
@@ -36,7 +37,7 @@ const AdminUI = {
       select: $("admin-collection"), raw: $("admin-rawjson"),
       editor: $("admin-editor"), status: $("admin-status"),
       validate: $("admin-validate"), save: $("admin-save"), reset: $("admin-reset"),
-      gallery: $("admin-gallery"), imgNote: $("admin-img-note"),
+      gallery: $("admin-gallery"), imgNote: $("admin-img-note"), imgTabs: $("admin-imgtabs"),
       devToggles: $("dev-toggles"),
       closes: document.querySelectorAll(".admin-close"),
     };
@@ -269,29 +270,42 @@ const AdminUI = {
 
   buildGallery() {
     if (!this.r.gallery) return;
+    if (this.imgCat == null) this.imgCat = 0;
+    const slots = this.slots();
+    if (this.imgCat >= slots.length) this.imgCat = 0;
     this.r.imgNote.textContent = "Upload a PNG/JPG to replace any sprite (stored in your Supabase 'sprites' bucket — see docs/ADMIN_SETUP.md). Changes show on reload.";
+    // category sub-tabs
+    this.r.imgTabs.innerHTML = "";
+    slots.forEach((slot, i) => {
+      this.r.imgTabs.append(this.el("button", {
+        class: "admin-imgtab" + (i === this.imgCat ? " active" : ""),
+        text: slot.group, onclick: () => { this.imgCat = i; this.buildGallery(); },
+      }));
+    });
+    // just the active category's grid (scrolls on its own)
     this.r.gallery.innerHTML = "";
-    for (const slot of this.slots()) {
-      this.r.gallery.append(this.el("h4", { class: "admin-gallery-h", text: slot.group }));
-      const grid = this.el("div", { class: "admin-grid" });
-      for (const item of slot.items) {
-        const key = `${slot.cat}:${item}`;
-        const overridden = !!ASSET_OVERRIDES[key];
-        const img = this.el("img", { class: "admin-thumb", src: slot.url(item), alt: item });
-        img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) })); };
-        const file = this.el("input", { type: "file", accept: "image/*", class: "hidden" });
-        file.onchange = () => { if (file.files[0]) this.upload(slot.cat, item, file.files[0]); };
-        const card = this.el("div", { class: "admin-card" + (overridden ? " custom" : "") }, [
-          img,
-          this.el("div", { class: "admin-card-name", text: String(item) }),
-          this.el("button", { class: "btn btn-mini", text: overridden ? "Replace" : "Upload", onclick: () => file.click() }),
-        ]);
-        if (overridden) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Reset", onclick: () => this.resetSlot(slot.cat, item) }));
-        card.append(file);
-        grid.append(card);
-      }
-      this.r.gallery.append(grid);
+    this.r.gallery.append(this.renderImageGrid(slots[this.imgCat]));
+  },
+
+  renderImageGrid(slot) {
+    const grid = this.el("div", { class: "admin-grid" });
+    for (const item of slot.items) {
+      const key = `${slot.cat}:${item}`;
+      const overridden = !!ASSET_OVERRIDES[key];
+      const img = this.el("img", { class: "admin-thumb", src: slot.url(item), alt: item });
+      img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) })); };
+      const file = this.el("input", { type: "file", accept: "image/*", class: "hidden" });
+      file.onchange = () => { if (file.files[0]) this.upload(slot.cat, item, file.files[0]); };
+      const card = this.el("div", { class: "admin-card" + (overridden ? " custom" : "") }, [
+        img,
+        this.el("div", { class: "admin-card-name", text: String(item) }),
+        this.el("button", { class: "btn btn-mini", text: overridden ? "Replace" : "Upload", onclick: () => file.click() }),
+      ]);
+      if (overridden) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Reset", onclick: () => this.resetSlot(slot.cat, item) }));
+      card.append(file);
+      grid.append(card);
     }
+    return grid;
   },
 
   async upload(cat, item, file) {
