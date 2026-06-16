@@ -88,6 +88,9 @@ const AuthUI = {
         await Cloud.signIn(email, pass);
       }
       await this.syncOnLogin();
+      // freeze local writes so the reload loads the synced/cloud save cleanly
+      // instead of beforeunload overwriting it with the pre-login state.
+      if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
       UI.toast("Signed in — syncing your save…", "good");
       setTimeout(() => location.reload(), 350);
     } catch (e) {
@@ -115,6 +118,9 @@ const AuthUI = {
     if (this.busy) return;
     if (!confirm("Sign out? This device returns to a fresh game. Your progress stays safe in the cloud and comes back when you log in.")) return;
     this.busy = true;
+    // Stop any further local writes BEFORE clearing — otherwise the page's
+    // beforeunload/autosave would re-persist the old state right after we wipe it.
+    if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
     // 1) push the latest state up so nothing is lost, 2) end the session,
     // 3) wipe the local save so the next session starts as a brand-new player.
     try { await Store.flush(window.Game ? Game.snapshot() : null); } catch (e) {}

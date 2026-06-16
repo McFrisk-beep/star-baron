@@ -26,13 +26,23 @@ const Store = {
 
   signedIn() { return !!(window.Cloud && Cloud.signedIn()); },
 
+  // Surface a persistent cloud failure once (most commonly: the `saves` table
+  // hasn't been created yet — see docs/CLOUD_SETUP.md).
+  _cloudFail(where, e) {
+    console.warn(`[Store] cloud ${where} failed:`, e);
+    if (this._cloudWarned) return;
+    this._cloudWarned = true;
+    if (window.UI && UI.toast) UI.toast("Cloud sync isn't working — has the 'saves' table been created? (docs/CLOUD_SETUP.md)", "warn", 7000);
+  },
+
   // ---- public API (unchanged signatures) --------------------------------
   async load() {
     if (this.signedIn()) {
       try {
         const remote = await Cloud.loadRemote();
-        if (remote) { this.localSave(remote); return remote; }   // cache cloud locally
-      } catch (e) { console.warn("[Store] cloud load failed, using local copy:", e); }
+        if (remote) { this.localSave(remote); console.log("[Store] loaded cloud save"); return remote; }
+        console.log("[Store] signed in, no cloud save yet — using local");
+      } catch (e) { this._cloudFail("load", e); }
     }
     return this.localLoad();
   },
@@ -47,7 +57,7 @@ const Store = {
   _queueCloud(state) {
     clearTimeout(this._cloudTimer);
     this._cloudTimer = setTimeout(() => {
-      Cloud.saveRemote(state).catch(e => console.warn("[Store] cloud save failed:", e));
+      Cloud.saveRemote(state).then(() => console.log("[Store] cloud save synced")).catch(e => this._cloudFail("save", e));
     }, this._cloudMs);
   },
 
@@ -55,7 +65,7 @@ const Store = {
   async flush(state) {
     clearTimeout(this._cloudTimer);
     if (!this.signedIn()) return;
-    try { if (state) await Cloud.saveRemote(state); } catch (e) { console.warn("[Store] cloud flush failed:", e); }
+    try { if (state) await Cloud.saveRemote(state); } catch (e) { this._cloudFail("flush", e); }
   },
 
   async clear() {

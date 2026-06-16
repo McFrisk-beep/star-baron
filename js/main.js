@@ -264,7 +264,7 @@ const Game = {
     clearTimeout(this._saveTimer);
     this._saveTimer = setTimeout(() => this.save(), 800);
   },
-  save() { Store.save(this.snapshot()); },
+  save() { if (this._noSave) return; Store.save(this.snapshot()); },
 
   async reset() {
     await Store.clear();
