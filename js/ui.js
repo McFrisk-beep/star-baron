@@ -59,6 +59,8 @@ const UI = {
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
       equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
       route: $("route-modal"), rtTitle: $("rt-title"), rtBody: $("rt-body"), rtStart: $("rt-start"), rtCancel: $("rt-cancel"),
+      incident: $("incident-modal"), incIcon: $("inc-icon"), incTitle: $("inc-title"), incText: $("inc-text"),
+      incChoices: $("inc-choices"), incResult: $("inc-result"), incClose: $("inc-close"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
     };
@@ -812,6 +814,32 @@ const UI = {
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
   },
 
+  // ===== incidents =========================================================
+  showIncident(incident) {
+    this._incident = incident;
+    this.refs.incIcon.textContent = incident.icon || "!";
+    this.refs.incTitle.textContent = incident.title;
+    this.refs.incText.textContent = (incident.text || "").replace(/\{SYS\}/g, this.sysName(this.s().currentSystem));
+    this.refs.incChoices.innerHTML = incident.choices.map((c, i) =>
+      `<button class="btn inc-choice" data-choice="${i}">${c.label}${c.chance != null ? ` <span class="inc-odds">${Math.round(c.chance * 100)}%</span>` : ""}</button>`).join("");
+    this.refs.incChoices.classList.remove("hidden");
+    this.refs.incResult.classList.add("hidden"); this.refs.incResult.innerHTML = "";
+    this.refs.incClose.classList.add("hidden");
+    this.refs.incChoices.onclick = e => { const b = e.target.closest("[data-choice]"); if (b) this.resolveIncident(parseInt(b.dataset.choice, 10)); };
+    this.refs.incident.classList.remove("hidden");
+  },
+  resolveIncident(i) {
+    const out = Incidents.resolve(this._incident, i);
+    this.refs.incChoices.classList.add("hidden");
+    const head = out.gamble ? `<b class="${out.won ? "up" : "down"}">${out.won ? "Success" : "Trouble"}</b> — ` : "";
+    this.refs.incResult.innerHTML = head + out.summary;
+    this.refs.incResult.classList.remove("hidden");
+    this.refs.incClose.classList.remove("hidden");
+    this.flashCredits(); window.Game.requestSave();
+    if (this.page === "fleet") this.renderFleet();
+    this.updateHeader();
+  },
+
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
@@ -889,6 +917,7 @@ const UI = {
     r.mmLaunch.onclick = () => this.launchMission();
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
     r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
+    r.incClose.onclick = () => r.incident.classList.add("hidden");
     r.rtStart.onclick = () => {
       const { comm, from, to } = this._routeSel();
       const res = Routes.start(this._routeShip, comm, from, to);

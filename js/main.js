@@ -176,6 +176,7 @@ const Game = {
     Broadcast.start();
     this.scheduleLocalEvent();
     this.scheduleLocalFlavor();
+    this.scheduleIncident();
     this._loopTimer = setInterval(() => this.loop(), CONFIG.marketTickMs);
     this._autosaveTimer = setInterval(() => this.save(), CONFIG.autosaveMs);
     this._bazaarTimer = setInterval(() => { const sold = Bazaar.tick(Date.now()); if (sold.length) this.requestSave(); }, 12000);
@@ -185,7 +186,7 @@ const Game = {
   stopSchedulers() {
     Feed.stop();
     if (window.Broadcast) Broadcast.stop();
-    clearTimeout(this._localTimer); clearTimeout(this._flavorTimer);
+    clearTimeout(this._localTimer); clearTimeout(this._flavorTimer); clearTimeout(this._incidentTimer);
     clearInterval(this._loopTimer); clearInterval(this._autosaveTimer);
     clearInterval(this._bazaarTimer); clearInterval(this._refreshTimer);
     this._loopTimer = this._autosaveTimer = this._bazaarTimer = this._refreshTimer = null;
@@ -259,6 +260,19 @@ const Game = {
       Galaxy.flavorPost(Util.pick(Galaxy.list));
       this.scheduleLocalFlavor();
     }, base / this.timeScale);
+  },
+
+  // Random choice-driven incident pop-up (incidents.js). Active-play only: the
+  // scheduler is torn down while the tab is hidden, so it never fires on idle.
+  scheduleIncident() {
+    clearTimeout(this._incidentTimer);
+    const base = CONFIG.fastNews ? Util.randInt(15000, 30000) : Util.randInt(INCIDENTCFG.minMs, INCIDENTCFG.maxMs);
+    this._incidentTimer = setTimeout(() => { this.fireIncident(); this.scheduleIncident(); }, base / this.timeScale);
+  },
+  fireIncident() {
+    if (this._booting || !window.Incidents) return;
+    if (document.querySelector(".modal-backdrop:not(.hidden)")) return;   // don't interrupt another modal
+    UI.showIncident(Util.pick(INCIDENTS));
   },
 
   snapshot() {

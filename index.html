@@ -195,6 +195,16 @@
       <button class="btn" id="eq-cancel">Cancel</button></div>
   </div>
 
+  <div class="modal-backdrop hidden" id="incident-modal">
+    <div class="modal">
+      <div class="tut-step"><div class="tut-icon" id="inc-icon">!</div><h3 id="inc-title">Incident</h3></div>
+      <p class="inc-text" id="inc-text"></p>
+      <div class="inc-choices" id="inc-choices"></div>
+      <div class="inc-result hidden" id="inc-result"></div>
+      <div class="settings-actions"><button class="btn btn-go hidden" id="inc-close">Continue ▸</button></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="tutorial-modal">
     <div class="modal modal-wide tutorial">
       <div class="tut-step">
@@ -309,6 +319,7 @@
   <script src="js/rivals.js"></script>
   <script src="js/missions.js"></script>
   <script src="js/routes.js"></script>
+  <script src="js/incidents.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>

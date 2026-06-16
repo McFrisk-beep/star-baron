@@ -166,6 +166,14 @@ const ROUTECFG = {
   margin: 0.5,              // ship keeps this × (spread × cargo) per round trip (the rest is "friction/fuel")
   maxCyclesPerResolve: 50,  // cap round trips banked in a single catch-up (anti-windfall on long idles)
 };
+
+/* ---- INCIDENTS ------------------------------------------------------------
+   Random choice-driven encounters during active play (incidents.js). Timer
+   only runs while the tab is visible, so they never fire during idle.          */
+const INCIDENTCFG = {
+  minMs: 6 * 60 * 1000,    // soonest between incidents
+  maxMs: 13 * 60 * 1000,   // latest between incidents
+};
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
 // need real firepower) pay much more than the safe early grind.
@@ -336,6 +344,7 @@ window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.ROUTECFG = ROUTECFG;
+window.INCIDENTCFG = INCIDENTCFG;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;

@@ -273,6 +273,12 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .tut-nav { display: flex; gap: 10px; }
 .wywa-runs { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .wywa-total { font-size: 14px; margin-top: 8px; }
+/* ---- incidents ---- */
+.inc-text { font-size: 13.5px; line-height: 1.55; margin: 4px 0 14px; color: var(--ink); }
+.inc-choices { display: flex; flex-direction: column; gap: 8px; }
+.inc-choice { text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.inc-odds { font-family: var(--mono); font-size: 11px; color: var(--accent2); }
+.inc-result { font-size: 13.5px; padding: 10px 12px; background: #11192c; border-radius: 8px; margin-top: 4px; font-family: var(--mono); }
 
 /* ---- account / auth ---- */
 #btn-account.signed-in { border-color: var(--accent2); color: var(--accent2); }
