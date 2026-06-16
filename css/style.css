@@ -132,6 +132,20 @@ table.market { width: 100%; border-collapse: collapse; font-family: var(--mono);
   border-radius: 6px; padding: 4px 6px; font-family: var(--mono); font-size: 12px; }
 input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 
+/* ===== standing orders & alerts ===== */
+.order-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.order-form select, .order-form input { background: #0c1020; border: 1px solid var(--line); color: var(--ink);
+  border-radius: 6px; padding: 6px 8px; font-family: var(--sans); font-size: 13px; }
+.order-form input[type=number] { width: 92px; font-family: var(--mono); }
+.orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ord { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-family: var(--mono);
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 6px 10px; }
+.ord-tag { font-size: 9px; font-weight: 800; letter-spacing: .5px; padding: 1px 6px; border-radius: 8px; font-family: var(--sans); }
+.ord-buy { background: #173b2e; color: var(--up); }
+.ord-sell { background: #3d1d27; color: var(--down); }
+.ord-alert { background: #2a2f4a; color: var(--accent); }
+.ord-now { margin-left: auto; color: var(--ink-dim); font-size: 11px; }
+
 /* ===== fleet ===== */
 .dispatch { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
 .dispatch-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }

@@ -63,6 +63,22 @@
           </div>
           <div class="transit-overlay hidden" id="transit-overlay"></div>
         </div>
+        <div class="panel" id="orders-panel">
+          <h2>Standing Orders &amp; Alerts <small>auto-fill while you're docked</small></h2>
+          <div class="order-form">
+            <select id="ord-comm" aria-label="commodity"></select>
+            <select id="ord-kind" aria-label="order type">
+              <option value="buy">Buy below</option>
+              <option value="sell">Sell above</option>
+              <option value="alert-below">Alert: drops to</option>
+              <option value="alert-above">Alert: rises to</option>
+            </select>
+            <input type="number" id="ord-price" placeholder="price" min="1" aria-label="trigger price" />
+            <input type="number" id="ord-qty" placeholder="qty" min="1" value="10" aria-label="quantity" />
+            <button class="btn btn-go" id="ord-add">Add</button>
+          </div>
+          <ul class="orders-list" id="orders-list"></ul>
+        </div>
       </section>
 
       <!-- FLEET -->
@@ -320,6 +336,7 @@
   <script src="js/missions.js"></script>
   <script src="js/routes.js"></script>
   <script src="js/incidents.js"></script>
+  <script src="js/orders.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>

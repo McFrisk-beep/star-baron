@@ -61,10 +61,13 @@ const UI = {
       route: $("route-modal"), rtTitle: $("rt-title"), rtBody: $("rt-body"), rtStart: $("rt-start"), rtCancel: $("rt-cancel"),
       incident: $("incident-modal"), incIcon: $("inc-icon"), incTitle: $("inc-title"), incText: $("inc-text"),
       incChoices: $("inc-choices"), incResult: $("inc-result"), incClose: $("inc-close"),
+      ordComm: $("ord-comm"), ordKind: $("ord-kind"), ordPrice: $("ord-price"), ordQty: $("ord-qty"),
+      ordAdd: $("ord-add"), ordersList: $("orders-list"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
     };
     this.buildExchange();
+    this.buildOrders();
     this.wireControls();
     this.wireBus();
     this.renderSystems();
@@ -82,6 +85,7 @@ const UI = {
     else if (name === "systems") this.renderSystems();
     else if (name === "barons") this.renderLeaderboard();
     else if (name === "ach") this.renderAchievements();
+    else if (name === "exchange") this.renderOrders();
   },
 
   // ===== exchange ==========================================================
@@ -164,6 +168,44 @@ const UI = {
     const min = Math.min(...hist), max = Math.max(...hist), span = max - min || 1;
     const pts = hist.map((v, i) => `${(i / (n - 1) * w).toFixed(1)},${(h - ((v - min) / span) * (h - 4) - 2).toFixed(1)}`).join(" ");
     return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${up ? "var(--up)" : "var(--down)"}" stroke-width="1.5"/></svg>`;
+  },
+
+  // ===== standing orders & alerts =========================================
+  buildOrders() {
+    this.refs.ordComm.innerHTML = COMMODITIES.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+    this.refs.ordAdd.onclick = () => this.addOrder();
+    this.renderOrders();
+  },
+  addOrder() {
+    const commId = this.refs.ordComm.value, kindRaw = this.refs.ordKind.value;
+    const price = parseFloat(this.refs.ordPrice.value);
+    if (!(price > 0)) return this.toast("Enter a trigger price.", "warn");
+    const order = kindRaw.startsWith("alert")
+      ? { commId, kind: "alert", side: kindRaw.split("-")[1], price }
+      : { commId, kind: kindRaw, price, qty: Math.max(1, parseInt(this.refs.ordQty.value, 10) || 0) };
+    Orders.add(order);
+    this.refs.ordPrice.value = "";
+    window.Game.requestSave(); this.renderOrders();
+    this.toast("Order set — it fires while you're docked.", "good");
+  },
+  renderOrders() {
+    const list = Orders.list();
+    if (!list.length) {
+      this.refs.ordersList.innerHTML = `<li class="muted-note">No standing orders. Set a buy-below, sell-above, or price alert — they fire automatically while you're docked here.</li>`;
+      this.refs.ordersList.onclick = null; return;
+    }
+    this.refs.ordersList.innerHTML = list.map(o => {
+      const cn = (COMMODITIES.find(c => c.id === o.commId) || {}).name || o.commId;
+      const now = `<span class="ord-now">now ${Util.price(Orders.priceNow(o.commId))}</span>`;
+      const tag = o.kind === "alert"
+        ? `<span class="ord-tag ord-alert">ALERT</span> ${cn} ${o.side === "below" ? "≤" : "≥"} <b>${Util.price(o.price)}</b>`
+        : `<span class="ord-tag ord-${o.kind}">${o.kind.toUpperCase()}</span> ${o.qty} ${cn} ${o.kind === "buy" ? "≤" : "≥"} <b>${Util.price(o.price)}</b>`;
+      return `<li class="ord">${tag} ${now}<button class="btn btn-mini" data-cancelord="${o.id}">✕</button></li>`;
+    }).join("");
+    this.refs.ordersList.onclick = e => {
+      const c = e.target.closest("[data-cancelord]"); if (!c) return;
+      Orders.remove(c.dataset.cancelord); window.Game.requestSave(); this.renderOrders();
+    };
   },
 
   // ===== header ============================================================
@@ -843,9 +885,10 @@ const UI = {
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
-  showWYWA({ elapsedMs, reports, sold, routed }) {
+  showWYWA({ elapsedMs, reports, sold, routed, orders }) {
     const routeTotal = (routed && routed.total) || 0;
-    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal) return false;
+    const fills = (orders || []).filter(e => e.type === "filled");
+    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal && !fills.length) return false;
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => r.success
@@ -853,8 +896,9 @@ const UI = {
         : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}</li>`).join("") + `</ul>`;
     }
     if (routeTotal) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
+    if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
-    if (!reports.length && !sold.length && !routeTotal) html += `<p>The market drifted while you were gone.</p>`;
+    if (!reports.length && !sold.length && !routeTotal && !fills.length) html += `<p>The market drifted while you were gone.</p>`;
     this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
     return true;
   },
@@ -964,6 +1008,12 @@ const UI = {
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
+    Bus.on("order", e => {
+      if (e.type === "alert") this.toast(`⚐ ${e.comm.name} ${e.side === "below" ? "dropped to" : "rose to"} ${Util.price(e.price)}`, "info", 4500);
+      else this.toast(`Order filled — ${e.side === "buy" ? "bought" : "sold"} ${e.qty} ${e.comm.name} @ ${Util.price(e.price)}`, e.side === "buy" ? "buy" : "good", 4500);
+      if (this.page === "exchange") { this.renderOrders(); this.updateExchange(); }
+      this.updateHeader();
+    });
     Bus.on("rivalPass", e => {
       const r = Rivals.data(e.rival); if (!r) return;
       if (e.dir === "up") this.toast(`You overtook ${r.name} — now #${e.rank} on the board.`, "good", 4500);
@@ -980,6 +1030,7 @@ const UI = {
     this.updateHeader();
     this.updateClock();
     if (this.page === "fleet") { this.renderMissions(); this.renderRoutes(); }
+    if (this.page === "exchange" && Orders.list().length) this.renderOrders();
     // skip the periodic re-render while a filter <select> is focused, so an open dropdown isn't nuked
     if (this.page === "bazaar") { const a = document.activeElement; if (!(a && a.classList && a.classList.contains("bz-filter"))) this.renderBazaar(); }
     if (this.page === "barons") this.renderLeaderboard();

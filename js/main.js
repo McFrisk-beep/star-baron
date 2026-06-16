@@ -18,7 +18,7 @@ const Game = {
       mainShip: { type: "pinnace" },
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
-      missions: [], reports: [], listings: [], items: {},
+      missions: [], reports: [], listings: [], orders: [], items: {},
       inventory: { capacity: 6, upgrades: 0 },
       bazaar: { mercs: [], contracts: [], accessories: [] },
       travel: null,
@@ -53,7 +53,7 @@ const Game = {
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
       delete s.avgCost; s.avgCost = loaded.avgCost || {};
     }
-    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.items ||= {};
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.items ||= {};
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
@@ -90,6 +90,7 @@ const Game = {
     Fleet.pruneMercs(now);
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
+    const offlineOrders = Orders.process();      // fill standing orders that crossed while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
     Broadcast.backfill(now, elapsed);   // populate the newswire as if it kept running
     this.state.lastSeenAt = now;
@@ -135,7 +136,7 @@ const Game = {
     // First-run tutorial: show it now for a fresh baron, or queue it to open
     // once the "While You Were Away" modal is dismissed for a returning one.
     this._tutorialPending = !this.state.settings.tutorialSeen;
-    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold, routed: offlineRoutes });
+    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold, routed: offlineRoutes, orders: offlineOrders });
     this._booting = false;
     if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
 
@@ -165,7 +166,9 @@ const Game = {
     Fleet.pruneMercs(now);
     Rivals.tick(now);
     const routed = Routes.resolve(now);
-    if (done.length || routed.total) this.requestSave();
+    const orderEv = Orders.process();
+    for (const ev of orderEv) Bus.emit("order", ev);
+    if (done.length || routed.total || orderEv.length) this.requestSave();
     UI.tick();
   },
 
@@ -216,6 +219,7 @@ const Game = {
       Fleet.pruneMercs(now);
       Bazaar.tick(now);
       Routes.resolve(now);
+      Orders.process();
       Rivals.tick(now);
       this._booting = false;
     }
