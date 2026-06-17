@@ -822,19 +822,19 @@ const UI = {
       this.refs.indList.innerHTML = `<p class="muted-note">No industries yet. Open the <b>Star Map</b>, pick a system, and build a factory/mine/farm on a planet — it produces into your tradeable stock while you're away.</p>`;
       this.refs.indList.onclick = null; return;
     }
-    const perHr = (INDUSTRYCFG.outputPerCycle * 3600000 / INDUSTRYCFG.cycleMs).toFixed(1);
     this.refs.indList.innerHTML = list.map(ind => {
       const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
-      const comm = COMMODITIES.find(c => c.id === ind.commodity);
-      const st = Industries.status(ind), eta = Math.max(0, ind.nextAt - Date.now());
-      const fac = FACTIONS[Industries.controllingFaction(ind.cat)];
-      const running = st === "running" || st === "boom";
+      const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
+      const st = Industries.status(ind), b = Industries.batch(ind);
+      const facId = planet ? Industries.planetFaction(sys, planet) : null, fac = facId ? FACTIONS[facId] : null;
+      const halted = st === "struck" || st === "disrupted";
+      const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
+      const warn = st === "at risk" ? `<div class="ind-warn">⚠ standing collapsing — works seized at ${INDUSTRYCFG.destroyRep}</div>` : "";
       return `<div class="industry"><div class="ind-head"><b>${planet ? planet.name : ind.systemId}</b>
-          <span class="ind-stat ind-${st}">${st}</span>
+          <span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}${st === "boom" ? ` ×${INDUSTRYCFG.warBoost}` : ""}</span>
           <button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>
-        <div class="ind-foot">produces <b>${comm ? comm.name : ind.commodity}</b> → stock · ~${perHr}/hr${st === "boom" ? ` <span class="up">×${INDUSTRYCFG.warBoost}</span>` : ""} · ` +
-        `${running ? `next batch ${Util.duration(eta)}` : `<span class="down">halted</span>`} · ` +
-        `<span class="ind-fac" style="color:${fac.color}">◆ ${fac.name}</span></div></div>`;
+        <div class="ind-foot">≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ` +
+        `<span class="ind-fac" style="color:${fac ? fac.color : "var(--accent2)"}">◆ ${fac ? fac.name : "Navos"}</span></div>${warn}</div>`;
     }).join("");
     this.refs.indList.onclick = e => {
       const d = e.target.closest("[data-demolish]"); if (!d) return;
@@ -1076,6 +1076,11 @@ const UI = {
       else if (e.kind === "end" && e.winner) this.toast(`Peace settles — ${FACTIONS[e.winner].name} prevailed.`, "info", 4500);
       this.renderWarBanner();
       if (this.page === "bazaar") this.renderBazaar();
+    });
+    Bus.on("industryLost", e => {
+      this.toast(`⚠ ${(FACTIONS[e.faction] || {}).name || "A faction"} seized your works on ${e.name}.`, "bad", 5500);
+      if (this.page === "industries") this.renderIndustries();
+      this.updateHeader();
     });
     Bus.on("rivalPass", e => {
       const r = Rivals.data(e.rival); if (!r) return;

@@ -99,14 +99,15 @@ const PlanetView = {
 
   renderAbout() {
     const { sys, planet } = this.cur;
-    const fac = FACTIONS[CATEGORY_FACTION[planet.cat]] || {};
+    const facId = Industries.planetFaction(sys, planet);
+    const fac = facId ? FACTIONS[facId] : null;
     this.refs().tabbody.innerHTML =
       `<p class="pm-lore">${this.flavor(sys, planet)}</p>
        <div class="pm-facts">
          <div><label>Type</label><span>${planet.type.replace("_", " ")}</span></div>
          <div><label>Primary trade</label><span>${planet.industry}</span></div>
          <div><label>Imports</label><span>${planet.importing}</span></div>
-         <div><label>Controlled by</label><span style="color:${fac.color || "var(--ink)"}">${fac.name || "—"}</span></div>
+         <div><label>Controlled by</label><span style="color:${fac ? fac.color : "var(--accent2)"}">${fac ? fac.name : "Navos (neutral)"}</span></div>
        </div>`;
   },
 
@@ -114,20 +115,29 @@ const PlanetView = {
     const { sys, idx, planet } = this.cur;
     const comm = COMMODITIES.find(c => c.id === planet.commodity);
     const name = comm ? comm.name : planet.commodity;
+    const facId = Industries.planetFaction(sys, planet);
+    const facName = facId ? FACTIONS[facId].name : "Navos (neutral)";
+    const facColor = facId ? FACTIONS[facId].color : "var(--accent2)";
+    const suit = Industries.suitability(planet);
+    const suitLabel = suit >= 1.3 ? "excellent" : suit >= 0.9 ? "good" : suit >= 0.5 ? "poor" : "barely viable";
     const ind = Industries.at(sys.id, idx);
     let body;
     if (ind) {
-      const st = Industries.status(ind);
-      const perHr = (INDUSTRYCFG.outputPerCycle * 3600000 / INDUSTRYCFG.cycleMs).toFixed(1);
-      body = `<div class="industry"><div class="ind-head"><b>${name} works</b><span class="ind-stat ind-${st}">${st}</span></div>
-        <div class="ind-foot">produces <b>${name}</b> → your stock · ~${perHr}/hr · next batch ${Util.duration(Math.max(0, ind.nextAt - Date.now()))}</div></div>
-        <div class="settings-actions"><button class="btn btn-danger" data-pm-demolish="${ind.id}">Close works</button></div>`;
+      const st = Industries.status(ind), b = Industries.batch(ind);
+      const halted = st === "struck" || st === "disrupted";
+      const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
+      const warn = st === "at risk" ? `<p class="down">⚠ Standing with ${facName} is collapsing — at ${INDUSTRYCFG.destroyRep} they seize the works.</p>` : "";
+      body = `<div class="industry"><div class="ind-head"><b>${name} works</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}</span></div>
+        <div class="ind-foot">≈ <b>${b.net}</b> ${name} per 12h <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> → your stock · next batch ${next}</div>
+        <div class="ind-foot">suitability <b>${suit.toFixed(2)}×</b> (${suitLabel}) · owner <span style="color:${facColor}">${facName}</span></div></div>
+        ${warn}<div class="settings-actions"><button class="btn btn-danger" data-pm-demolish="${ind.id}">Close works</button></div>`;
     } else {
-      const chk = Industries.canBuild(sys, idx), cost = Industries.startupCost(planet);
-      const fac = FACTIONS[Industries.controllingFaction(planet.cat)];
-      body = `<p class="muted-note">Set up an operation here to produce <b>${name}</b> into your tradeable stock while you're away. Licence depends on your standing with <span style="color:${fac.color}">${fac.name}</span>.</p>` +
-        (chk.ok ? `<div class="settings-actions"><button class="btn btn-go" data-pm-build="${sys.id}:${idx}">Build — ${Util.credits(cost)}c</button></div>`
-                : `<p class="down">🔒 ${chk.msg}</p>`);
+      const chk = Industries.canBuild(sys, idx), cost = Industries.permitCost(sys, planet), rate = Industries.taxRate(sys, planet);
+      const gross = Math.round(INDUSTRYCFG.baseYield * suit), net = gross > 0 ? Math.max(1, gross - Math.ceil(gross * rate)) : 0;
+      body = `<p class="muted-note">Operate here to produce <b>${name}</b> into your tradeable stock in ~12h batches. Suitability <b>${suit.toFixed(2)}×</b> (${suitLabel}) → ≈ <b>${net}</b>/12h after ${(rate * 100).toFixed(0)}% tax. Owner: <span style="color:${facColor}">${facName}</span>.</p>` +
+        (chk.ok
+          ? `<div class="settings-actions"><button class="btn btn-go" data-pm-build="${sys.id}:${idx}">${cost > 0 ? `Buy permit — ${Util.credits(cost)}c` : "Set up — free (neutral space)"}</button></div>`
+          : `<p class="down">🔒 ${chk.msg}</p>`);
     }
     const r = this.refs(); r.tabbody.innerHTML = body;
     const b = r.tabbody.querySelector("[data-pm-build]");
@@ -135,7 +145,7 @@ const PlanetView = {
       const [sid, i] = b.dataset.pmBuild.split(":");
       const res = Industries.build(sid, +i);
       if (!res.ok) return UI.toast(res.msg, "warn");
-      UI.toast(`Industry licensed — ${Util.credits(res.cost)}c.`, "good"); UI.flashCredits();
+      UI.toast(res.cost > 0 ? `Permit bought — ${Util.credits(res.cost)}c.` : "Operation set up.", "good"); UI.flashCredits();
       window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
     };
     const d = r.tabbody.querySelector("[data-pm-demolish]");

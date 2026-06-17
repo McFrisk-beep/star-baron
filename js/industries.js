@@ -1,12 +1,17 @@
-/* industries.js — offworld manufacturing. Build a factory/mine/farm on a
-   star-map planet and it slowly produces that planet's commodity into your
-   tradeable stock (state.positions), running while you're away. Licensing is
-   gated by your standing with the commodity's controlling faction (blocked if
-   you're disliked enough); production halts during local disruptions (a strike)
-   and faction-war slumps, and doubles when its category is a war's hot side.
+/* industries.js — offworld manufacturing. Buy a permit on a star-map planet and
+   it produces that planet's commodity into your tradeable stock (state.positions)
+   in slow, taxed ~12h batches while you're away.
 
-   Reuses CATEGORY_FACTION + Rep (license), Market.activeLocal + Wars (events),
-   and the exchange positions as the output sink.                              */
+   Output = baseYield × planet SUITABILITY (type × commodity category), halved or
+   doubled by local strikes / faction wars, then TAXED: tax = ceil(gross × rate),
+   net = max(1, gross − tax). Navos (the core sector) is neutral — free permits,
+   a low flat tax. Elsewhere the commodity's controlling faction owns the planet:
+   you need standing to buy a permit, higher standing means cheaper permits +
+   lower tax, negative standing raises tax, and at/below −40 they seize the works.
+
+   ponytail: production is tied to the planet's own commodity for now. The
+   extractor/component layer (choose what to mine, yield tiers) lands next on top
+   of this; the hooks (suitability, batch math, status) are already factored.    */
 
 const Industries = {
   s() { return window.Game.state; },
@@ -14,42 +19,49 @@ const Industries = {
   idFor(systemId, idx) { return systemId + "#" + idx; },
   at(systemId, idx) { return this.list().find(i => i.id === this.idFor(systemId, idx)); },
 
-  controllingFaction(cat) { return CATEGORY_FACTION[cat] || "free_trade"; },
-  licensed(cat) {
-    const f = this.controllingFaction(cat);
-    return Rep.tierIndex(Rep.tierOf(f).id) >= Rep.tierIndex(INDUSTRYCFG.licenseMinTier);
+  isNeutral(sys) { return !!sys && sys.sectorId === "core"; },                       // Navos's home turf
+  planetFaction(sys, planet) { return this.isNeutral(sys) ? null : (CATEGORY_FACTION[planet.cat] || "free_trade"); },
+  suitability(planet) {
+    const cat = (COMMODITIES.find(c => c.id === planet.commodity) || {}).cat || planet.cat;
+    return (PLANET_SUITABILITY[planet.type] || {})[cat] ?? 1;
   },
-  startupCost(planet) {
-    const comm = COMMODITIES.find(c => c.id === planet.commodity) || COMMODITIES[0];
-    const disc = Math.max(0, Rep.get(this.controllingFaction(planet.cat))) / 100 * INDUSTRYCFG.repDiscountMax;
-    return Math.round(comm.base * INDUSTRYCFG.startupMult * (1 - disc));
+  permitCost(sys, planet) {
+    if (this.isNeutral(sys)) return 0;
+    const rep = Math.max(0, Rep.get(this.planetFaction(sys, planet)));
+    return Math.round(INDUSTRYCFG.permitBase * (1 - rep / 100 * INDUSTRYCFG.permitRepDiscount));
+  },
+  taxRate(sys, planet) {
+    if (this.isNeutral(sys)) return INDUSTRYCFG.neutralTax;
+    const rep = Rep.get(this.planetFaction(sys, planet));
+    let r = INDUSTRYCFG.factionBaseTax;
+    if (rep >= 0) r *= (1 - rep / 100 * INDUSTRYCFG.taxRepRelief);
+    else r *= (1 + Math.min(1, (-rep) / Math.abs(INDUSTRYCFG.destroyRep)) * INDUSTRYCFG.taxNegPenalty);
+    return Util.clamp(r, 0.02, 0.6);
   },
 
   canBuild(sys, idx) {
     const planet = sys && sys.planets[idx];
     if (!planet) return { ok: false, msg: "No planet." };
-    if (this.at(sys.id, idx)) return { ok: false, msg: "Already operating here." };
-    if (this.list().length >= INDUSTRYCFG.maxPerPlayer) return { ok: false, msg: `Licence cap reached (${INDUSTRYCFG.maxPerPlayer}).` };
-    if (!this.licensed(planet.cat)) return { ok: false, msg: `${FACTIONS[this.controllingFaction(planet.cat)].name} won't licence you at your standing.` };
+    if (this.at(sys.id, idx)) return { ok: false, msg: "You already operate here." };
+    if (this.list().length >= INDUSTRYCFG.maxPerPlayer) return { ok: false, msg: `Permit cap reached (${INDUSTRYCFG.maxPerPlayer}).` };
+    const fac = this.planetFaction(sys, planet);
+    if (fac && Rep.get(fac) < INDUSTRYCFG.permitMinRep) return { ok: false, msg: `${FACTIONS[fac].name} won't sell you a permit at your standing.` };
     return { ok: true };
   },
-
   build(systemId, idx, now = Date.now()) {
     const sys = Galaxy.get(systemId); if (!sys) return { ok: false, msg: "Unknown system." };
     const chk = this.canBuild(sys, idx); if (!chk.ok) return chk;
     const planet = sys.planets[idx];
-    const cost = this.startupCost(planet);
-    if (cost > this.s().credits) return { ok: false, msg: "Not enough credits." };
+    const cost = this.permitCost(sys, planet);
+    if (cost > this.s().credits) return { ok: false, msg: "Not enough credits for the permit." };
     this.s().credits -= cost;
-    this.list().push({ id: this.idFor(systemId, idx), systemId, planetIdx: idx,
-      commodity: planet.commodity, cat: planet.cat, nextAt: now + INDUSTRYCFG.cycleMs });
+    this.list().push({ id: this.idFor(systemId, idx), systemId, planetIdx: idx, commodity: planet.commodity, cat: planet.cat, nextAt: now + INDUSTRYCFG.cycleMs });
     Economy.refreshNetWorth();
     return { ok: true, cost };
   },
   demolish(id) { this.s().industries = this.list().filter(i => i.id !== id); return { ok: true }; },
 
-  // Production multiplier: 0 = halted (local strike/disruption or war slump),
-  // INDUSTRYCFG.warBoost = boom (its category is a war's spiking side), else 1.
+  // 0 = halted (local strike / war slump), warBoost = boom, else 1.
   prodMult(ind, now = Date.now()) {
     if (Market.activeLocal(ind.systemId, now).length) return 0;
     const w = window.Wars && Wars.active(now);
@@ -61,27 +73,48 @@ const Industries = {
     const w = window.Wars && Wars.active(now);
     if (w && ind.cat === w.catB) return "disrupted";
     if (w && ind.cat === w.catA) return "boom";
+    const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+    const fac = planet ? this.planetFaction(sys, planet) : null;
+    if (fac) { const rep = Rep.get(fac); if (rep <= INDUSTRYCFG.atRiskRep) return "at risk"; if (rep < 0) return "taxed"; }
     return "running";
   },
+  // Nominal per-12h economics (running, before strike/war multipliers) for display.
+  batch(ind) {
+    const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+    if (!planet) return { gross: 0, rate: 0, tax: 0, net: 0, suit: 1 };
+    const suit = this.suitability(planet);
+    const gross = Math.round(INDUSTRYCFG.baseYield * suit);
+    const rate = this.taxRate(sys, planet);
+    const tax = Math.ceil(gross * rate);
+    return { gross, rate, tax, net: gross > 0 ? Math.max(1, gross - tax) : 0, suit };
+  },
 
-  // Bank produced batches up to `now` into tradeable stock. Free goods, so the
-  // commodity's average cost is blended down (selling them reads as profit).
+  // Bank produced batches up to `now` into tradeable stock; seize any structure
+  // whose faction standing has collapsed. Free goods → blend cost basis down.
   resolve(now = Date.now()) {
-    const s = this.s(); const made = [];
+    const s = this.s(); const made = [], lost = [];
     for (const ind of this.list()) {
-      if (now < ind.nextAt) continue;
+      const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+      const fac = planet ? this.planetFaction(sys, planet) : null;
+      if (fac && Rep.get(fac) <= INDUSTRYCFG.destroyRep) { ind._dead = true; lost.push({ name: planet ? planet.name : ind.systemId, faction: fac }); continue; }
+      if (!planet || now < ind.nextAt) continue;
       const mult = this.prodMult(ind, now);
-      if (mult <= 0) { ind.nextAt = now + INDUSTRYCFG.cycleMs; continue; }     // halted batch — skip, reschedule
+      if (mult <= 0) { ind.nextAt = now + INDUSTRYCFG.cycleMs; continue; }
       const cycles = Math.min(Math.floor((now - ind.nextAt) / INDUSTRYCFG.cycleMs) + 1, INDUSTRYCFG.maxCyclesPerResolve);
-      const qty = Math.round(cycles * INDUSTRYCFG.outputPerCycle * mult);
+      const rate = this.taxRate(sys, planet);
+      const batchGross = Math.round(INDUSTRYCFG.baseYield * this.suitability(planet) * mult);
+      const batchNet = batchGross > 0 ? Math.max(1, batchGross - Math.ceil(batchGross * rate)) : 0;
+      const qty = batchNet * cycles;
       if (qty > 0) {
-        const held = s.positions[ind.commodity] || 0, prevCost = s.avgCost[ind.commodity] || 0;
+        const held = s.positions[ind.commodity] || 0, prev = s.avgCost[ind.commodity] || 0;
         s.positions[ind.commodity] = held + qty;
-        s.avgCost[ind.commodity] = (held + qty) > 0 ? (held * prevCost) / (held + qty) : 0;
+        s.avgCost[ind.commodity] = (held + qty) > 0 ? (held * prev) / (held + qty) : 0;
         made.push({ commodity: ind.commodity, qty });
       }
       ind.nextAt = now + INDUSTRYCFG.cycleMs;
     }
+    if (lost.length) this.s().industries = this.list().filter(i => !i._dead);
+    for (const l of lost) Bus.emit("industryLost", l);
     if (made.length) { Economy.refreshNetWorth(); Economy.checkAchievements(); }
     return made;
   },

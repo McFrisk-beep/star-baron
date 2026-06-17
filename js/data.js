@@ -194,14 +194,35 @@ const WARCFG = {
    your standing with the commodity's controlling faction; halted by local
    disruptions (strikes) and faction-war slumps.                               */
 const INDUSTRYCFG = {
-  cycleMs: 5 * 60 * 1000,   // one batch every ~5 min (slow & passive)
-  outputPerCycle: 1,        // units of the planet's commodity per batch
-  startupMult: 80,          // build cost = commodity.base × this (× a standing discount)
-  repDiscountMax: 0.3,      // up to 30% off startup at +100 with the controlling faction
-  licenseMinTier: "neutral",// must be at least this tier with the controlling faction to license
-  warBoost: 2,              // production ×this when its category is a war's spiking side
-  maxPerPlayer: 12,         // how many industries you may license at once
-  maxCyclesPerResolve: 48,  // offline batch cap per industry (anti-windfall)
+  cycleMs: 12 * 60 * 60 * 1000,   // taxed batches drop every ~12h (slow & passive)
+  baseYield: 50,                  // batches/12h before planet suitability (and, later, extractor/components)
+  permitBase: 6000,               // faction permit price at neutral standing (× a standing discount); neutral space is free
+  permitRepDiscount: 0.5,         // up to 50% off the permit at +100 standing
+  permitMinRep: 0,                // need standing ≥ this to licence a faction planet
+  neutralTax: 0.05,               // flat tax in neutral (core / Navos) space
+  factionBaseTax: 0.12,           // tax on a faction planet at neutral standing
+  taxRepRelief: 0.6,              // positive standing cuts tax by up to this fraction (at +100)
+  taxNegPenalty: 1.5,             // negative standing multiplies tax up (full effect at the seizure line)
+  destroyRep: -40,                // a faction seizes your structure at/below this standing
+  atRiskRep: -25,                 // show an "at risk" warning from here down
+  warBoost: 2,                    // ×production when its category is a war's hot side
+  maxPerPlayer: 12,               // how many permits you may hold at once
+  maxCyclesPerResolve: 8,         // offline batch cap per industry (8 × 12h ≈ 4 days)
+};
+
+/* Planet suitability: how well a planet TYPE yields each commodity CATEGORY
+   (a multiplier on base output). Volcanic worlds are rich in minerals but
+   hopeless for farms; gas giants gush gas; toxic worlds breed contraband.      */
+const PLANET_SUITABILITY = {
+  rocky:     { mineral: 1.4, gas: 0.6, agri: 0.4,  tech: 1.0, luxury: 0.7, illicit: 0.9 },
+  terran:    { mineral: 0.6, gas: 0.8, agri: 1.8,  tech: 1.1, luxury: 1.3, illicit: 0.6 },
+  ocean:     { mineral: 0.5, gas: 1.2, agri: 1.5,  tech: 0.9, luxury: 1.2, illicit: 0.7 },
+  ice:       { mineral: 0.8, gas: 1.7, agri: 0.3,  tech: 0.9, luxury: 0.6, illicit: 0.8 },
+  lava:      { mineral: 1.8, gas: 0.6, agri: 0.1,  tech: 1.2, luxury: 0.5, illicit: 1.0 },
+  gas_giant: { mineral: 0.3, gas: 1.9, agri: 0.1,  tech: 0.8, luxury: 0.6, illicit: 0.7 },
+  barren:    { mineral: 1.5, gas: 0.5, agri: 0.1,  tech: 0.9, luxury: 0.5, illicit: 1.2 },
+  ringed:    { mineral: 1.2, gas: 1.3, agri: 0.3,  tech: 1.0, luxury: 1.1, illicit: 0.8 },
+  toxic:     { mineral: 1.1, gas: 1.0, agri: 0.05, tech: 1.2, luxury: 0.5, illicit: 1.6 },
 };
 // danger tiers drive contract risk → base success + reward scaling.
 // `pay` multiplies a contract's base credit reward, so higher-risk jobs (which
@@ -376,6 +397,7 @@ window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
 window.INDUSTRYCFG = INDUSTRYCFG;
+window.PLANET_SUITABILITY = PLANET_SUITABILITY;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;
 window.CATEGORY_FACTION = CATEGORY_FACTION;

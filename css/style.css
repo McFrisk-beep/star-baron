@@ -165,7 +165,9 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ind-stat { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; padding: 1px 6px; border-radius: 8px; font-weight: 700; }
 .ind-running { background: #14352b; color: var(--accent2); }
 .ind-boom { background: #2c2616; color: var(--gold); }
-.ind-struck, .ind-disrupted { background: #3d1d27; color: var(--down); }
+.ind-taxed { background: #2c2616; color: var(--warn); }
+.ind-struck, .ind-disrupted, .ind-at-risk { background: #3d1d27; color: var(--down); }
+.ind-warn { font-size: 11px; color: var(--down); margin-top: 5px; font-family: var(--mono); }
 /* planet build affordance in the star-map system view */
 .p-ind { margin-top: 5px; font-size: 11.5px; }
 .ind-locked { color: var(--ink-faint); font-size: 11px; }
