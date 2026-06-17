@@ -391,7 +391,10 @@ const Senate = {
   _emptyPending() { return { billId: null, want: null, pushAll: 0, pushFac: {}, pushSen: {}, abstain: {} }; },
   _pendingFor(bill) {
     const senate = this.sen();
-    if (!senate.pending || senate.pending.billId !== bill.id) senate.pending = Object.assign(this._emptyPending(), { billId: bill.id });
+    const p = senate.pending;
+    // reset for a new bill, OR upgrade a pre-refactor pending (old lobbyAll/bribes/scandals shape)
+    if (!p || p.billId !== bill.id || !p.pushSen || !p.pushFac || !p.abstain)
+      senate.pending = Object.assign(this._emptyPending(), { billId: bill.id });
     return senate.pending;
   },
   pending() { const b = this.nextBill(); return b ? this._pendingFor(b) : this._emptyPending(); },
@@ -403,7 +406,7 @@ const Senate = {
   tier() { return (this.s().prestige || {}).tier || 0; },
   power() { return 1 + this.tier() * SENATECFG.tierInfluenceBonus; },
   maxTargets() { return 1 + this.tier(); },
-  targetsUsed(p) { return Object.keys(p.pushSen).length + Object.keys(p.abstain).length; },
+  targetsUsed(p) { return Object.keys((p && p.pushSen) || {}).length + Object.keys((p && p.abstain) || {}).length; },
   // shared mode needs a signed-in player and an open voting window
   _gate(b) {
     if (!this.shared) return null;
