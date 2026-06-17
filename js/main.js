@@ -175,6 +175,7 @@ const Game = {
     // ---- schedulers ----
     this.startSchedulers();
     if (window.WorldFeed) WorldFeed.init();   // shared, always-on world chat (Supabase cron)
+    if (window.SenateWorld) SenateWorld.init();   // shared, galaxy-wide senate agenda (Supabase cron)
 
     // When the tab is backgrounded we suspend ALL work (timers + the star-map
     // animation) so an open tab costs ~nothing over long idle periods; on return
@@ -239,6 +240,7 @@ const Game = {
     Store.flush(this.snapshot());           // push to cloud now (best-effort)
     this.stopSchedulers();
     if (window.WorldFeed) WorldFeed.stop();
+    if (window.SenateWorld) SenateWorld.stop();
     if (window.StarMap) StarMap.suspend();
     if (window.Senate) Senate.suspend();
   },
@@ -266,6 +268,7 @@ const Game = {
     this.state.lastSeenAt = now;
     this.startSchedulers();
     if (window.WorldFeed) { WorldFeed.poll(); WorldFeed.start(); }   // catch up shared feed
+    if (window.SenateWorld) { SenateWorld.poll(); SenateWorld.start(); }   // catch up shared senate
     UI.tick(); UI.renderNewswire();
     if (window.StarMap) StarMap.resume();
     if (window.Senate) Senate.resume();

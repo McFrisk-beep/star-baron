@@ -24,6 +24,7 @@ const Senate = {
   _seatEls: {},
   _rev: 0,            // module-local revision; bumped on any change → invalidates the effects cache
   BILLGEN: 2,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
+  shared: false,      // true when the galaxy-wide agenda (world_senate, via SenateWorld) is the source of bills
 
   s() { return window.Game.state; },
   sen() {
@@ -212,9 +213,27 @@ const Senate = {
     senate.pending = this._emptyPending();   // drop influence queued against the old bills
   },
 
+  // ----- galaxy-wide agenda (server-authored bills, via SenateWorld) -------
+  setShared(on) {
+    if (this.shared === on) return;
+    this.shared = on;
+    if (on) {                                 // the server owns the agenda → drop locally-generated upcoming bills
+      const senate = this.sen();
+      senate.bills = (senate.bills || []).filter(b => b.status !== "upcoming" || /^wb/.test(b.id));
+      this._bumpRev();
+    }
+  },
+  // add a shared bill (idempotent by id; a bill already resolved locally is kept as-is)
+  ingestSharedBill(b) {
+    const senate = this.sen(); senate.bills ||= [];
+    if (senate.bills.some(x => x.id === b.id)) return false;
+    senate.bills.push(b); this._bumpRev(); return true;
+  },
+
   ensureSchedule(now) {
     const senate = this.sen();
     if (!senate.bills) senate.bills = [];
+    if (this.shared) return;            // the galaxy-wide agenda owns scheduling (SenateWorld feeds bills)
     if (!senate.nextVoteAt) senate.nextVoteAt = now + this.interval();
     let up = senate.bills.filter(b => b.status === "upcoming").sort((a, b) => a.votesAt - b.votesAt);
     let guard = 0;
