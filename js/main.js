@@ -86,10 +86,14 @@ const Game = {
     this._booting = true;
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
+    // snapshot "when you left" so the welcome-back recap can show what changed
+    const away = { nwBefore: Economy.netWorth(), warBefore: Wars.active(now),
+      priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
+      indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
     Economy.checkArrival(now);
     const offlineReports = Missions.resolveMatured(now);
-    Fleet.pruneMercs(now);
+    const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
     const offlineOrders = Orders.process();      // fill standing orders that crossed while away
@@ -140,7 +144,9 @@ const Game = {
     // First-run tutorial: show it now for a fresh baron, or queue it to open
     // once the "While You Were Away" modal is dismissed for a returning one.
     this._tutorialPending = !this.state.settings.tutorialSeen;
-    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold, routed: offlineRoutes, orders: offlineOrders, industry: offlineIndustry });
+    const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold,
+      routed: offlineRoutes, orders: offlineOrders, industry: offlineIndustry, mercs: offlineMercs,
+      recap: this.awayRecap(away, now) });
     this._booting = false;
     if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
 
@@ -293,6 +299,30 @@ const Game = {
     clearTimeout(this._warTimer);
     const base = CONFIG.fastNews ? Util.randInt(40000, 80000) : Util.randInt(WARCFG.minMs, WARCFG.maxMs);
     this._warTimer = setTimeout(() => { if (!this._booting && window.Wars) Wars.start(); this.scheduleWar(); }, base / this.timeScale);
+  },
+
+  // Diff the before/after snapshots into a "while you were away" recap: net-worth
+  // swing, the biggest market moves, an ongoing/ended war, and seized structures.
+  awayRecap(away, now = Date.now()) {
+    const s = this.state;
+    const movers = [];
+    for (const c of COMMODITIES) {
+      const before = away.priceBefore[c.id], after = Market.price(c.id);
+      if (!before) continue;
+      const pct = ((after - before) / before) * 100;
+      if (Math.abs(pct) >= 4) movers.push({ name: c.name, pct });
+    }
+    movers.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+    // industries gone from the list (only the catch-up can remove them → seized)
+    const seized = away.indBefore
+      .filter(b => !s.industries.some(i => i.id === b.id))
+      .map(b => { const sys = Galaxy.get(b.systemId), p = sys && sys.planets[b.planetIdx]; return p ? p.name : b.systemId; });
+    const warNow = Wars.active(now);
+    let war = null, warEnded = null;
+    if (warNow) war = { aggressor: FACTIONS[warNow.a].name, defender: FACTIONS[warNow.b].name, hot: warNow.catA, cold: warNow.catB };
+    else if (away.warBefore) warEnded = `${FACTIONS[away.warBefore.a].name}–${FACTIONS[away.warBefore.b].name}`;
+    const nwAfter = Economy.netWorth();
+    return { nwBefore: away.nwBefore, nwAfter, nwDelta: nwAfter - away.nwBefore, movers: movers.slice(0, 3), seized, war, warEnded };
   },
 
   snapshot() {

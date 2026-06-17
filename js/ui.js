@@ -962,12 +962,27 @@ const UI = {
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
-  showWYWA({ elapsedMs, reports, sold, routed, orders, industry }) {
+  showWYWA({ elapsedMs, reports, sold, routed, orders, industry, mercs, recap }) {
     const routeTotal = (routed && routed.total) || 0;
     const fills = (orders || []).filter(e => e.type === "filled");
-    const made = industry || [];
-    if (elapsedMs < 60000 && !reports.length && !sold.length && !routeTotal && !fills.length && !made.length) return false;
+    const made = industry || [], merced = mercs || [], rc = recap || {};
+    const seized = rc.seized || [], movers = rc.movers || [];
+    const anything = reports.length || sold.length || routeTotal || fills.length || made.length
+      || merced.length || seized.length || movers.length || rc.war || rc.warEnded;
+    if (elapsedMs < 60000 && !anything) return false;
+
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
+    // headline: net worth then → now
+    if (rc.nwAfter != null) {
+      const d = Math.round(rc.nwDelta || 0), cls = d > 0 ? "up" : d < 0 ? "down" : "";
+      html += `<p class="wywa-net">Net worth <b>${Util.credits(rc.nwBefore)}c</b> → <b>${Util.credits(rc.nwAfter)}c</b>`
+        + `${d ? ` <span class="${cls}">(${d > 0 ? "+" : "−"}${Util.credits(Math.abs(d))}c)</span>` : ""}</p>`;
+    }
+    // world events worth flagging up top
+    if (rc.war) html += `<p class="wywa-war">⚔ ${rc.war.aggressor} at war with ${rc.war.defender} — ${rc.war.hot} prices spiking, ${rc.war.cold} slumping.</p>`;
+    else if (rc.warEnded) html += `<p class="wywa-war">⚔ The ${rc.warEnded} war ended while you were away.</p>`;
+    if (seized.length) html += `<p class="down">⚠ Seized for low standing: ${seized.join(", ")} (rebuild from the Star Map).</p>`;
+
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => r.success
         ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}</li>`
@@ -981,7 +996,10 @@ const UI = {
       html += `<p>Industries produced: ${Object.entries(agg).map(([id, q]) => `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`).join(", ")} (now in your stock).</p>`;
     }
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
-    if (!reports.length && !sold.length && !routeTotal && !fills.length && !made.length) html += `<p>The market drifted while you were gone.</p>`;
+    if (merced.length) html += `<p>Mercenaries stood down: ${merced.map(m => m.name).join(", ")} (their contracts lapsed).</p>`;
+    if (movers.length) html += `<p>Market swings: ${movers.map(m => `${m.name} <span class="${m.pct > 0 ? "up" : "down"}">${m.pct > 0 ? "+" : ""}${m.pct.toFixed(0)}%</span>`).join(", ")}.</p>`;
+
+    if (!anything) html += `<p>The market drifted while you were gone.</p>`;
     this.refs.wywaBody.innerHTML = html; this.refs.wywa.classList.remove("hidden");
     return true;
   },

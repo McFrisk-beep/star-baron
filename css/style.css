@@ -317,6 +317,8 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .tut-nav { display: flex; gap: 10px; }
 .wywa-runs { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .wywa-total { font-size: 14px; margin-top: 8px; }
+.wywa-net { font-size: 15px; margin: 10px 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.wywa-war { color: var(--gold); }
 /* ---- incidents ---- */
 .inc-text { font-size: 13.5px; line-height: 1.55; margin: 4px 0 14px; color: var(--ink); }
 .inc-choices { display: flex; flex-direction: column; gap: 8px; }
