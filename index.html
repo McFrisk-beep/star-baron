@@ -189,6 +189,7 @@
     <div class="system-view hidden" id="system-view">
       <div class="system-scene"><canvas id="system-canvas"></canvas></div>
       <aside class="system-info" id="system-info"></aside>
+      <div class="planet-tip" id="planet-tip"></div>
     </div>
   </div>
 
@@ -313,6 +314,22 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="planet-modal">
+    <div class="modal modal-wide planet-modal">
+      <div class="pm-head"><h3 id="pm-title">Planet</h3><button class="btn" id="pm-close">✕ Close</button></div>
+      <div class="pm-body">
+        <div class="pm-scene"><canvas id="pm-canvas"></canvas><div class="pm-scene-cap" id="pm-subtitle"></div></div>
+        <div class="pm-info">
+          <nav class="subtabs pm-tabs" id="pm-tabs">
+            <button class="subtab active" data-pm="about">About</button>
+            <button class="subtab" data-pm="industries">Industries</button>
+          </nav>
+          <div class="pm-tabbody" id="pm-tabbody"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="settings-modal">
     <div class="modal"><h3>Settings</h3>
       <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
@@ -357,6 +374,7 @@
   <script src="js/ui.js"></script>
   <script src="js/auth-ui.js"></script>
   <script src="js/admin-ui.js"></script>
+  <script src="js/planetview.js"></script>
   <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 </body>
