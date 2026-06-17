@@ -134,7 +134,7 @@ const StarMap = {
         g.appendChild(t);
       }
 
-      g.addEventListener("click", () => this.openSystem(sys.id));
+      g.addEventListener("click", () => { if (this._dragged) return; this.openSystem(sys.id); });
       g.addEventListener("mouseenter", e => this.showTip(sys, e));
       g.addEventListener("mousemove", e => this.moveTip(e));
       g.addEventListener("mouseleave", () => this.refs.tip.style.display = "none");
@@ -142,6 +142,106 @@ const StarMap = {
       this._nodeEls[sys.id] = { ring, g };
     }
     this.updateGalaxyNodes();
+    this._fitGalaxy();
+    this._initPanZoom();
+  },
+
+  // ===== galaxy pan / zoom =================================================
+  // The galaxy is drawn in a fixed 1000×620 coordinate space; we pan & zoom by
+  // mutating the SVG viewBox. getScreenCTM() handles the pixel↔user conversion,
+  // so this stays correct under preserveAspectRatio letterboxing.
+  _setVB(v) { this.gz = v; this.refs.svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); },
+  _toSVG(cx, cy) {
+    const m = this.refs.svg.getScreenCTM(); if (!m) return { x: 0, y: 0 };
+    const p = this.refs.svg.createSVGPoint(); p.x = cx; p.y = cy;
+    const q = p.matrixTransform(m.inverse()); return { x: q.x, y: q.y };
+  },
+  // Keep the viewBox at the screen's aspect ratio (so it always fills, no
+  // letterbox), clamp the zoom range, and keep the view over the content.
+  _clampVB(v) {
+    const AR = this._gAR, B = this._gB;
+    const w = Util.clamp(v.w, this._gMinW, this._gMaxW), h = w / AR;
+    const rw = B.x1 - B.x0, rh = B.y1 - B.y0;
+    const x = w >= rw ? (B.x0 + B.x1 - w) / 2 : Util.clamp(v.x, B.x0, B.x1 - w);
+    const y = h >= rh ? (B.y0 + B.y1 - h) / 2 : Util.clamp(v.y, B.y0, B.y1 - h);
+    return { x, y, w, h };
+  },
+  // "Cover" fit: size the viewBox to the screen's aspect ratio and zoom so the
+  // cluster of systems FILLS the view (cropping the long axis) instead of
+  // floating tiny in a mostly-empty 1000×620 frame. The user pans (drag /
+  // swipe) to reach cropped edges and pinches / scrolls to zoom out for the
+  // whole galaxy.
+  _fitGalaxy() {
+    const W = 1000, H = 620;
+    let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    for (const sys of Galaxy.list) {
+      const x = sys.pos.x * W, y = sys.pos.y * H;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+    if (!isFinite(minX)) { minX = 0; minY = 0; maxX = W; maxY = H; }
+    minX -= 60; maxX += 60; minY -= 90; maxY += 70;    // extra top pad for sector labels
+    const cw = maxX - minX, ch = maxY - minY;
+    const r = this.refs.galaxyView.getBoundingClientRect();
+    const AR = (r.width > 0 && r.height > 0) ? r.width / r.height : cw / ch;
+    this._gAR = AR;
+    this._gB = { x0: minX - cw * 0.18, y0: minY - ch * 0.18, x1: maxX + cw * 0.18, y1: maxY + ch * 0.18 };
+    this._gMaxW = Math.max(cw, ch * AR) * 1.12;        // zoom-out reveals the whole cluster
+    this._gMinW = Math.max(120, Math.min(cw, ch * AR) * 0.3);
+    let w, h;                                          // cover: fill the short axis
+    if (cw / ch > AR) { h = ch; w = h * AR; } else { w = cw; h = w / AR; }
+    this._setVB(this._clampVB({ x: (minX + maxX) / 2 - w / 2, y: (minY + maxY) / 2 - h / 2, w, h }));
+  },
+  _zoomAt(cx, cy, factor) {
+    const b = this._toSVG(cx, cy);
+    const fx = (b.x - this.gz.x) / this.gz.w, fy = (b.y - this.gz.y) / this.gz.h;
+    const w = this.gz.w * factor, h = w / this._gAR;
+    this._setVB(this._clampVB({ x: b.x - fx * w, y: b.y - fy * h, w, h }));
+  },
+  _panBy(dxPx, dyPx) {
+    const m = this.refs.svg.getScreenCTM(); if (!m || !m.a) return;
+    this._setVB(this._clampVB({ x: this.gz.x - dxPx / m.a, y: this.gz.y - dyPx / m.d, w: this.gz.w, h: this.gz.h }));
+  },
+  _initPanZoom() {
+    if (this._pzReady) return; this._pzReady = true;
+    const svg = this.refs.svg;
+    this._ptrs = new Map();
+    // No pointer capture: it can swallow the tap→click that opens a system on
+    // touch. Releases are caught on window so a finger leaving the svg can't
+    // strand a drag. The _dragged flag suppresses the click after a real pan.
+    svg.addEventListener("pointerdown", e => {
+      this._ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      this._dragged = false; this._pinchPrev = null;
+      svg.classList.add("grabbing");
+    });
+    svg.addEventListener("pointermove", e => {
+      const p = this._ptrs.get(e.pointerId); if (!p) return;
+      const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+      if (this._ptrs.size >= 2) { this._pinch(); return; }
+      if (Math.abs(e.clientX - px) + Math.abs(e.clientY - py) > 2) this._dragged = true;
+      this._panBy(e.clientX - px, e.clientY - py);
+    });
+    const up = e => {
+      if (!this._ptrs.delete(e.pointerId)) return;
+      this._pinchPrev = null;
+      if (!this._ptrs.size) svg.classList.remove("grabbing");
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    svg.addEventListener("wheel", e => {
+      e.preventDefault();
+      this._zoomAt(e.clientX, e.clientY, e.deltaY > 0 ? 1.12 : 1 / 1.12);
+    }, { passive: false });
+  },
+  _pinch() {
+    const [a, b] = [...this._ptrs.values()];
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (this._pinchPrev && dist > 0) {
+      this._zoomAt(mid.x, mid.y, this._pinchPrev.dist / dist);
+      this._panBy(mid.x - this._pinchPrev.mid.x, mid.y - this._pinchPrev.mid.y);
+    }
+    this._pinchPrev = { dist, mid }; this._dragged = true;
   },
 
   updateGalaxyNodes() {
