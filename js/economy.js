@@ -162,9 +162,9 @@ const Economy = {
     s.credits = Math.round(CONFIG.startingCredits * multiplier);
     s.positions = {}; s.avgCost = {};
     s.ships = []; s.mainShip = { type: "pinnace" };
-    s.missions = []; s.reports = []; s.listings = []; s.orders = []; s.routes = []; s.industries = []; s.extractors = {}; s.items = {};
+    s.missions = []; s.reports = []; s.listings = []; s.orders = []; s.routes = []; s.industries = []; s.extractors = {}; s.components = {}; s.items = {};
     s.inventory = { capacity: 6, upgrades: 0 };
-    s.bazaar = { mercs: [], contracts: [], accessories: [], extractors: [] };
+    s.bazaar = { mercs: [], contracts: [], accessories: [], extractors: [], components: [] };
     s.reputation = Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0]));
     s.travel = null;
     s.currentSystem = "navos";

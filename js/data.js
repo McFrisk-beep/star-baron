@@ -221,6 +221,20 @@ const EXTRACTORCFG = {
     jack:        { label: "jack",         yieldMult: 0.6, price: 5000 },
   },
   bazaarSlots: 4,          // how many extractors on offer at once
+  componentSlots: 2,       // component slots per extractor
+};
+
+/* ---- COMPONENTS -----------------------------------------------------------
+   Rarity-tiered upgrades bought in the Bazaar and slotted into an extractor:
+   "rate" raises yield, "speed" shortens the batch cycle. Effect = base × the
+   rarity multiplier (RARITIES).                                                */
+const COMPONENTCFG = {
+  kinds: { rate: { label: "Yield Booster" }, speed: { label: "Cycle Optimizer" } },
+  rateBase: 0.08,          // +yield fraction per rate component (× rarity mult)
+  speedBase: 0.06,         // −cycle-time fraction per speed component (× rarity mult)
+  cycleFloor: 0.4,         // an extractor's cycle can't drop below this × base
+  priceBase: 1800,         // × rarity price multiplier
+  bazaarSlots: 5,          // how many components on offer at once
 };
 
 /* Planet suitability: how well a planet TYPE yields each commodity CATEGORY
@@ -411,6 +425,7 @@ window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
 window.INDUSTRYCFG = INDUSTRYCFG;
 window.EXTRACTORCFG = EXTRACTORCFG;
+window.COMPONENTCFG = COMPONENTCFG;
 window.PLANET_SUITABILITY = PLANET_SUITABILITY;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;

@@ -721,6 +721,15 @@ const UI = {
         <button class="btn btn-mini" data-buyextractor="${o.id}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No extractors in stock — check back soon.</p>`;
 
+    const comp = (b.components || []).map(o => {
+      const col = this.rarityColor(o.comp.rarity), price = Math.round(o.price * (1 - Rep.discount()));
+      return `<div class="item buy" style="border-left-color:${col}">
+        <div class="item-top"><b>${o.comp.name}</b><span class="rar" style="color:${col}">${(Items.rarity(o.comp.rarity) || {}).label}</span></div>
+        <div class="item-stat">${Components.describe(o.comp)}</div>
+        <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
+        <button class="btn btn-mini" data-buycomponent="${o.id}">Buy</button></div></div>`;
+    }).join("") || `<p class="muted-note">No components in stock.</p>`;
+
     const invCost = Bazaar.upgradeInventoryCost();
     const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
 
@@ -733,7 +742,8 @@ const UI = {
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
-      extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>`,
+      extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
+             <div class="panel"><h2>Components <small>fit into an extractor to boost yield / cut cycle time</small></h2><div class="item-grid">${comp}</div></div>`,
       standing,
     };
     const tabs = [["shipyard", "Shipyard"], ["flagships", "Flagships"], ["mercs", "Mercenaries"],
@@ -774,7 +784,8 @@ const UI = {
       ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
-      ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — install it in Industries."]];
+      ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — install it in Industries."],
+      ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it to an extractor in Industries."]];
     for (const [attr, fn, msg] of map) {
       const el = t.closest(`[data-${attr}]`);
       if (el) { const r = fn(el.dataset[attr.replace("buy", "buy")] || el.getAttribute(`data-${attr}`)); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader(); return; }

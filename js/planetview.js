@@ -144,10 +144,16 @@ const PlanetView = {
       const halted = st === "struck" || st === "disrupted";
       const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
       const warn = st === "at risk" ? `<p class="down">⚠ Standing with ${facName} is collapsing — at ${INDUSTRYCFG.destroyRep} they seize the works.</p>` : "";
+      const fitted = Extractors.componentsOf(ex), slots = Extractors.componentSlots(), avail = Components.unequipped();
+      const chips = fitted.map(c => `<span class="acc-chip" style="border-color:${Components.rarity(c.rarity).color}">${c.name} <span class="muted-note">${Components.describe(c)}</span> <button class="x" data-pm-detach="${ex.uid}:${c.uid}">✕</button></span>`).join("");
+      let compUI = `<div class="ind-foot">Components ${fitted.length}/${slots}</div><div class="acc-row">${chips || `<span class="muted-note">none fitted</span>`}</div>`;
+      if (fitted.length < slots && avail.length) compUI += `<div class="rt-form"><label>Fit <select id="pm-comp">${avail.map(c => `<option value="${c.uid}">${c.name} — ${Components.describe(c)}</option>`).join("")}</select></label></div><div class="settings-actions"><button class="btn" id="pm-attach">Fit component</button></div>`;
+      else if (fitted.length < slots) compUI += `<p class="muted-note">Buy components in the <b>Bazaar → Extractors</b> to boost this extractor.</p>`;
       body = `<div class="industry"><div class="ind-head"><b>${name} works</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}</span></div>
-        <div class="ind-foot">${ex ? ex.name : "extractor"} · ≈ <b>${b.net}</b>/12h <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next}</div>
+        <div class="ind-foot">${ex ? ex.name : "extractor"} · ≈ <b>${b.net}</b> ${name} every ${Util.duration(b.cycleMs)} <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next}</div>
         <div class="ind-foot">suitability <b>${b.suit.toFixed(2)}×</b> · owner <span style="color:${facColor}">${facName}</span></div></div>
-        ${warn}<div class="settings-actions"><button class="btn" data-pm-remove="${ind.id}">Remove extractor</button><button class="btn btn-danger" data-pm-demolish="${ind.id}">Give up permit</button></div>`;
+        ${warn}${compUI}
+        <div class="settings-actions"><button class="btn" data-pm-remove="${ind.id}">Remove extractor</button><button class="btn btn-danger" data-pm-demolish="${ind.id}">Give up permit</button></div>`;
     }
     r.tabbody.innerHTML = body;
 
@@ -177,6 +183,18 @@ const PlanetView = {
     };
     const rem = r.tabbody.querySelector("[data-pm-remove]");
     if (rem) rem.onclick = () => { Industries.removeExtractor(rem.dataset.pmRemove); UI.toast("Extractor moved to storage.", "info"); window.Game.requestSave(); this.showTab("industries"); };
+    const att = r.tabbody.querySelector("#pm-attach");
+    if (att) att.onclick = () => {
+      const sel = r.tabbody.querySelector("#pm-comp"); if (!sel) return;
+      const res = Extractors.attachComponent(ind.extractorUid, sel.value);
+      if (!res.ok) return UI.toast(res.msg, "warn");
+      UI.toast("Component fitted.", "good"); window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
+    };
+    r.tabbody.querySelectorAll("[data-pm-detach]").forEach(b => b.onclick = () => {
+      const [exu, cu] = b.dataset.pmDetach.split(":");
+      Extractors.detachComponent(exu, cu); UI.toast("Component removed to storage.", "info");
+      window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
+    });
     const d = r.tabbody.querySelector("[data-pm-demolish]");
     if (d) d.onclick = () => { Industries.demolish(d.dataset.pmDemolish); UI.toast("Permit given up.", "info"); window.Game.requestSave(); UI.updateHeader(); this.showTab("industries"); };
   },

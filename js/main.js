@@ -18,9 +18,9 @@ const Game = {
       mainShip: { type: "pinnace" },
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
-      missions: [], reports: [], listings: [], orders: [], routes: [], industries: [], extractors: {}, items: {},
+      missions: [], reports: [], listings: [], orders: [], routes: [], industries: [], extractors: {}, components: {}, items: {},
       inventory: { capacity: 6, upgrades: 0 },
-      bazaar: { mercs: [], contracts: [], accessories: [], extractors: [] },
+      bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [] },
       travel: null,
       seq: 1,
       unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
@@ -53,11 +53,11 @@ const Game = {
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
       delete s.avgCost; s.avgCost = loaded.avgCost || {};
     }
-    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.industries ||= []; s.extractors ||= {}; s.items ||= {};
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
-    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= [];
+    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     return s;
   },
