@@ -901,14 +901,55 @@ const SENATE_SPEAKER = [
   "Silence in the well. The matter is {TITLE}.",
 ];
 
-// Short speech-bubble snippets shown over present senators while in recess.
-const SENATE_BUBBLES = ["psst…", "the tariff?", "not a chance", "we'll see", "my vote's mine",
-  "talk later", "interesting…", "hardly", "agreed", "outrageous!", "off the record…", "for now",
-  "no deal", "watch them", "naturally", "as if", "hmph", "votes are votes", "you didn't hear it", "…"];
+// Solo remarks a present senator makes during recess. Tokens: {ME} {BLOC}
+// {ISSUE} {COMM} {BILL}. Kept short-ish so the speech bubbles stay readable.
+const SENATE_BUBBLES = [
+  "{BLOC} will not back another tariff.", "This {ISSUE} bill is a mistake, mark me.",
+  "{COMM} prices are an outright scandal.", "My constituents demand action on {ISSUE}.",
+  "I vote my conscience. Usually.", "Someone's buying votes again. Shameful.",
+  "Free trade or nothing, I say.", "Strong borders make a strong senate.",
+  "The baron's lobbyists found my office again.", "I've read {BILL}. Deeply troubling.",
+  "Tax the cartels, not the workers.", "We cannot keep subsidising failure.",
+  "Order — we need order on {ISSUE}.", "{COMM} must flow freely. It must.",
+  "I'll not be bought. Not cheaply, anyway.", "The cartels run this chamber, not us.",
+  "Another day, another bribe attempt.", "Prosperity needs open lanes.",
+  "Crack down. Crack down hard.", "Let the market decide, I say.",
+  "My sector bleeds while they debate.", "Whisper it — {BILL} is already decided.",
+  "I remember who funded my campaign.", "Reckless. Utterly reckless.",
+  "We answer to the people, not the barons.", "Hold the line on {ISSUE}.",
+  "Compromise is just slow defeat.", "Mark my seat — I abstain on principle.",
+];
+// Two present senators trade a scripted exchange (bubbles play in order; "a"
+// and "b" are the two speakers). Tokens: {OTHER} {ISSUE} {COMM} {BILL}.
+const SENATE_TALK = [
+  [{ s: "a", t: "You can't seriously back {BILL}." }, { s: "b", t: "My sector needs it. Yours doesn't." }, { s: "a", t: "It'll gut us and you know it." }],
+  [{ s: "a", t: "Heard the baron's been generous." }, { s: "b", t: "Careful — walls have ears here." }],
+  [{ s: "a", t: "Where do you stand on {ISSUE}?" }, { s: "b", t: "Wherever the votes are, friend." }],
+  [{ s: "a", t: "{COMM} prices are obscene." }, { s: "b", t: "And whose fault is that?" }, { s: "a", t: "Not mine. Ask the cartels." }],
+  [{ s: "a", t: "Vote with me on this one." }, { s: "b", t: "What's in it for my district?" }],
+  [{ s: "a", t: "The syndicate's whipping votes again." }, { s: "b", t: "Let them. I don't scare easy." }],
+  [{ s: "a", t: "This blockade will choke trade." }, { s: "b", t: "Good. Some trade ought to choke." }],
+  [{ s: "a", t: "You changed your tune on {ISSUE}." }, { s: "b", t: "Times change. So do I." }],
+  [{ s: "a", t: "They offered me a fortune to flip." }, { s: "b", t: "Did you take it?" }, { s: "a", t: "…we're still talking, aren't we?" }],
+  [{ s: "a", t: "The baron thinks he owns this floor." }, { s: "b", t: "Doesn't he?" }],
+  [{ s: "a", t: "I'll second your motion." }, { s: "b", t: "Generous. What do you want?" }],
+  [{ s: "a", t: "{BILL} passes and we're finished." }, { s: "b", t: "Then we'd better count heads." }],
+  [{ s: "a", t: "Your bloc is fracturing." }, { s: "b", t: "And yours is for sale." }],
+  [{ s: "a", t: "Quiet word after the session?" }, { s: "b", t: "Make it worth my time." }],
+  [{ s: "a", t: "Subsidies again? Truly?" }, { s: "b", t: "My miners eat because of them." }],
+  [{ s: "a", t: "Tighter borders, fewer problems." }, { s: "b", t: "Or fewer freedoms." }],
+  [{ s: "a", t: "The galaxy's watching this vote." }, { s: "b", t: "Let them watch. I'll win it." }],
+  [{ s: "a", t: "You're bluffing about the numbers." }, { s: "b", t: "Call it, then." }],
+  [{ s: "a", t: "Cut me in or I sink the bill." }, { s: "b", t: "You wouldn't dare." }, { s: "a", t: "Try me." }],
+  [{ s: "a", t: "I hear {COMM} is the new fortune." }, { s: "b", t: "Until the senate taxes it to death." }],
+  [{ s: "a", t: "My vote isn't cheap." }, { s: "b", t: "Nothing in this room is." }],
+  [{ s: "a", t: "We were allies last session." }, { s: "b", t: "Last session is over." }],
+];
 
 window.SENATE_ISSUES = SENATE_ISSUES;
 window.SENATE_EDICTS = SENATE_EDICTS;
 window.SENATE_BUBBLES = SENATE_BUBBLES;
+window.SENATE_TALK = SENATE_TALK;
 window.SENATE_FIRST = SENATE_FIRST;
 window.SENATE_SUR = SENATE_SUR;
 window.SENATE_TITLES = SENATE_TITLES;

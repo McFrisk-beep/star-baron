@@ -412,11 +412,10 @@ const Senate = {
     const $ = id => document.getElementById(id);
     this.refs = { overlay: $("senate-overlay"), svg: $("senate-svg"), tip: $("sc-tip"),
       speaker: $("sc-speaker"), stage: $("sc-stage"),
-      btnReplay: $("sc-replay"), btnHall: $("sc-hall"), btnClose: $("sc-close") };
+      btnReplay: $("sc-replay"), btnClose: $("sc-close") };
     if (!this.refs.overlay) return;
     this.refs.btnClose.onclick = () => this.closeChamber();
     this.refs.btnReplay.onclick = () => this.replay();
-    this.refs.btnHall.onclick = () => this.showHall();
     document.addEventListener("keydown", e => { if (e.key === "Escape" && this._open) this.closeChamber(); });
   },
   openChamber() {
@@ -610,10 +609,39 @@ const Senate = {
     for (let i = 0; i < need && absent.length; i++) { const k = Util.randInt(0, absent.length - 1); this._present.add(absent[k]); absent.splice(k, 1); }
   },
   _applyPresence() { for (const sn of this.roster()) this._setSeat(sn.id, this._present.has(sn.id), "bloc"); },
-  _bubble(id) {
+  // fill conversation/statement tokens for a line spoken by `id` (to `otherName`)
+  _say(id, raw, otherName) {
+    const sn = this.byId(id); if (!sn) return;
+    this._present.add(id); this._setSeat(id, true, "bloc");        // a speaking senator is always visible
+    const next = this.nextBill();
+    const text = raw
+      .replace(/\{ME\}/g, sn.name)
+      .replace(/\{BLOC\}/g, this.blocName(sn.bloc))
+      .replace(/\{OTHER\}/g, otherName || "you")
+      .replace(/\{ISSUE\}/g, Util.pick(SENATE_ISSUES).label.toLowerCase())
+      .replace(/\{COMM\}/g, Util.pick(COMMODITIES).name)
+      .replace(/\{BILL\}/g, next ? next.title : "the motion");
+    this._bubble(id, text);
+  },
+  // two nearby present senators trade a scripted exchange (bubbles, staggered)
+  _startTalk(present) {
+    const a = Util.pick(present);
+    let b = null, bd = Infinity;
+    for (const id of present) { if (id === a) continue; const pa = this._seats[a], pb = this._seats[id]; const d = (pa.x - pb.x) ** 2 + (pa.y - pb.y) ** 2; if (d < bd) { bd = d; b = id; } }
+    if (!b) { this._say(a, Util.pick(SENATE_BUBBLES)); return; }
+    const convo = Util.pick(SENATE_TALK), step = 1550;
+    this._talkTimers ||= [];
+    convo.forEach((ln, i) => {
+      const sid = ln.s === "a" ? a : b, oid = ln.s === "a" ? b : a;
+      const t = setTimeout(() => { if (this._open && this._mode === "hall") this._say(sid, ln.t, this.byId(oid).name); }, i * step);
+      this._talkTimers.push(t);
+    });
+    this._talkUntil = performance.now() + convo.length * step + 1200;
+  },
+  _bubble(id, text) {
     const p = this._seats[id]; if (!p || !this.refs.svg) return;
     const ns = "http://www.w3.org/2000/svg";
-    const text = Util.pick(SENATE_BUBBLES);
+    if (text.length > 58) text = text.slice(0, 57) + "…";
     const w = Math.max(34, text.length * 6.2 + 14), h = 18;
     const x = Util.clamp(p.x, w / 2 + 4, 996 - w / 2), y = p.y - (this.byId(id).capital ? 10 : 7) - 15;
     const g = document.createElementNS(ns, "g"); g.setAttribute("class", "sc-bubble");
@@ -628,7 +656,12 @@ const Senate = {
     setTimeout(() => { g.classList.remove("show"); setTimeout(() => g.remove(), 350); this._bubbles = (this._bubbles || []).filter(b => b !== g); }, 2600);
     while (this._bubbles.length > 5) { const old = this._bubbles.shift(); if (old) old.remove(); }
   },
-  _clearBubbles() { if (this._bubbles) for (const b of this._bubbles) b.remove(); this._bubbles = []; },
+  _clearBubbles() {
+    if (this._bubbles) for (const b of this._bubbles) b.remove();
+    this._bubbles = [];
+    if (this._talkTimers) for (const t of this._talkTimers) clearTimeout(t);
+    this._talkTimers = []; this._talkUntil = 0;
+  },
 
   _reduced() { return !!(this.s().settings && this.s().settings.reduced); },
   _showVote(bill) {
@@ -668,7 +701,10 @@ const Senate = {
     this._rollPresence(false);
     this._applyPresence();
     const present = [...this._present];
-    if (present.length) this._bubble(Util.pick(present));
+    if (performance.now() >= (this._talkUntil || 0)) {     // don't interrupt an exchange in progress
+      if (present.length >= 2 && Math.random() < 0.72) this._startTalk(present);
+      else if (present.length) this._say(Util.pick(present), Util.pick(SENATE_BUBBLES));
+    }
     this._renderRecessText();
   },
   _renderRecessText() {
