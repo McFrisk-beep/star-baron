@@ -34,7 +34,9 @@ const Economy = {
   inTransit() { return !!this.s().travel; },
 
   maxBuy(commId) {
-    const p = this.priceHere(commId);
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    if (window.Senate && Senate.isBanned(commId, cat)) return 0;
+    const p = this.priceHere(commId) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
     return p > 0 ? Math.floor(this.s().credits / p) : 0;
   },
 
@@ -44,7 +46,8 @@ const Economy = {
     qty = Math.floor(qty);
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    const price = this.priceHere(commId) * (1 - Rep.edgeForCategory(cat)); // friendly → cheaper
+    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
+    const price = this.priceHere(commId) * (1 - Rep.edgeForCategory(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
     const cost = price * qty;
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
@@ -62,7 +65,8 @@ const Economy = {
     qty = Math.min(Math.floor(qty), held);
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    const price = this.priceHere(commId) * (1 + Rep.edgeForCategory(cat)); // friendly → dearer
+    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
+    const price = this.priceHere(commId) * (1 + Rep.edgeForCategory(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
     const proceeds = price * qty;
     const realized = (price - (s.avgCost[commId] || 0)) * qty;
     s.credits += proceeds;
@@ -166,6 +170,13 @@ const Economy = {
     s.inventory = { capacity: 6, upgrades: 0 };
     s.bazaar = { mercs: [], contracts: [], accessories: [], extractors: [], components: [] };
     s.reputation = Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0]));
+    // politics reset with the empire — but keep dossier knowledge you paid for
+    if (window.Senate) {
+      const keep = {}, old = (s.senate && s.senate.reps) || {};
+      for (const id in old) if (old[id].revealed) keep[id] = { revealed: true, rel: 0, scandal: 0 };
+      s.senate = Object.assign(Senate.defaultState(), { reps: keep });
+      Senate._bumpRev();
+    }
     s.travel = null;
     s.currentSystem = "navos";
     s.unlockedSystems = SYSTEMS.filter(x => x.unlock === 0).map(x => x.id);

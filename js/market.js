@@ -87,7 +87,8 @@ const Market = {
     for (const c of COMMODITIES) {
       const floor = c.base * CONFIG.priceFloorMult;
       const ceil = c.base * CONFIG.priceCeilMult;
-      const anchor = c.base * this.categoryDrift(c.cat, now) * this.newsMult(c, now);
+      const senateFx = window.Senate ? Senate.priceFactor(c.id, c.cat) : 1;   // senate price caps / subsidies
+      const anchor = c.base * this.categoryDrift(c.cat, now) * this.newsMult(c, now) * senateFx;
       const prev = this.prices[c.id];
       const reverted = prev + (anchor - prev) * CONFIG.meanReversion;
       const noise = Util.gauss(c.vol * CONFIG.volScale * this.volMult);

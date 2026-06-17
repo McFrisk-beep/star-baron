@@ -35,12 +35,17 @@ const Industries = {
     return Math.round(INDUSTRYCFG.permitBase * (1 - rep / 100 * INDUSTRYCFG.permitRepDiscount));
   },
   taxRate(sys, planet) {
-    if (this.isNeutral(sys)) return INDUSTRYCFG.neutralTax;
-    const rep = Rep.get(this.planetFaction(sys, planet));
-    let r = INDUSTRYCFG.factionBaseTax;
-    if (rep >= 0) r *= (1 - rep / 100 * INDUSTRYCFG.taxRepRelief);
-    else r *= (1 + Math.min(1, (-rep) / Math.abs(INDUSTRYCFG.destroyRep)) * INDUSTRYCFG.taxNegPenalty);
-    return Util.clamp(r, 0.02, 0.6);
+    const fac = this.planetFaction(sys, planet);
+    let r;
+    if (this.isNeutral(sys)) r = INDUSTRYCFG.neutralTax;
+    else {
+      const rep = Rep.get(fac);
+      r = INDUSTRYCFG.factionBaseTax;
+      if (rep >= 0) r *= (1 - rep / 100 * INDUSTRYCFG.taxRepRelief);
+      else r *= (1 + Math.min(1, (-rep) / Math.abs(INDUSTRYCFG.destroyRep)) * INDUSTRYCFG.taxNegPenalty);
+    }
+    if (window.Senate) r += Senate.industryTaxAdd(fac);   // senate levies / tax holidays
+    return Util.clamp(r, 0.02, 0.75);
   },
 
   canBuild(sys, idx) {

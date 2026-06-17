@@ -825,3 +825,80 @@ window.OMENS = OMENS;
 window.NEWS_EVENTS = NEWS_EVENTS;
 window.NPCS = NPCS;
 window.TV_SHOWS = TV_SHOWS;
+
+/* ====== SENATE / SPACE POLITICS ===========================================
+   Voting axes ("issues"), edict templates, and senator naming/flavor pools.
+   Read at runtime by senate.js, so all of this is admin-overridable. `bias`
+   centres each faction bloc's stance on an issue (−3 = vehemently opposed …
+   +3 = solid support); independents default to 0.                            */
+const SENATE_ISSUES = [
+  { key: "trade",       label: "Market controls",  bias: { free_trade: -3, syndicate: -2, mining_combine: 1,  agri_collective: 1 } },
+  { key: "tax",         label: "Industrial tax",   bias: { agri_collective: 2, mining_combine: 1, free_trade: -2, syndicate: -1 } },
+  { key: "borders",     label: "Border security",  bias: { syndicate: -3, free_trade: -1, mining_combine: 1,  agri_collective: 2 } },
+  { key: "prohibition", label: "Vice prohibition", bias: { syndicate: -3, agri_collective: 2, free_trade: -1, mining_combine: 0 } },
+  { key: "arms",        label: "Arms control",     bias: { syndicate: -2, mining_combine: 1, free_trade: -1, agri_collective: 1 } },
+  { key: "subsidy",     label: "Corporate aid",    bias: { mining_combine: 2, free_trade: 1, agri_collective: 1, syndicate: 0 } },
+];
+
+// Edict templates. `type`+`scope`+`mag` drive the mechanical effect; senate.js
+// fills the concrete target (a commodity/category/faction/ship-class) at vote
+// time and substitutes {TARGET} / {PCT} into the title & blurb.
+const SENATE_EDICTS = [
+  { id: "price_control", issue: "trade",       type: "priceCap",    scope: "cat",     mag: 0.8,  title: "{TARGET} Price Control Act", blurb: "Caps {TARGET} prices across the exchange — about {PCT} below their drift." },
+  { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,    title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
+  { id: "cat_embargo",   issue: "prohibition", type: "ban",         scope: "cat",     mag: 0,    title: "{TARGET} Embargo", blurb: "Suspends all trade in {TARGET}-class goods until repeal." },
+  { id: "tariff",        issue: "tax",         type: "tariff",      scope: "cat",     mag: 0.1,  title: "{TARGET} Tariff", blurb: "Levies a {PCT} duty on every {TARGET} trade, both ways." },
+  { id: "ind_levy",      issue: "tax",         type: "industryTax", scope: "faction", mag: 0.12, title: "Industrial Levy: {TARGET}", blurb: "Raises offworld industry tax {PCT} on {TARGET} holdings." },
+  { id: "border_act",    issue: "borders",     type: "border",      scope: "none",    mag: 0.22, title: "Border Security Act", blurb: "Tightens the lanes — smuggling runs are about {PCT} likelier to fail." },
+  { id: "ship_restrict", issue: "arms",        type: "shipBan",     scope: "shipcls", mag: 0,    title: "{TARGET} Restriction Act", blurb: "Bars {TARGET}-class ships from contract work in senate space." },
+  { id: "subsidy",       issue: "subsidy",     type: "subsidy",     scope: "cat",     mag: 1.18, title: "{TARGET} Subsidy", blurb: "Props {TARGET} prices up about {PCT} above their drift." },
+  { id: "tax_holiday",   issue: "subsidy",     type: "taxHoliday",  scope: "faction", mag: -0.07,title: "{TARGET} Tax Holiday", blurb: "Cuts offworld industry tax {PCT} on {TARGET} holdings." },
+];
+
+// Senator first names by race nameStyle; surnames are assembled pre+suf.
+const SENATE_FIRST = {
+  soft:     ["Lyra", "Sael", "Niven", "Oola", "Mirae", "Vael", "Suun", "Aeryn", "Liora", "Nyssa", "Evon", "Yuna", "Caelo", "Imari"],
+  guttural: ["Grokk", "Brall", "Thudd", "Gnar", "Vorg", "Khrul", "Dmagg", "Rukk", "Brog", "Gholl", "Vrang", "Krudd", "Mogg", "Throg"],
+  regal:    ["Auren", "Cassia", "Valeria", "Octavian", "Lucanis", "Seraphine", "Tiberon", "Aurelia", "Maximus", "Coriol", "Liviana", "Caelius", "Domitia", "Regulus"],
+  harsh:    ["Kex", "Drax", "Vorn", "Skarr", "Razk", "Thokk", "Grael", "Vrex", "Karn", "Drask", "Zarn", "Hask", "Vask", "Korrul"],
+  code:     ["Unit-7", "Cipher", "Vox-9", "Datum", "Helix", "Cortex", "Binar", "Ohm-2", "Axon", "Logi", "Pixel", "Quark-3", "Servo", "Node-5"],
+  slick:    ["Vance", "Silk", "Cass", "Rey", "Marlo", "Dax", "Lux", "Vivi", "Cabel", "Mireille", "Joss", "Renn", "Ezra", "Sable"],
+};
+const SENATE_SUR = {
+  pre: ["Vol", "Thar", "Mor", "Kel", "Bran", "Quor", "Sel", "Dre", "Hal", "Vex", "Sor", "Tan", "Wren", "Gar", "Pol", "Ash", "Cor", "Ny", "Bel", "Rho", "Ulm", "Sk"],
+  suf: ["gar", "ane", "ix", "oth", "une", "ell", "ar", "in", "os", "eth", "wyn", "ack", "ond", "ius"],
+};
+const SENATE_TITLES = {
+  high:   ["High Senator", "Sector Praetor", "First Delegate", "Grand Councillor", "Sector Magnate"],
+  normal: ["Senator", "Delegate", "Councillor", "Envoy", "Representative", "Deputy"],
+};
+// Ambient "hall" lines (no active vote). {A}/{B} = senator names, {ISSUE} = an issue label.
+const SENATE_HALL = [
+  "{A} leans in to whisper something to {B}.",
+  "{A} and {B} argue in low voices over the {ISSUE} bill.",
+  "{A} drifts toward the rostrum, datapad in hand.",
+  "{B} laughs at something {A} said — neither looks sincere.",
+  "An aide hurries a sealed writ across the floor to {A}.",
+  "{A} pointedly turns their back on {B}.",
+  "{A} rehearses a speech to an empty row.",
+  "{B} steps out of the chamber for a hushed call.",
+  "{A} and {B} shake hands — a deal, or a threat.",
+  "{A} taps the floor impatiently, waiting on the vote bell.",
+  "Two aides to {B} trade folders without a word.",
+  "{A} is cornered by lobbyists near the gallery.",
+];
+const SENATE_SPEAKER = [
+  "The chamber recognizes the motion: {TITLE}.",
+  "Order. Order. We turn now to {TITLE}.",
+  "Senators, before you stands {TITLE}. Cast your vote.",
+  "The Speaker calls the question on {TITLE}.",
+  "Silence in the well. The matter is {TITLE}.",
+];
+
+window.SENATE_ISSUES = SENATE_ISSUES;
+window.SENATE_EDICTS = SENATE_EDICTS;
+window.SENATE_FIRST = SENATE_FIRST;
+window.SENATE_SUR = SENATE_SUR;
+window.SENATE_TITLES = SENATE_TITLES;
+window.SENATE_HALL = SENATE_HALL;
+window.SENATE_SPEAKER = SENATE_SPEAKER;

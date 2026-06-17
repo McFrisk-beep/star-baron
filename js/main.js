@@ -31,6 +31,7 @@ const Game = {
       newswire: [],
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
+      senate: window.Senate ? Senate.defaultState() : null,
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false },
       lastSeenAt: Date.now(),
       market: null,
@@ -45,6 +46,7 @@ const Game = {
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
+    if (window.Senate) s.senate = Object.assign(Senate.defaultState(), loaded.senate || {});
     // v1 → v2: the fleet model changed shape; reset fleet/bazaar/items but keep
     // credits, positions, unlocks, achievements, prestige, stats, world.
     if ((loaded.v || 1) < 2) {
@@ -87,7 +89,7 @@ const Game = {
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
     // snapshot "when you left" so the welcome-back recap can show what changed
-    const away = { nwBefore: Economy.netWorth(), warBefore: Wars.active(now),
+    const away = { nwBefore: Economy.netWorth(), warBefore: Wars.active(now), senateSince: now - elapsed,
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
@@ -99,6 +101,7 @@ const Game = {
     const offlineOrders = Orders.process();      // fill standing orders that crossed while away
     const offlineIndustry = Industries.resolve(now);  // bank offworld production made while away
     Wars.tick(now);               // resolve a faction war that ended while away
+    if (window.Senate) Senate.resolve(now);   // run the daily senate votes while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
     Broadcast.backfill(now, elapsed);   // populate the newswire as if it kept running
     this.state.lastSeenAt = now;
@@ -108,6 +111,7 @@ const Game = {
     if (window.AuthUI) AuthUI.init();
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
+    if (window.Senate) Senate.init();
     Feed.wire();
     Feed.prime();                 // fill the chat so it isn't empty on arrival
     UI.fullRender();
@@ -124,6 +128,18 @@ const Game = {
     });
 
     Bus.on("missionDone", () => this.requestSave());
+
+    // A senate vote landed during active play — surface the outcome.
+    Bus.on("senateVote", bill => {
+      if (this._booting) return;
+      const carried = bill.status === "passed";
+      const msg = bill.repealOf
+        ? (carried ? `Senate repealed “${bill.title.replace(/^Repeal — /, "")}”.` : `Repeal of an edict failed.`)
+        : (carried ? `Senate PASSED: ${bill.title}.` : `Senate rejected: ${bill.title}.`);
+      UI.toast(msg, bill.repealOf ? "info" : carried ? "warn" : "good", 5000);
+      if (UI.page === "senate") UI.renderSenate();
+      this.requestSave();
+    });
 
     // Retiring drops you to the bottom of the board — resync rank silently so
     // the reset doesn't spam overtake toasts on the next tick.
@@ -172,6 +188,7 @@ const Game = {
     Market.tick(now);
     this.detectMoves();
     Wars.tick(now);
+    const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
     const done = Missions.resolveMatured(now);
     Fleet.pruneMercs(now);
@@ -180,7 +197,7 @@ const Game = {
     const orderEv = Orders.process();
     for (const ev of orderEv) Bus.emit("order", ev);
     const made = Industries.resolve(now);
-    if (done.length || routed.total || orderEv.length || made.length) this.requestSave();
+    if (done.length || routed.total || orderEv.length || made.length || senateBills.length) this.requestSave();
     UI.tick();
   },
 
@@ -217,6 +234,7 @@ const Game = {
     this.stopSchedulers();
     if (window.WorldFeed) WorldFeed.stop();
     if (window.StarMap) StarMap.suspend();
+    if (window.Senate) Senate.suspend();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
   resume() {
@@ -235,6 +253,7 @@ const Game = {
       Orders.process();
       Industries.resolve(now);
       Wars.tick(now);
+      if (window.Senate) Senate.resolve(now);
       Rivals.tick(now);
       this._booting = false;
     }
@@ -243,6 +262,7 @@ const Game = {
     if (window.WorldFeed) { WorldFeed.poll(); WorldFeed.start(); }   // catch up shared feed
     UI.tick(); UI.renderNewswire();
     if (window.StarMap) StarMap.resume();
+    if (window.Senate) Senate.resume();
   },
 
   // Emit newHigh/crash chatter when a commodity moves hard (throttled).
@@ -322,7 +342,8 @@ const Game = {
     if (warNow) war = { aggressor: FACTIONS[warNow.a].name, defender: FACTIONS[warNow.b].name, hot: warNow.catA, cold: warNow.catB };
     else if (away.warBefore) warEnded = `${FACTIONS[away.warBefore.a].name}–${FACTIONS[away.warBefore.b].name}`;
     const nwAfter = Economy.netWorth();
-    return { nwBefore: away.nwBefore, nwAfter, nwDelta: nwAfter - away.nwBefore, movers: movers.slice(0, 3), seized, war, warEnded };
+    const senate = window.Senate ? Senate.recapSince(away.senateSince, now) : null;
+    return { nwBefore: away.nwBefore, nwAfter, nwDelta: nwAfter - away.nwBefore, movers: movers.slice(0, 3), seized, war, warEnded, senate };
   },
 
   snapshot() {

@@ -47,6 +47,8 @@ const UI = {
       rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"),
       achList: $("ach-list"), achCount: $("ach-count"),
       indList: $("industry-list"), indCount: $("ind-count"),
+      senateBody: $("senate-body"),
+      senatorModal: $("senator-modal"), senatorCard: $("senator-card"), senatorClose: $("senator-close"),
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
@@ -87,6 +89,7 @@ const UI = {
     else if (name === "barons") this.renderLeaderboard();
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") this.renderIndustries();
+    else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
   },
 
@@ -730,6 +733,14 @@ const UI = {
         <button class="btn btn-mini" data-buycomponent="${o.id}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No components in stock.</p>`;
 
+    const dossiers = !window.Senate ? "" : ((b.dossiers || []).map(d => {
+      const price = Math.round(d.price * (1 - Rep.discount()));
+      return `<div class="contract tip"><div class="c-head"><b>${d.name}</b><span class="ctype">dossier</span></div>
+        <div class="c-desc">${d.title} · <span style="color:${Senate.blocColor(d.bloc)}">◆ ${Senate.blocName(d.bloc)}</span> · ${d.systemName}</div>
+        <div class="c-foot"><span class="muted-note">unlocks their stances &amp; voting record</span>
+        <button class="btn btn-go" data-buydossier="${d.id}">Buy dossier ${Util.credits(price)}c</button></div></div>`;
+    }).join("") || `<p class="muted-note">No dossiers for sale right now.</p>`);
+
     const invCost = Bazaar.upgradeInventoryCost();
     const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
 
@@ -738,7 +749,8 @@ const UI = {
       shipyard: `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>`,
       flagships: `<div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>`,
       mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2>${mercTools}<div class="buy-grid">${mercs}</div></div>`,
-      contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`,
+      contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`
+        + `<div class="panel"><h2>Senator Dossiers <small>unlock hidden stances &amp; voting records</small></h2><div class="contract-list">${dossiers}</div></div>`,
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
@@ -785,7 +797,8 @@ const UI = {
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
       ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — install it in Industries."],
-      ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it to an extractor in Industries."]];
+      ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it to an extractor in Industries."],
+      ["buydossier", id => Bazaar.buyDossier(id), "Dossier filed — read it in the Senate roster."]];
     for (const [attr, fn, msg] of map) {
       const el = t.closest(`[data-${attr}]`);
       if (el) { const r = fn(el.dataset[attr.replace("buy", "buy")] || el.getAttribute(`data-${attr}`)); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader(); return; }
@@ -867,6 +880,149 @@ const UI = {
       Industries.demolish(d.dataset.demolish); this.toast("Permit closed.", "info");
       window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
     };
+  },
+
+  // ===== SENATE / space politics ===========================================
+  issueLabel(key) { return (SENATE_ISSUES.find(i => i.key === key) || {}).label || key; },
+
+  renderSenate() {
+    if (!window.Senate) { this.refs.senateBody.innerHTML = `<div class="panel"><p class="muted-note">Senate unavailable.</p></div>`; return; }
+    this.senateFilt ||= { sector: "all", bloc: "all", q: "" };
+    const now = Date.now();
+    const roster = Senate.roster(), active = Senate.activeEdicts(now), upcoming = Senate.upcomingBills(now);
+    const next = upcoming[0] || null, p = Senate.pending(), tier = Senate.tier();
+    const senate = Senate.sen();
+
+    // ---- floor / influence ----
+    const lobbyGated = !Senate.can("lobby");
+    let floor = `<button class="btn btn-go" data-sn="chamber">🏛 Enter the Chamber</button>`;
+    if (next) {
+      const facBtns = Object.keys(FACTIONS).map(f =>
+        `<button class="btn btn-mini" data-sn="lobby" data-v="${f}" ${lobbyGated ? "disabled" : ""}>Lobby ${FACTIONS[f].name} · ${Util.credits(SENATECFG.lobbyFacCost)}c</button>`).join("");
+      const tu = Senate.targetsUsed(p), mt = Senate.maxTargets();
+      const queued = [];
+      if (p.lobbyAll) queued.push("lobbied the floor");
+      if (Object.keys(p.lobbyFac).length) queued.push(`lobbied ${Object.keys(p.lobbyFac).length} bloc(s)`);
+      if (Object.keys(p.bribes).length) queued.push(`bribed ${Object.keys(p.bribes).length}`);
+      if (Object.keys(p.scandals).length) queued.push(`smeared ${Object.keys(p.scandals).length}`);
+      floor += `<div class="bill on-floor">
+        <div class="bill-head"><b>${next.title}</b><span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
+        <div class="bill-blurb">${next.blurb}</div>
+        <div class="bill-issue muted-note">issue: ${this.issueLabel(next.issue)}</div>
+        <div class="influence">
+          <div class="want-row"><span>Your position:</span>
+            <button class="btn btn-mini ${p.want === "pass" ? "sel up" : ""}" data-sn="want" data-v="pass">Back it</button>
+            <button class="btn btn-mini ${p.want === "block" ? "sel down" : ""}" data-sn="want" data-v="block">Block it</button>
+            ${p.want ? `<span class="muted-note">you want this to <b>${p.want === "pass" ? "pass" : "fail"}</b></span>` : `<span class="muted-note">declare a side to lobby or bribe</span>`}</div>
+          <div class="lobby-row">
+            <button class="btn btn-mini" data-sn="lobby" data-v="all" ${lobbyGated ? "disabled" : ""}>Lobby the floor · ${Util.credits(SENATECFG.lobbyAllCost)}c</button>
+            ${facBtns}
+            ${lobbyGated ? `<span class="muted-note">lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}</span>` : ""}</div>
+          ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — applied when the vote lands.</div>` : ""}
+        </div></div>`;
+    }
+    const floorPanel = `<div class="panel senate-floor">
+      <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2>
+      <p class="muted-note">A galactic senate votes ~daily on edicts that reshape the markets. Your <b>Baron Tier ${tier}</b> sets your leverage:
+        lobby a bloc (Tier ${SENATECFG.lobbyMinTier}) → bribe a senator (Tier ${SENATECFG.bribeMinTier}) → plant a scandal (Tier ${SENATECFG.scandalMinTier}). You can work ${Senate.maxTargets()} senator(s) per session.</p>
+      ${floor}</div>`;
+
+    // ---- active edicts ----
+    const edictPanel = `<div class="panel"><h2>Active Edicts <small>${active.length} in force</small></h2>` +
+      (active.length ? active.map(b => `<div class="edict"><div class="edict-head"><b>${b.title}</b>${b.endsAt ? `<span class="edict-eta">expires ${Util.duration(b.endsAt - now)}</span>` : ""}</div><div class="edict-blurb">${b.blurb}</div></div>`).join("")
+        : `<p class="muted-note">No edicts in force — the markets are free… for now.</p>`) + `</div>`;
+
+    // ---- upcoming legislation ----
+    const upPanel = `<div class="panel"><h2>Upcoming Legislation <small>preview the docket</small></h2>` +
+      upcoming.map((b, i) => `<div class="bill upcoming"><div class="bill-head"><b>${b.title}</b><span class="bill-eta">${i === 0 ? "on the floor · " : ""}votes in ${Util.duration(Math.max(0, b.votesAt - now))}</span></div><div class="bill-blurb">${b.blurb}</div></div>`).join("") + `</div>`;
+
+    // ---- roster ----
+    const f = this.senateFilt, q = (f.q || "").toLowerCase();
+    const shown = roster.filter(sn =>
+      (f.sector === "all" || sn.sectorId === f.sector) &&
+      (f.bloc === "all" || sn.bloc === f.bloc) &&
+      (!q || sn.name.toLowerCase().includes(q) || sn.systemName.toLowerCase().includes(q)));
+    const issueKey = next ? next.issue : "trade";
+    const rows = shown.map(sn => {
+      const revealed = Senate.revealed(sn.id), rel = Senate.relationship(sn.id);
+      const hist = Senate.senatorHistory(sn.id, 8).map(h => `<i class="vh vh-${h.vote}"></i>`).join("");
+      const stance = revealed ? `${this.issueLabel(issueKey)}: <b>${Senate.stanceLabel(sn.stances[issueKey])}</b>` : `<span class="muted-note">${SENATECFG.stanceUnknown}</span>`;
+      return `<div class="sen-row${revealed ? "" : " locked"}" data-sn="card" data-id="${sn.id}">
+        <span class="sen-name"><b>${sn.name}</b> <span class="sen-title">${sn.title}</span></span>
+        <span class="sen-bloc" style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span>
+        <span class="sen-where">${sn.systemName} · ${sn.sectorName}</span>
+        <span class="sen-stance">${stance}</span>
+        <span class="sen-hist" title="recent votes">${hist}</span>
+        ${rel ? `<span class="sen-rel ${rel > 0 ? "up" : "down"}">${rel > 0 ? "ally" : "wary"}</span>` : ""}</div>`;
+    }).join("") || `<p class="muted-note">No senators match your filter.</p>`;
+    const secOpts = `<option value="all">All sectors</option>` + SECTORS.map(s => `<option value="${s.id}"${f.sector === s.id ? " selected" : ""}>${s.name}</option>`).join("");
+    const blocOpts = `<option value="all">All blocs</option>` + Object.keys(FACTIONS).map(b => `<option value="${b}"${f.bloc === b ? " selected" : ""}>${FACTIONS[b].name}</option>`).join("") + `<option value="independent"${f.bloc === "independent" ? " selected" : ""}>Independent</option>`;
+    const rosterPanel = `<div class="panel"><h2>Representatives <small>${shown.length}/${roster.length} senators · click for a dossier</small></h2>
+      <div class="senate-filters">
+        <label>Sector <select data-snf="sector">${secOpts}</select></label>
+        <label>Bloc <select data-snf="bloc">${blocOpts}</select></label>
+        <input type="search" data-snf="q" placeholder="search name / system…" value="${f.q || ""}" />
+      </div>
+      <div class="senate-roster">${rows}</div></div>`;
+
+    this.refs.senateBody.innerHTML = floorPanel + edictPanel + upPanel + rosterPanel;
+    this.refs.senateBody.onclick = e => this.onSenateClick(e);
+    this.refs.senateBody.onchange = e => this.onSenateFilter(e);
+  },
+
+  onSenateClick(e) {
+    const b = e.target.closest("[data-sn]"); if (!b) return;
+    const act = b.dataset.sn;
+    if (act === "chamber") { Senate.openChamber(); return; }
+    if (act === "card") { this.openSenatorCard(b.dataset.id); return; }
+    if (act === "want") { Senate.setWant(b.dataset.v); window.Game.requestSave(); this.renderSenate(); return; }
+    if (act === "lobby") {
+      const r = Senate.lobby(b.dataset.v);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Lobbying campaign funded.", "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+    }
+  },
+  onSenateFilter(e) {
+    const sel = e.target.closest("[data-snf]"); if (!sel) return;
+    this.senateFilt ||= { sector: "all", bloc: "all", q: "" };
+    this.senateFilt[sel.dataset.snf] = sel.value;
+    this.renderSenate();
+  },
+
+  openSenatorCard(id) {
+    if (!window.Senate) return;
+    const sn = Senate.byId(id); if (!sn) return;
+    const revealed = Senate.revealed(id), rel = Senate.relationship(id), p = Senate.pending(), next = Senate.nextBill();
+    const stances = SENATE_ISSUES.map(iss => `<li><span>${iss.label}</span><b>${revealed ? Senate.stanceLabel(sn.stances[iss.key]) : SENATECFG.stanceUnknown}</b></li>`).join("");
+    const hist = Senate.senatorHistory(id, 12);
+    const histHTML = hist.length ? hist.map(h => `<div class="sh-row"><i class="vh vh-${h.vote}"></i> <span>${h.bill.title}</span> <span class="muted-note">${h.vote === "a" ? "aye" : h.vote === "n" ? "nay" : "abstained"}</span></div>`).join("") : `<p class="muted-note">No votes on record yet.</p>`;
+    const canB = Senate.can("bribe"), canS = Senate.can("scandal");
+    const bribed = !!p.bribes[id], smeared = !!p.scandals[id];
+    const lockNote = canB && canS ? "" : `<span class="muted-note">${canB ? "" : `bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}. `}${canS ? "" : `scandals at Baron Tier ${SENATECFG.scandalMinTier}.`}</span>`;
+    const actions = next ? `<div class="sen-actions">
+        <button class="btn btn-mini" data-sncard="bribe" data-id="${id}" ${(!canB || bribed) ? "disabled" : ""}>${bribed ? "Bribed ✓" : `Bribe · ${Util.credits(Math.round(SENATECFG.bribeCostBase * sn.weight))}c`}</button>
+        <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || smeared) ? "disabled" : ""}>${smeared ? "Smeared ✓" : `Scandal · ${Util.credits(SENATECFG.scandalCostBase)}c`}</button>
+        ${lockNote}</div>` : `<p class="muted-note">No bill on the floor to influence.</p>`;
+    this.refs.senatorCard.innerHTML = `
+      <div class="sen-card-head"><h3>${sn.name}</h3>
+        <div class="sen-card-sub">${sn.title} · <span style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span></div>
+        <div class="muted-note">${sn.raceName} · represents ${sn.systemName}, ${sn.sectorName} · seat weight ${sn.weight}${rel ? ` · relationship <b class="${rel > 0 ? "up" : "down"}">${rel > 0 ? "+" : ""}${rel}</b>` : ""}</div></div>
+      ${revealed ? "" : `<p class="locked-note">⚠ ${SENATECFG.stanceUnknown}. Buy this senator's dossier in the <b>Bazaar → Contracts</b> to reveal their positions and full voting record.</p>`}
+      <h4>Positions</h4><ul class="sen-stances">${stances}</ul>
+      <h4>Voting record</h4><div class="sen-history">${histHTML}</div>
+      ${actions}`;
+    this.refs.senatorCard.onclick = e => {
+      const btn = e.target.closest("[data-sncard]"); if (!btn) return;
+      const r = btn.dataset.sncard === "bribe" ? Senate.bribe(btn.dataset.id) : Senate.scandal(btn.dataset.id);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      if (r.backfired) this.toast("The smear backfired — credits wasted and word got back to them.", "bad");
+      else this.toast(btn.dataset.sncard === "bribe" ? "Senator bribed — they'll lean your way." : "Scandal planted — they'll sit the vote out.", "good");
+      this.flashCredits(); window.Game.requestSave(); this.updateHeader();
+      this.openSenatorCard(id); if (this.page === "senate") this.renderSenate();
+    };
+    this.refs.senatorClose.onclick = () => this.refs.senatorModal.classList.add("hidden");
+    this.refs.senatorModal.onclick = e => { if (e.target === this.refs.senatorModal) this.refs.senatorModal.classList.add("hidden"); };
+    this.refs.senatorModal.classList.remove("hidden");
   },
 
   // ===== BARONS / leaderboard ==============================================
@@ -967,8 +1123,9 @@ const UI = {
     const fills = (orders || []).filter(e => e.type === "filled");
     const made = industry || [], merced = mercs || [], rc = recap || {};
     const seized = rc.seized || [], movers = rc.movers || [];
+    const senateChanged = rc.senate && (rc.senate.passed.length || rc.senate.repealed.length);
     const anything = reports.length || sold.length || routeTotal || fills.length || made.length
-      || merced.length || seized.length || movers.length || rc.war || rc.warEnded;
+      || merced.length || seized.length || movers.length || rc.war || rc.warEnded || senateChanged;
     if (elapsedMs < 60000 && !anything) return false;
 
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
@@ -994,6 +1151,12 @@ const UI = {
       const agg = {};
       for (const m of made) agg[m.commodity] = (agg[m.commodity] || 0) + m.qty;
       html += `<p>Industries produced: ${Object.entries(agg).map(([id, q]) => `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`).join(", ")} (now in your stock).</p>`;
+    }
+    if (rc.senate) {
+      const sp = rc.senate;
+      if (sp.passed.length) html += `<p class="wywa-war">🏛 Senate passed: ${sp.passed.map(b => b.title).join("; ")}. <span class="muted-note">(active edicts — see the Senate tab)</span></p>`;
+      if (sp.repealed.length) html += `<p>🏛 Senate repealed ${sp.repealed.length} edict(s).</p>`;
+      if (sp.failed.length) html += `<p class="muted-note">🏛 Senate rejected ${sp.failed.length} bill(s).</p>`;
     }
     if (sold.length) html += `<p>Market sales: ${sold.map(s => `${s.name} (+${Util.credits(s.price)}c)`).join(", ")}</p>`;
     if (merced.length) html += `<p>Mercenaries stood down: ${merced.map(m => m.name).join(", ")} (their contracts lapsed).</p>`;
@@ -1156,6 +1319,7 @@ const UI = {
     if (this.page === "fleet") this.renderFleet();
     if (this.page === "bazaar") this.renderBazaar();
     if (this.page === "barons") this.renderLeaderboard();
+    if (this.page === "senate") this.renderSenate();
   },
 };
 

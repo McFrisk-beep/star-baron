@@ -19,6 +19,7 @@ const Missions = {
       if (cap < contract.cargoRequired) chance -= 0.45 * (1 - cap / contract.cargoRequired);
     }
     if (contract.faction) chance += Rep.successBonus(contract.faction); // friendly sponsor helps
+    if (window.Senate && contract.type === "smuggle") chance -= Senate.smuggleFailAdd(); // tighter borders
     return Util.clamp(chance, 0.03, 0.99);
   },
 
@@ -41,6 +42,8 @@ const Missions = {
     const s = this.s();
     uids = uids.filter(u => { const sh = Fleet.ship(u); return sh && sh.status === "idle"; });
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
+    if (window.Senate && uids.some(u => Senate.shipClassBanned(Fleet.ship(u).cls)))
+      return { ok: false, msg: "A senate edict bars one of those ship classes from contract work." };
     const phases = this.buildPhases(contract, uids);
     const totalMs = phases.reduce((a, p) => a + p.ms, 0);
     const mission = {

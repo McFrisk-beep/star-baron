@@ -43,6 +43,7 @@
         <button class="tab" data-page="systems">Star Systems</button>
         <button class="tab" data-page="bazaar">Bazaar</button>
         <button class="tab" data-page="industries">Industries</button>
+        <button class="tab" data-page="senate">Senate</button>
         <button class="tab" data-page="barons">Barons</button>
         <button class="tab" data-page="ach">Milestones</button>
       </nav>
@@ -121,6 +122,11 @@
         </div>
       </section>
 
+      <!-- SENATE / SPACE POLITICS -->
+      <section class="page hidden" id="page-senate">
+        <div id="senate-body"></div>
+      </section>
+
       <!-- BARONS / LEADERBOARD -->
       <section class="page hidden" id="page-barons">
         <div class="panel">
@@ -193,6 +199,23 @@
     </div>
   </div>
 
+  <!-- ===== SENATE CHAMBER OVERLAY ===== -->
+  <div class="chamber hidden" id="senate-overlay">
+    <div class="chamber-bar">
+      <div class="chamber-title">INTERGALACTIC SENATE</div>
+      <div class="chamber-actions">
+        <button class="btn" id="sc-hall">Hall</button>
+        <button class="btn" id="sc-replay">▶ Replay vote</button>
+        <button class="btn" id="sc-close">✕ Close</button>
+      </div>
+    </div>
+    <div class="chamber-stage" id="sc-stage">
+      <svg id="senate-svg" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="chamber-tip" id="sc-tip"></div>
+    </div>
+    <div class="chamber-speaker" id="sc-speaker"></div>
+  </div>
+
   <!-- ===== TOASTS ===== -->
   <div class="toast-stack" id="toast-stack"></div>
 
@@ -200,6 +223,13 @@
   <div class="modal-backdrop hidden" id="wywa-modal">
     <div class="modal"><h3>While You Were Away</h3><div id="wywa-body"></div>
       <button class="btn btn-go" id="wywa-close">Collect &amp; Continue</button></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="senator-modal">
+    <div class="modal modal-wide senator-modal">
+      <button class="btn btn-mini sen-close" id="senator-close">✕</button>
+      <div id="senator-card"></div>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="mission-modal">
@@ -391,6 +421,7 @@
   <script src="js/auth-ui.js"></script>
   <script src="js/admin-ui.js"></script>
   <script src="js/planetview.js"></script>
+  <script src="js/senate.js"></script>
   <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 </body>

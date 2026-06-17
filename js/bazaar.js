@@ -49,6 +49,19 @@ const Bazaar = {
     return { id: "cpo" + (++this.s().seq), comp: c, price: Components.price(c) };
   },
 
+  // A "dossier" on a senator whose stances are still hidden — buy it to unlock
+  // their positions + voting record in the Senate roster.
+  genDossier(now) {
+    if (!window.Senate) return null;
+    const candidates = Senate.roster().filter(sn => !Senate.revealed(sn.id));
+    if (!candidates.length) return null;
+    const sn = Util.pick(candidates);
+    return { id: "dos" + (++this.s().seq), senatorId: sn.id, name: sn.name, title: sn.title,
+      bloc: sn.bloc, systemName: sn.systemName,
+      price: Util.randInt(SENATECFG.dossierMinPrice, SENATECFG.dossierMaxPrice) + sn.weight * 600,
+      expiresAt: now + BAZAARCFG.contractExpiryMs * 2 };
+  },
+
   genContract(now) {
     const tpl = Util.pick(CONTRACT_TEMPLATES);
     const sys = Util.pick(Galaxy.list);
@@ -95,6 +108,8 @@ const Bazaar = {
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
     while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
     while (b.components.length < COMPONENTCFG.bazaarSlots) b.components.push(this.genComponent());
+    b.dossiers ||= [];
+    while (window.Senate && b.dossiers.length < SENATECFG.dossierSlots) { const d = this.genDossier(now); if (!d) break; b.dossiers.push(d); }
     const openCount = () => b.contracts.filter(c => c.status === "open").length;
     let tries = 0;
     while (openCount() < BAZAARCFG.contractSlots && tries++ < 60) {
@@ -111,6 +126,7 @@ const Bazaar = {
     b.accessories = b.accessories.filter(a => Math.random() > 0.06);
     b.extractors = (b.extractors || []).filter(a => Math.random() > 0.04);
     b.components = (b.components || []).filter(a => Math.random() > 0.05);
+    b.dossiers = (b.dossiers || []).filter(d => d.expiresAt > now && !(window.Senate && Senate.revealed(d.senatorId)));
     // contracts: expire, get taken by NPCs, and clear after lingering
     for (const c of b.contracts) {
       if (c.status === "open") {
@@ -241,6 +257,20 @@ const Bazaar = {
     b.components = b.components.filter(o => o.id !== offerId);
     Economy.refreshNetWorth();
     return { ok: true, comp: offer.comp };
+  },
+
+  buyDossier(offerId) {
+    const b = this.bz(), s = this.s();
+    const offer = (b.dossiers || []).find(d => d.id === offerId);
+    if (!offer || !window.Senate) return { ok: false, msg: "Dossier withdrawn." };
+    if (Senate.revealed(offer.senatorId)) { b.dossiers = b.dossiers.filter(d => d.id !== offerId); return { ok: false, msg: "Already on file." }; }
+    const price = Math.round(offer.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    s.credits -= price;
+    Senate.reveal(offer.senatorId);
+    b.dossiers = b.dossiers.filter(d => d.id !== offerId);
+    Economy.refreshNetWorth();
+    return { ok: true, name: offer.name };
   },
 
   upgradeInventoryCost() {

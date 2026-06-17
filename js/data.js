@@ -335,6 +335,38 @@ const PRESTIGE = {
   volPerTier: 0.05,        // +5% market volatility per tier (harder + richer)
 };
 
+/* ---- SENATE / SPACE POLITICS ----------------------------------------------
+   A galactic senate (one senator per system; sector capitals weigh more) votes
+   ~once a day on edicts that bite the whole game: price caps, prohibitions,
+   tariffs, industry levies, tighter borders (smuggling), ship restrictions —
+   plus player-friendly subsidies/tax holidays. Your Baron Tier gates how much
+   you can sway a vote (lobby → bribe → scandal). Edicts expire or get repealed.
+   Senators are generated deterministically from the galaxy seed (senate.js).   */
+const SENATECFG = {
+  voteIntervalMs: 24 * 60 * 60 * 1000,      // a vote ~once a day (scaled by dev fast-time)
+  billLookahead: 4,                          // upcoming bills queued & previewable at once
+  edictDurationMs: 3 * 24 * 60 * 60 * 1000,  // a passed edict lasts ~3 days unless repealed
+  repealChance: 0.25,                        // chance a new bill repeals an active edict instead
+  maxResolvePerCatchup: 14,                  // cap votes resolved in one offline catch-up
+  historyKeep: 30,                           // finished bills retained for vote history
+  abstainBand: 0.14,                         // |vote score| under this → the senator abstains
+  voteNoise: 0.28,                           // deterministic per-(senator,bill) jitter
+  staggerMs: 2600,                           // how long the chamber's vote cascade plays
+  weightCapital: 3, weightHub: 2, weightNormal: 1,  // seat weighting (capitals carry the chamber)
+  independentChance: 0.12,                   // some senators sit as independents (cross-bench)
+  // ---- player influence — gated by Baron Tier (0 = spectator) ----
+  lobbyMinTier: 1, bribeMinTier: 2, scandalMinTier: 3,
+  tierInfluenceBonus: 0.18,                  // +18% sway strength per Baron Tier
+  lobbyAllStrength: 0.45, lobbyFacStrength: 0.8, bribeStrength: 1.4,
+  relGainOnBribe: 22, relLossOnBackfire: 18,
+  scandalBackfireBase: 0.32, scandalTierRelief: 0.06,  // backfire chance −6%/tier
+  lobbyAllCost: 9000, lobbyFacCost: 5500, bribeCostBase: 3500, scandalCostBase: 7000,
+  dossierMinPrice: 1500, dossierMaxPrice: 9000, dossierSlots: 3,
+  // stance scale −3..+3 → label[v+3]; hidden stances read as the "unknown" string.
+  stanceLabels: ["vehemently opposed", "strongly disagree", "slightly disagree", "either way", "slightly agree", "strongly agree", "solid support"],
+  stanceUnknown: "information lacking",
+};
+
 /* ---- GALAXY / SECTORS -----------------------------------------------------
    The map is generated procedurally (galaxy.js) from GALAXY.seed so it is the
    same universe every load. Each sector has a theme, a galaxy-view position
@@ -434,6 +466,7 @@ window.REP = REP;
 window.RIVALCFG = RIVALCFG;
 window.RIVALS = RIVALS;
 window.PRESTIGE = PRESTIGE;
+window.SENATECFG = SENATECFG;
 window.GALAXY = GALAXY;
 window.RACES = RACES;
 window.SECTORS = SECTORS;
