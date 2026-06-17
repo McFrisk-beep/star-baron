@@ -210,6 +210,19 @@ const INDUSTRYCFG = {
   maxCyclesPerResolve: 8,         // offline batch cap per industry (8 × 12h ≈ 4 days)
 };
 
+/* ---- EXTRACTORS -----------------------------------------------------------
+   Bought in the Bazaar and installed into a permitted industry slot. Type sets
+   what it can produce and its yield tier: specialized = one commodity (best),
+   semi = a whole category (gas / tech / …), jack = anything (worst).           */
+const EXTRACTORCFG = {
+  types: {
+    specialized: { label: "specialized", yieldMult: 1.5, price: 14000 },
+    semi:        { label: "semi-spec",    yieldMult: 1.0, price: 9000 },
+    jack:        { label: "jack",         yieldMult: 0.6, price: 5000 },
+  },
+  bazaarSlots: 4,          // how many extractors on offer at once
+};
+
 /* Planet suitability: how well a planet TYPE yields each commodity CATEGORY
    (a multiplier on base output). Volcanic worlds are rich in minerals but
    hopeless for farms; gas giants gush gas; toxic worlds breed contraband.      */
@@ -397,6 +410,7 @@ window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
 window.INDUSTRYCFG = INDUSTRYCFG;
+window.EXTRACTORCFG = EXTRACTORCFG;
 window.PLANET_SUITABILITY = PLANET_SUITABILITY;
 window.DANGER = DANGER;
 window.FACTIONS = FACTIONS;

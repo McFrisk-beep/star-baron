@@ -40,6 +40,11 @@ const Bazaar = {
     return { id: "ac" + (++this.s().seq), item, price: Math.round(item.value * Util.randFloat(0.95, 1.25)) };
   },
 
+  genExtractor() {
+    const ex = Extractors.gen();
+    return { id: "exo" + (++this.s().seq), ex, price: Extractors.price(ex) };
+  },
+
   genContract(now) {
     const tpl = Util.pick(CONTRACT_TEMPLATES);
     const sys = Util.pick(Galaxy.list);
@@ -81,9 +86,10 @@ const Bazaar = {
   // ---- lifecycle ----------------------------------------------------------
   ensure(now = Date.now()) {
     const b = this.bz();
-    b.mercs ||= []; b.contracts ||= []; b.accessories ||= [];
+    b.mercs ||= []; b.contracts ||= []; b.accessories ||= []; b.extractors ||= [];
     while (b.mercs.length < BAZAARCFG.mercSlots) b.mercs.push(this.genMerc(now));
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
+    while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
     const openCount = () => b.contracts.filter(c => c.status === "open").length;
     let tries = 0;
     while (openCount() < BAZAARCFG.contractSlots && tries++ < 60) {
@@ -96,8 +102,9 @@ const Bazaar = {
     const b = this.bz();
     // mercs expire from the board
     b.mercs = b.mercs.filter(m => m.availUntil > now);
-    // accessories occasionally get bought by NPCs
+    // accessories + extractors occasionally get bought by NPCs
     b.accessories = b.accessories.filter(a => Math.random() > 0.06);
+    b.extractors = (b.extractors || []).filter(a => Math.random() > 0.04);
     // contracts: expire, get taken by NPCs, and clear after lingering
     for (const c of b.contracts) {
       if (c.status === "open") {
@@ -203,6 +210,19 @@ const Bazaar = {
     b.accessories = b.accessories.filter(a => a.id !== offerId);
     Economy.refreshNetWorth();
     return { ok: true, item: offer.item };
+  },
+
+  buyExtractor(offerId) {
+    const b = this.bz(); const s = this.s();
+    const offer = (b.extractors || []).find(o => o.id === offerId);
+    if (!offer) return { ok: false, msg: "Sold to another buyer." };
+    const price = Math.round(offer.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    s.credits -= price;
+    Extractors.acquire(offer.ex);
+    b.extractors = b.extractors.filter(o => o.id !== offerId);
+    Economy.refreshNetWorth();
+    return { ok: true, ex: offer.ex };
   },
 
   upgradeInventoryCost() {

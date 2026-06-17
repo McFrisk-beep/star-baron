@@ -712,6 +712,15 @@ const UI = {
         <button class="btn btn-mini" data-buyacc="${a.id}">Buy</button></div></div>`;
       }).join("") || `<p class="muted-note">${allAcc.length ? "No gear matches this filter." : "Restocking the accessory stalls…"}</p>`;
 
+    const exo = (b.extractors || []).map(o => {
+      const t = EXTRACTORCFG.types[o.ex.type], price = Math.round(o.price * (1 - Rep.discount()));
+      return `<div class="item buy ext-${o.ex.type}">
+        <div class="item-top"><b>${o.ex.name}</b><span class="rar">${t.label} ×${t.yieldMult}</span></div>
+        <div class="item-stat">${Extractors.describe(o.ex)}</div>
+        <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
+        <button class="btn btn-mini" data-buyextractor="${o.id}">Buy</button></div></div>`;
+    }).join("") || `<p class="muted-note">No extractors in stock — check back soon.</p>`;
+
     const invCost = Bazaar.upgradeInventoryCost();
     const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
 
@@ -724,10 +733,11 @@ const UI = {
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
+      extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>`,
       standing,
     };
     const tabs = [["shipyard", "Shipyard"], ["flagships", "Flagships"], ["mercs", "Mercenaries"],
-      ["contracts", "Contracts"], ["gear", "Gear"], ["standing", "Standing"]];
+      ["contracts", "Contracts"], ["gear", "Gear"], ["extractors", "Extractors"], ["standing", "Standing"]];
     if (!sections[this.bazaarTab]) this.bazaarTab = "shipyard";
     const subtabs = tabs.map(([k, label]) =>
       `<button class="subtab ${k === this.bazaarTab ? "active" : ""}" data-bz="${k}">${label}` +
@@ -763,7 +773,8 @@ const UI = {
     const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
       ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
-      ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."]];
+      ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
+      ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — install it in Industries."]];
     for (const [attr, fn, msg] of map) {
       const el = t.closest(`[data-${attr}]`);
       if (el) { const r = fn(el.dataset[attr.replace("buy", "buy")] || el.getAttribute(`data-${attr}`)); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader(); return; }
@@ -817,28 +828,32 @@ const UI = {
   // ===== industries ========================================================
   renderIndustries() {
     const list = Industries.list();
-    this.refs.indCount.textContent = `${list.length}/${INDUSTRYCFG.maxPerPlayer}`;
+    const storage = Extractors.unequipped().length;
+    this.refs.indCount.textContent = `${list.length}/${INDUSTRYCFG.maxPerPlayer} permits${storage ? ` · ${storage} extractor${storage > 1 ? "s" : ""} in storage` : ""}`;
     if (!list.length) {
-      this.refs.indList.innerHTML = `<p class="muted-note">No industries yet. Open the <b>Star Map</b>, pick a system, and build a factory/mine/farm on a planet — it produces into your tradeable stock while you're away.</p>`;
+      this.refs.indList.innerHTML = `<p class="muted-note">No permits yet. Open the <b>Star Map</b>, click a planet, buy a permit, then install an extractor (from the Bazaar) — it produces into your tradeable stock while you're away.</p>`;
       this.refs.indList.onclick = null; return;
     }
     this.refs.indList.innerHTML = list.map(ind => {
       const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
-      const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
-      const st = Industries.status(ind), b = Industries.batch(ind);
+      const where = planet ? planet.name : ind.systemId;
+      const st = Industries.status(ind);
       const facId = planet ? Industries.planetFaction(sys, planet) : null, fac = facId ? FACTIONS[facId] : null;
+      const owner = `<span class="ind-fac" style="color:${fac ? fac.color : "var(--accent2)"}">◆ ${fac ? fac.name : "Navos"}</span>`;
+      const head = `<div class="ind-head"><b>${where}</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}${st === "boom" ? ` ×${INDUSTRYCFG.warBoost}` : ""}</span><button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>`;
+      if (!ind.extractorUid) {
+        return `<div class="industry">${head}<div class="ind-foot">permit held — open the planet (Star Map) to install an extractor · ${owner}</div></div>`;
+      }
+      const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
+      const b = Industries.batch(ind), ex = Extractors.get(ind.extractorUid);
       const halted = st === "struck" || st === "disrupted";
       const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
       const warn = st === "at risk" ? `<div class="ind-warn">⚠ standing collapsing — works seized at ${INDUSTRYCFG.destroyRep}</div>` : "";
-      return `<div class="industry"><div class="ind-head"><b>${planet ? planet.name : ind.systemId}</b>
-          <span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}${st === "boom" ? ` ×${INDUSTRYCFG.warBoost}` : ""}</span>
-          <button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>
-        <div class="ind-foot">≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ` +
-        `<span class="ind-fac" style="color:${fac ? fac.color : "var(--accent2)"}">◆ ${fac ? fac.name : "Navos"}</span></div>${warn}</div>`;
+      return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ${owner}</div>${warn}</div>`;
     }).join("");
     this.refs.indList.onclick = e => {
       const d = e.target.closest("[data-demolish]"); if (!d) return;
-      Industries.demolish(d.dataset.demolish); this.toast("Industry closed.", "info");
+      Industries.demolish(d.dataset.demolish); this.toast("Permit closed.", "info");
       window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
     };
   },

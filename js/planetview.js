@@ -113,46 +113,82 @@ const PlanetView = {
 
   renderIndustries() {
     const { sys, idx, planet } = this.cur;
-    const comm = COMMODITIES.find(c => c.id === planet.commodity);
-    const name = comm ? comm.name : planet.commodity;
     const facId = Industries.planetFaction(sys, planet);
     const facName = facId ? FACTIONS[facId].name : "Navos (neutral)";
     const facColor = facId ? FACTIONS[facId].color : "var(--accent2)";
-    const suit = Industries.suitability(planet);
-    const suitLabel = suit >= 1.3 ? "excellent" : suit >= 0.9 ? "good" : suit >= 0.5 ? "poor" : "barely viable";
     const ind = Industries.at(sys.id, idx);
+    const r = this.refs();
     let body;
-    if (ind) {
-      const st = Industries.status(ind), b = Industries.batch(ind);
+    if (!ind) {                                   // no permit yet
+      const chk = Industries.canBuild(sys, idx), cost = Industries.permitCost(sys, planet), rate = Industries.taxRate(sys, planet);
+      body = `<p class="muted-note">Buy a permit to operate on <b>${planet.name}</b>, then install an extractor (from the <b>Bazaar → Extractors</b>) to mine or manufacture into your tradeable stock. Owner: <span style="color:${facColor}">${facName}</span> · tax ${(rate * 100).toFixed(0)}%.</p>` +
+        (chk.ok
+          ? `<div class="settings-actions"><button class="btn btn-go" data-pm-build="${sys.id}:${idx}">${cost > 0 ? `Buy permit — ${Util.credits(cost)}c` : "Claim permit — free (neutral)"}</button></div>`
+          : `<p class="down">🔒 ${chk.msg}</p>`);
+    } else if (!ind.extractorUid) {               // permit held, no extractor
+      const avail = Extractors.unequipped();
+      if (!avail.length) {
+        body = `<p class="muted-note">Permit held on <b>${planet.name}</b>. You own no spare extractors — buy one in the <b>Bazaar → Extractors</b>, then install it here.</p>`;
+      } else {
+        body = `<p class="muted-note">Permit held on <b>${planet.name}</b>. Install an extractor and pick what to produce — yield scales with this planet's suitability for that good.</p>
+          <div class="rt-form">
+            <label>Extractor <select id="pm-ex">${avail.map(e => `<option value="${e.uid}">${e.name}</option>`).join("")}</select></label>
+            <label>Produce <select id="pm-target"></select></label>
+          </div>
+          <p class="muted-note" id="pm-exdesc"></p><div class="mm-calc" id="pm-calc"></div>`;
+      }
+      body += `<div class="settings-actions">${avail.length ? `<button class="btn btn-go" id="pm-install">Install</button>` : ""}<button class="btn btn-danger" data-pm-demolish="${ind.id}">Give up permit</button></div>`;
+    } else {                                       // extractor installed
+      const ex = Extractors.get(ind.extractorUid), st = Industries.status(ind), b = Industries.batch(ind);
+      const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
       const halted = st === "struck" || st === "disrupted";
       const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
       const warn = st === "at risk" ? `<p class="down">⚠ Standing with ${facName} is collapsing — at ${INDUSTRYCFG.destroyRep} they seize the works.</p>` : "";
       body = `<div class="industry"><div class="ind-head"><b>${name} works</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}</span></div>
-        <div class="ind-foot">≈ <b>${b.net}</b> ${name} per 12h <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> → your stock · next batch ${next}</div>
-        <div class="ind-foot">suitability <b>${suit.toFixed(2)}×</b> (${suitLabel}) · owner <span style="color:${facColor}">${facName}</span></div></div>
-        ${warn}<div class="settings-actions"><button class="btn btn-danger" data-pm-demolish="${ind.id}">Close works</button></div>`;
-    } else {
-      const chk = Industries.canBuild(sys, idx), cost = Industries.permitCost(sys, planet), rate = Industries.taxRate(sys, planet);
-      const gross = Math.round(INDUSTRYCFG.baseYield * suit), net = gross > 0 ? Math.max(1, gross - Math.ceil(gross * rate)) : 0;
-      body = `<p class="muted-note">Operate here to produce <b>${name}</b> into your tradeable stock in ~12h batches. Suitability <b>${suit.toFixed(2)}×</b> (${suitLabel}) → ≈ <b>${net}</b>/12h after ${(rate * 100).toFixed(0)}% tax. Owner: <span style="color:${facColor}">${facName}</span>.</p>` +
-        (chk.ok
-          ? `<div class="settings-actions"><button class="btn btn-go" data-pm-build="${sys.id}:${idx}">${cost > 0 ? `Buy permit — ${Util.credits(cost)}c` : "Set up — free (neutral space)"}</button></div>`
-          : `<p class="down">🔒 ${chk.msg}</p>`);
+        <div class="ind-foot">${ex ? ex.name : "extractor"} · ≈ <b>${b.net}</b>/12h <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next}</div>
+        <div class="ind-foot">suitability <b>${b.suit.toFixed(2)}×</b> · owner <span style="color:${facColor}">${facName}</span></div></div>
+        ${warn}<div class="settings-actions"><button class="btn" data-pm-remove="${ind.id}">Remove extractor</button><button class="btn btn-danger" data-pm-demolish="${ind.id}">Give up permit</button></div>`;
     }
-    const r = this.refs(); r.tabbody.innerHTML = body;
-    const b = r.tabbody.querySelector("[data-pm-build]");
-    if (b) b.onclick = () => {
-      const [sid, i] = b.dataset.pmBuild.split(":");
+    r.tabbody.innerHTML = body;
+
+    const bbtn = r.tabbody.querySelector("[data-pm-build]");
+    if (bbtn) bbtn.onclick = () => {
+      const [sid, i] = bbtn.dataset.pmBuild.split(":");
       const res = Industries.build(sid, +i);
       if (!res.ok) return UI.toast(res.msg, "warn");
-      UI.toast(res.cost > 0 ? `Permit bought — ${Util.credits(res.cost)}c.` : "Operation set up.", "good"); UI.flashCredits();
+      UI.toast(res.cost > 0 ? `Permit bought — ${Util.credits(res.cost)}c.` : "Permit claimed.", "good"); UI.flashCredits();
       window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
     };
+    const exSel = r.tabbody.querySelector("#pm-ex"), tSel = r.tabbody.querySelector("#pm-target");
+    if (exSel && tSel) {
+      const fill = () => {
+        const ex = Extractors.get(exSel.value);
+        tSel.innerHTML = Extractors.targets(ex).map(cid => `<option value="${cid}">${(COMMODITIES.find(c => c.id === cid) || {}).name || cid}</option>`).join("");
+        const d = r.tabbody.querySelector("#pm-exdesc"); if (d) d.textContent = ex ? Extractors.describe(ex) : "";
+        this._pmCalc();
+      };
+      exSel.onchange = fill; tSel.onchange = () => this._pmCalc(); fill();
+    }
+    const inst = r.tabbody.querySelector("#pm-install");
+    if (inst) inst.onclick = () => {
+      const res = Industries.installExtractor(ind.id, exSel.value, tSel.value);
+      if (!res.ok) return UI.toast(res.msg, "warn");
+      UI.toast("Extractor installed — production online.", "good"); window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
+    };
+    const rem = r.tabbody.querySelector("[data-pm-remove]");
+    if (rem) rem.onclick = () => { Industries.removeExtractor(rem.dataset.pmRemove); UI.toast("Extractor moved to storage.", "info"); window.Game.requestSave(); this.showTab("industries"); };
     const d = r.tabbody.querySelector("[data-pm-demolish]");
-    if (d) d.onclick = () => {
-      Industries.demolish(d.dataset.pmDemolish); UI.toast("Industry closed.", "info");
-      window.Game.requestSave(); UI.updateHeader(); this.showTab("industries");
-    };
+    if (d) d.onclick = () => { Industries.demolish(d.dataset.pmDemolish); UI.toast("Permit given up.", "info"); window.Game.requestSave(); UI.updateHeader(); this.showTab("industries"); };
+  },
+  _pmCalc() {
+    const { sys, planet } = this.cur, r = this.refs();
+    const exSel = r.tabbody.querySelector("#pm-ex"), tSel = r.tabbody.querySelector("#pm-target"), calc = r.tabbody.querySelector("#pm-calc");
+    if (!exSel || !tSel || !calc) return;
+    const ex = Extractors.get(exSel.value), commId = tSel.value;
+    const suit = Industries.suitabilityFor(planet.type, commId), rate = Industries.taxRate(sys, planet);
+    const gross = Math.round(INDUSTRYCFG.baseYield * suit * Extractors.yieldMult(ex)), net = gross > 0 ? Math.max(1, gross - Math.ceil(gross * rate)) : 0;
+    const cn = (COMMODITIES.find(c => c.id === commId) || {}).name || commId;
+    calc.innerHTML = `${cn}: suitability <b>${suit.toFixed(2)}×</b> · ≈ <b class="${net > 0 ? "up" : "down"}">${net}</b>/12h after ${(rate * 100).toFixed(0)}% tax`;
   },
 
   // ---- deterministic per-planet lore -------------------------------------
