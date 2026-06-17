@@ -8,10 +8,10 @@ from the galaxy seed) and the market trend + bill id are shared, every player
 who doesn't interfere lands on the **same outcome**, so the galaxy passes the
 same laws at the same time.
 
-> Scope (v1): the shared **agenda + outcomes**. Your own lobby/bribe/scandal
-> still bends *your* copy of a vote. **Pooled multiplayer influence** (combining
-> every player's influence into the shared result, via a `world_senate_influence`
-> table) is the planned next layer — ask for it when you want it.
+The senate is now also a multiplayer **tug-of-war**: every player's
+lobby/bribe/scandal goes into a shared `world_senate_influence` pool, and the
+combined pool decides the one outcome everyone gets (§1b below). Run **both** SQL
+blocks.
 
 The client already reads `world_senate` (see `js/senateworld.js`): it loads the
 recent bills on arrival, polls every ~45s (paused while hidden), and falls back
@@ -138,6 +138,39 @@ select cron.schedule('senate-tick', '0 0 * * *', $$ select public.senate_tick();
 > `select cron.unschedule('senate-tick');` then re-run the `cron.schedule(...)` line.
 > Want a bill right now to test? `select public.senate_tick();`
 
+## 1b. Pooled influence (run this too)
+
+Lets every player's lobby/bribe/scandal combine into the shared outcome. Players
+**insert their own** influence for the open bill; everyone **reads the aggregate**;
+the deterministic resolution then lands the same result for all. Run in the
+**SQL Editor**:
+
+```sql
+create table if not exists public.world_senate_influence (
+  id         bigint generated always as identity primary key,
+  bill_id    text not null,            -- the world_senate bill (client id: 'wb' || world_senate.id)
+  user_id    uuid not null default auth.uid(),
+  kind       text not null,            -- lobby_all | lobby_fac | bribe | scandal
+  target     text,                     -- faction id (lobby_fac) | senator id (bribe/scandal) | null
+  dir        int  not null default 0,  -- +1 back / -1 block (0 for scandal)
+  strength   numeric not null default 0,
+  created_at timestamptz not null default now()
+);
+create index if not exists wsi_bill_idx on public.world_senate_influence (bill_id);
+alter table public.world_senate_influence enable row level security;
+create policy "read influence"      on public.world_senate_influence for select using (true);
+create policy "insert own influence" on public.world_senate_influence for insert with check (auth.uid() = user_id);
+-- (no update/delete → influence is immutable once cast)
+
+-- optional housekeeping: drop influence for bills older than the retention window
+-- (safe to skip; or add to senate_tick: delete from world_senate_influence where created_at < now() - interval '14 days';)
+```
+
+> Influence requires the player to be **signed in** (so each contribution has an
+> owner). Guests still see the shared agenda and outcomes, they just can't sway
+> them. Submissions close at a bill's `votes_at`; clients resolve with the final
+> pool, so everyone agrees.
+
 ## 2. That's it
 
 The client activates automatically once rows exist: on load you'll see
@@ -162,11 +195,5 @@ generator switches off. Two browsers will show the same upcoming legislation.
 select cron.unschedule('senate-tick');
 drop function if exists public.senate_tick();
 drop table if exists public.world_senate;
+drop table if exists public.world_senate_influence;
 ```
-
-## Planned next: pooled influence (`world_senate_influence`)
-A small `world_senate_influence` table (authenticated insert of your own
-lobby/bribe/scandal for the open bill; public read of the aggregate) will let
-every player's influence combine into the single shared outcome — a real
-multiplayer tug-of-war — while the deterministic resolution keeps every client
-in agreement. Not enabled yet.

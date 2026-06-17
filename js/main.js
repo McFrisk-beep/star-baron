@@ -78,6 +78,8 @@ const Game = {
     const loaded = await Store.load();
     this.state = loaded ? this.migrate(loaded) : this.defaultState();
     this.timeScale = 1;
+    // resume the galaxy-wide senate before catch-up so it doesn't generate stray local bills
+    if (window.Senate && this.state.senate && this.state.senate.shared) Senate.shared = true;
 
     Market.init();
     Market.volMult = 1 + this.state.prestige.tier * PRESTIGE.volPerTier;

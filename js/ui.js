@@ -901,10 +901,10 @@ const UI = {
         `<button class="btn btn-mini" data-sn="lobby" data-v="${f}" ${lobbyGated ? "disabled" : ""}>Lobby ${FACTIONS[f].name} · ${Util.credits(SENATECFG.lobbyFacCost)}c</button>`).join("");
       const tu = Senate.targetsUsed(p), mt = Senate.maxTargets();
       const queued = [];
-      if (p.lobbyAll) queued.push("lobbied the floor");
-      if (Object.keys(p.lobbyFac).length) queued.push(`lobbied ${Object.keys(p.lobbyFac).length} bloc(s)`);
-      if (Object.keys(p.bribes).length) queued.push(`bribed ${Object.keys(p.bribes).length}`);
-      if (Object.keys(p.scandals).length) queued.push(`smeared ${Object.keys(p.scandals).length}`);
+      if (p.pushAll) queued.push("lobbied the floor");
+      if (Object.keys(p.pushFac).length) queued.push(`lobbied ${Object.keys(p.pushFac).length} bloc(s)`);
+      if (Object.keys(p.pushSen).length) queued.push(`bribed ${Object.keys(p.pushSen).length}`);
+      if (Object.keys(p.abstain).length) queued.push(`smeared ${Object.keys(p.abstain).length}`);
       floor += `<div class="bill on-floor">
         <div class="bill-head"><b>${next.title}</b><span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
         <div class="bill-blurb">${next.blurb}</div>
@@ -918,7 +918,7 @@ const UI = {
             <button class="btn btn-mini" data-sn="lobby" data-v="all" ${lobbyGated ? "disabled" : ""}>Lobby the floor · ${Util.credits(SENATECFG.lobbyAllCost)}c</button>
             ${facBtns}
             ${lobbyGated ? `<span class="muted-note">lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}</span>` : ""}</div>
-          ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — applied when the vote lands.</div>` : ""}
+          ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — ${Senate.shared ? "pooled with every baron's, applied galaxy-wide when the vote lands." : "applied when the vote lands."}</div>` : ""}
         </div></div>`;
     }
     const floorPanel = `<div class="panel senate-floor">
@@ -998,7 +998,7 @@ const UI = {
     const hist = Senate.senatorHistory(id, 12);
     const histHTML = hist.length ? hist.map(h => `<div class="sh-row"><i class="vh vh-${h.vote}"></i> <span>${h.bill.title}</span> <span class="muted-note">${h.vote === "a" ? "aye" : h.vote === "n" ? "nay" : "abstained"}</span></div>`).join("") : `<p class="muted-note">No votes on record yet.</p>`;
     const canB = Senate.can("bribe"), canS = Senate.can("scandal");
-    const bribed = !!p.bribes[id], smeared = !!p.scandals[id];
+    const bribed = !!p.pushSen[id], smeared = !!p.abstain[id];
     const lockNote = canB && canS ? "" : `<span class="muted-note">${canB ? "" : `bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}. `}${canS ? "" : `scandals at Baron Tier ${SENATECFG.scandalMinTier}.`}</span>`;
     const actions = next ? `<div class="sen-actions">
         <button class="btn btn-mini" data-sncard="bribe" data-id="${id}" ${(!canB || bribed) ? "disabled" : ""}>${bribed ? "Bribed ✓" : `Bribe · ${Util.credits(Math.round(SENATECFG.bribeCostBase * sn.weight))}c`}</button>

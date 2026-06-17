@@ -25,6 +25,8 @@ const Senate = {
   _rev: 0,            // module-local revision; bumped on any change → invalidates the effects cache
   BILLGEN: 2,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
   shared: false,      // true when the galaxy-wide agenda (world_senate, via SenateWorld) is the source of bills
+  _pool: {},          // billId -> aggregated pooled influence (shared mode)
+  _poolReady: {},     // billId -> true once the final (post-deadline) pool has been fetched
 
   s() { return window.Game.state; },
   sen() {
@@ -33,7 +35,7 @@ const Senate = {
     return s.senate;
   },
   defaultState() {
-    return { bills: [], nextVoteAt: 0, reps: {}, pending: this._emptyPending(), cycle: 0, billSeq: 0, lastBillId: null, gen: this.BILLGEN };
+    return { bills: [], nextVoteAt: 0, reps: {}, pending: this._emptyPending(), cycle: 0, billSeq: 0, lastBillId: null, gen: this.BILLGEN, shared: false };
   },
 
   // ===== deterministic helpers ============================================
@@ -215,6 +217,7 @@ const Senate = {
 
   // ----- galaxy-wide agenda (server-authored bills, via SenateWorld) -------
   setShared(on) {
+    this.sen().shared = on;                   // persisted hint so boot starts in the right mode (no spurious local bills)
     if (this.shared === on) return;
     this.shared = on;
     if (on) {                                 // the server owns the agenda → drop locally-generated upcoming bills
@@ -222,6 +225,12 @@ const Senate = {
       senate.bills = (senate.bills || []).filter(b => b.status !== "upcoming" || /^wb/.test(b.id));
       this._bumpRev();
     }
+  },
+  // SenateWorld feeds the aggregated pooled influence for a shared bill here
+  applyPool(billId, pending, ready) {
+    this._pool[billId] = pending;
+    if (ready) this._poolReady[billId] = true;
+    this._bumpRev();
   },
   // add a shared bill (idempotent by id; a bill already resolved locally is kept as-is)
   ingestSharedBill(b) {
@@ -252,7 +261,7 @@ const Senate = {
     this.ensureSchedule(now);
     const out = []; let guard = 0;
     while (guard++ < SENATECFG.maxResolvePerCatchup) {
-      const due = senate.bills.filter(b => b.status === "upcoming" && b.votesAt <= now).sort((a, b) => a.votesAt - b.votesAt);
+      const due = senate.bills.filter(b => b.status === "upcoming" && b.votesAt <= now && (!this.shared || this._poolReady[b.id])).sort((a, b) => a.votesAt - b.votesAt);
       if (!due.length) break;
       const bill = due[0];
       this._resolveBill(bill, bill.votesAt);
@@ -269,7 +278,9 @@ const Senate = {
   },
   _resolveBill(bill, atTime) {
     const roster = this.roster(), senate = this.sen();
-    const pending = (senate.pending && senate.pending.billId === bill.id) ? senate.pending : null;
+    const pending = this.shared
+      ? (this._pool[bill.id] || null)                                  // galaxy-wide: the combined player pool
+      : ((senate.pending && senate.pending.billId === bill.id) ? senate.pending : null);
     const ctx = this._context(bill, atTime);
     let aye = 0, nay = 0, abst = 0, wAye = 0, wNay = 0;
     const votes = new Array(roster.length).fill("x");
@@ -294,16 +305,16 @@ const Senate = {
   },
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
   _vote(sn, bill, pending, ctx, now) {
-    if (pending && pending.scandals && pending.scandals[sn.id]) return "x";   // smeared → sits it out
+    if (pending && pending.abstain && pending.abstain[sn.id]) return "x";   // smeared → sits it out
     let score = (this.stanceNow(sn, bill.issue, now) / 3) * bill.lean + (ctx || 0);
-    const rep = (this.sen().reps || {})[sn.id];
-    const want = pending ? (pending.want === "pass" ? 1 : pending.want === "block" ? -1 : 0) : 0;
-    if (want) {
-      if (rep && rep.rel) score += (rep.rel / 100) * want * 0.6;
-      if (pending.bribes && pending.bribes[sn.id]) score += SENATECFG.bribeStrength * want;
-      if (pending.lobbyAll) score += pending.lobbyAll * want;
-      const f = pending.lobbyFac && pending.lobbyFac[this.blocNow(sn, now)];
-      if (f) score += f * want;
+    if (pending) {                                            // signed pushes (+ toward pass) — local OR pooled
+      score += pending.pushAll || 0;
+      const f = pending.pushFac && pending.pushFac[this.blocNow(sn, now)]; if (f) score += f;
+      const s = pending.pushSen && pending.pushSen[sn.id]; if (s) score += s;
+      if (!this.shared && pending.want) {                    // personal relationship lean (local mode only)
+        const rep = (this.sen().reps || {})[sn.id];
+        if (rep && rep.rel) score += (rep.rel / 100) * (pending.want === "pass" ? 1 : -1) * 0.6;
+      }
     }
     score += (this._hash(sn.id + "|" + bill.id) / 4294967296 - 0.5) * 2 * SENATECFG.voteNoise;
     if (score > SENATECFG.abstainBand) return "a";
@@ -377,7 +388,7 @@ const Senate = {
   travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
 
   // ===== player influence =================================================
-  _emptyPending() { return { billId: null, want: null, lobbyAll: 0, lobbyFac: {}, bribes: {}, scandals: {} }; },
+  _emptyPending() { return { billId: null, want: null, pushAll: 0, pushFac: {}, pushSen: {}, abstain: {} }; },
   _pendingFor(bill) {
     const senate = this.sen();
     if (!senate.pending || senate.pending.billId !== bill.id) senate.pending = Object.assign(this._emptyPending(), { billId: bill.id });
@@ -392,7 +403,17 @@ const Senate = {
   tier() { return (this.s().prestige || {}).tier || 0; },
   power() { return 1 + this.tier() * SENATECFG.tierInfluenceBonus; },
   maxTargets() { return 1 + this.tier(); },
-  targetsUsed(p) { return Object.keys(p.bribes).length + Object.keys(p.scandals).length; },
+  targetsUsed(p) { return Object.keys(p.pushSen).length + Object.keys(p.abstain).length; },
+  // shared mode needs a signed-in player and an open voting window
+  _gate(b) {
+    if (!this.shared) return null;
+    if (!(window.Cloud && Cloud.signedIn())) return { ok: false, msg: "Sign in to influence galaxy-wide votes." };
+    if (Date.now() >= b.votesAt) return { ok: false, msg: "Voting has closed on this bill." };
+    return null;
+  },
+  _submitPool(billId, kind, target, dir, strength) {
+    if (this.shared && window.SenateWorld) SenateWorld.submit(billId, kind, target, dir, strength);
+  },
   can(kind) {
     const t = this.tier();
     if (kind === "lobby") return t >= SENATECFG.lobbyMinTier;
@@ -409,35 +430,44 @@ const Senate = {
   lobby(scope) {
     if (!this.can("lobby")) return { ok: false, msg: `Lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
+    const gate = this._gate(b); if (gate) return gate;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first, then lobby." };
     const cost = scope === "all" ? SENATECFG.lobbyAllCost : SENATECFG.lobbyFacCost;
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
-    if (scope === "all") p.lobbyAll = (p.lobbyAll || 0) + SENATECFG.lobbyAllStrength * this.power();
-    else { p.lobbyFac[scope] = (p.lobbyFac[scope] || 0) + SENATECFG.lobbyFacStrength * this.power(); }
+    const dir = p.want === "pass" ? 1 : -1;
+    const strength = (scope === "all" ? SENATECFG.lobbyAllStrength : SENATECFG.lobbyFacStrength) * this.power();
+    if (scope === "all") p.pushAll += dir * strength;
+    else p.pushFac[scope] = (p.pushFac[scope] || 0) + dir * strength;
+    this._submitPool(b.id, scope === "all" ? "lobby_all" : "lobby_fac", scope === "all" ? null : scope, dir, strength);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
   },
   bribe(senatorId) {
     if (!this.can("bribe")) return { ok: false, msg: `Bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
+    const gate = this._gate(b); if (gate) return gate;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first." };
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
-    if (p.bribes[senatorId]) return { ok: false, msg: "Already in your pocket this session." };
+    if (p.pushSen[senatorId]) return { ok: false, msg: "Already in your pocket this session." };
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
     const cost = Math.round(SENATECFG.bribeCostBase * sn.weight);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
-    s.credits -= cost; p.bribes[senatorId] = true;
+    s.credits -= cost;
+    const dir = p.want === "pass" ? 1 : -1;
+    p.pushSen[senatorId] = dir * SENATECFG.bribeStrength;
     const rep = this._rep(senatorId); rep.rel = Util.clamp((rep.rel || 0) + SENATECFG.relGainOnBribe, -100, 100);
+    this._submitPool(b.id, "bribe", senatorId, dir, SENATECFG.bribeStrength);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
   },
   scandal(senatorId) {
     if (!this.can("scandal")) return { ok: false, msg: `Scandals unlock at Baron Tier ${SENATECFG.scandalMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
+    const gate = this._gate(b); if (gate) return gate;
     const p = this._pendingFor(b);
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
-    if (p.scandals[senatorId]) return { ok: false, msg: "Already smeared this session." };
+    if (p.abstain[senatorId]) return { ok: false, msg: "Already smeared this session." };
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
     const cost = SENATECFG.scandalCostBase;
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
@@ -445,7 +475,8 @@ const Senate = {
     const rep = this._rep(senatorId);
     const backfire = Math.random() < Math.max(0.05, SENATECFG.scandalBackfireBase - this.tier() * SENATECFG.scandalTierRelief);
     if (backfire) { rep.rel = Util.clamp((rep.rel || 0) - SENATECFG.relLossOnBackfire, -100, 100); Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost, backfired: true }; }
-    p.scandals[senatorId] = true; rep.scandal = (rep.scandal || 0) + 1;
+    p.abstain[senatorId] = true; rep.scandal = (rep.scandal || 0) + 1;
+    this._submitPool(b.id, "scandal", senatorId, 0, 0);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost, backfired: false };
   },
 
