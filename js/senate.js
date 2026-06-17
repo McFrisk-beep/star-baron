@@ -23,6 +23,7 @@ const Senate = {
   _seats: null,
   _seatEls: {},
   _rev: 0,            // module-local revision; bumped on any change → invalidates the effects cache
+  BILLGEN: 2,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
 
   s() { return window.Game.state; },
   sen() {
@@ -31,7 +32,7 @@ const Senate = {
     return s.senate;
   },
   defaultState() {
-    return { bills: [], nextVoteAt: 0, reps: {}, pending: this._emptyPending(), cycle: 0, billSeq: 0, lastBillId: null };
+    return { bills: [], nextVoteAt: 0, reps: {}, pending: this._emptyPending(), cycle: 0, billSeq: 0, lastBillId: null, gen: this.BILLGEN };
   },
 
   // ===== deterministic helpers ============================================
@@ -146,19 +147,34 @@ const Senate = {
   _genBill(votesAt, now) {
     const senate = this.sen();
     const id = "bill_" + (++senate.billSeq);
-    const active = this.activeEdicts(now);
+    return Object.assign({ id, votesAt, status: "upcoming" }, this._billContent(this.activeEdicts(now)));
+  },
+  // the content of a bill (everything but id/votesAt/status) — shared by _genBill
+  // and the regen migration so they can't drift apart.
+  _billContent(active) {
     if (active.length && Math.random() < SENATECFG.repealChance) {
       const t = Util.pick(active);
-      return { id, repealOf: t.id, issue: t.issue, lean: -1, type: "repeal",
-        title: "Repeal — " + t.title, blurb: "Strikes down “" + t.title + "” and restores the prior status quo.",
-        effect: null, votesAt, status: "upcoming" };
+      return { repealOf: t.id, issue: t.issue, lean: -1, type: "repeal",
+        title: "Repeal — " + t.title, blurb: "Strikes down “" + t.title + "” and restores the prior status quo.", effect: null };
     }
     const tpl = this._weighted(SENATE_EDICTS);
     // bans are binary (no magnitude) → no severity roll/prefix; everything else scales
     const sev = (tpl.type === "ban" || tpl.type === "shipBan") ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
     const inst = this._instantiate(tpl, sev);
-    return { id, repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type,
-      title: inst.title, blurb: inst.blurb, effect: inst.effect, votesAt, status: "upcoming" };
+    return { repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
+  },
+  // One-time on load: rewrite not-yet-voted bills with the current bill mix
+  // (keeps each bill's id, votesAt and place in the schedule). Operates on a
+  // passed senate object so it can run during migrate before Game.state is set.
+  regenUpcoming(senate) {
+    const now = Date.now();
+    const active = (senate.bills || []).filter(b => b.status === "passed" && b.type !== "repeal" && b.effect && (!b.endsAt || b.endsAt > now));
+    for (const b of (senate.bills || [])) {
+      if (b.status !== "upcoming") continue;
+      delete b.endsAt; delete b.result; delete b.votes;
+      Object.assign(b, this._billContent(active));
+    }
+    senate.pending = this._emptyPending();   // drop influence queued against the old bills
   },
 
   ensureSchedule(now) {

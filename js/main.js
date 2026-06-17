@@ -46,7 +46,12 @@ const Game = {
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
-    if (window.Senate) s.senate = Object.assign(Senate.defaultState(), loaded.senate || {});
+    if (window.Senate) {
+      const ls = loaded.senate || {};
+      s.senate = Object.assign(Senate.defaultState(), ls);
+      // refresh queued (unvoted) bills once so old saves get the rebalanced mild/rare mix
+      if ((ls.gen || 0) < Senate.BILLGEN) { Senate.regenUpcoming(s.senate); s.senate.gen = Senate.BILLGEN; }
+    }
     // v1 → v2: the fleet model changed shape; reset fleet/bazaar/items but keep
     // credits, positions, unlocks, achievements, prestige, stats, world.
     if ((loaded.v || 1) < 2) {
