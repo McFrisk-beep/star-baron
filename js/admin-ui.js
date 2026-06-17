@@ -38,7 +38,8 @@ const AdminUI = {
       editor: $("admin-editor"), status: $("admin-status"),
       validate: $("admin-validate"), save: $("admin-save"), reset: $("admin-reset"),
       gallery: $("admin-gallery"), imgNote: $("admin-img-note"), imgTabs: $("admin-imgtabs"),
-      devToggles: $("dev-toggles"),
+      vDev: $("admin-view-dev"),
+      devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
       closes: document.querySelectorAll(".admin-close"),
     };
     if (this.r.btn) this.r.btn.onclick = () => this.open();
@@ -50,6 +51,12 @@ const AdminUI = {
     if (this.r.save) this.r.save.onclick = () => this.doSave();
     if (this.r.reset) this.r.reset.onclick = () => this.doReset();
 
+    // dev tools: credit cheats (admin-gated by the whole panel)
+    const adjust = fn => { const s = window.Game && Game.state; if (!s) return; fn(s); if (window.Economy) Economy.refreshNetWorth(); if (window.UI) { UI.updateHeader(); UI.flashCredits(); } window.Game.requestSave(); };
+    if (this.r.devSet) this.r.devSet.onclick = () => adjust(s => { s.credits = Math.max(0, Math.round(+this.r.devCredits.value || 0)); UI.toast(`Credits set to ${Util.creditsFull(s.credits)}.`, "good"); });
+    if (this.r.dev10k) this.r.dev10k.onclick = () => adjust(s => { s.credits += 10000; UI.toast("+10,000c (dev)", "good"); });
+    if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
+
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
     this.refresh();
@@ -58,7 +65,6 @@ const AdminUI = {
   refresh() {
     const admin = !!(window.Cloud && Cloud.isAdmin());
     if (this.r.btn) this.r.btn.classList.toggle("hidden", !admin);
-    if (this.r.devToggles) this.r.devToggles.classList.toggle("hidden", !admin);
   },
 
   open() {
@@ -72,6 +78,7 @@ const AdminUI = {
     this.r.navs.forEach(b => b.classList.toggle("active", b.dataset.view === view));
     this.r.vContent.classList.toggle("hidden", view !== "content");
     this.r.vImages.classList.toggle("hidden", view !== "images");
+    if (this.r.vDev) this.r.vDev.classList.toggle("hidden", view !== "dev");
     if (view === "images") this.buildGallery();
   },
 

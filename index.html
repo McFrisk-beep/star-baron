@@ -287,6 +287,7 @@
       <div class="admin-nav">
         <button class="admin-navbtn active" data-view="content">📝 Content</button>
         <button class="admin-navbtn" data-view="images">🖼 Images</button>
+        <button class="admin-navbtn" data-view="dev">🧪 Dev</button>
       </div>
 
       <div id="admin-view-content">
@@ -311,6 +312,24 @@
         <div class="admin-gallery-scroll" id="admin-gallery"></div>
         <div class="settings-actions"><button class="btn admin-close">Close</button></div>
       </div>
+
+      <div id="admin-view-dev" class="hidden">
+        <p class="admin-hint">Developer tools — admin only.</p>
+        <div id="dev-toggles">
+          <label class="toggle"><input type="checkbox" id="set-fastnews" /> Fast news (~20s)</label>
+          <label class="toggle"><input type="checkbox" id="set-fast" /> Fast time (×60)</label>
+        </div>
+        <div class="admin-row">
+          <label class="auth-field admin-collection-field">Credits
+            <input type="number" id="dev-credits" placeholder="set exact amount" /></label>
+        </div>
+        <div class="settings-actions">
+          <button class="btn btn-go" id="dev-credits-set">Set</button>
+          <button class="btn" id="dev-credits-10k">+10K</button>
+          <button class="btn" id="dev-credits-1m">+1M</button>
+          <button class="btn admin-close">Close</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -334,10 +353,6 @@
     <div class="modal"><h3>Settings</h3>
       <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
       <label class="toggle"><input type="checkbox" id="set-reduced" /> Reduce motion</label>
-      <div id="dev-toggles" class="hidden">
-        <label class="toggle"><input type="checkbox" id="set-fastnews" /> Dev: fast news (~20s)</label>
-        <label class="toggle"><input type="checkbox" id="set-fast" /> Dev: fast time (×60)</label>
-      </div>
       <div class="settings-actions">
         <button class="btn btn-danger" id="set-reset">Reset Save</button>
         <button class="btn btn-go" id="set-close">Close</button>

@@ -224,8 +224,8 @@ const UI = {
   // ===== header ============================================================
   updateHeader() {
     const s = this.s();
-    this.refs.credits.textContent = Util.credits(s.credits);
-    this.refs.networth.textContent = Util.credits(Economy.netWorth());
+    this.refs.credits.textContent = Util.creditsFull(s.credits);
+    this.refs.networth.textContent = Util.creditsFull(Economy.netWorth());
     if (this.refs.rank && window.Rivals) this.refs.rank.textContent = `#${Rivals.rank()} / ${Rivals.count()}`;
     this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = s.prestige.tier;

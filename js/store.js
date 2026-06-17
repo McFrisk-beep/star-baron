@@ -104,6 +104,8 @@ const Util = {
   price(n) {
     return n >= 1000 ? Math.round(n).toLocaleString() : n.toFixed(n < 10 ? 2 : 1);
   },
+  // Exact, grouped credits (e.g. 1,523,400) — for the HUD where precision matters.
+  creditsFull(n) { return Math.round(n).toLocaleString(); },
   // ts → "just now" / "5 min ago" / "3 hr ago" / "2 days ago" / "4 months ago".
   ago(ts) {
     const s = Math.max(0, (Date.now() - ts) / 1000);
