@@ -106,31 +106,41 @@ const Senate = {
   // ===== bill scheduling & generation =====================================
   interval() { return SENATECFG.voteIntervalMs / (window.Game.timeScale || 1); },
 
-  _instantiate(tpl) {
+  // weighted pick over a pool by `.weight` (default 1)
+  _weighted(pool) {
+    let total = 0; for (const t of pool) total += (t.weight || 1);
+    let r = Math.random() * total;
+    for (const t of pool) { r -= (t.weight || 1); if (r <= 0) return t; }
+    return pool[pool.length - 1];
+  },
+  _instantiate(tpl, sev) {
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
     const cap = w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+    const f = sev ? sev.factor : 1, rnd = x => Math.round(x);
     let target = "", effect = { type: tpl.type }, pct = "";
     if (tpl.scope === "cat") {
       const c = Util.pick(cats); target = cap(c);
-      if (tpl.type === "priceCap") { effect.cat = c; effect.mult = tpl.mag; pct = Math.round((1 - tpl.mag) * 100) + "%"; }
-      else if (tpl.type === "subsidy") { effect.cat = c; effect.mult = tpl.mag; pct = Math.round((tpl.mag - 1) * 100) + "%"; }
-      else if (tpl.type === "tariff") { effect.cat = c; effect.tax = tpl.mag; pct = Math.round(tpl.mag * 100) + "%"; }
+      if (tpl.type === "priceCap") { const m = 1 - (1 - tpl.mag) * f; effect.cat = c; effect.mult = m; pct = rnd((1 - m) * 100) + "%"; }
+      else if (tpl.type === "subsidy") { const m = 1 + (tpl.mag - 1) * f; effect.cat = c; effect.mult = m; pct = rnd((m - 1) * 100) + "%"; }
+      else if (tpl.type === "tariff") { const tax = tpl.mag * f; effect.cat = c; effect.tax = tax; pct = rnd(Math.abs(tax) * 100) + "%"; }
       else if (tpl.type === "ban") { effect.cat = c; }
     } else if (tpl.scope === "comm") {
       const comm = Util.pick(COMMODITIES); target = comm.name; effect.commId = comm.id;
     } else if (tpl.scope === "faction") {
       const all = Math.random() < 0.4;
       const fac = all ? "all" : Util.pick(Object.keys(FACTIONS));
-      effect.faction = fac; effect.add = tpl.mag;
+      effect.faction = fac; effect.add = tpl.mag * f;
       target = all ? "all sectors" : FACTIONS[fac].name;
-      pct = Math.round(Math.abs(tpl.mag) * 100) + "%";
+      pct = rnd(Math.abs(tpl.mag * f) * 100) + "%";
     } else if (tpl.scope === "shipcls") {
       const cls = Util.pick(["escort", "transport"]); effect.cls = cls; target = cap(cls);
     } else if (tpl.scope === "none") {
-      if (tpl.type === "border") { effect.add = tpl.mag; pct = Math.round(tpl.mag * 100) + "%"; }
+      if (tpl.type === "border") { effect.add = tpl.mag * f; pct = rnd(tpl.mag * f * 100) + "%"; }
+      else if (tpl.type === "warpGate") { effect.add = tpl.mag * f; pct = (tpl.mag * f * 100).toFixed(1) + "%"; }
     }
     const fill = t => t.replace(/\{TARGET\}/g, target).replace(/\{PCT\}/g, pct);
-    return { title: fill(tpl.title), blurb: fill(tpl.blurb), effect };
+    const prefix = (sev && sev.label) ? sev.label + " " : "";
+    return { title: prefix + fill(tpl.title), blurb: fill(tpl.blurb), effect };
   },
 
   _genBill(votesAt, now) {
@@ -143,8 +153,10 @@ const Senate = {
         title: "Repeal — " + t.title, blurb: "Strikes down “" + t.title + "” and restores the prior status quo.",
         effect: null, votesAt, status: "upcoming" };
     }
-    const tpl = Util.pick(SENATE_EDICTS);
-    const inst = this._instantiate(tpl);
+    const tpl = this._weighted(SENATE_EDICTS);
+    // bans are binary (no magnitude) → no severity roll/prefix; everything else scales
+    const sev = (tpl.type === "ban" || tpl.type === "shipBan") ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
+    const inst = this._instantiate(tpl, sev);
     return { id, repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type,
       title: inst.title, blurb: inst.blurb, effect: inst.effect, votesAt, status: "upcoming" };
   },
@@ -263,7 +275,7 @@ const Senate = {
     const bucket = Math.floor(now / 2000);
     if (this._fx && this._fxSig === this._rev && this._fxBucket === bucket) return this._fx;
     const fx = { banComm: {}, banCat: {}, catMult: {}, commMult: {}, buyTax: {}, sellTax: {},
-      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {} };
+      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {}, warp: 0 };
     for (const b of this.activeEdicts(now)) {
       const e = b.effect; if (!e) continue;
       switch (e.type) {
@@ -278,6 +290,7 @@ const Senate = {
           if (e.faction === "all") fx.indTaxAll += e.add; else fx.indTaxFac[e.faction] = (fx.indTaxFac[e.faction] || 0) + e.add; break;
         case "border": fx.border += e.add; break;
         case "shipBan": if (e.cls) fx.shipBan[e.cls] = 1; break;
+        case "warpGate": fx.warp += e.add; break;
       }
     }
     this._fx = fx; this._fxSig = this._rev; this._fxBucket = bucket;
@@ -290,6 +303,7 @@ const Senate = {
   industryTaxAdd(fac) { const fx = this._effects(); return fx.indTaxAll + (fac ? (fx.indTaxFac[fac] || 0) : 0); },
   smuggleFailAdd() { return this._effects().border; },
   shipClassBanned(cls) { return !!this._effects().shipBan[cls]; },
+  travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
 
   // ===== player influence =================================================
   _emptyPending() { return { billId: null, want: null, lobbyAll: 0, lobbyFac: {}, bribes: {}, scandals: {} }; },

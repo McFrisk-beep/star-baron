@@ -840,19 +840,25 @@ const SENATE_ISSUES = [
   { key: "subsidy",     label: "Corporate aid",    bias: { mining_combine: 2, free_trade: 1, agri_collective: 1, syndicate: 0 } },
 ];
 
-// Edict templates. `type`+`scope`+`mag` drive the mechanical effect; senate.js
-// fills the concrete target (a commodity/category/faction/ship-class) at vote
-// time and substitutes {TARGET} / {PCT} into the title & blurb.
+// Edict templates. `type`+`scope`+`mag` drive the mechanical effect; `weight`
+// sets how often the bill comes up (heavy-handed bills are deliberately rare).
+// senate.js rolls a severity that scales `mag` (most bills are mild), fills the
+// concrete target at vote time, and substitutes {TARGET} / {PCT}.
 const SENATE_EDICTS = [
-  { id: "price_control", issue: "trade",       type: "priceCap",    scope: "cat",     mag: 0.8,  title: "{TARGET} Price Control Act", blurb: "Caps {TARGET} prices across the exchange — about {PCT} below their drift." },
-  { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,    title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
-  { id: "cat_embargo",   issue: "prohibition", type: "ban",         scope: "cat",     mag: 0,    title: "{TARGET} Embargo", blurb: "Suspends all trade in {TARGET}-class goods until repeal." },
-  { id: "tariff",        issue: "tax",         type: "tariff",      scope: "cat",     mag: 0.1,  title: "{TARGET} Tariff", blurb: "Levies a {PCT} duty on every {TARGET} trade, both ways." },
-  { id: "ind_levy",      issue: "tax",         type: "industryTax", scope: "faction", mag: 0.12, title: "Industrial Levy: {TARGET}", blurb: "Raises offworld industry tax {PCT} on {TARGET} holdings." },
-  { id: "border_act",    issue: "borders",     type: "border",      scope: "none",    mag: 0.22, title: "Border Security Act", blurb: "Tightens the lanes — smuggling runs are about {PCT} likelier to fail." },
-  { id: "ship_restrict", issue: "arms",        type: "shipBan",     scope: "shipcls", mag: 0,    title: "{TARGET} Restriction Act", blurb: "Bars {TARGET}-class ships from contract work in senate space." },
-  { id: "subsidy",       issue: "subsidy",     type: "subsidy",     scope: "cat",     mag: 1.18, title: "{TARGET} Subsidy", blurb: "Props {TARGET} prices up about {PCT} above their drift." },
-  { id: "tax_holiday",   issue: "subsidy",     type: "taxHoliday",  scope: "faction", mag: -0.07,title: "{TARGET} Tax Holiday", blurb: "Cuts offworld industry tax {PCT} on {TARGET} holdings." },
+  // — mild, common market measures —
+  { id: "price_control", issue: "trade",       type: "priceCap",    scope: "cat",     mag: 0.8,   weight: 1.0,  title: "{TARGET} Price Control Act", blurb: "Caps {TARGET} prices across the exchange — about {PCT} below their drift." },
+  { id: "tariff",        issue: "tax",         type: "tariff",      scope: "cat",     mag: 0.1,   weight: 1.2,  title: "{TARGET} Tariff", blurb: "Levies a {PCT} duty on every {TARGET} trade, both ways." },
+  { id: "ind_levy",      issue: "tax",         type: "industryTax", scope: "faction", mag: 0.12,  weight: 1.0,  title: "Industrial Levy: {TARGET}", blurb: "Raises offworld industry tax {PCT} on {TARGET} holdings." },
+  { id: "border_act",    issue: "borders",     type: "border",      scope: "none",    mag: 0.18,  weight: 0.8,  title: "Border Security Act", blurb: "Tightens the lanes — smuggling runs are about {PCT} likelier to fail." },
+  // — positive / player-friendly —
+  { id: "warp_gate",     issue: "subsidy",     type: "warpGate",    scope: "none",    mag: 0.015, weight: 1.1,  title: "Warp-Lane Standardization", blurb: "Standardised warp gates speed every ship about {PCT} faster between systems." },
+  { id: "subsidy",       issue: "subsidy",     type: "subsidy",     scope: "cat",     mag: 1.18,  weight: 1.1,  title: "{TARGET} Subsidy", blurb: "Props {TARGET} prices up about {PCT} above their drift." },
+  { id: "tax_holiday",   issue: "subsidy",     type: "taxHoliday",  scope: "faction", mag: -0.07, weight: 1.0,  title: "{TARGET} Tax Holiday", blurb: "Cuts offworld industry tax {PCT} on {TARGET} holdings." },
+  { id: "trade_relief",  issue: "trade",       type: "tariff",      scope: "cat",     mag: -0.08, weight: 0.9,  title: "{TARGET} Free-Trade Act", blurb: "Waives duties on {TARGET} — about {PCT} better on every trade, both ways." },
+  // — heavy-handed, deliberately RARE (kept, but uncommon) —
+  { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,     weight: 0.32, title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
+  { id: "cat_embargo",   issue: "prohibition", type: "ban",         scope: "cat",     mag: 0,     weight: 0.16, title: "{TARGET} Embargo", blurb: "Suspends all trade in {TARGET}-class goods until repeal." },
+  { id: "ship_restrict", issue: "arms",        type: "shipBan",     scope: "shipcls", mag: 0,     weight: 0.12, title: "{TARGET} Restriction Act", blurb: "Bars {TARGET}-class ships from contract work in senate space." },
 ];
 
 // Senator first names by race nameStyle; surnames are assembled pre+suf.

@@ -352,6 +352,12 @@ const SENATECFG = {
   abstainBand: 0.14,                         // |vote score| under this → the senator abstains
   voteNoise: 0.28,                           // deterministic per-(senator,bill) jitter
   staggerMs: 2600,                           // how long the chamber's vote cascade plays
+  // bill severity: most bills are mild; a rare "sweeping" one bites harder (scales the effect magnitude)
+  severities: [
+    { factor: 0.5, weight: 64, label: "" },
+    { factor: 1.0, weight: 28, label: "" },
+    { factor: 1.7, weight: 8, label: "Sweeping" },
+  ],
   weightCapital: 3, weightHub: 2, weightNormal: 1,  // seat weighting (capitals carry the chamber)
   independentChance: 0.12,                   // some senators sit as independents (cross-bench)
   // ---- player influence — gated by Baron Tier (0 = spectator) ----

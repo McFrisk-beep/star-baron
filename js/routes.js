@@ -20,7 +20,7 @@ const Routes = {
     const a = SYSTEMS.find(s => s.id === route.from), b = SYSTEMS.find(s => s.id === route.to);
     const dist = Math.max(1, Math.abs((a?.distance ?? 0) - (b?.distance ?? 0)));
     const ships = this.shipsOf(route);
-    const speed = ships.length ? Math.min(...ships.map(sh => Fleet.stats(sh).speed || 1)) : 1;
+    const speed = (ships.length ? Math.min(...ships.map(sh => Fleet.stats(sh).speed || 1)) : 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
     const seconds = (2 * dist * ROUTECFG.legSecondsPerDist) / speed;
     return Math.max(1000, seconds * 1000 / (window.Game.timeScale || 1));
   },
