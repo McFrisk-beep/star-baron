@@ -396,6 +396,8 @@ const Senate = {
     this.refs.overlay.classList.remove("hidden");
     this._buildSeats();
     this._renderSeats();
+    this._initPanZoom();
+    this._fitChamber();       // cover-fit so the chamber fills the screen on mobile (pan/pinch to explore)
     this.showHall();          // open in recess (partial attendance) — "Replay vote" plays the last session
     this._startLoop();
   },
@@ -409,6 +411,69 @@ const Senate = {
   resume() { if (this._open) this._startLoop(); },
   _startLoop() { if (!this._raf) this._raf = requestAnimationFrame(() => this._frame()); },
   _stopLoop() { if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; } },
+
+  // ---- pan / zoom (mirrors the star-map galaxy view) ----------------------
+  // The chamber is drawn in a fixed 1000×560 space; we pan & zoom by mutating
+  // the SVG viewBox. "Cover" fit fills the screen on mobile; getScreenCTM()
+  // keeps pixel↔user conversion correct.
+  _setVBc(v) { this.gz = v; this.refs.svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`); },
+  _toSVGc(cx, cy) {
+    const m = this.refs.svg.getScreenCTM(); if (!m) return { x: 0, y: 0 };
+    const p = this.refs.svg.createSVGPoint(); p.x = cx; p.y = cy;
+    const q = p.matrixTransform(m.inverse()); return { x: q.x, y: q.y };
+  },
+  _clampVBc(v) {
+    const AR = this._cAR, B = this._cB;
+    const w = Util.clamp(v.w, this._cMinW, this._cMaxW), h = w / AR;
+    const rw = B.x1 - B.x0, rh = B.y1 - B.y0;
+    const x = w >= rw ? (B.x0 + B.x1 - w) / 2 : Util.clamp(v.x, B.x0, B.x1 - w);
+    const y = h >= rh ? (B.y0 + B.y1 - h) / 2 : Util.clamp(v.y, B.y0, B.y1 - h);
+    return { x, y, w, h };
+  },
+  _fitChamber() {
+    const minX = 28, maxX = 972, minY = 52, maxY = 560;   // seats + podium (bubbles sit just above)
+    const cw = maxX - minX, ch = maxY - minY;
+    const r = this.refs.stage.getBoundingClientRect();
+    const AR = (r.width > 0 && r.height > 0) ? r.width / r.height : cw / ch;
+    this._cAR = AR;
+    this._cB = { x0: minX - cw * 0.12, y0: minY - ch * 0.12, x1: maxX + cw * 0.12, y1: maxY + ch * 0.12 };
+    this._cMaxW = Math.max(cw, ch * AR) * 1.1;
+    this._cMinW = Math.max(120, Math.min(cw, ch * AR) * 0.3);
+    let w, h;
+    if (cw / ch > AR) { h = ch; w = h * AR; } else { w = cw; h = w / AR; }
+    this._setVBc(this._clampVBc({ x: (minX + maxX) / 2 - w / 2, y: (minY + maxY) / 2 - h / 2, w, h }));
+  },
+  _panByc(dxPx, dyPx) {
+    const m = this.refs.svg.getScreenCTM(); if (!m || !m.a) return;
+    this._setVBc(this._clampVBc({ x: this.gz.x - dxPx / m.a, y: this.gz.y - dyPx / m.d, w: this.gz.w, h: this.gz.h }));
+  },
+  _zoomAtc(cx, cy, factor) {
+    const b = this._toSVGc(cx, cy);
+    const fx = (b.x - this.gz.x) / this.gz.w, fy = (b.y - this.gz.y) / this.gz.h;
+    const w = this.gz.w * factor, h = w / this._cAR;
+    this._setVBc(this._clampVBc({ x: b.x - fx * w, y: b.y - fy * h, w, h }));
+  },
+  _initPanZoom() {
+    if (this._pzcReady) return; this._pzcReady = true;
+    const svg = this.refs.svg; this._ptrs = new Map();
+    svg.addEventListener("pointerdown", e => { this._ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); this._dragged = false; this._pinchPrev = null; svg.classList.add("grabbing"); });
+    svg.addEventListener("pointermove", e => {
+      const p = this._ptrs.get(e.pointerId); if (!p) return;
+      const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+      if (this._ptrs.size >= 2) { this._pinchc(); return; }
+      if (Math.abs(e.clientX - px) + Math.abs(e.clientY - py) > 2) this._dragged = true;
+      this._panByc(e.clientX - px, e.clientY - py);
+    });
+    const up = e => { if (!this._ptrs.delete(e.pointerId)) return; this._pinchPrev = null; if (!this._ptrs.size) svg.classList.remove("grabbing"); };
+    window.addEventListener("pointerup", up); window.addEventListener("pointercancel", up);
+    svg.addEventListener("wheel", e => { e.preventDefault(); this._zoomAtc(e.clientX, e.clientY, e.deltaY > 0 ? 1.12 : 1 / 1.12); }, { passive: false });
+  },
+  _pinchc() {
+    const [a, b] = [...this._ptrs.values()];
+    const dist = Math.hypot(b.x - a.x, b.y - a.y), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (this._pinchPrev && dist > 0) { this._zoomAtc(mid.x, mid.y, this._pinchPrev.dist / dist); this._panByc(mid.x - this._pinchPrev.mid.x, mid.y - this._pinchPrev.mid.y); }
+    this._pinchPrev = { dist, mid }; this._dragged = true;
+  },
 
   _buildSeats() {
     if (this._seats) return;
@@ -471,7 +536,7 @@ const Senate = {
       g.addEventListener("mouseenter", e => this._tip(sn, e));
       g.addEventListener("mousemove", e => this._tipMove(e));
       g.addEventListener("mouseleave", () => this.refs.tip.style.display = "none");
-      g.addEventListener("click", () => { if (window.UI) UI.openSenatorCard(sn.id); });
+      g.addEventListener("click", () => { if (this._dragged) return; if (window.UI) UI.openSenatorCard(sn.id); });
       svg.appendChild(g);
       this._seatEls[sn.id] = { g, ring, pic };
     }

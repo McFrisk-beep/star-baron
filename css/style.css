@@ -838,7 +838,8 @@ body.reduced .node-ring.pulse { animation: none; }
 .chamber-title { font-weight: 800; letter-spacing: 2px; color: var(--ink); }
 .chamber-actions { margin-left: auto; display: flex; gap: 8px; }
 .chamber-stage { position: relative; flex: 1; min-height: 0; }
-#senate-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#senate-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+#senate-svg.grabbing { cursor: grabbing; }
 .sc-well { fill: rgba(123,140,255,.06); stroke: #2a3358; stroke-width: 1.5; }
 .sc-podium { fill: #2a3358; stroke: #4a5bff; stroke-width: 1; }
 .sc-seat { fill: #2a3148; stroke: #0b0f1c; stroke-width: 1; transition: fill .35s ease; }
