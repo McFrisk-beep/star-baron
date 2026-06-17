@@ -948,7 +948,7 @@ const UI = {
       const hist = Senate.senatorHistory(sn.id, 8).map(h => `<i class="vh vh-${h.vote}"></i>`).join("");
       const stance = revealed ? `${this.issueLabel(issueKey)}: <b>${Senate.stanceLabel(sn.stances[issueKey])}</b>` : `<span class="muted-note">${SENATECFG.stanceUnknown}</span>`;
       return `<div class="sen-row${revealed ? "" : " locked"}" data-sn="card" data-id="${sn.id}">
-        <span class="sen-name"><b>${sn.name}</b> <span class="sen-title">${sn.title}</span></span>
+        <span class="sen-name"><img class="sen-av" src="${ASSET.portrait(sn.portrait)}" alt="" onerror="this.style.display='none'" /><span class="sen-nm"><b>${sn.name}</b> <span class="sen-title">${sn.title}</span></span></span>
         <span class="sen-bloc" style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span>
         <span class="sen-where">${sn.systemName} · ${sn.sectorName}</span>
         <span class="sen-stance">${stance}</span>
@@ -1004,9 +1004,11 @@ const UI = {
         <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || smeared) ? "disabled" : ""}>${smeared ? "Smeared ✓" : `Scandal · ${Util.credits(SENATECFG.scandalCostBase)}c`}</button>
         ${lockNote}</div>` : `<p class="muted-note">No bill on the floor to influence.</p>`;
     this.refs.senatorCard.innerHTML = `
-      <div class="sen-card-head"><h3>${sn.name}</h3>
-        <div class="sen-card-sub">${sn.title} · <span style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span></div>
-        <div class="muted-note">${sn.raceName} · represents ${sn.systemName}, ${sn.sectorName} · seat weight ${sn.weight}${rel ? ` · relationship <b class="${rel > 0 ? "up" : "down"}">${rel > 0 ? "+" : ""}${rel}</b>` : ""}</div></div>
+      <div class="sen-card-head">
+        <img class="sen-portrait" src="${ASSET.portrait(sn.portrait)}" alt="" onerror="this.style.visibility='hidden'" />
+        <div class="sen-card-id"><h3>${sn.name}</h3>
+          <div class="sen-card-sub">${sn.title} · <span style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span></div>
+          <div class="muted-note">${sn.raceName} · represents ${sn.systemName}, ${sn.sectorName} · seat weight ${sn.weight}${rel ? ` · relationship <b class="${rel > 0 ? "up" : "down"}">${rel > 0 ? "+" : ""}${rel}</b>` : ""}</div></div></div>
       ${revealed ? "" : `<p class="locked-note">⚠ ${SENATECFG.stanceUnknown}. Buy this senator's dossier in the <b>Bazaar → Contracts</b> to reveal their positions and full voting record.</p>`}
       <h4>Positions</h4><ul class="sen-stances">${stances}</ul>
       <h4>Voting record</h4><div class="sen-history">${histHTML}</div>

@@ -33,6 +33,7 @@ const Content = {
     { key: "SENATE_TITLES",   label: "Senator titles",        group: "flavor" },
     { key: "SENATE_HALL",     label: "Senate hall chatter",   group: "flavor" },
     { key: "SENATE_SPEAKER",  label: "Senate speaker lines",  group: "flavor" },
+    { key: "SENATE_BUBBLES",  label: "Senate recess bubbles", group: "flavor" },
     { key: "COMMODITIES",     label: "Commodities (items)",   group: "data" },
     { key: "SHIP_CATALOG",    label: "Ships (transport/escort/flagship)", group: "data" },
     { key: "CONTRACT_TEMPLATES", label: "Contract templates", group: "data" },

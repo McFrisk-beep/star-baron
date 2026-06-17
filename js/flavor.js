@@ -895,8 +895,14 @@ const SENATE_SPEAKER = [
   "Silence in the well. The matter is {TITLE}.",
 ];
 
+// Short speech-bubble snippets shown over present senators while in recess.
+const SENATE_BUBBLES = ["psst…", "the tariff?", "not a chance", "we'll see", "my vote's mine",
+  "talk later", "interesting…", "hardly", "agreed", "outrageous!", "off the record…", "for now",
+  "no deal", "watch them", "naturally", "as if", "hmph", "votes are votes", "you didn't hear it", "…"];
+
 window.SENATE_ISSUES = SENATE_ISSUES;
 window.SENATE_EDICTS = SENATE_EDICTS;
+window.SENATE_BUBBLES = SENATE_BUBBLES;
 window.SENATE_FIRST = SENATE_FIRST;
 window.SENATE_SUR = SENATE_SUR;
 window.SENATE_TITLES = SENATE_TITLES;

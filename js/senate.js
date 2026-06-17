@@ -95,6 +95,7 @@ const Senate = {
       bloc,
       weight: cap ? SENATECFG.weightCapital : ((sys.planets || []).length >= 5 ? SENATECFG.weightHub : SENATECFG.weightNormal),
       stances,
+      portrait: Math.floor(rng() * (CONFIG.portraitCount || 12)),   // trader-chat sprite (admin-overridable via ASSET.portrait)
     };
   },
 
@@ -395,13 +396,13 @@ const Senate = {
     this.refs.overlay.classList.remove("hidden");
     this._buildSeats();
     this._renderSeats();
-    const last = this.lastResolved();
-    if (last && last.votes) this._showVote(last); else this.showHall();
+    this.showHall();          // open in recess (partial attendance) — "Replay vote" plays the last session
     this._startLoop();
   },
   closeChamber() {
     this._open = false;
     if (this.refs.overlay) this.refs.overlay.classList.add("hidden");
+    this._clearBubbles();
     this._stopLoop();
   },
   suspend() { if (this._open) this._stopLoop(); },
@@ -439,41 +440,58 @@ const Senate = {
   _renderSeats() {
     const svg = this.refs.svg, ns = "http://www.w3.org/2000/svg";
     svg.innerHTML = "";
-    // podium / well
+    // a single objectBoundingBox clip → every portrait <image> is cropped to a circle
+    const defs = document.createElementNS(ns, "defs");
+    const clip = document.createElementNS(ns, "clipPath");
+    clip.setAttribute("id", "seatClip"); clip.setAttribute("clipPathUnits", "objectBoundingBox");
+    const cc = document.createElementNS(ns, "circle"); cc.setAttribute("cx", "0.5"); cc.setAttribute("cy", "0.5"); cc.setAttribute("r", "0.5");
+    clip.appendChild(cc); defs.appendChild(clip); svg.appendChild(defs);
     const well = document.createElementNS(ns, "ellipse");
     well.setAttribute("cx", 500); well.setAttribute("cy", 548); well.setAttribute("rx", 95); well.setAttribute("ry", 30);
     well.setAttribute("class", "sc-well"); svg.appendChild(well);
     const podium = document.createElementNS(ns, "rect");
     podium.setAttribute("x", 482); podium.setAttribute("y", 512); podium.setAttribute("width", 36); podium.setAttribute("height", 30);
     podium.setAttribute("rx", 5); podium.setAttribute("class", "sc-podium"); svg.appendChild(podium);
-    this._seatEls = {};
+    this._seatEls = {}; this._bubbles = [];
     for (const sn of this.roster()) {
       const p = this._seats[sn.id]; if (!p) continue;
-      const c = document.createElementNS(ns, "circle");
-      c.setAttribute("cx", p.x.toFixed(1)); c.setAttribute("cy", p.y.toFixed(1));
-      c.setAttribute("r", sn.capital ? 9 : 6.5);
-      c.setAttribute("class", "sc-seat" + (sn.capital ? " cap" : ""));
-      c.style.cursor = "pointer";
-      c.addEventListener("mouseenter", e => this._tip(sn, e));
-      c.addEventListener("mousemove", e => this._tipMove(e));
-      c.addEventListener("mouseleave", () => this.refs.tip.style.display = "none");
-      c.addEventListener("click", () => { if (window.UI) UI.openSenatorCard(sn.id); });
-      svg.appendChild(c);
-      this._seatEls[sn.id] = c;
+      const R = sn.capital ? 10 : 7, Ri = R - 2.2;
+      const g = document.createElementNS(ns, "g"); g.setAttribute("class", "sc-seat-g"); g.style.cursor = "pointer";
+      const ring = document.createElementNS(ns, "circle");
+      ring.setAttribute("cx", p.x.toFixed(1)); ring.setAttribute("cy", p.y.toFixed(1)); ring.setAttribute("r", R);
+      ring.setAttribute("class", "sc-seat" + (sn.capital ? " cap" : "") + " vacant");
+      const pic = document.createElementNS(ns, "image");
+      const href = ASSET.portrait(sn.portrait);
+      pic.setAttributeNS("http://www.w3.org/1999/xlink", "href", href); pic.setAttribute("href", href);
+      pic.setAttribute("x", (p.x - Ri).toFixed(1)); pic.setAttribute("y", (p.y - Ri).toFixed(1));
+      pic.setAttribute("width", (Ri * 2).toFixed(1)); pic.setAttribute("height", (Ri * 2).toFixed(1));
+      pic.setAttribute("clip-path", "url(#seatClip)"); pic.setAttribute("preserveAspectRatio", "xMidYMid slice");
+      pic.setAttribute("class", "sc-pic"); pic.style.opacity = "0";
+      g.appendChild(ring); g.appendChild(pic);
+      g.addEventListener("mouseenter", e => this._tip(sn, e));
+      g.addEventListener("mousemove", e => this._tipMove(e));
+      g.addEventListener("mouseleave", () => this.refs.tip.style.display = "none");
+      g.addEventListener("click", () => { if (window.UI) UI.openSenatorCard(sn.id); });
+      svg.appendChild(g);
+      this._seatEls[sn.id] = { g, ring, pic };
     }
   },
-  _seatColor(id, kind) {
+  // present? show the portrait + (vote/bloc) ring; absent → empty dim seat, no hover
+  _setSeat(id, present, color) {
     const el = this._seatEls[id]; if (!el) return;
-    el.classList.remove("aye", "nay", "abst", "bloc", "pending");
-    if (kind === "bloc") { el.classList.add("bloc"); el.style.fill = this.blocColor(this.byId(id).bloc); }
-    else { el.style.fill = ""; el.classList.add(kind); }
+    el.pic.style.opacity = present ? "1" : "0";
+    el.g.style.pointerEvents = present ? "auto" : "none";
+    el.ring.classList.remove("aye", "nay", "abst", "bloc", "pending", "vacant");
+    if (!present) { el.ring.classList.add("vacant"); el.ring.style.fill = ""; return; }
+    if (color === "bloc") { el.ring.classList.add("bloc"); el.ring.style.fill = this.blocColor(this.byId(id).bloc); }
+    else { el.ring.style.fill = ""; el.ring.classList.add(color); }
   },
   _tip(sn, e) {
     const v = (this._mode === "vote" && this._bill) ? this.voteOf(this._bill, sn) : null;
     const vt = v === "a" ? '<span class="up">▲ aye</span>' : v === "n" ? '<span class="down">▼ nay</span>' : v === "x" ? '<span class="tip-dim">abstain</span>' : "";
     this.refs.tip.innerHTML = `<b>${sn.name}</b> <span class="tip-dim">${sn.title}</span><br>` +
       `<span style="color:${this.blocColor(sn.bloc)}">◆ ${this.blocName(sn.bloc)}</span> · ${sn.systemName}` +
-      (vt ? `<br>vote: ${vt}` : "");
+      (vt ? `<br>vote: ${vt}` : (this._mode === "hall" ? `<br><span class="tip-dim">present — ${this.revealed(sn.id) ? "dossier on file" : "buy a dossier for their stance"}</span>` : ""));
     this.refs.tip.style.display = "block"; this._tipMove(e);
   },
   _tipMove(e) {
@@ -482,12 +500,48 @@ const Senate = {
     this.refs.tip.style.top = (e.clientY - r.top + 14) + "px";
   },
 
+  // ---- recess attendance: only a rotating handful of senators are present ----
+  _rollPresence(initial) {
+    const ids = this.roster().map(s => s.id);
+    const target = Math.max(5, Math.round(ids.length * 0.18));
+    if (initial || !this._present) this._present = new Set();
+    if (!initial) {                                  // a couple drift out…
+      const cur = [...this._present], leave = Util.randInt(0, 2);
+      for (let i = 0; i < leave && cur.length; i++) { const k = Util.randInt(0, cur.length - 1); this._present.delete(cur[k]); cur.splice(k, 1); }
+    }
+    const absent = ids.filter(id => !this._present.has(id));
+    let need = initial ? target - this._present.size : Util.randInt(1, 3);
+    need = Util.clamp(need, 0, Math.min(absent.length, target + 2 - this._present.size));
+    for (let i = 0; i < need && absent.length; i++) { const k = Util.randInt(0, absent.length - 1); this._present.add(absent[k]); absent.splice(k, 1); }
+  },
+  _applyPresence() { for (const sn of this.roster()) this._setSeat(sn.id, this._present.has(sn.id), "bloc"); },
+  _bubble(id) {
+    const p = this._seats[id]; if (!p || !this.refs.svg) return;
+    const ns = "http://www.w3.org/2000/svg";
+    const text = Util.pick(SENATE_BUBBLES);
+    const w = Math.max(34, text.length * 6.2 + 14), h = 18;
+    const x = Util.clamp(p.x, w / 2 + 4, 996 - w / 2), y = p.y - (this.byId(id).capital ? 10 : 7) - 15;
+    const g = document.createElementNS(ns, "g"); g.setAttribute("class", "sc-bubble");
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", (x - w / 2).toFixed(1)); rect.setAttribute("y", (y - h / 2).toFixed(1));
+    rect.setAttribute("width", w.toFixed(1)); rect.setAttribute("height", h); rect.setAttribute("rx", 7);
+    const t = document.createElementNS(ns, "text"); t.setAttribute("x", x.toFixed(1)); t.setAttribute("y", (y + 4).toFixed(1));
+    t.setAttribute("text-anchor", "middle"); t.setAttribute("class", "sc-bubble-t"); t.textContent = text;
+    g.appendChild(rect); g.appendChild(t); this.refs.svg.appendChild(g);
+    requestAnimationFrame(() => g.classList.add("show"));
+    this._bubbles ||= []; this._bubbles.push(g);
+    setTimeout(() => { g.classList.remove("show"); setTimeout(() => g.remove(), 350); this._bubbles = (this._bubbles || []).filter(b => b !== g); }, 2600);
+    while (this._bubbles.length > 5) { const old = this._bubbles.shift(); if (old) old.remove(); }
+  },
+  _clearBubbles() { if (this._bubbles) for (const b of this._bubbles) b.remove(); this._bubbles = []; },
+
   _reduced() { return !!(this.s().settings && this.s().settings.reduced); },
   _showVote(bill) {
     this._mode = "vote"; this._bill = bill; this._voteDone = false;
+    this._clearBubbles();
     this._tally = { aye: 0, nay: 0, abst: 0, wAye: 0, wNay: 0 };
     this.refs.btnReplay.style.display = "";
-    for (const sn of this.roster()) this._seatColor(sn.id, "pending");
+    for (const sn of this.roster()) this._setSeat(sn.id, true, "pending");   // full attendance for the vote
     const order = this.roster().slice().sort((a, b) => (this._seats[a.id]?.a || 0) - (this._seats[b.id]?.a || 0));
     this._revealed = {};
     if (this._reduced()) {
@@ -501,32 +555,44 @@ const Senate = {
   },
   _applyVote(id) {
     const v = this._bill.votes[this.byId(id).idx], w = this.byId(id).weight;
-    if (v === "a") { this._tally.aye++; this._tally.wAye += w; this._seatColor(id, "aye"); }
-    else if (v === "n") { this._tally.nay++; this._tally.wNay += w; this._seatColor(id, "nay"); }
-    else { this._tally.abst++; this._seatColor(id, "abst"); }
+    if (v === "a") { this._tally.aye++; this._tally.wAye += w; this._setSeat(id, true, "aye"); }
+    else if (v === "n") { this._tally.nay++; this._tally.wNay += w; this._setSeat(id, true, "nay"); }
+    else { this._tally.abst++; this._setSeat(id, true, "abst"); }
   },
   replay() { const b = this._bill || this.lastResolved(); if (b && b.votes) { this._showVote(b); this._startLoop(); } },
   showHall() {
     this._mode = "hall"; this._bill = null;
+    this._clearBubbles();
     this.refs.btnReplay.style.display = this.lastResolved() ? "" : "none";
-    for (const sn of this.roster()) this._seatColor(sn.id, "bloc");
+    this._rollPresence(true);
+    this._applyPresence();
     this._nextHall = 0;
-    this._renderSpeaker();
+    this._renderRecessText();
   },
   _hallBeat() {
-    const roster = this.roster();
-    if (roster.length < 2) return;
-    const a = Util.pick(roster), b = Util.pick(roster.filter(s => s.id !== a.id));
-    const iss = Util.pick(SENATE_ISSUES);
-    const line = Util.pick(SENATE_HALL).replace(/\{A\}/g, a.name).replace(/\{B\}/g, b.name).replace(/\{ISSUE\}/g, iss.label.toLowerCase());
-    for (const id of [a.id, b.id]) { const el = this._seatEls[id]; if (el) { el.classList.add("speaking"); setTimeout(() => el && el.classList.remove("speaking"), 1500); } }
-    const next = this.nextBill();
+    this._rollPresence(false);
+    this._applyPresence();
+    const present = [...this._present];
+    if (present.length) this._bubble(Util.pick(present));
+    this._renderRecessText();
+  },
+  _renderRecessText() {
+    const present = [...(this._present || [])], next = this.nextBill();
     const eta = next ? Util.duration(Math.max(0, next.votesAt - Date.now())) : "—";
+    let line = "The chamber stands in recess; senators drift in and out.";
+    if (present.length > 1) {
+      const a = this.byId(present[Util.randInt(0, present.length - 1)]);
+      const b = this.byId(present[Util.randInt(0, present.length - 1)]);
+      if (a && b && a.id !== b.id) {
+        const iss = Util.pick(SENATE_ISSUES);
+        line = Util.pick(SENATE_HALL).replace(/\{A\}/g, a.name).replace(/\{B\}/g, b.name).replace(/\{ISSUE\}/g, iss.label.toLowerCase());
+      }
+    }
     this.refs.speaker.innerHTML = `<div class="sc-hall-line">${line}</div>` +
-      `<div class="sc-sub">The chamber is in recess · next session in <b>${eta}</b>${next ? ` · <span class="sc-up">${next.title}</span>` : ""}</div>`;
+      `<div class="sc-sub">In recess · <b>${present.length}</b>/${this.roster().length} present · next session in <b>${eta}</b>` +
+      `${next ? ` · <span class="sc-up">${next.title}</span> · buy dossiers to know the absent senators' stances` : ""}</div>`;
   },
   _renderSpeaker() {
-    if (this._mode === "hall") { this._hallBeat(); return; }
     const b = this._bill; if (!b) return;
     const line = Util.pick(SENATE_SPEAKER).replace(/\{TITLE\}/g, b.title);
     const result = (this._voteDone)
