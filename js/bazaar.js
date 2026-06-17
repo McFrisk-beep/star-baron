@@ -57,7 +57,7 @@ const Bazaar = {
     if (!candidates.length) return null;
     const sn = Util.pick(candidates);
     return { id: "dos" + (++this.s().seq), senatorId: sn.id, name: sn.name, title: sn.title,
-      bloc: sn.bloc, systemName: sn.systemName,
+      bloc: Senate.blocNow(sn), systemName: sn.systemName,
       price: Util.randInt(SENATECFG.dossierMinPrice, SENATECFG.dossierMaxPrice) + sn.weight * 600,
       expiresAt: now + BAZAARCFG.contractExpiryMs * 2 };
   },

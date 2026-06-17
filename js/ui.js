@@ -940,16 +940,16 @@ const UI = {
     const f = this.senateFilt, q = (f.q || "").toLowerCase();
     const shown = roster.filter(sn =>
       (f.sector === "all" || sn.sectorId === f.sector) &&
-      (f.bloc === "all" || sn.bloc === f.bloc) &&
+      (f.bloc === "all" || Senate.blocNow(sn) === f.bloc) &&
       (!q || sn.name.toLowerCase().includes(q) || sn.systemName.toLowerCase().includes(q)));
     const issueKey = next ? next.issue : "trade";
     const rows = shown.map(sn => {
-      const revealed = Senate.revealed(sn.id), rel = Senate.relationship(sn.id);
+      const revealed = Senate.revealed(sn.id), rel = Senate.relationship(sn.id), bloc = Senate.blocNow(sn);
       const hist = Senate.senatorHistory(sn.id, 8).map(h => `<i class="vh vh-${h.vote}"></i>`).join("");
-      const stance = revealed ? `${this.issueLabel(issueKey)}: <b>${Senate.stanceLabel(sn.stances[issueKey])}</b>` : `<span class="muted-note">${SENATECFG.stanceUnknown}</span>`;
+      const stance = revealed ? `${this.issueLabel(issueKey)}: <b>${Senate.stanceLabel(Senate.stanceNow(sn, issueKey))}</b>` : `<span class="muted-note">${SENATECFG.stanceUnknown}</span>`;
       return `<div class="sen-row${revealed ? "" : " locked"}" data-sn="card" data-id="${sn.id}">
         <span class="sen-name"><img class="sen-av" src="${ASSET.portrait(sn.portrait)}" alt="" onerror="this.style.display='none'" /><span class="sen-nm"><b>${sn.name}</b> <span class="sen-title">${sn.title}</span></span></span>
-        <span class="sen-bloc" style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span>
+        <span class="sen-bloc" style="color:${Senate.blocColor(bloc)}">◆ ${Senate.blocName(bloc)}${bloc !== sn.bloc ? " ⇄" : ""}</span>
         <span class="sen-where">${sn.systemName} · ${sn.sectorName}</span>
         <span class="sen-stance">${stance}</span>
         <span class="sen-hist" title="recent votes">${hist}</span>
@@ -993,7 +993,8 @@ const UI = {
     if (!window.Senate) return;
     const sn = Senate.byId(id); if (!sn) return;
     const revealed = Senate.revealed(id), rel = Senate.relationship(id), p = Senate.pending(), next = Senate.nextBill();
-    const stances = SENATE_ISSUES.map(iss => `<li><span>${iss.label}</span><b>${revealed ? Senate.stanceLabel(sn.stances[iss.key]) : SENATECFG.stanceUnknown}</b></li>`).join("");
+    const curBloc = Senate.blocNow(sn);
+    const stances = SENATE_ISSUES.map(iss => `<li><span>${iss.label}</span><b>${revealed ? Senate.stanceLabel(Senate.stanceNow(sn, iss.key)) : SENATECFG.stanceUnknown}</b></li>`).join("");
     const hist = Senate.senatorHistory(id, 12);
     const histHTML = hist.length ? hist.map(h => `<div class="sh-row"><i class="vh vh-${h.vote}"></i> <span>${h.bill.title}</span> <span class="muted-note">${h.vote === "a" ? "aye" : h.vote === "n" ? "nay" : "abstained"}</span></div>`).join("") : `<p class="muted-note">No votes on record yet.</p>`;
     const canB = Senate.can("bribe"), canS = Senate.can("scandal");
@@ -1007,9 +1008,9 @@ const UI = {
       <div class="sen-card-head">
         <img class="sen-portrait" src="${ASSET.portrait(sn.portrait)}" alt="" onerror="this.style.visibility='hidden'" />
         <div class="sen-card-id"><h3>${sn.name}</h3>
-          <div class="sen-card-sub">${sn.title} · <span style="color:${Senate.blocColor(sn.bloc)}">◆ ${Senate.blocName(sn.bloc)}</span></div>
+          <div class="sen-card-sub">${sn.title} · <span style="color:${Senate.blocColor(curBloc)}">◆ ${Senate.blocName(curBloc)}</span>${curBloc !== sn.bloc ? ` <span class="muted-note">(crossed the floor from ${Senate.blocName(sn.bloc)})</span>` : ""}</div>
           <div class="muted-note">${sn.raceName} · represents ${sn.systemName}, ${sn.sectorName} · seat weight ${sn.weight}${rel ? ` · relationship <b class="${rel > 0 ? "up" : "down"}">${rel > 0 ? "+" : ""}${rel}</b>` : ""}</div></div></div>
-      ${revealed ? "" : `<p class="locked-note">⚠ ${SENATECFG.stanceUnknown}. Buy this senator's dossier in the <b>Bazaar → Contracts</b> to reveal their positions and full voting record.</p>`}
+      ${revealed ? `<p class="muted-note">Positions shift slowly over time — a dossier always shows their current stance.</p>` : `<p class="locked-note">⚠ ${SENATECFG.stanceUnknown}. Buy this senator's dossier in the <b>Bazaar → Contracts</b> to reveal their positions and full voting record.</p>`}
       <h4>Positions</h4><ul class="sen-stances">${stances}</ul>
       <h4>Voting record</h4><div class="sen-history">${histHTML}</div>
       ${actions}`;

@@ -358,6 +358,13 @@ const SENATECFG = {
     { factor: 1.0, weight: 28, label: "" },
     { factor: 1.7, weight: 8, label: "Sweeping" },
   ],
+  // opinions drift over time (deterministic from the galaxy clock, so identical for every player)
+  driftAmp: 1.6,                             // stance swing magnitude over a cycle (on the −3..3 scale)
+  driftPeriodMs: 3 * 24 * 60 * 60 * 1000,    // one full opinion cycle (~3 days)
+  switchMargin: 10,                          // a senator only defects bloc when drifted views beat their own by this
+  // votes also react to the live market & standing edicts
+  contextStrength: 0.45,                     // how hard the current market level nudges a price-bill vote
+  satFatigue: 0.5,                           // appetite drop when an edict on the same issue is already in force
   weightCapital: 3, weightHub: 2, weightNormal: 1,  // seat weighting (capitals carry the chamber)
   independentChance: 0.12,                   // some senators sit as independents (cross-bench)
   // ---- player influence — gated by Baron Tier (0 = spectator) ----

@@ -104,6 +104,41 @@ const Senate = {
   blocColor(b) { return b === "independent" ? "#9aa9c8" : ((FACTIONS[b] || {}).color || "#9aa9c8"); },
   stanceLabel(v) { return SENATECFG.stanceLabels[Util.clamp(v + 3, 0, 6)]; },
 
+  // ----- opinions drift over time (deterministic from the wall clock) -----
+  // base stance + a slow per-(senator,issue) sine wave → identical on every
+  // client at a given time, no stored state.
+  stanceNow(sn, key, now = Date.now()) {
+    const base = (sn.stances && sn.stances[key]) || 0;
+    const phase = (this._hash(sn.id + ":" + key) / 4294967296) * Math.PI * 2;
+    const drift = SENATECFG.driftAmp * Math.sin(now / SENATECFG.driftPeriodMs * Math.PI * 2 + phase);
+    return Util.clamp(Math.round(base + drift), -3, 3);
+  },
+  // current allegiance: a senator defects to the faction their drifted views now
+  // best fit, but only on a strong margin — so side-switches stay rare.
+  blocNow(sn, now = Date.now()) {
+    const score = fac => { let s = 0; for (const iss of SENATE_ISSUES) s += this.stanceNow(sn, iss.key, now) * ((iss.bias && iss.bias[fac]) || 0); return s; };
+    const baseSc = sn.bloc === "independent" ? 0 : score(sn.bloc);
+    let best = sn.bloc, bestSc = baseSc;
+    for (const fac of Object.keys(FACTIONS)) { const s = score(fac); if (s > bestSc) { bestSc = s; best = fac; } }
+    return (best !== sn.bloc && bestSc >= baseSc + SENATECFG.switchMargin) ? best : sn.bloc;
+  },
+  defected(sn, now = Date.now()) { return this.blocNow(sn, now) !== sn.bloc; },
+  // market / standing-edict context for a bill (same for every senator on a bill)
+  _context(bill, now = Date.now()) {
+    const e = bill && bill.effect; if (!e || !window.Market) return 0;
+    const amp = CONFIG.driftAmp || 0.06, k = SENATECFG.contextStrength;
+    let ctx = 0;
+    const cat = e.cat || (e.commId ? (COMMODITIES.find(c => c.id === e.commId) || {}).cat : null);
+    if (cat) {
+      const high = (Market.categoryDrift(cat, now) - 1) / amp;     // −1..1 structural price level (shared)
+      if (e.type === "priceCap") ctx += k * high;                  // capping a high market is popular
+      else if (e.type === "subsidy") ctx -= k * high;              // propping an already-high market isn't
+      else if (e.type === "tariff" && e.tax > 0) ctx -= k * high;  // taxing a high market isn't
+    }
+    if (bill.lean > 0 && this.activeEdicts(now).some(b => b.id !== bill.id && b.issue === bill.issue)) ctx -= SENATECFG.satFatigue;
+    return ctx;
+  },
+
   // ===== bill scheduling & generation =====================================
   interval() { return SENATECFG.voteIntervalMs / (window.Game.timeScale || 1); },
 
@@ -216,10 +251,11 @@ const Senate = {
   _resolveBill(bill, atTime) {
     const roster = this.roster(), senate = this.sen();
     const pending = (senate.pending && senate.pending.billId === bill.id) ? senate.pending : null;
+    const ctx = this._context(bill, atTime);
     let aye = 0, nay = 0, abst = 0, wAye = 0, wNay = 0;
     const votes = new Array(roster.length).fill("x");
     for (const sn of roster) {
-      const v = this._vote(sn, bill, pending);
+      const v = this._vote(sn, bill, pending, ctx, atTime);
       votes[sn.idx] = v;
       if (v === "a") { aye++; wAye += sn.weight; }
       else if (v === "n") { nay++; wNay += sn.weight; }
@@ -238,16 +274,16 @@ const Senate = {
     Bus.emit("senateVote", bill);
   },
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
-  _vote(sn, bill, pending) {
+  _vote(sn, bill, pending, ctx, now) {
     if (pending && pending.scandals && pending.scandals[sn.id]) return "x";   // smeared → sits it out
-    let score = ((sn.stances[bill.issue] || 0) / 3) * bill.lean;
+    let score = (this.stanceNow(sn, bill.issue, now) / 3) * bill.lean + (ctx || 0);
     const rep = (this.sen().reps || {})[sn.id];
     const want = pending ? (pending.want === "pass" ? 1 : pending.want === "block" ? -1 : 0) : 0;
     if (want) {
       if (rep && rep.rel) score += (rep.rel / 100) * want * 0.6;
       if (pending.bribes && pending.bribes[sn.id]) score += SENATECFG.bribeStrength * want;
       if (pending.lobbyAll) score += pending.lobbyAll * want;
-      const f = pending.lobbyFac && pending.lobbyFac[sn.bloc];
+      const f = pending.lobbyFac && pending.lobbyFac[this.blocNow(sn, now)];
       if (f) score += f * want;
     }
     score += (this._hash(sn.id + "|" + bill.id) / 4294967296 - 0.5) * 2 * SENATECFG.voteNoise;
@@ -577,14 +613,15 @@ const Senate = {
     el.g.style.pointerEvents = present ? "auto" : "none";
     el.ring.classList.remove("aye", "nay", "abst", "bloc", "pending", "vacant");
     if (!present) { el.ring.classList.add("vacant"); el.ring.style.fill = ""; return; }
-    if (color === "bloc") { el.ring.classList.add("bloc"); el.ring.style.fill = this.blocColor(this.byId(id).bloc); }
+    if (color === "bloc") { el.ring.classList.add("bloc"); el.ring.style.fill = this.blocColor(this.blocNow(this.byId(id))); }
     else { el.ring.style.fill = ""; el.ring.classList.add(color); }
   },
   _tip(sn, e) {
     const v = (this._mode === "vote" && this._bill) ? this.voteOf(this._bill, sn) : null;
     const vt = v === "a" ? '<span class="up">▲ aye</span>' : v === "n" ? '<span class="down">▼ nay</span>' : v === "x" ? '<span class="tip-dim">abstain</span>' : "";
+    const bloc = this.blocNow(sn);
     this.refs.tip.innerHTML = `<b>${sn.name}</b> <span class="tip-dim">${sn.title}</span><br>` +
-      `<span style="color:${this.blocColor(sn.bloc)}">◆ ${this.blocName(sn.bloc)}</span> · ${sn.systemName}` +
+      `<span style="color:${this.blocColor(bloc)}">◆ ${this.blocName(bloc)}${bloc !== sn.bloc ? " ⇄" : ""}</span> · ${sn.systemName}` +
       (vt ? `<br>vote: ${vt}` : (this._mode === "hall" ? `<br><span class="tip-dim">present — ${this.revealed(sn.id) ? "dossier on file" : "buy a dossier for their stance"}</span>` : ""));
     this.refs.tip.style.display = "block"; this._tipMove(e);
   },
@@ -616,7 +653,7 @@ const Senate = {
     const next = this.nextBill();
     const text = raw
       .replace(/\{ME\}/g, sn.name)
-      .replace(/\{BLOC\}/g, this.blocName(sn.bloc))
+      .replace(/\{BLOC\}/g, this.blocName(this.blocNow(sn)))
       .replace(/\{OTHER\}/g, otherName || "you")
       .replace(/\{ISSUE\}/g, Util.pick(SENATE_ISSUES).label.toLowerCase())
       .replace(/\{COMM\}/g, Util.pick(COMMODITIES).name)
