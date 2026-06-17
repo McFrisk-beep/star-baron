@@ -98,17 +98,23 @@ const Industries = {
     if (fac) { const rep = Rep.get(fac); if (rep <= INDUSTRYCFG.atRiskRep) return "at risk"; if (rep < 0) return "taxed"; }
     return "running";
   },
+  // One batch's economics at a production multiplier (1 = nominal). Single source
+  // of truth for the yield/tax/cycle math shared by batch() (display) and
+  // resolve() (production) — so the two can never drift apart.
+  _yield(sys, planet, ex, commodity, mult = 1) {
+    const bon = Extractors.bonuses(ex);
+    const suit = this.suitabilityFor(planet.type, commodity);
+    const gross = Math.round(INDUSTRYCFG.baseYield * suit * Extractors.yieldMult(ex) * bon.rate * mult);
+    const rate = this.taxRate(sys, planet);
+    return { gross, rate, suit, net: gross > 0 ? Math.max(1, gross - Math.ceil(gross * rate)) : 0, cycleMs: INDUSTRYCFG.cycleMs * bon.cycle };
+  },
   // Nominal per-12h economics (running, pre strike/war) for display.
   batch(ind) {
     const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
     const ex = Extractors.get(ind.extractorUid);
     if (!planet || !ex || !ind.commodity) return { gross: 0, rate: 0, tax: 0, net: 0, suit: 1, cycleMs: INDUSTRYCFG.cycleMs };
-    const bon = Extractors.bonuses(ex);
-    const suit = this.suitabilityFor(planet.type, ind.commodity);
-    const gross = Math.round(INDUSTRYCFG.baseYield * suit * Extractors.yieldMult(ex) * bon.rate);
-    const rate = this.taxRate(sys, planet);
-    const tax = Math.ceil(gross * rate);
-    return { gross, rate, tax, net: gross > 0 ? Math.max(1, gross - tax) : 0, suit, cycleMs: INDUSTRYCFG.cycleMs * bon.cycle };
+    const y = this._yield(sys, planet, ex, ind.commodity);
+    return { ...y, tax: Math.ceil(y.gross * y.rate) };
   },
 
   resolve(now = Date.now()) {
@@ -119,21 +125,18 @@ const Industries = {
       if (fac && Rep.get(fac) <= INDUSTRYCFG.destroyRep) { ind._dead = true; lost.push({ name: planet ? planet.name : ind.systemId, faction: fac }); continue; }
       if (!planet || !ind.extractorUid || !ind.commodity || now < ind.nextAt) continue;
       const ex = Extractors.get(ind.extractorUid); if (!ex) continue;
-      const bon = Extractors.bonuses(ex), cycleMs = INDUSTRYCFG.cycleMs * bon.cycle;
       const mult = this.prodMult(ind, now);
-      if (mult <= 0) { ind.nextAt = now + cycleMs; continue; }
-      const cycles = Math.min(Math.floor((now - ind.nextAt) / cycleMs) + 1, INDUSTRYCFG.maxCyclesPerResolve);
-      const rate = this.taxRate(sys, planet);
-      const batchGross = Math.round(INDUSTRYCFG.baseYield * this.suitabilityFor(planet.type, ind.commodity) * Extractors.yieldMult(ex) * bon.rate * mult);
-      const batchNet = batchGross > 0 ? Math.max(1, batchGross - Math.ceil(batchGross * rate)) : 0;
-      const qty = batchNet * cycles;
+      const y = this._yield(sys, planet, ex, ind.commodity, mult);
+      if (mult <= 0) { ind.nextAt = now + y.cycleMs; continue; }
+      const cycles = Math.min(Math.floor((now - ind.nextAt) / y.cycleMs) + 1, INDUSTRYCFG.maxCyclesPerResolve);
+      const qty = y.net * cycles;
       if (qty > 0) {
         const held = s.positions[ind.commodity] || 0, prev = s.avgCost[ind.commodity] || 0;
         s.positions[ind.commodity] = held + qty;
         s.avgCost[ind.commodity] = (held + qty) > 0 ? (held * prev) / (held + qty) : 0;
         made.push({ commodity: ind.commodity, qty });
       }
-      ind.nextAt = now + cycleMs;
+      ind.nextAt = now + y.cycleMs;
     }
     if (lost.length) this.s().industries = this.list().filter(i => !i._dead);
     for (const l of lost) Bus.emit("industryLost", l);
