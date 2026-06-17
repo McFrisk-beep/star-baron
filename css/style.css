@@ -352,8 +352,10 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .admin-json:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .admin-status { font-size: 12px; min-height: 16px; margin: 0 0 4px; color: var(--ink-dim); font-family: var(--mono); }
 .admin-status.good { color: var(--up); } .admin-status.bad { color: var(--down); }
-/* bound the panel to the viewport; inner regions scroll, not the whole modal */
-.admin-panel { max-width: min(860px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
+/* bound the panel to the viewport; inner regions scroll, not the whole modal.
+   wider on desktop so the table editors (e.g. Senate edicts) fit more columns;
+   .modal.admin-panel beats the .modal-wide cap this panel also carries. */
+.modal.admin-panel { max-width: min(1180px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
 .admin-panel > h3 { flex: none; }
 #admin-view-content, #admin-view-images { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .admin-row, .admin-status, .admin-panel .settings-actions, #admin-img-note, .admin-imgtabs { flex: none; }
