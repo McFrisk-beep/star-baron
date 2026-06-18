@@ -253,10 +253,19 @@ const Senate = {
     if (ready) this._poolReady[billId] = true;
     this._bumpRev();
   },
-  // add a shared bill (idempotent by id; a bill already resolved locally is kept as-is)
+  // add or re-sync a shared agenda bill. A bill that's still upcoming is kept in
+  // step with the server (its votes_at / content can change — e.g. a re-stagger),
+  // but one that already resolved locally is left to its published outcome.
   ingestSharedBill(b) {
     const senate = this.sen(); senate.bills ||= [];
-    if (senate.bills.some(x => x.id === b.id)) return false;
+    const cur = senate.bills.find(x => x.id === b.id);
+    if (cur) {
+      if (cur.status !== "upcoming") return false;     // resolved → the outcome owns it
+      if (cur.votesAt === b.votesAt && cur.endsAt === b.endsAt && cur.title === b.title && cur.blurb === b.blurb) return false;
+      Object.assign(cur, { issue: b.issue, type: b.type, lean: b.lean, effect: b.effect,
+        title: b.title, blurb: b.blurb, votesAt: b.votesAt, endsAt: b.endsAt });
+      this._bumpRev(); return true;
+    }
     senate.bills.push(b); this._bumpRev(); return true;
   },
 
