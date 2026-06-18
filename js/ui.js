@@ -54,9 +54,6 @@ const UI = {
       feedList: $("feed-list"), toast: $("toast-stack"),
       colSide: document.querySelector(".col-side"), newswireDetails: $("newswire-details"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
-      tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
-      tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
-      tutBack: $("tut-back"), tutNext: $("tut-next"),
       wywa: $("wywa-modal"), wywaBody: $("wywa-body"), wywaClose: $("wywa-close"),
       mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
@@ -1288,34 +1285,163 @@ const UI = {
     return true;
   },
 
-  // ===== tutorial / help ===================================================
+  // ===== tutorial / interactive walkthrough ================================
+  // A spotlight tour: dim the screen, cut a bright hole around the real control
+  // a step is about, and float a callout beside it. Tab steps (step.opens) stay
+  // clickable in the hole so tapping the lit-up tab navigates AND advances; other
+  // steps just point, and you advance with Next. Reopen anytime via ❔ Help.
   openTutorial() {
     this.tutStep = 0;
-    this.refs.tutorial.classList.remove("hidden");
-    this.renderTutorial();
+    this._tourBuild();
+    this._tourRoot.classList.remove("hidden");
+    this._tourReposition = () => this._tourPlace();
+    window.addEventListener("resize", this._tourReposition);
+    window.addEventListener("scroll", this._tourReposition, true); // capture: regions scroll internally
+    this._tourKey = e => {
+      if (e.key === "Escape") this.closeTutorial();
+      // Enter advances — unless a tour button is focused (its own click already fires)
+      else if (e.key === "Enter" && !(document.activeElement && document.activeElement.classList.contains("btn"))) this.tourNext();
+    };
+    window.addEventListener("keydown", this._tourKey);
+    this._tourRender();
   },
-  renderTutorial() {
-    const steps = window.TUTORIAL_STEPS || [];
+
+  _tourSteps() { return window.TUTORIAL_STEPS || []; },
+  _tourTarget(step) {
+    if (!step || !step.sel) return null;
+    try { return document.querySelector(step.sel); } catch (e) { return null; }
+  },
+
+  _tourBuild() {
+    if (this._tourRoot) return;
+    const root = document.createElement("div");
+    root.className = "tour-root hidden";
+    root.innerHTML =
+      `<div class="tour-dim"></div>` +
+      `<div class="tour-mask top"></div><div class="tour-mask bottom"></div>` +
+      `<div class="tour-mask left"></div><div class="tour-mask right"></div>` +
+      `<div class="tour-ring"></div><div class="tour-hole"></div>` +
+      `<div class="tour-callout" role="dialog" aria-live="polite">` +
+        `<div class="tour-head"><span class="tour-ic"></span><h3 class="tour-title"></h3></div>` +
+        `<div class="tour-body"></div>` +
+        `<div class="tour-foot"><div class="tour-dots"></div>` +
+          `<div class="tour-btns"><button class="btn tour-skip">Skip ✕</button>` +
+          `<span class="tour-nav2"><button class="btn tour-back">◂ Back</button>` +
+          `<button class="btn btn-go tour-next">Next ▸</button></span></div></div>` +
+        `<span class="tour-arrow"></span></div>`;
+    document.body.appendChild(root);
+    const q = s => root.querySelector(s);
+    this._tourRoot = root;
+    this._tourCallout = q(".tour-callout");
+    this._tourLayers = { dim: q(".tour-dim"), top: q(".tour-mask.top"), bottom: q(".tour-mask.bottom"),
+      left: q(".tour-mask.left"), right: q(".tour-mask.right"), ring: q(".tour-ring"), hole: q(".tour-hole") };
+    this._tourEls = { ic: q(".tour-ic"), title: q(".tour-title"), body: q(".tour-body"),
+      dots: q(".tour-dots"), arrow: q(".tour-arrow"), next: q(".tour-next") };
+    q(".tour-skip").onclick = () => this.closeTutorial();
+    q(".tour-back").onclick = () => this.tourBack();
+    q(".tour-next").onclick = () => this.tourNext();
+  },
+
+  _tourClearTarget() {
+    if (this._tourCur && this._tourClick) this._tourCur.removeEventListener("click", this._tourClick, true);
+    this._tourCur = null; this._tourClick = null;
+  },
+
+  _tourRender() {
+    const steps = this._tourSteps();
     const i = Util.clamp(this.tutStep, 0, steps.length - 1);
     const step = steps[i]; if (!step) return;
-    this.refs.tutIcon.textContent = step.icon;
-    this.refs.tutTitle.textContent = step.title;
-    this.refs.tutBody.innerHTML = step.body;
-    this.refs.tutDots.innerHTML = steps.map((_, k) =>
-      `<span class="tut-dot ${k === i ? "on" : ""}"></span>`).join("");
-    this.refs.tutBack.disabled = i === 0;
+    if (step.on && this.page !== step.on) this.showPage(step.on);  // make the target's page visible before we measure it
+    const e = this._tourEls;
+    e.ic.textContent = step.icon || "◆";
+    e.title.textContent = step.title || "";
+    e.body.innerHTML = step.body || "";
+    e.dots.innerHTML = steps.map((_, k) => `<span class="tour-dot ${k === i ? "on" : ""}"></span>`).join("");
     const last = i === steps.length - 1;
-    this.refs.tutNext.textContent = last ? "Got it ✓" : "Next ▸";
-    this.refs.tutSkip.classList.toggle("hidden", last);
+    e.next.textContent = last ? "Got it ✓" : "Next ▸";
+
+    // tab steps stay clickable in the hole: tapping the lit-up tab advances the tour
+    this._tourClearTarget();
+    const t = this._tourTarget(step);
+    if (t && step.opens) {
+      this._tourCur = t;
+      // detach immediately so a fast double-tap can't advance twice
+      this._tourClick = () => { this._tourClearTarget(); setTimeout(() => this.tourNext(), 130); };
+      t.addEventListener("click", this._tourClick, true);
+      if (this._tourOffscreen(t)) t.scrollIntoView({ block: "center", behavior: this.s().settings.reduced ? "auto" : "smooth" });
+    } else if (t && this._tourOffscreen(t)) {
+      t.scrollIntoView({ block: "center", behavior: this.s().settings.reduced ? "auto" : "smooth" });
+    }
+    requestAnimationFrame(() => this._tourPlace());
   },
-  tutorialNext() {
-    const steps = window.TUTORIAL_STEPS || [];
+
+  _tourOffscreen(el) {
+    const r = el.getBoundingClientRect();
+    return r.height && (r.top < 8 || r.bottom > window.innerHeight - 8);
+  },
+
+  _tourPlace() {
+    const root = this._tourRoot;
+    if (!root || root.classList.contains("hidden")) return;
+    const steps = this._tourSteps();
+    const step = steps[Util.clamp(this.tutStep, 0, steps.length - 1)];
+    const t = step ? this._tourTarget(step) : null;
+    const r0 = t && t.getBoundingClientRect();
+    const co = this._tourCallout, arrow = this._tourEls.arrow, E = this._tourLayers;
+    const vw = window.innerWidth, vh = window.innerHeight, M = 10;
+
+    if (!t || !r0 || !r0.height) {                 // centered intro/outro — full dim, no hole
+      E.dim.classList.remove("hidden");
+      for (const k of ["top", "bottom", "left", "right", "ring", "hole"]) E[k].classList.add("hidden");
+      co.classList.add("tour-center"); co.style.left = co.style.top = co.style.transform = "";
+      arrow.style.display = "none";
+      return;
+    }
+
+    E.dim.classList.add("hidden");
+    for (const k of ["top", "bottom", "left", "right", "ring"]) E[k].classList.remove("hidden");
+    co.classList.remove("tour-center"); arrow.style.display = "";
+
+    const pad = 6;
+    const hx = Util.clamp(r0.left - pad, 0, vw), hy = Util.clamp(r0.top - pad, 0, vh);
+    const hw = Util.clamp(r0.width + pad * 2, 0, vw - hx), hh = Util.clamp(r0.height + pad * 2, 0, vh - hy);
+    const set = (el, x, y, w, h) => { el.style.left = x + "px"; el.style.top = y + "px"; el.style.width = Math.max(0, w) + "px"; el.style.height = Math.max(0, h) + "px"; };
+    set(E.top, 0, 0, vw, hy);
+    set(E.bottom, 0, hy + hh, vw, vh - (hy + hh));
+    set(E.left, 0, hy, hx, hh);
+    set(E.right, hx + hw, hy, vw - (hx + hw), hh);
+    set(E.ring, hx, hy, hw, hh);
+    set(E.hole, hx, hy, hw, hh);
+    E.hole.classList.toggle("hidden", !!step.opens);  // tab steps: leave the hole open so the tab is clickable
+
+    const cw = co.offsetWidth, ch = co.offsetHeight;  // place below the target, flip above if it won't fit
+    let top = hy + hh + 12, below = true;
+    if (top + ch > vh - M && hy - 12 - ch > M) { top = hy - 12 - ch; below = false; }
+    top = Util.clamp(top, M, vh - ch - M);
+    const left = Util.clamp(hx + hw / 2 - cw / 2, M, vw - cw - M);
+    co.style.transform = ""; co.style.left = left + "px"; co.style.top = top + "px";
+    arrow.style.left = Util.clamp(hx + hw / 2 - left, 18, cw - 18) + "px";
+    arrow.classList.toggle("up", below); arrow.classList.toggle("down", !below);
+  },
+
+  tourNext() {
+    const steps = this._tourSteps();
+    const step = steps[this.tutStep];
+    if (step && step.opens && this.page !== step.opens) this.showPage(step.opens); // Next on a tab step still navigates
     if (this.tutStep >= steps.length - 1) return this.closeTutorial();
-    this.tutStep++; this.renderTutorial();
+    this.tutStep++; this._tourRender();
   },
-  tutorialBack() { if (this.tutStep > 0) { this.tutStep--; this.renderTutorial(); } },
+  tourBack() { if (this.tutStep > 0) { this.tutStep--; this._tourRender(); } },
+
   closeTutorial() {
-    this.refs.tutorial.classList.add("hidden");
+    this._tourClearTarget();
+    if (this._tourRoot) this._tourRoot.classList.add("hidden");
+    if (this._tourReposition) {
+      window.removeEventListener("resize", this._tourReposition);
+      window.removeEventListener("scroll", this._tourReposition, true);
+      this._tourReposition = null;
+    }
+    if (this._tourKey) { window.removeEventListener("keydown", this._tourKey); this._tourKey = null; }
     if (!this.s().settings.tutorialSeen) { this.s().settings.tutorialSeen = true; window.Game.requestSave(); }
   },
 
@@ -1334,9 +1460,6 @@ const UI = {
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
     r.btnHelp.onclick = () => this.openTutorial();
-    r.tutNext.onclick = () => this.tutorialNext();
-    r.tutBack.onclick = () => this.tutorialBack();
-    r.tutSkip.onclick = () => this.closeTutorial();
     r.wywaClose.onclick = () => {
       r.wywa.classList.add("hidden");
       // first-run tutorial waits for the welcome-back modal to clear
