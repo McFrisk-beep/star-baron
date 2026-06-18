@@ -182,23 +182,42 @@ const Senate = {
     return { title: prefix + fill(tpl.title), blurb: fill(tpl.blurb), effect };
   },
 
-  _genBill(votesAt, now) {
+  _genBill(votesAt, now, taken) {
     const senate = this.sen();
     const id = "bill_" + (++senate.billSeq);
-    return Object.assign({ id, votesAt, status: "upcoming" }, this._billContent(this.activeEdicts(now)));
+    return Object.assign({ id, votesAt, status: "upcoming" }, this._billContent(this.activeEdicts(now), taken || this._takenSet(now)));
+  },
+  // a signature for what a bill *does*, so the docket never lists two of the same
+  // edict (or two repeals of the same edict).
+  _effectSig(e) { return e ? e.type + ":" + (e.cat || e.commId || e.faction || e.cls || "") : ""; },
+  _billSig(b) { return b && b.repealOf ? ("repeal:" + b.repealOf) : this._effectSig(b && b.effect); },
+  // everything already on the books (active edicts + queued upcoming bills)
+  _takenSet(now) {
+    const taken = new Set();
+    for (const b of this.activeEdicts(now)) taken.add(this._billSig(b));
+    for (const b of (this.sen().bills || [])) if (b.status === "upcoming") taken.add(this._billSig(b));
+    return taken;
   },
   // the content of a bill (everything but id/votesAt/status) — shared by _genBill
-  // and the regen migration so they can't drift apart.
-  _billContent(active) {
-    if (active.length && Math.random() < SENATECFG.repealChance) {
-      const t = Util.pick(active);
+  // and the regen migration so they can't drift apart. `taken` is the set of
+  // signatures already in play, so we never propose a duplicate edict, nor a
+  // repeal of something that isn't in force (or is already queued for repeal).
+  _billContent(active, taken) {
+    taken = taken || new Set();
+    const repealable = (active || []).filter(t => !taken.has("repeal:" + t.id));
+    if (repealable.length && Math.random() < SENATECFG.repealChance) {
+      const t = Util.pick(repealable);
       return { repealOf: t.id, issue: t.issue, lean: -1, type: "repeal",
         title: "Repeal — " + t.title, blurb: "Strikes down “" + t.title + "” and restores the prior status quo.", effect: null };
     }
-    const tpl = this._weighted(SENATE_EDICTS);
-    // bans are binary (no magnitude) → no severity roll/prefix; everything else scales
-    const sev = (tpl.type === "ban" || tpl.type === "shipBan") ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
-    const inst = this._instantiate(tpl, sev);
+    let inst, tpl;
+    for (let tries = 0; tries < 14; tries++) {
+      tpl = this._weighted(SENATE_EDICTS);
+      // bans are binary (no magnitude) → no severity roll/prefix; everything else scales
+      const sev = (tpl.type === "ban" || tpl.type === "shipBan") ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
+      inst = this._instantiate(tpl, sev);
+      if (!taken.has(this._effectSig(inst.effect))) break;   // found one not already on the books
+    }
     return { repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
   },
   // One-time on load: rewrite not-yet-voted bills with the current bill mix
@@ -207,10 +226,12 @@ const Senate = {
   regenUpcoming(senate) {
     const now = Date.now();
     const active = (senate.bills || []).filter(b => b.status === "passed" && b.type !== "repeal" && b.effect && (!b.endsAt || b.endsAt > now));
+    const taken = new Set(active.map(b => this._billSig(b)));
     for (const b of (senate.bills || [])) {
       if (b.status !== "upcoming") continue;
       delete b.endsAt; delete b.result; delete b.votes;
-      Object.assign(b, this._billContent(active));
+      Object.assign(b, this._billContent(active, taken));
+      taken.add(this._billSig(b));                            // later bills avoid the ones we just minted
     }
     senate.pending = this._emptyPending();   // drop influence queued against the old bills
   },
@@ -281,16 +302,33 @@ const Senate = {
   // the resolved bill, or null if there's nothing on the floor.
   forceResolveNext(now = Date.now()) {
     const senate = this.sen();
-    const bill = this.nextBill(now);
+    let bill = this.nextBill(now);
+    if (!bill) { this._adminRefill(now); bill = this.nextBill(now); }   // shared/empty agenda left nothing → seed a docket
     if (!bill) return null;
     bill.votesAt = now;
     this._resolveBill(bill, now);
     senate.cycle = (senate.cycle || 0) + 1;
     senate.lastBillId = bill.id;
     if (senate.pending && senate.pending.billId === bill.id) senate.pending = this._emptyPending();
-    this.ensureSchedule(now);
+    this._adminRefill(now);   // always leave a full, de-duplicated docket to preview
     this._trim(); this._bumpRev();
     return bill;
+  },
+  // admin/dev: guarantee a full, de-duplicated docket. In local play the timings
+  // are re-based so the next vote is one interval out and the rest cascade; in
+  // shared play the server owns timing, so we only top it up (never blank).
+  _adminRefill(now) {
+    const senate = this.sen(), iv = this.interval();
+    senate.bills ||= [];
+    let up = senate.bills.filter(b => b.status === "upcoming").sort((a, b) => a.votesAt - b.votesAt);
+    if (!this.shared) up.forEach((b, i) => { b.votesAt = now + iv * (i + 1); });
+    let guard = 0;
+    while (up.length < SENATECFG.billLookahead && guard++ < 30) {
+      const at = up.length ? up[up.length - 1].votesAt + iv : now + iv;
+      const bill = this._genBill(at, now);
+      senate.bills.push(bill); up.push(bill);
+    }
+    senate.nextVoteAt = up.length ? up[0].votesAt : now + iv;
   },
   _resolveBill(bill, atTime) {
     const roster = this.roster(), senate = this.sen();
@@ -761,13 +799,13 @@ const Senate = {
     });
     this._talkUntil = performance.now() + convo.length * step + 1200;
   },
-  _bubble(id, text) {
+  _bubble(id, text, kind) {
     const p = this._seats[id]; if (!p || !this.refs.svg) return;
     const ns = "http://www.w3.org/2000/svg";
     if (text.length > 58) text = text.slice(0, 57) + "…";
     const w = Math.max(34, text.length * 6.2 + 14), h = 18;
     const x = Util.clamp(p.x, w / 2 + 4, 996 - w / 2), y = p.y - (this.byId(id).capital ? 10 : 7) - 15;
-    const g = document.createElementNS(ns, "g"); g.setAttribute("class", "sc-bubble");
+    const g = document.createElementNS(ns, "g"); g.setAttribute("class", "sc-bubble" + (kind ? " sc-bubble-" + kind : ""));
     const rect = document.createElementNS(ns, "rect");
     rect.setAttribute("x", (x - w / 2).toFixed(1)); rect.setAttribute("y", (y - h / 2).toFixed(1));
     rect.setAttribute("width", w.toFixed(1)); rect.setAttribute("height", h); rect.setAttribute("rx", 7);
@@ -794,22 +832,22 @@ const Senate = {
     this.refs.btnReplay.style.display = "";
     if (this.refs.votebar) this.refs.votebar.classList.remove("hidden");   // top-centre live vote bar
     for (const sn of this.roster()) this._setSeat(sn.id, true, "pending");   // full attendance for the vote
-    const order = this.roster().slice().sort((a, b) => (this._seats[a.id]?.a || 0) - (this._seats[b.id]?.a || 0));
+    const order = Util.shuffle(this.roster().slice());   // senators speak up in a random order, not a tidy sweep
     this._revealed = {};
     if (instant || this._reduced()) {
       for (const sn of order) { this._revealed[sn.id] = true; this._applyVote(sn.id); }
       this._voteDone = true; this._renderTally();
     } else {
-      const t0 = performance.now();
-      this._reveal = order.map((sn, i) => ({ id: sn.id, at: t0 + (i / Math.max(1, order.length)) * SENATECFG.staggerMs }));
+      const t0 = performance.now(), span = SENATECFG.staggerMs, n = Math.max(1, order.length), slot = span / n;
+      this._reveal = order.map((sn, i) => ({ id: sn.id, at: t0 + Math.max(0, i * slot + (Math.random() - 0.5) * slot * 1.6) }));
     }
     this._renderSpeaker();
   },
-  _applyVote(id) {
+  _applyVote(id, announce) {
     const v = this._bill.votes[this.byId(id).idx], w = this.byId(id).weight;
-    if (v === "a") { this._tally.aye++; this._tally.wAye += w; this._setSeat(id, true, "aye"); }
-    else if (v === "n") { this._tally.nay++; this._tally.wNay += w; this._setSeat(id, true, "nay"); }
-    else { this._tally.abst++; this._setSeat(id, true, "abst"); }
+    if (v === "a") { this._tally.aye++; this._tally.wAye += w; this._setSeat(id, true, "aye"); if (announce) this._bubble(id, "AYE!", "aye"); }
+    else if (v === "n") { this._tally.nay++; this._tally.wNay += w; this._setSeat(id, true, "nay"); if (announce) this._bubble(id, "NAY!", "nay"); }
+    else { this._tally.abst++; this._setSeat(id, true, "abst"); if (announce) this._bubble(id, "Abstain.", "abst"); }
   },
   replay() { const b = this._bill || this.lastResolved(); if (b && b.votes) { this._showVote(b); this._startLoop(); } },
   showHall() {
@@ -885,7 +923,7 @@ const Senate = {
     const now = performance.now();
     if (this._mode === "vote" && this._reveal && !this._voteDone) {
       let changed = false;
-      for (const r of this._reveal) if (!this._revealed[r.id] && r.at <= now) { this._revealed[r.id] = true; this._applyVote(r.id); changed = true; }
+      for (const r of this._reveal) if (!this._revealed[r.id] && r.at <= now) { this._revealed[r.id] = true; this._applyVote(r.id, true); changed = true; }
       if (changed) this._renderTally();
       if (Object.keys(this._revealed).length >= this._reveal.length) { this._voteDone = true; this._renderSpeaker(); }
     } else if (this._mode === "hall") {

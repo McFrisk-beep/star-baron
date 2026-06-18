@@ -82,6 +82,7 @@ const Util = {
   randInt: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min,
   randFloat: (min, max) => Math.random() * (max - min) + min,
   pick: arr => arr[Math.floor(Math.random() * arr.length)],
+  shuffle(arr) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; },
   clamp: (x, lo, hi) => Math.max(lo, Math.min(hi, x)),
   // Box-Muller normal(0, sd).
   gauss(sd) {

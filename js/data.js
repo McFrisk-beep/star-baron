@@ -344,14 +344,14 @@ const PRESTIGE = {
    Senators are generated deterministically from the galaxy seed (senate.js).   */
 const SENATECFG = {
   voteIntervalMs: 24 * 60 * 60 * 1000,      // a vote ~once a day (scaled by dev fast-time)
-  billLookahead: 4,                          // upcoming bills queued & previewable at once
+  billLookahead: 6,                          // upcoming bills queued & previewable at once (the floor bill + 5)
   edictDurationMs: 3 * 24 * 60 * 60 * 1000,  // a passed edict lasts ~3 days unless repealed
   repealChance: 0.25,                        // chance a new bill repeals an active edict instead
   maxResolvePerCatchup: 14,                  // cap votes resolved in one offline catch-up
   historyKeep: 30,                           // finished bills retained for vote history
   abstainBand: 0.14,                         // |vote score| under this → the senator abstains
   voteNoise: 0.28,                           // deterministic per-(senator,bill) jitter
-  staggerMs: 2600,                           // how long the chamber's vote cascade plays
+  staggerMs: 15000,                          // how long the chamber's vote cascade plays (senators vote in a random order)
   // bill severity: most bills are mild; a rare "sweeping" one bites harder (scales the effect magnitude)
   severities: [
     { factor: 0.5, weight: 64, label: "" },

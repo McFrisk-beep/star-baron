@@ -874,6 +874,9 @@ body.reduced .node-ring.pulse { animation: none; }
 .sc-bubble.show { opacity: 1; }
 .sc-bubble rect { fill: #0c1224; stroke: var(--line); stroke-width: 1; }
 .sc-bubble-t { fill: var(--ink); font-size: 11px; font-family: var(--sans); }
+.sc-bubble-aye rect { stroke: var(--up); } .sc-bubble-aye .sc-bubble-t { fill: var(--up); font-weight: 700; }
+.sc-bubble-nay rect { stroke: var(--down); } .sc-bubble-nay .sc-bubble-t { fill: var(--down); font-weight: 700; }
+.sc-bubble-abst rect { stroke: #5a647f; } .sc-bubble-abst .sc-bubble-t { fill: #9aa6c4; }
 body.reduced .sc-pic, body.reduced .sc-bubble { transition: none; }
 .chamber-tip { position: absolute; display: none; pointer-events: none; z-index: 5; background: #0c1224; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; max-width: 240px; box-shadow: 0 8px 24px rgba(0,0,0,.6); }
 .chamber-speaker { border-top: 1px solid var(--line); background: #0b0f1c; padding: 12px 18px; min-height: 86px; }
