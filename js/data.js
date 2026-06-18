@@ -148,6 +148,11 @@ const RARITIES = [
 
 /* ---- BAZAAR / CONTRACTS ---------------------------------------------------*/
 const BAZAARCFG = {
+  // Contracts get harder as your Baron Tier climbs: bigger pay, but steeper fleet
+  // requirements and a heavier failure penalty (per tier).
+  tierStakeMult: 0.5,      // +50% gross reward per Baron Tier
+  tierReqMult: 0.3,        // +30% required firepower/cargo per Baron Tier
+  tierRiskMult: 0.2,       // +20% ship-loss chance / retrieval cost on failure per Baron Tier
   mercSlots: 8,            // how many mercs are on offer at once
   contractSlots: 14,       // how many contracts on the board
   accessorySlots: 18,      // how many accessories for sale

@@ -52,6 +52,7 @@ const Missions = {
       shipUids: uids.slice(), phases, totalMs, startedAt: Date.now(),
       successChance: this.successChance(contract, uids),
       reward: contract.reward, impound: !!contract.impound, danger: contract.danger,
+      stakeTier: contract.stakeTier || 0,
       faction: contract.faction, resolved: false,
     };
     for (const u of uids) Fleet.ship(u).status = "mission";
@@ -111,15 +112,17 @@ const Missions = {
         }
         for (const u of m.shipUids) { const sh = Fleet.ship(u); if (sh) sh.status = "idle"; }
       } else {
-        // failure consequences depend on the job
+        // failure consequences depend on the job — bigger stakes at higher Baron Tiers
+        const riskMult = 1 + (m.stakeTier || 0) * BAZAARCFG.tierRiskMult;
         for (const u of m.shipUids) {
           const sh = Fleet.ship(u); if (!sh) continue;
           if (m.impound) {
             sh.status = "impounded";
-            sh.retrieveCost = Math.round((Fleet.shipDef(sh.type).price || 2000) * 0.5) || 1500;
+            sh.retrieveCost = Math.round(((Fleet.shipDef(sh.type).price || 2000) * 0.5) * riskMult) || 1500;
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else {
-            const lossP = { safe: 0.05, low: 0.15, moderate: 0.3, high: 0.5, extreme: 0.7 }[m.danger] || 0.2;
+            const baseLoss = { safe: 0.05, low: 0.15, moderate: 0.3, high: 0.5, extreme: 0.7 }[m.danger] || 0.2;
+            const lossP = Util.clamp(baseLoss * riskMult, 0, 0.9);
             if (Math.random() < lossP) report.lost.push({ uid: sh.uid, name: sh.name });
             else sh.status = "idle";
           }

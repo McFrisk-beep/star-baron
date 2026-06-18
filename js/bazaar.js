@@ -83,12 +83,16 @@ const Bazaar = {
     if (Rep.gated(tpl.type, danger) && !Rep.meetsGate(base.faction)) return null;
     const pay = (DANGER.find(d => d.id === danger) || { pay: 1 }).pay;
     base.danger = danger;
-    base.minFirepower = tpl.fp ? Util.randInt(tpl.fp[0], tpl.fp[1]) : 0;
-    base.cargoRequired = (tpl.cargo && tpl.cargo !== 0) ? Util.randInt(tpl.cargo[0], tpl.cargo[1]) : 0;
+    // higher Baron Tiers raise the stakes: bigger pay + steeper requirements + bigger risk
+    const stakeTier = window.Economy ? Economy.tier() : 0;
+    base.stakeTier = stakeTier;
+    const reqMult = 1 + stakeTier * BAZAARCFG.tierReqMult, stakeMult = 1 + stakeTier * BAZAARCFG.tierStakeMult;
+    base.minFirepower = Math.round((tpl.fp ? Util.randInt(tpl.fp[0], tpl.fp[1]) : 0) * reqMult);
+    base.cargoRequired = Math.round(((tpl.cargo && tpl.cargo !== 0) ? Util.randInt(tpl.cargo[0], tpl.cargo[1]) : 0) * reqMult);
     base.durationMs = Util.randInt(tpl.dur[0], tpl.dur[1]) * 60 * 1000;
     base.impound = !!tpl.impound;
     base.reward = {
-      credits: Math.round(Util.randInt(tpl.reward.credits[0], tpl.reward.credits[1]) * pay / 10) * 10,
+      credits: Math.round(Util.randInt(tpl.reward.credits[0], tpl.reward.credits[1]) * pay * stakeMult / 10) * 10,
       itemChance: tpl.reward.itemChance || 0,
       stockChance: tpl.reward.stockChance || 0,
     };
