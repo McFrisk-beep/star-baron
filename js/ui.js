@@ -1242,7 +1242,7 @@ const UI = {
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
-    r.setReset.onclick = () => { if (confirm("Wipe your Star Baron save and start over?")) window.Game.reset(); };
+    r.setReset.onclick = () => { if (confirm("Wipe your Cosmocrat save and start over?")) window.Game.reset(); };
 
     r.btnPrestige.onclick = () => {
       if (!Economy.canPrestige()) return;

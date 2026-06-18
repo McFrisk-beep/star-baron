@@ -1,4 +1,4 @@
-# Star Baron — Handoff / Context Doc
+# Cosmocrat — Handoff / Context Doc
 
 A complete orientation for picking this project up in a fresh session (the
 container is cloned fresh each time — this doc + the repo are your only memory).

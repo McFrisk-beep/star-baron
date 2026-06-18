@@ -189,7 +189,7 @@ const Game = {
 
     // first paint
     UI.tick();
-    console.log("[Star Baron] ready. Saves to localStorage. Open Settings for dev toggles.");
+    console.log("[Cosmocrat] ready. Saves to localStorage. Open Settings for dev toggles.");
   },
 
   loop() {

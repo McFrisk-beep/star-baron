@@ -1,6 +1,6 @@
-# Star Baron — Graphics Spec & Art Drop-in Guide
+# Cosmocrat — Graphics Spec & Art Drop-in Guide
 
-Everything visual in Star Baron is a PNG loaded by **path + filename**. To put
+Everything visual in Cosmocrat is a PNG loaded by **path + filename**. To put
 real art in the game you **replace a placeholder PNG with your own, keeping the
 same path, filename, and (ideally) dimensions** — no code changes needed. The
 engine already falls back to a tinted box / drawn shape if a file is missing, so

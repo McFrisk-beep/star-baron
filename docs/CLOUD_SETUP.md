@@ -1,6 +1,6 @@
 # Cloud accounts & saves — setup (Supabase, free)
 
-Star Baron runs fully offline by default (saves to the browser). To enable
+Cosmocrat runs fully offline by default (saves to the browser). To enable
 **online accounts + cloud saves that sync across devices**, connect a free
 Supabase project. ~5 minutes, no server to run.
 

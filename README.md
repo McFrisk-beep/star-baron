@@ -1,4 +1,4 @@
-# Star Baron
+# Cosmocrat
 
 A browser-based, idle-friendly **interstellar trading game**. Read the live
 *Galactic Exchange* better than the crowd, run a *cargo fleet* that works while
@@ -172,4 +172,4 @@ stations, nebulae, asteroids, stars) — same filename in, real art out, no code
   over WebSocket, a shared feed/news, real rivals on the leaderboard, and
   server-side saves — all behind the same `Store` interface.
 
-Built per the Star Baron design brief. Working title; art is placeholder.
+Built per the Cosmocrat design brief. Art is placeholder.

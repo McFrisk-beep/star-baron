@@ -1,4 +1,4 @@
-# CLAUDE.md — Star Baron
+# CLAUDE.md — Cosmocrat
 
 Guidance for AI coding agents working in this repo. The coding discipline below
 adopts **ponytail** — "lazy senior developer" mode — from
