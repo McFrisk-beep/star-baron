@@ -306,7 +306,13 @@ const Senate = {
   forceResolveNext(now = Date.now()) {
     const senate = this.sen();
     let bill = this.nextBill(now);
-    if (!bill) { this._adminRefill(now); bill = this.nextBill(now); }   // shared/empty agenda left nothing → seed a docket
+    if (!bill) {
+      // nothing on the floor: in shared mode mint a one-off that resolves at once
+      // (it never lingers as a shared "upcoming", so it can't desync the docket);
+      // in local mode seed a previewable docket.
+      if (this.shared) { bill = this._genBill(now, now); senate.bills.push(bill); }
+      else { this._adminRefill(now); bill = this.nextBill(now); }
+    }
     if (!bill) return null;
     bill.votesAt = now;
     this._resolveBill(bill, now);   // publishes itself when already shared
@@ -316,18 +322,19 @@ const Senate = {
     senate.cycle = (senate.cycle || 0) + 1;
     senate.lastBillId = bill.id;
     if (senate.pending && senate.pending.billId === bill.id) senate.pending = this._emptyPending();
-    this._adminRefill(now);   // always leave a full, de-duplicated docket to preview
+    // only refill the LOCAL preview docket — in shared mode the agenda stays
+    // server-authored so every client shows the same upcoming legislation.
+    if (!this.shared) this._adminRefill(now);
     this._trim(); this._bumpRev();
     return bill;
   },
-  // admin/dev: guarantee a full, de-duplicated docket. In local play the timings
-  // are re-based so the next vote is one interval out and the rest cascade; in
-  // shared play the server owns timing, so we only top it up (never blank).
+  // admin/dev (LOCAL play only): keep a full, de-duplicated preview docket whose
+  // next vote is one interval out and the rest cascade.
   _adminRefill(now) {
     const senate = this.sen(), iv = this.interval();
     senate.bills ||= [];
     let up = senate.bills.filter(b => b.status === "upcoming").sort((a, b) => a.votesAt - b.votesAt);
-    if (!this.shared) up.forEach((b, i) => { b.votesAt = now + iv * (i + 1); });
+    up.forEach((b, i) => { b.votesAt = now + iv * (i + 1); });
     let guard = 0;
     while (up.length < SENATECFG.billLookahead && guard++ < 30) {
       const at = up.length ? up[up.length - 1].votesAt + iv : now + iv;
