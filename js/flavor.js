@@ -763,46 +763,59 @@ window.SHIP_RADIO = SHIP_RADIO;
 window.SHIP_DIALOGUES = SHIP_DIALOGUES;
 
 /* ===========================================================================
-   TUTORIAL — the new-player onboarding carousel (UI renders these steps).
-   Plain content; the Help button reopens it any time.
+   TUTORIAL — the new-player walkthrough. The UI renders these as a spotlight
+   "tour": it dims the screen, lights up the real control named by `sel`, and
+   floats a callout beside it. `opens` marks a TAB step — tapping the lit-up tab
+   (or Next) navigates there and advances. `on` makes sure that page is showing
+   before we point at something inside it. Reopen anytime via ❔ Help.
    =========================================================================== */
 const TUTORIAL_STEPS = [
-  { icon: "◆", title: "Welcome, Baron",
-    body: `You're a fledgling trade baron in a living galaxy. Your job: <b>buy low, sell high, grow your net worth</b>, build a fleet, and climb past your rivals.
-      <p class="tut-tip">This guide is quick. Hit <b>Skip</b> to dive in, or <b>Next</b> to learn the ropes. You can reopen it anytime from <b>❔ Help</b> up top.</p>` },
-  { icon: "₵", title: "The Exchange",
-    body: `The <b>Exchange</b> tab is the heart of the game. Each commodity has a <b>live price</b> that drifts and reacts to news.
-      <ul><li><b>Buy</b> where a good is cheap, <b>Sell</b> where it's dear.</li>
-      <li><b>Δ</b> shows the recent move; the sparkline shows the trend.</li>
-      <li><b>P&amp;L</b> tracks profit on what you're holding.</li></ul>
-      Prices differ by <b>system</b> — the whole game is moving goods to where they're worth more.` },
-  { icon: "🗺", title: "Travel the galaxy",
-    body: `Open the <b>Star Map</b> (top right) to see the galaxy, or use the <b>Star Systems</b> tab to travel.
-      <ul><li>Each system favors different goods — a system that's <i>cheap</i> in minerals is a great place to <b>buy</b> them.</li>
-      <li><b>Docking takes time</b>, set by your flagship's speed. You can't trade while in transit.</li>
-      <li>Locked systems can be <b>unlocked</b> with credits for richer routes.</li></ul>` },
-  { icon: "🚀", title: "Your fleet",
-    body: `In the <b>Fleet</b> tab you command real ships:
-      <ul><li><b>Transports</b> haul cargo; <b>escorts</b> bring firepower.</li>
-      <li>Your <b>flagship</b> sets travel speed and grants a passive bonus to the whole fleet.</li>
-      <li>Send ships on <b>missions</b> (from the Bazaar) for credits and loot — riskier jobs pay far more.</li></ul>` },
-  { icon: "🛰", title: "The Bazaar",
-    body: `The <b>Bazaar</b> is where you spend your winnings:
-      <ul><li>Buy <b>ships</b>, hire <b>mercenaries</b>, and grab rare <b>accessories</b> that buff your ships.</li>
-      <li>Take <b>contracts</b> from the board — transport, escort, combat, smuggling, and more.</li>
-      <li><b>Faction standing</b> earns you discounts, bigger payouts, and unlocks the top jobs.</li></ul>` },
-  { icon: "📡", title: "Read the room",
-    body: `Information is an edge. Watch the side panels:
-      <ul><li><b>Trader Chat</b> is mostly noise — but rare <b>omens</b> (👀 tip) hint at real news coming. Beware <b>scams</b>.</li>
-      <li><b>Broadcast</b> news events actually <b>move the market</b> — buy ahead of the crowd.</li>
-      <li>On the Star Map, <b>local events</b> (riots, strikes, fresh strikes) shift a single system's prices — real, actionable insight.</li></ul>` },
-  { icon: "👑", title: "Rivals & the long game",
-    body: `Check the <b>Barons</b> tab for the leaderboard. Twelve AI barons get richer over time — <b>climb past them</b>, and don't go idle or you'll slip.
-      <p>When your net worth is vast enough, <b>Retire Empire</b> (prestige) for a permanent bonus and a fresh, harder, richer run.</p>` },
-  { icon: "✦", title: "You're ready",
-    body: `That's the loop: <b>trade → grow → expand → outgrow your rivals → retire → repeat</b>.
-      <p class="tut-tip">Start small on the Exchange, take a safe contract or two, and build from there. Reopen this guide anytime via <b>❔ Help</b>.</p>
-      <p>Good luck out there, Baron.</p>` },
+  { icon: "◆", title: "Welcome, Baron", sel: null,
+    body: `You're a fledgling trade baron in a living galaxy. The goal: <b>buy low, sell high, grow your net worth</b>, build a fleet, and climb past your rivals.
+      <p class="tut-tip">This quick walkthrough will <b>light up each part of the screen</b> and show you what it does. Tap <b>Next</b> to begin — or <b>Skip</b> to dive straight in.</p>` },
+
+  { icon: "₵", title: "Your money", sel: ".stats",
+    body: `Everything at a glance up here. <b>Credits</b> are cash to spend; <b>Net Worth</b> is your real score — cash plus stock, ships and industries. <b>Rank</b> is your place among the barons, and <b>Title</b> is your Baron Tier.` },
+
+  { icon: "₵", title: "The Exchange", sel: '[data-page="exchange"]', opens: "exchange",
+    body: `This tab is the heart of the game — the live commodity market. <b>Tap it</b> to open the floor.` },
+
+  { icon: "📈", title: "Reading the market", sel: "#market-table", on: "exchange",
+    body: `Each row is a commodity with a <b>live price</b> that drifts and reacts to news.
+      <ul><li><b>Buy</b> when it's cheap, <b>Sell</b> when it's dear — <b>Buy Max / Sell All</b> for speed.</li>
+      <li><b>Δ</b> is the recent move; the <b>trend</b> sparkline shows direction.</li>
+      <li><b>P&amp;L</b> is profit on what you hold. Prices differ by system — move goods to where they pay more.</li></ul>` },
+
+  { icon: "🗺", title: "Travel the galaxy", sel: '[data-page="systems"]', opens: "systems",
+    body: `Every system favors different goods. <b>Tap Star Systems</b> to travel — or use the <b>🗺 Star Map</b> up top. Docking takes time set by your flagship, and you can't trade in transit.` },
+
+  { icon: "🚀", title: "Your fleet", sel: '[data-page="fleet"]', opens: "fleet",
+    body: `<b>Tap Fleet</b> to command your ships. Transports haul cargo, escorts bring firepower, and your <b>flagship</b> sets speed and buffs the whole fleet. Send ships on <b>missions</b> for credits and loot.` },
+
+  { icon: "🛰", title: "The Bazaar", sel: '[data-page="bazaar"]', opens: "bazaar",
+    body: `<b>Tap Bazaar</b> to spend your winnings — buy <b>ships</b>, hire <b>mercenaries</b>, grab <b>accessories</b>, and take <b>contracts</b> from the board. Better <b>faction standing</b> means discounts, bigger payouts, and the top jobs.` },
+
+  { icon: "🏭", title: "Industries", sel: '[data-page="industries"]', opens: "industries",
+    body: `<b>Tap Industries</b> to run factories, mines and farms on planets (you start them from the Star Map). They quietly produce tradeable stock while you're away — passive income.` },
+
+  { icon: "🏛", title: "The Senate", sel: '[data-page="senate"]', opens: "senate",
+    body: `<b>Tap Senate</b> to follow galaxy-wide law. Edicts can <b>sharply move prices</b> and change the rules. Watch the votes — and <b>lobby, bribe, or dig up scandal</b> to swing senators your way.` },
+
+  { icon: "👑", title: "Barons & ascension", sel: '[data-page="barons"]', opens: "barons",
+    body: `<b>Tap Barons</b> for the leaderboard — twelve AI rivals grow over time, so don't go idle. When you're rich enough, <b>Ascend</b> a Baron Tier: keep your empire, unlock more, and shoulder steeper taxes.` },
+
+  { icon: "✦", title: "Milestones", sel: '[data-page="ach"]', opens: "ach",
+    body: `<b>Tap Milestones</b> to see goals worth chasing and the rewards they pay out — a handy checklist when you're not sure what to do next.` },
+
+  { icon: "📡", title: "Read the room", sel: ".col-side",
+    body: `Information is an edge. <b>Broadcast</b> news events actually <b>move the market</b> — buy ahead of the crowd. <b>Trader Chat</b> is mostly noise, but rare <b>omens (👀)</b> hint at real news. Watch both.` },
+
+  { icon: "❔", title: "Help is always here", sel: "#btn-help",
+    body: `That's the tour. You can replay this walkthrough anytime from <b>❔ Help</b> up top.` },
+
+  { icon: "✦", title: "You're ready", sel: null,
+    body: `The loop: <b>trade → grow → expand → outgrow your rivals → ascend → repeat</b>.
+      <p class="tut-tip">Start small on the Exchange, take a safe contract or two, and build from there. Good luck out there, Baron.</p>` },
 ];
 
 window.TUTORIAL_STEPS = TUTORIAL_STEPS;
