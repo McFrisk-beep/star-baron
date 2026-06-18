@@ -41,6 +41,7 @@ const AdminUI = {
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
       devSenateVote: $("dev-senate-vote"), devSenateNext: $("dev-senate-next"),
+      devGlobalReset: $("dev-global-reset"), devResetStatus: $("dev-reset-status"),
       closes: document.querySelectorAll(".admin-close"),
     };
     if (this.r.btn) this.r.btn.onclick = () => this.open();
@@ -58,6 +59,7 @@ const AdminUI = {
     if (this.r.dev10k) this.r.dev10k.onclick = () => adjust(s => { s.credits += 10000; UI.toast("+10,000c (dev)", "good"); });
     if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
     if (this.r.devSenateVote) this.r.devSenateVote.onclick = () => this.forceSenateVote();
+    if (this.r.devGlobalReset) this.r.devGlobalReset.onclick = () => this.issueGlobalReset();
 
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
@@ -100,6 +102,28 @@ const AdminUI = {
     Senate._showVote(bill);                           // play the staggered roll-call for the bill we just resolved
     Senate._startLoop();
     this.refreshSenateDev();
+  },
+
+  // dev: bump the shared reset epoch — every player (guests included) wipes once on next load
+  async issueGlobalReset() {
+    if (!(window.Cloud && Cloud.isAdmin() && Cloud.client)) { if (window.UI) UI.toast("Cloud + admin required.", "warn"); return; }
+    if (!confirm("Issue a GLOBAL reset to EVERY player (guests included)?\n\nOn their next load, everyone's credits become 5,000 and all owned assets (stocks, ships, industries, accessories) are wiped. The senate is kept. This cannot be undone.")) return;
+    const status = this.r.devResetStatus;
+    if (status) status.textContent = "Issuing…";
+    try {
+      const { data, error } = await Cloud.client.from("world_reset").select("epoch").eq("id", 1).maybeSingle();
+      if (error) throw error;
+      const next = ((data && Number(data.epoch)) || 0) + 1;
+      const up = await Cloud.client.from("world_reset")
+        .upsert({ id: 1, epoch: next, note: "admin global reset", updated_at: new Date().toISOString() }, { onConflict: "id" });
+      if (up.error) throw up.error;
+      if (status) status.textContent = `✓ Global reset issued (epoch ${next}). Every player resets on their next load.`;
+      if (window.UI) UI.toast(`Global reset issued (epoch ${next}).`, "good", 6000);
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      if (status) status.textContent = "✗ " + msg;
+      if (window.UI) UI.toast(/relation|does not exist|not found/i.test(msg) ? "Create the world_reset table first (docs/ADMIN_SETUP.md)." : "Reset failed: " + msg, "warn", 6000);
+    }
   },
 
   populate() {

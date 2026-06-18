@@ -104,6 +104,37 @@ create policy "admin delete sprites" on storage.objects
     bucket_id = 'sprites' and exists (select 1 from public.profiles p where p.user_id = auth.uid() and p.role = 'admin'));
 ```
 
+## 3c. Global reset switch (for the "Issue Global Reset" button)
+
+Lets an admin wipe **every** player's progress at once — accounts *and* guests.
+The button bumps a shared counter; each client reads it on load and, if it's
+newer than what they've already applied, does a one-time reset (credits → 5,000,
+all owned assets wiped, **senate legislation kept**) and shows an "admin reset"
+popup. Without this table the button just reports it's missing and nothing else
+changes. In **SQL Editor**:
+
+```sql
+create table if not exists public.world_reset (
+  id         int primary key default 1,
+  epoch      int not null default 0,   -- bump this (the button does) to issue a reset
+  note       text,
+  updated_at timestamptz not null default now(),
+  constraint world_reset_singleton check (id = 1)
+);
+insert into public.world_reset (id, epoch) values (1, 0) on conflict (id) do nothing;
+alter table public.world_reset enable row level security;
+create policy "read world_reset" on public.world_reset for select using (true);   -- everyone (incl. guests) reads it
+create policy "admin writes world_reset" on public.world_reset
+  for all to authenticated
+  using      ((select role from public.profiles where user_id = auth.uid()) = 'admin')
+  with check ((select role from public.profiles where user_id = auth.uid()) = 'admin');
+```
+
+> Then **Admin → Dev → Issue Global Reset**. Each player resets on their *next*
+> load (it fires once per bump, never loops). To undo a mistaken reset there's no
+> clean rollback — players who've already loaded have applied it — so it's behind
+> a confirm. Note the issuing admin's own save also resets on their next reload.
+
 ---
 
 ## Using the admin panel

@@ -11,6 +11,7 @@ const Game = {
   defaultState() {
     return {
       v: 2,
+      appliedResetEpoch: 0,        // last admin-issued global reset this save has applied
       credits: CONFIG.startingCredits,
       currentSystem: "navos",
       positions: {},
@@ -69,14 +70,53 @@ const Game = {
     return s;
   },
 
+  // the admin-issued global-reset counter, shared in Supabase (readable by guests
+  // via the anon key). null = cloud not configured / table missing / offline → no reset.
+  async fetchResetEpoch() {
+    if (!(window.Cloud && Cloud.enabled && Cloud.client)) return null;
+    try {
+      const { data, error } = await Cloud.client.from("world_reset").select("epoch").eq("id", 1).maybeSingle();
+      if (error) throw error;
+      return data ? (Number(data.epoch) || 0) : 0;
+    } catch (e) { return null; }   // table not set up yet → behave exactly as before
+  },
+  // a fresh game stamped with the new epoch: 5,000 credits, all owned assets wiped,
+  // but the senate (current + passed legislation) and the player's prefs are kept.
+  applyAdminReset(loaded, epoch) {
+    const fresh = this.defaultState();
+    fresh.credits = 5000;
+    if (loaded.senate) fresh.senate = loaded.senate;                       // keep senate legislation/history/dossiers
+    if (loaded.settings) fresh.settings = Object.assign(fresh.settings, loaded.settings);  // keep mute / reduced-motion
+    fresh.appliedResetEpoch = epoch;
+    return fresh;
+  },
+  // one-time "An admin reset has been issued" popup → OK reloads into the fresh game
+  showAdminReset() {
+    const modal = document.getElementById("reset-modal"), ok = document.getElementById("reset-ok");
+    if (!modal || !ok) { location.reload(); return; }
+    modal.classList.remove("hidden");
+    ok.onclick = () => location.reload();
+  },
+
   async init() {
     // Bring up cloud auth first (if configured) so Store.load can prefer the
     // signed-in player's cloud save; otherwise this is a no-op and we go local.
     if (window.Cloud) { Cloud.init(); await Cloud.restore(); }
     // Apply admin content overrides before anything reads the collections.
     if (window.Content) await Content.load();
-    const loaded = await Store.load();
-    this.state = loaded ? this.migrate(loaded) : this.defaultState();
+    // load the save and the admin-issued global-reset epoch together (both work
+    // for guests via the anon key; the epoch is a no-op until the table exists).
+    const [loaded, sharedReset] = await Promise.all([Store.load(), this.fetchResetEpoch()]);
+    if (loaded && sharedReset != null && sharedReset > (loaded.appliedResetEpoch || 0)) {
+      this.state = this.applyAdminReset(loaded, sharedReset);   // credits→5000, owned assets wiped, senate kept
+      this._adminReset = true;
+      Store.localSave(this.state);
+      if (window.Cloud && Cloud.signedIn()) { try { await Cloud.saveRemote(this.state); } catch (e) { console.warn("[reset] cloud persist failed:", e); } }
+      console.log("[Game] admin global reset applied (epoch " + sharedReset + ")");
+    } else {
+      this.state = loaded ? this.migrate(loaded) : this.defaultState();
+      if (sharedReset != null) this.state.appliedResetEpoch = Math.max(this.state.appliedResetEpoch || 0, sharedReset);  // new/up-to-date players adopt the current epoch (no reset)
+    }
     this.timeScale = 1;
     // resume the galaxy-wide senate before catch-up so it doesn't generate stray local bills
     if (window.Senate && this.state.senate && this.state.senate.shared) Senate.shared = true;
@@ -164,6 +204,10 @@ const Game = {
       this.requestSave();
       if (UI.page === "bazaar") UI.renderBazaar();
     });
+
+    // An admin global reset just landed → tell the player and reload on OK
+    // (skips the usual "While You Were Away" recap, which is meaningless here).
+    if (this._adminReset) { this._booting = false; this.showAdminReset(); return; }
 
     // First-run tutorial: show it now for a fresh baron, or queue it to open
     // once the "While You Were Away" modal is dismissed for a returning one.

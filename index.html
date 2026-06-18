@@ -271,6 +271,14 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="reset-modal">
+    <div class="modal">
+      <div class="tut-step"><div class="tut-icon">⟳</div><h3>Admin Reset</h3></div>
+      <p class="inc-text">An admin reset has been issued. Your progress has been reset — you're starting fresh with <b>5,000</b> credits. The senate and its legislation carry on.</p>
+      <div class="settings-actions"><button class="btn btn-go" id="reset-ok">OK</button></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="trade-modal">
     <div class="modal trade-terminal">
       <div class="tt-head"><span class="tt-dot"></span><h3 id="trade-title">Trade Terminal</h3></div>
@@ -382,6 +390,12 @@
         <div class="settings-actions">
           <button class="btn btn-go" id="dev-senate-vote">Hold vote now</button>
           <button class="btn admin-close">Close</button>
+        </div>
+        <hr class="admin-rule" />
+        <p class="admin-hint">Danger zone — issues a one-time <b>global reset to every player</b> (guests included): credits set to <b>5,000</b>, all owned assets (stocks, ships, industries, accessories…) wiped, senate legislation kept. Each player gets the “admin reset” popup and a fresh start on their next load.</p>
+        <div class="admin-row"><div class="dev-senate-next" id="dev-reset-status">—</div></div>
+        <div class="settings-actions">
+          <button class="btn btn-danger" id="dev-global-reset">Issue Global Reset</button>
         </div>
       </div>
     </div>
