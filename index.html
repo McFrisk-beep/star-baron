@@ -147,7 +147,7 @@
     <!-- RIGHT: persistent flavor sidebar -->
     <aside class="col-side">
       <section class="panel" id="panel-broadcast">
-        <h2>Broadcast</h2>
+        <div class="bc-head"><h2>Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
         <div class="screen" id="broadcast-screen">
           <img id="bc-frame" alt="broadcast" />
           <div class="screen-overlay">
@@ -440,16 +440,18 @@
   <script src="js/starmap.js"></script>
   <script src="js/main.js"></script>
 
-  <!-- Ko-fi "Support Me" floating button (loads from CDN; gracefully absent offline/file://). -->
-  <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
-  <script>
+  <!-- Ko-fi "Support me" button — rendered into the Broadcast panel (#kofi-slot).
+       On mobile it becomes a small fixed button (see .kofi-slot in style.css).
+       Uses getHTML() not draw() so it can't document.write over the page, and is
+       guarded so a blocked/offline CDN (file://) leaves the game untouched. -->
+  <script type="text/javascript" src="https://storage.ko-fi.com/cdn/widget/Widget_2.js"></script>
+  <script type="text/javascript">
     try {
-      if (window.kofiWidgetOverlay) kofiWidgetOverlay.draw('mcfrisk', {
-        'type': 'floating-chat',
-        'floating-chat.donateButton.text': 'Support Me',
-        'floating-chat.donateButton.background-color': '#ffffff',
-        'floating-chat.donateButton.text-color': '#323842'
-      });
+      var kofiSlot = document.getElementById('kofi-slot');
+      if (window.kofiwidget2 && kofiSlot && typeof kofiwidget2.getHTML === 'function') {
+        kofiwidget2.init('Support me on Ko-fi', '#72a4f2', 'V5K021M201');
+        kofiSlot.innerHTML = kofiwidget2.getHTML();
+      }
     } catch (e) { /* widget CDN blocked/offline — game is unaffected */ }
   </script>
 </body>
