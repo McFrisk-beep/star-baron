@@ -127,12 +127,56 @@ const UI = {
   tintBox(c) { const d = this.el("div", "tintbox"); d.textContent = (c.name || "?").slice(0, 2); return d; },
 
   doTrade(side, id, qty) {
+    const tm = document.getElementById("trade-modal");
+    if (tm && !tm.classList.contains("hidden")) return;   // terminal already open → ignore (anti-spam)
     const r = side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty);
     if (!r.ok) { this.toast(r.msg, "warn"); return; }
-    const comm = COMMODITIES.find(c => c.id === id);
-    if (side === "buy") this.toast(`Bought ${r.qty} ${comm.name} for ${Util.credits(r.cost)}c`, "buy");
-    else this.toast(`Sold ${r.qty} ${comm.name} for ${Util.credits(r.proceeds)}c (${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)})`, r.realized >= 0 ? "good" : "bad");
-    this.flashCredits(); window.Game.requestSave(); this.updateExchange();
+    window.Game.requestSave();                        // the trade is committed atomically — persist now
+    this.playTradeAnim(side, COMMODITIES.find(c => c.id === id), r);
+  },
+
+  // a deliberately-paced "trade terminal" — flavour + an anti-spam gate: the modal
+  // backdrop blocks the buy/sell buttons until the player closes it.
+  playTradeAnim(side, comm, r) {
+    const $ = id => document.getElementById(id);
+    const modal = $("trade-modal"), log = $("trade-log"), barWrap = $("trade-bar-wrap"),
+      bar = $("trade-bar"), result = $("trade-result"), close = $("trade-close"), title = $("trade-title");
+    const refresh = () => { this.flashCredits(); this.updateHeader(); this.updateExchange(); };
+    if (!modal || !log) { refresh(); return; }        // no terminal in DOM → just settle silently
+    (this._tradeTimers || []).forEach(clearTimeout); this._tradeTimers = [];
+    const isBuy = side === "buy", total = isBuy ? r.cost : r.proceeds, unit = r.qty === 1 ? "share" : "shares";
+    title.textContent = isBuy ? "Purchase Order" : "Sell Order";
+    log.innerHTML = ""; result.innerHTML = ""; result.classList.add("hidden");
+    barWrap.classList.add("hidden"); bar.style.width = "0%"; close.classList.add("hidden");
+    modal.classList.remove("hidden");
+    const reduced = !!(this.s().settings && this.s().settings.reduced), step = reduced ? 220 : 600;
+    const lines = [
+      `▸ Opening secure channel to the ${comm.name} exchange…`,
+      `▸ Sending request to ${isBuy ? "purchase" : "sell"} ${r.qty} ${unit} of ${comm.name}…`,
+      `▸ Locking in ${isBuy ? "ask" : "bid"} price at ${Util.price(r.price)}c / share…`,
+    ];
+    let t = 0;
+    for (const ln of lines) { const at = t; this._tradeTimers.push(setTimeout(() => this._tradeLine(log, ln), at)); t += step; }
+    this._tradeTimers.push(setTimeout(() => {
+      this._tradeLine(log, isBuy ? `▸ Transferring ${Util.credits(total)}c…` : `▸ Settling ${Util.credits(total)}c in proceeds…`);
+      barWrap.classList.remove("hidden");
+      requestAnimationFrame(() => { bar.style.width = "100%"; });
+    }, t));
+    t += reduced ? 320 : 900;
+    this._tradeTimers.push(setTimeout(() => {
+      this._tradeLine(log, `✓ ${isBuy ? "Purchase" : "Sale"} complete.`);
+      const pnl = (!isBuy && typeof r.realized === "number")
+        ? ` · <span class="${r.realized >= 0 ? "up" : "down"}">${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)}c</span>` : "";
+      result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}` +
+        `<br><span class="muted-note">New balance: ${Util.creditsFull(this.s().credits)}c</span>`;
+      result.classList.remove("hidden"); close.classList.remove("hidden");
+      refresh();                                       // reveal the new balance at the "complete" beat
+    }, t));
+    close.onclick = () => modal.classList.add("hidden");
+  },
+  _tradeLine(log, text) {
+    const div = document.createElement("div"); div.className = "tt-line"; div.textContent = text;
+    log.appendChild(div); log.scrollTop = log.scrollHeight;
   },
 
   updateExchange() {

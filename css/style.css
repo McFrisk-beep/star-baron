@@ -315,6 +315,25 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .modal { background: linear-gradient(180deg, var(--panel), var(--bg2)); border: 1px solid var(--line);
   border-radius: 12px; padding: 22px; max-width: 460px; width: 100%; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
 .modal h3 { margin: 0 0 14px; font-size: 18px; }
+
+/* trade terminal (deliberate buy/sell processing screen) */
+.trade-terminal .tt-head { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+.trade-terminal .tt-head h3 { margin: 0; }
+.tt-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); animation: tt-pulse 1s infinite; }
+.tt-log { font-family: var(--mono); font-size: 12.5px; line-height: 1.7; background: #0a0e1a;
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 104px; max-height: 210px;
+  overflow-y: auto; color: var(--ink-dim); }
+.tt-line { opacity: 0; animation: tt-in .25s ease forwards; }
+.tt-line:last-child { color: var(--ink); }
+.tt-bar-wrap { height: 8px; background: #1a2034; border-radius: 4px; overflow: hidden; margin-top: 12px; }
+.tt-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--up)); transition: width .8s linear; }
+.tt-result { margin-top: 12px; font-size: 13px; background: #11192c; border-radius: 8px; padding: 10px 12px; }
+.tt-result .muted-note { margin: 6px 0 0; }
+@keyframes tt-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes tt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+body.reduced .tt-bar { transition: none; }
+body.reduced .tt-line { animation: none; opacity: 1; }
+body.reduced .tt-dot { animation: none; }
 .toggle { display: flex; align-items: center; gap: 9px; padding: 6px 0; font-size: 13px; cursor: pointer; }
 .settings-actions { display: flex; gap: 10px; margin-top: 16px; }
 .muted-note { color: var(--ink-faint); font-size: 11px; margin: 14px 0 0; }
