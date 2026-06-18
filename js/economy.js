@@ -33,10 +33,22 @@ const Economy = {
   priceHere(commId) { return Market.systemPrice(commId, this.s().currentSystem); },
   inTransit() { return !!this.s().travel; },
 
+  // effective half-spread for a category: base spread tightened by reputation, but
+  // never to zero — so buy price stays above sell price and round-trips can't profit.
+  _spread(cat) { return Math.max(REP.minSpread, REP.spread - Rep.edgeForCategory(cat)); },
+  buyPrice(commId) {
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    return this.priceHere(commId) * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+  },
+  sellPrice(commId) {
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    return this.priceHere(commId) * (1 - this._spread(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
+  },
+
   maxBuy(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
-    const p = this.priceHere(commId) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    const p = this.buyPrice(commId);
     return p > 0 ? Math.floor(this.s().credits / p) : 0;
   },
 
@@ -47,7 +59,7 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const price = this.priceHere(commId) * (1 - Rep.edgeForCategory(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    const price = this.buyPrice(commId);
     const cost = price * qty;
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
@@ -66,7 +78,7 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const price = this.priceHere(commId) * (1 + Rep.edgeForCategory(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
+    const price = this.sellPrice(commId);
     const proceeds = price * qty;
     const realized = (price - (s.avgCost[commId] || 0)) * qty;
     s.credits += proceeds;

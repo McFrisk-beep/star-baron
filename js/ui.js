@@ -108,8 +108,8 @@ const UI = {
         <input type="number" class="qin" min="1" value="10" aria-label="qty ${c.name}" />
         <button class="btn btn-buy" data-act="buy">Buy</button>
         <button class="btn btn-sell" data-act="sell">Sell</button>
-        <button class="btn btn-mini" data-act="max">Max</button>
-        <button class="btn btn-mini" data-act="all">All</button></div>`;
+        <button class="btn btn-mini" data-act="max">Buy Max</button>
+        <button class="btn btn-mini" data-act="all">Sell All</button></div>`;
       tr.append(icon, name, price, chg, trend, held, pnl, act);
       body.appendChild(tr);
       this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin: act.querySelector(".qin") };

@@ -280,7 +280,11 @@ const CATEGORY_FACTION = { mineral: "mining_combine", gas: "mining_combine", agr
    the top jobs behind being Friendly with the sponsor.                         */
 const REP = {
   min: -100, max: 100,
-  maxEdge: 0.06,        // ±6% exchange execution edge at ±100 standing
+  maxEdge: 0.06,        // reputation tightens your exchange spread by up to 6% at +100 standing
+  // bid-ask spread on the exchange: you buy a touch above mid and sell a touch
+  // below it, so an instant round-trip at one spot always loses money (no buy↔sell
+  // arbitrage). Reputation narrows it from `spread` down to `minSpread`.
+  spread: 0.04, minSpread: 0.005,
   discountMax: 0.10,    // up to 10% off ships/accessories from your best ally
   rewardMaxBonus: 0.25, // up to +25% contract pay from a friendly sponsor
   gateTier: "friendly", // assassinate / extreme jobs need this with the sponsor
