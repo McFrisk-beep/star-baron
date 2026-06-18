@@ -409,8 +409,10 @@ const Game = {
   },
 
   requestSave() {
+    // Persist immediately so any player action (buy/sell, ship, prestige, industry…)
+    // is saved the instant it happens; the cloud push is still coalesced in Store.
     clearTimeout(this._saveTimer);
-    this._saveTimer = setTimeout(() => this.save(), 800);
+    this.save();
   },
   save() { if (this._noSave) return; Store.save(this.snapshot()); },
 

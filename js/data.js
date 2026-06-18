@@ -36,16 +36,19 @@ const CONFIG = {
   // Number of alien portrait sprites available in /assets/portraits.
   portraitCount: 12,
 
-  // Market guardrails: price can't drift past base × these. Keeps the
-  // random walk + news shocks from running away to absurdity.
-  priceFloorMult: 0.3,
-  priceCeilMult: 3.0,
-  meanReversion: 0.02,        // per-tick pull back toward base (0–1)
-  // Per-tick wiggle = gauss(vol × volScale). Keep this small for a "chill"
-  // market: at volScale 0.03 even the jumpiest commodity moves ~0.5%/tick,
-  // most far less. Raise for a wilder market.
-  volScale: 0.03,
-  driftAmp: 0.06,             // amplitude of the slow per-category secular drift
+  // Market guardrails. Prices stay in a TIGHT band around base; only senate
+  // legislation shifts the band (the one thing that moves price sharply). News,
+  // insight and the random walk just nudge price within it and quickly fade.
+  priceFloorMult: 0.88,       // price floor = (legislation-adjusted) base × this
+  priceCeilMult: 1.12,        // price ceil = (legislation-adjusted) base × this  (≈ ±12%)
+  meanReversion: 0.02,        // per-tick pull toward the drift+news anchor (0–1)
+  newsImpact: 0.10,           // how much a news/insight event nudges price (×nominal). Low = calm.
+  overheatBand: 0.03,         // once price runs >3% off base, "other barons" pile in…
+  overheatPull: 0.05,         // …adding this per-tick pull back toward base, so fast moves stabilise
+  maxTickMove: 0.004,         // hard cap on ordinary per-tick change (legislation's band-shift overrides it)
+  // Per-tick wiggle = gauss(vol × volScale). Tiny → a chill market.
+  volScale: 0.006,
+  driftAmp: 0.04,             // amplitude of the slow per-category secular drift
   driftPeriodMs: 30 * 60 * 1000, // one full sector-rotation cycle
 
   // Offline catch-up: cap how much real time we simulate forward on return.

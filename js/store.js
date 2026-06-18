@@ -8,7 +8,7 @@ const SAVE_KEY = "starbaron";
 
 const Store = {
   _cloudTimer: null,
-  _cloudMs: 20000,        // debounce window for cloud pushes (local is instant)
+  _cloudMs: 5000,         // debounce window for cloud pushes (local is instant)
 
   // ---- local (always available) -----------------------------------------
   localLoad() {

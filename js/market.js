@@ -38,6 +38,7 @@ const Market = {
   },
 
   // Combined active-news multiplier for one commodity (decays to 1 over life).
+  // News only *nudges* price now (scaled by CONFIG.newsImpact) — it can't run it away.
   newsMult(comm, now) {
     let m = 1;
     for (const e of this.effects) {
@@ -45,7 +46,7 @@ const Market = {
       const elapsed = now - e.startedAt;
       if (elapsed >= e.durationMs) continue;
       const remain = 1 - elapsed / e.durationMs;        // 1 → 0 over life
-      m *= 1 + (e.mult - 1) * remain;
+      m *= 1 + (e.mult - 1) * remain * CONFIG.newsImpact;
     }
     return m;
   },
@@ -67,7 +68,7 @@ const Market = {
       if (e.target !== comm.id && e.target !== comm.cat) continue;
       const elapsed = now - e.startedAt;
       if (elapsed >= e.durationMs) continue;
-      m *= 1 + (e.mult - 1) * (1 - elapsed / e.durationMs);
+      m *= 1 + (e.mult - 1) * (1 - elapsed / e.durationMs) * CONFIG.newsImpact;
     }
     return m;
   },
@@ -85,14 +86,22 @@ const Market = {
   tick(now) {
     this.pruneEffects(now);
     for (const c of COMMODITIES) {
-      const floor = c.base * CONFIG.priceFloorMult;
-      const ceil = c.base * CONFIG.priceCeilMult;
-      const senateFx = window.Senate ? Senate.priceFactor(c.id, c.cat) : 1;   // senate price caps / subsidies
-      const anchor = c.base * this.categoryDrift(c.cat, now) * this.newsMult(c, now) * senateFx;
+      // Legislation shifts the whole band, so it's the only sharp price mover.
+      const senateFx = window.Senate ? Senate.priceFactor(c.id, c.cat) : 1;
+      const legBase = c.base * senateFx;
+      const floor = legBase * CONFIG.priceFloorMult, ceil = legBase * CONFIG.priceCeilMult;
+      const anchor = legBase * this.categoryDrift(c.cat, now) * this.newsMult(c, now);
       const prev = this.prices[c.id];
-      const reverted = prev + (anchor - prev) * CONFIG.meanReversion;
-      const noise = Util.gauss(c.vol * CONFIG.volScale * this.volMult);
-      const next = Util.clamp(reverted * (1 + noise), floor, ceil);
+      // pull toward the (drift + news) anchor…
+      let next = prev + (anchor - prev) * CONFIG.meanReversion;
+      // …plus an "other barons arbitrage" pull back toward base once price has run
+      // away from the legislated fundamental — this stabilises fast rises/drops.
+      const dev = (prev - legBase) / legBase;
+      if (Math.abs(dev) > CONFIG.overheatBand) next += (legBase - prev) * CONFIG.overheatPull;
+      next *= 1 + Util.gauss(c.vol * CONFIG.volScale * this.volMult);     // small wiggle
+      const cap = prev * CONFIG.maxTickMove;
+      next = Util.clamp(next, prev - cap, prev + cap);                    // no sudden spikes…
+      next = Util.clamp(next, floor, ceil);                              // …but a legislative band shift still snaps sharply
       this.prices[c.id] = next;
       const h = this.hist[c.id];
       h.push(next);
