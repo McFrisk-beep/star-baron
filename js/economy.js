@@ -79,14 +79,26 @@ const Economy = {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
     const price = this.sellPrice(commId);
-    const proceeds = price * qty;
-    const realized = (price - (s.avgCost[commId] || 0)) * qty;
+    const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
+    const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;   // Baron Tier earnings tax (on profit)
+    const proceeds = price * qty - tax;                                                // keep principal + after-tax profit
+    const realized = grossRealized - tax;
     s.credits += proceeds;
     s.positions[commId] = held - qty;
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
-    return { ok: true, qty, proceeds, price, realized };
+    return { ok: true, qty, proceeds, price, realized, tax };
   },
+
+  // ----- Baron Tier (prestige "ascension") -----
+  tier() { return (this.s().prestige || {}).tier || 0; },
+  tierInfo(t = this.tier()) { return BARON_TIERS[Util.clamp(t, 0, BARON_TIERS.length - 1)]; },
+  tierTitle() { return this.tierInfo().title; },
+  baronTax() { return this.tierInfo().tax; },
+  afterTax(amount) { return amount > 0 ? Math.round(amount * (1 - this.baronTax())) : amount; },  // tax positive earnings only
+  permitCap() { return this.tierInfo().permits; },
+  fleetCap() { return this.tierInfo().fleet; },
+  nextTier() { const t = this.tier(); return t + 1 < BARON_TIERS.length ? BARON_TIERS[t + 1] : null; },
 
   _afterTrade(commId, side, qty, value, price, realized = 0) {
     const s = this.s();
@@ -167,38 +179,20 @@ const Economy = {
     }
   },
 
-  canPrestige() { return this.netWorth() >= PRESTIGE.threshold; },
+  canPrestige() { const n = this.nextTier(); return !!n && this.netWorth() >= n.threshold; },
 
+  // ASCEND a Baron Tier: you KEEP your whole empire — credits, stocks, industries,
+  // ships, senator relationships, faction standing. The only changes are a fancier
+  // title, a bigger industry-permit + fleet cap, and a steeper tax on all earnings.
   prestige() {
     const s = this.s();
-    if (!this.canPrestige()) return { ok: false, msg: "Net worth too low." };
-    const tier = s.prestige.tier + 1;
-    const multiplier = 1 + tier * PRESTIGE.bonusPerTier;
-    s.prestige = { tier, multiplier };
-    s.credits = Math.round(CONFIG.startingCredits * multiplier);
-    s.positions = {}; s.avgCost = {};
-    s.ships = []; s.mainShip = { type: "pinnace" };
-    s.missions = []; s.reports = []; s.listings = []; s.orders = []; s.routes = []; s.industries = []; s.extractors = {}; s.components = {}; s.items = {};
-    s.inventory = { capacity: 6, upgrades: 0 };
-    s.bazaar = { mercs: [], contracts: [], accessories: [], extractors: [], components: [] };
-    s.reputation = Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0]));
-    // politics reset with the empire — but keep dossier knowledge you paid for
-    if (window.Senate) {
-      const keep = {}, old = (s.senate && s.senate.reps) || {};
-      for (const id in old) if (old[id].revealed) keep[id] = { revealed: true, rel: 0, scandal: 0 };
-      s.senate = Object.assign(Senate.defaultState(), { reps: keep });
-      Senate._bumpRev();
-    }
-    s.travel = null;
-    s.currentSystem = "navos";
-    s.unlockedSystems = SYSTEMS.filter(x => x.unlock === 0).map(x => x.id);
-    s.stats.peakNetWorth = this.netWorth();
-    Market.volMult = 1 + tier * PRESTIGE.volPerTier;
-    Market.init();
-    Bazaar.ensure();
-    Bus.emit("prestige", { tier, multiplier });
+    if (!this.canPrestige()) return { ok: false, msg: "Net worth too low to ascend." };
+    const tier = (s.prestige.tier || 0) + 1;
+    s.prestige = { tier, multiplier: 1 };          // multiplier kept for save-shape compat (unused)
+    s.stats.peakNetWorth = Math.max(s.stats.peakNetWorth || 0, this.netWorth());
+    Bus.emit("prestige", { tier });
     this.checkAchievements();
-    return { ok: true, tier, multiplier };
+    return { ok: true, tier, title: this.tierTitle() };
   },
 };
 

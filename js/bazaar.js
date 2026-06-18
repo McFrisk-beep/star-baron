@@ -158,6 +158,8 @@ const Bazaar = {
   buyShip(catalogId) {
     const def = Fleet.shipDef(catalogId); const s = this.s();
     if (!def || def.cls === "main") return { ok: false, msg: "Unknown ship." };
+    const cap = window.Economy ? Economy.fleetCap() : 99;
+    if ((s.ships || []).length >= cap) return { ok: false, msg: `Fleet at capacity (${cap}) — ascend a Baron Tier to command more.` };
     const price = Math.round(def.price * (1 - Rep.discount()));
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;

@@ -89,8 +89,9 @@ const Missions = {
         credits: 0, items: [], stock: null, lost: [], impounded: [] };
 
       if (success) {
-        const mult = s.prestige.multiplier || 1;
-        report.credits = Math.round(m.reward.credits * mult * (m.faction ? Rep.rewardMult(m.faction) : 1));
+        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1));
+        report.credits = Economy.afterTax(gross);                 // Baron Tier earnings tax
+        report.taxed = gross - report.credits;
         s.credits += report.credits;
         s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
         if (m.faction) Rep.onContract(m.faction, m.type, m.danger);

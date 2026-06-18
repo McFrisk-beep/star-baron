@@ -22,14 +22,14 @@
       <div class="stat"><label>Location</label><span id="hud-system">—</span></div>
       <div class="stat" title="Market sentiment"><label>Sentiment</label>
         <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
-      <div class="stat"><label>Baron Tier</label><span id="hud-tier">0</span></div>
+      <div class="stat" title="Your Baron Tier — ascend in the Barons tab"><label>Title</label><span id="hud-tier">Baron</span></div>
       <div class="stat"><label>Cycle</label><span id="hud-clock">—</span></div>
     </div>
     <div class="topbtns">
       <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
       <button id="btn-account" class="btn hidden">Sign in</button>
       <button id="btn-admin" class="btn hidden">🛠 Admin</button>
-      <button id="btn-prestige" class="btn btn-prestige hidden">Retire Empire</button>
+      <button id="btn-prestige" class="btn btn-prestige hidden">Ascend ▸</button>
       <button id="btn-help" class="btn">❔ Help</button>
       <button id="btn-settings" class="btn">⚙ Settings</button>
     </div>
@@ -129,6 +129,7 @@
 
       <!-- BARONS / LEADERBOARD -->
       <section class="page hidden" id="page-barons">
+        <div class="panel" id="baron-track"></div>
         <div class="panel">
           <h2>Baron Leaderboard <small id="lb-sub"></small></h2>
           <ol class="lb-list" id="lb-list"></ol>

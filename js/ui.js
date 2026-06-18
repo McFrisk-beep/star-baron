@@ -44,7 +44,7 @@ const UI = {
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
       fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
       systemList: $("system-list"), bazaarBody: $("bazaar-body"),
-      rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"),
+      rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"), baronTrack: $("baron-track"),
       achList: $("ach-list"), achCount: $("ach-count"),
       indList: $("industry-list"), indCount: $("ind-count"),
       senateBody: $("senate-body"),
@@ -164,10 +164,12 @@ const UI = {
     }, t));
     t += reduced ? 320 : 900;
     this._tradeTimers.push(setTimeout(() => {
+      if (!isBuy && r.tax) this._tradeLine(log, `▸ Baron tax withheld: ${Util.credits(r.tax)}c (${(Economy.baronTax() * 100).toFixed(0)}%)…`);
       this._tradeLine(log, `✓ ${isBuy ? "Purchase" : "Sale"} complete.`);
       const pnl = (!isBuy && typeof r.realized === "number")
         ? ` · <span class="${r.realized >= 0 ? "up" : "down"}">${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)}c</span>` : "";
-      result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}` +
+      const taxNote = (!isBuy && r.tax) ? ` · <span class="down">−${Util.credits(r.tax)}c tax</span>` : "";
+      result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}${taxNote}` +
         `<br><span class="muted-note">New balance: ${Util.creditsFull(this.s().credits)}c</span>`;
       result.classList.remove("hidden"); close.classList.remove("hidden");
       refresh();                                       // reveal the new balance at the "complete" beat
@@ -275,11 +277,13 @@ const UI = {
     this.refs.networth.textContent = Util.creditsFull(Economy.netWorth());
     if (this.refs.rank && window.Rivals) this.refs.rank.textContent = `#${Rivals.rank()} / ${Rivals.count()}`;
     this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
-    this.refs.tier.textContent = s.prestige.tier;
+    this.refs.tier.textContent = Economy.tierTitle();
     const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
     this.refs.sentiment.style.width = pct.toFixed(0) + "%";
     this.refs.sentiment.style.background = sent >= 0 ? "var(--up)" : "var(--down)";
-    this.refs.btnPrestige.classList.toggle("hidden", !Economy.canPrestige());
+    const canAscend = Economy.canPrestige(), nextT = Economy.nextTier();
+    this.refs.btnPrestige.classList.toggle("hidden", !canAscend);
+    if (canAscend && nextT) this.refs.btnPrestige.textContent = `Ascend ▸ ${nextT.title}`;
     const missionsN = s.missions.length, reportsN = s.reports.length;
     const badge = this.refs.fleetBadge;
     if (missionsN + reportsN > 0) { badge.classList.remove("hidden"); badge.textContent = missionsN + reportsN; }
@@ -1112,6 +1116,7 @@ const UI = {
   // ===== BARONS / leaderboard ==============================================
   renderLeaderboard() {
     if (this.page !== "barons") return;
+    this.renderBaronTrack();
     const board = Rivals.board();
     const snap = (this.s().rivalsMeta || {}).snap;
     const rank = board.findIndex(r => r.you) + 1;
@@ -1133,6 +1138,38 @@ const UI = {
         ${arrow}
         <span class="lb-nw">${Util.credits(r.netWorth)}c</span></li>`;
     }).join("");
+  },
+
+  // the Baron Tier "ascension" track: current title + perks, and the next tier
+  renderBaronTrack() {
+    const el = this.refs.baronTrack; if (!el) return;
+    const cur = Economy.tierInfo(), next = Economy.nextTier(), nw = Economy.netWorth();
+    const taxPct = (cur.tax * 100).toFixed(0);
+    const perks = `<div class="bt-perks"><span>Earnings tax <b class="${cur.tax ? "down" : "up"}">${taxPct}%</b></span><span>Industry permits <b>${cur.permits}</b></span><span>Fleet cap <b>${cur.fleet}</b></span></div>`;
+    let nextHtml;
+    if (!next) {
+      nextHtml = `<p class="muted-note">You've reached the apex — there is no higher office than <b>${cur.title}</b>.</p>`;
+    } else {
+      const ready = nw >= next.threshold, pct = Math.min(100, nw / next.threshold * 100);
+      nextHtml = `<div class="bt-next">
+        <div class="bt-next-head">Next: <b>${next.title}</b> <span class="muted-note">at ${Util.credits(next.threshold)}c net worth</span></div>
+        <div class="bt-bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+        <div class="muted-note">Keeps your whole empire. Unlocks ${next.permits} permits · fleet ${next.fleet} · costs a permanent ${(next.tax * 100).toFixed(0)}% earnings tax.</div>
+        <button class="btn ${ready ? "btn-go" : ""}" id="baron-ascend" ${ready ? "" : "disabled"}>${ready ? `Ascend to ${next.title} ▸` : `${Util.credits(Math.max(0, next.threshold - nw))}c to go`}</button>
+      </div>`;
+    }
+    el.innerHTML = `<h2>Your Title <small>${cur.title}</small></h2>
+      <p class="muted-note">Ascending a tier keeps everything you own — stocks, industries, ships, senator ties — and grants a bigger empire, at the price of a steeper tax on all earnings.</p>
+      ${perks}${nextHtml}`;
+    const btn = el.querySelector("#baron-ascend");
+    if (btn) btn.onclick = () => this.doAscend();
+  },
+  doAscend() {
+    if (!Economy.canPrestige()) return;
+    const next = Economy.nextTier();
+    if (!confirm(`Ascend to ${next.title}? You keep your entire empire — stocks, industries, ships and senator ties — and gain ${next.permits} industry permits + a fleet cap of ${next.fleet}. The price: a permanent ${(next.tax * 100).toFixed(0)}% tax on all earnings (it never goes back down).`)) return;
+    const res = Economy.prestige();
+    if (res.ok) { this.toast(`Ascended — you are now a ${res.title}.`, "good", 5000); this.fullRender(); }
   },
 
   // ===== broadcast / feed ==================================================
@@ -1325,12 +1362,7 @@ const UI = {
     r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setReset.onclick = () => { if (confirm("Wipe your Cosmocrat save and start over?")) window.Game.reset(); };
 
-    r.btnPrestige.onclick = () => {
-      if (!Economy.canPrestige()) return;
-      if (!confirm(`Retire and sell the empire? You'll reset to Baron Tier ${this.s().prestige.tier + 1} with a permanent +${((this.s().prestige.tier + 1) * PRESTIGE.bonusPerTier * 100).toFixed(0)}% edge.`)) return;
-      const res = Economy.prestige();
-      if (res.ok) { this.toast(`Empire sold. Welcome to Baron Tier ${res.tier}.`, "good", 5000); this.fullRender(); }
-    };
+    r.btnPrestige.onclick = () => this.doAscend();
 
     this.refs.feedList.addEventListener("scroll", () => {
       const el = this.refs.feedList; this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;

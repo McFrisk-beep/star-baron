@@ -336,10 +336,23 @@ const RIVALS = [
    [DECISION] starting curve — tune freely. Unlocks at the net-worth
    threshold; "sell the empire" grants a permanent multiplier and bumps the
    Baron Tier so the next run is both harder (more volatile) and richer.       */
+/* ---- BARON TIERS (prestige "ascension") -----------------------------------
+   Retiring now ASCENDS a tier: you keep your empire (stocks, industries, senator
+   ties) and gain a fancier title, a bigger industry-permit cap and fleet cap —
+   but pay a permanent, rising tax on all earnings. `threshold` is the net worth
+   you must reach to ascend INTO that tier. Beyond the last entry you stay Cosmocrat. */
+const BARON_TIERS = [
+  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  threshold: 0 },
+  { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  threshold: 1000000 },
+  { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  threshold: 2500000 },
+  { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  threshold: 6000000 },
+  { title: "Plutocrat", tax: 0.40, permits: 24, fleet: 7,  threshold: 15000000 },
+  { title: "Potentate", tax: 0.50, permits: 28, fleet: 8,  threshold: 40000000 },
+  { title: "Cosmocrat", tax: 0.60, permits: 32, fleet: 10, threshold: 100000000 },
+];
+
 const PRESTIGE = {
-  threshold: 1000000,      // net worth needed to retire
-  bonusPerTier: 0.15,      // +15% income/price-edge per Baron Tier
-  volPerTier: 0.05,        // +5% market volatility per tier (harder + richer)
+  threshold: 1000000,      // legacy: base net worth gate (per-tier gates live in BARON_TIERS)
 };
 
 /* ---- SENATE / SPACE POLITICS ----------------------------------------------
@@ -490,6 +503,7 @@ window.REP = REP;
 window.RIVALCFG = RIVALCFG;
 window.RIVALS = RIVALS;
 window.PRESTIGE = PRESTIGE;
+window.BARON_TIERS = BARON_TIERS;
 window.SENATECFG = SENATECFG;
 window.GALAXY = GALAXY;
 window.RACES = RACES;

@@ -79,7 +79,7 @@ const Routes = {
       route.nextAt = now + cycleMs;
     }
     this.s().routes = this.list().filter(r => !r._dead);
-    if (total) { this.s().credits += total; Economy.refreshNetWorth(); }
+    if (total) { total = Economy.afterTax(total); this.s().credits += total; Economy.refreshNetWorth(); }   // Baron Tier earnings tax
     return { total, runs };
   },
 };

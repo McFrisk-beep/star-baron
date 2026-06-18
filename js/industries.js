@@ -52,7 +52,8 @@ const Industries = {
     const planet = sys && sys.planets[idx];
     if (!planet) return { ok: false, msg: "No planet." };
     if (this.at(sys.id, idx)) return { ok: false, msg: "You already hold a permit here." };
-    if (this.list().length >= INDUSTRYCFG.maxPerPlayer) return { ok: false, msg: `Permit cap reached (${INDUSTRYCFG.maxPerPlayer}).` };
+    const permitCap = window.Economy ? Economy.permitCap() : INDUSTRYCFG.maxPerPlayer;
+    if (this.list().length >= permitCap) return { ok: false, msg: `Permit cap reached (${permitCap}) — ascend a Baron Tier for more.` };
     const fac = this.planetFaction(sys, planet);
     if (fac && Rep.get(fac) < INDUSTRYCFG.permitMinRep) return { ok: false, msg: `${FACTIONS[fac].name} won't sell you a permit at your standing.` };
     return { ok: true };

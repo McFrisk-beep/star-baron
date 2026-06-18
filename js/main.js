@@ -122,7 +122,7 @@ const Game = {
     if (window.Senate && this.state.senate && this.state.senate.shared) Senate.shared = true;
 
     Market.init();
-    Market.volMult = 1 + this.state.prestige.tier * PRESTIGE.volPerTier;
+    Market.volMult = 1;                 // Baron Tiers no longer crank volatility (the market stays calm)
     Market.hydrate(this.state.market);
 
     // Build the (deterministic) galaxy, then restore its local-news history.
