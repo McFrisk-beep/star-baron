@@ -77,6 +77,7 @@ declare
   target text := ''; pct text := ''; effect jsonb := '{}'::jsonb;
   c text; cm jsonb; f text; cls text;
   ttl text; blb text; ov jsonb;
+  next_vote timestamptz;
 begin
   -- prefer admin-edited SENATE_EDICTS (Admin → Content), else the built-in set
   begin
@@ -123,8 +124,15 @@ begin
   ttl := sevlabel || replace(replace(tpl->>'title','{TARGET}',target),'{PCT}',pct);
   blb := replace(replace(tpl->>'blurb','{TARGET}',target),'{PCT}',pct);
 
+  -- stagger: this bill votes one day after the last bill already on the docket,
+  -- so authoring several at once spreads them across days instead of bunching
+  -- them all ~24h out. (In normal daily operation this is still just +1 day.)
+  select coalesce(max(votes_at), now()) into next_vote
+  from public.world_senate where votes_at > now();
+  next_vote := greatest(next_vote, now()) + interval '1 day';
+
   insert into public.world_senate(issue, type, lean, effect, title, blurb, votes_at, ends_at)
-  values (tpl->>'issue', typ, 1, effect, ttl, blb, now() + interval '1 day', now() + interval '4 days');
+  values (tpl->>'issue', typ, 1, effect, ttl, blb, next_vote, next_vote + interval '3 days');
 
   delete from public.world_senate where created_at < now() - interval '14 days';
 end;
@@ -134,9 +142,26 @@ $$;
 select cron.schedule('senate-tick', '0 0 * * *', $$ select public.senate_tick(); $$);
 ```
 
-> Re-running? Remove the old job first to avoid duplicates:
-> `select cron.unschedule('senate-tick');` then re-run the `cron.schedule(...)` line.
+> Re-running? You can re-run the `create or replace function …` block any time to
+> update the logic — the schedule keeps calling it by name, so you don't need to
+> touch `cron.schedule`. (Only re-run `cron.schedule(...)` if the job is missing;
+> `select cron.unschedule('senate-tick');` first to avoid duplicates.)
 > Want a bill right now to test? `select public.senate_tick();`
+
+**Already have a bunched-up docket?** Seeding several bills at once with the old
+function left them all voting ~24h out. Re-stagger the queued ones a day apart
+(run once, after updating the function):
+
+```sql
+with q as (
+  select id, row_number() over (order by votes_at, id) as rn
+  from public.world_senate where votes_at > now()
+)
+update public.world_senate w
+set votes_at = date_trunc('minute', now()) + q.rn * interval '1 day',
+    ends_at  = date_trunc('minute', now()) + q.rn * interval '1 day' + interval '3 days'
+from q where w.id = q.id;
+```
 
 ## 1b. Pooled influence (run this too)
 
