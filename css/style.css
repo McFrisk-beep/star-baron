@@ -280,6 +280,13 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .msg-reaction { opacity: .95; }
 .msg-npc .msg-handle { color: var(--gold); }
 
+/* ===== Ko-fi support widget ===== */
+/* The widget ships with a very high z-index; cap it below our overlays (modals 60,
+   star map 70, chamber 72) so an open overlay always covers it and it can never sit
+   over a close/confirm button. It floats bottom-left, clear of the bottom-right toasts. */
+.floatingchat-container-wrap, .floatingchat-container-wrap-mobi,
+[class*="floatingchat"], [id*="kofi"] { z-index: 45 !important; }
+
 /* ===== toasts ===== */
 .toast-stack { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
 .toast { background: #1a2138; border: 1px solid var(--line); border-left: 3px solid var(--accent);
