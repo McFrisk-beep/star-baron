@@ -37,14 +37,22 @@ const Store = {
 
   // ---- public API (unchanged signatures) --------------------------------
   async load() {
+    const local = this.localLoad();
     if (this.signedIn()) {
       try {
         const remote = await Cloud.loadRemote();
-        if (remote) { this.localSave(remote); console.log("[Store] loaded cloud save"); return remote; }
+        if (remote) {
+          // Local is written on every change instantly; the cloud push is debounced,
+          // so a quick refresh can leave the cloud STALER than local. Keep whichever
+          // was saved more recently so we never clobber unsynced local progress.
+          const lt = (local && local.lastSeenAt) || 0, rt = (remote && remote.lastSeenAt) || 0;
+          if (local && lt > rt) { console.log("[Store] local save newer than cloud — keeping local"); return local; }
+          this.localSave(remote); console.log("[Store] loaded cloud save"); return remote;
+        }
         console.log("[Store] signed in, no cloud save yet — using local");
       } catch (e) { this._cloudFail("load", e); }
     }
-    return this.localLoad();
+    return local;
   },
 
   async save(state) {

@@ -131,7 +131,7 @@ const UI = {
     if (tm && !tm.classList.contains("hidden")) return;   // terminal already open → ignore (anti-spam)
     const r = side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty);
     if (!r.ok) { this.toast(r.msg, "warn"); return; }
-    window.Game.requestSave();                        // the trade is committed atomically — persist now
+    window.Game.save();                               // the trade is committed — persist to storage immediately
     this.playTradeAnim(side, COMMODITIES.find(c => c.id === id), r);
   },
 
