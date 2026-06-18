@@ -362,6 +362,13 @@ const Senate = {
     return this.sen().bills.filter(b => b.votes).sort((a, b) => (b.votesAt || 0) - (a.votesAt || 0)).slice(0, limit);
   },
   voteOf(bill, sn) { return (bill && bill.votes && sn) ? bill.votes[sn.idx] : null; },
+  // did this bill's roll-call carry? (a passed edict may since have expired or been
+  // repealed; a repeal motion "passed" means the repeal itself succeeded)
+  _carried(b) {
+    if (!b) return false;
+    if (b.repealOf) return b.status === "passed";
+    return b.status === "passed" || b.status === "expired" || b.status === "repealed";
+  },
   senatorHistory(id, limit = 10) {
     const sn = this.byId(id); if (!sn) return [];
     return this.sen().bills.filter(b => b.votes).sort((a, b) => (b.votesAt || 0) - (a.votesAt || 0))
@@ -517,7 +524,8 @@ const Senate = {
     const $ = id => document.getElementById(id);
     this.refs = { overlay: $("senate-overlay"), svg: $("senate-svg"), tip: $("sc-tip"),
       speaker: $("sc-speaker"), stage: $("sc-stage"),
-      btnReplay: $("sc-replay"), btnClose: $("sc-close") };
+      btnReplay: $("sc-replay"), btnClose: $("sc-close"),
+      votebar: $("sc-votebar"), vbCounts: $("sc-vb-counts"), vbAye: $("sc-vb-aye"), vbNay: $("sc-vb-nay"), vbResult: $("sc-vb-result") };
     if (!this.refs.overlay) return;
     this.refs.btnClose.onclick = () => this.closeChamber();
     this.refs.btnReplay.onclick = () => this.replay();
@@ -540,6 +548,15 @@ const Senate = {
     if (this.refs.overlay) this.refs.overlay.classList.add("hidden");
     this._clearBubbles();
     this._stopLoop();
+  },
+  // open the chamber straight onto a recorded bill's vote — animate=true replays
+  // the staggered roll-call, animate=false snaps to the final result.
+  openVote(billId, animate = true) {
+    const b = this.sen().bills.find(x => x.id === billId);
+    if (!b || !b.votes) { if (window.UI) UI.toast("No recorded vote for that bill.", "warn"); return; }
+    this.openChamber();
+    this._showVote(b, !animate);
+    this._startLoop();
   },
   suspend() { if (this._open) this._stopLoop(); },
   resume() { if (this._open) this._startLoop(); },
@@ -770,15 +787,16 @@ const Senate = {
   },
 
   _reduced() { return !!(this.s().settings && this.s().settings.reduced); },
-  _showVote(bill) {
+  _showVote(bill, instant) {
     this._mode = "vote"; this._bill = bill; this._voteDone = false;
     this._clearBubbles();
     this._tally = { aye: 0, nay: 0, abst: 0, wAye: 0, wNay: 0 };
     this.refs.btnReplay.style.display = "";
+    if (this.refs.votebar) this.refs.votebar.classList.remove("hidden");   // top-centre live vote bar
     for (const sn of this.roster()) this._setSeat(sn.id, true, "pending");   // full attendance for the vote
     const order = this.roster().slice().sort((a, b) => (this._seats[a.id]?.a || 0) - (this._seats[b.id]?.a || 0));
     this._revealed = {};
-    if (this._reduced()) {
+    if (instant || this._reduced()) {
       for (const sn of order) { this._revealed[sn.id] = true; this._applyVote(sn.id); }
       this._voteDone = true; this._renderTally();
     } else {
@@ -797,6 +815,7 @@ const Senate = {
   showHall() {
     this._mode = "hall"; this._bill = null;
     this._clearBubbles();
+    if (this.refs.votebar) this.refs.votebar.classList.add("hidden");
     this.refs.btnReplay.style.display = this.lastResolved() ? "" : "none";
     this._rollPresence(true);
     this._applyPresence();
@@ -833,7 +852,7 @@ const Senate = {
     const b = this._bill; if (!b) return;
     const line = Util.pick(SENATE_SPEAKER).replace(/\{TITLE\}/g, b.title);
     const result = (this._voteDone)
-      ? (b.status === "passed" ? `<span class="sc-pass">PASSED</span>` : `<span class="sc-fail">FAILED</span>`)
+      ? (this._carried(b) ? `<span class="sc-pass">PASSED</span>` : `<span class="sc-fail">FAILED</span>`)
       : `<span class="sc-live">voting…</span>`;
     this.refs.speaker.innerHTML =
       `<div class="sc-speaker-line">🏛 ${line}</div>` +
@@ -843,10 +862,23 @@ const Senate = {
     this._renderTally();
   },
   _renderTally() {
+    this._renderVoteBar();
     const el = document.getElementById("sc-tally"); if (!el || !this._tally) return;
     const t = this._tally, wt = t.wAye + t.wNay || 1;
     el.innerHTML = `<span class="up">Aye ${t.aye}</span> · <span class="down">Nay ${t.nay}</span> · <span class="tip-dim">Abstain ${t.abst}</span>` +
       `<div class="sc-bar"><span class="sc-bar-aye" style="width:${(t.wAye / wt * 100).toFixed(0)}%"></span><span class="sc-bar-nay" style="width:${(t.wNay / wt * 100).toFixed(0)}%"></span></div>`;
+  },
+  // the prominent top-centre bar: aye vs nay normalised to cast weight, so the
+  // dashed 50% line is the exact pass threshold (passes when wAye > wNay).
+  _renderVoteBar() {
+    if (!this.refs.votebar || !this.refs.vbAye || !this._tally) return;
+    const t = this._tally, wt = t.wAye + t.wNay || 1;
+    this.refs.vbAye.style.width = (t.wAye / wt * 100).toFixed(1) + "%";
+    this.refs.vbNay.style.width = (t.wNay / wt * 100).toFixed(1) + "%";
+    this.refs.vbCounts.innerHTML = `<span class="up">Aye ${t.aye}</span> · <span class="down">Nay ${t.nay}</span> · <span class="tip-dim">Abstain ${t.abst}</span>`;
+    const b = this._bill;
+    this.refs.vbResult.innerHTML = !this._voteDone ? `<span class="sc-live">voting…</span>`
+      : (this._carried(b) ? `<span class="sc-pass">PASSED</span>` : `<span class="sc-fail">FAILED</span>`);
   },
   _frame() {
     if (!this._open) { this._raf = null; return; }

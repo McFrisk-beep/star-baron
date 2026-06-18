@@ -921,8 +921,9 @@ const UI = {
           ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — ${Senate.shared ? "pooled with every baron's, applied galaxy-wide when the vote lands." : "applied when the vote lands."}</div>` : ""}
         </div></div>`;
     }
+    const headPanel = `<div class="panel senate-head">
+      <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2></div>`;
     const floorPanel = `<div class="panel senate-floor">
-      <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2>
       <p class="muted-note">A galactic senate votes ~daily on edicts that reshape the markets. Your <b>Baron Tier ${tier}</b> sets your leverage:
         lobby a bloc (Tier ${SENATECFG.lobbyMinTier}) → bribe a senator (Tier ${SENATECFG.bribeMinTier}) → plant a scandal (Tier ${SENATECFG.scandalMinTier}). You can work ${Senate.maxTargets()} senator(s) per session.</p>
       ${floor}</div>`;
@@ -965,15 +966,53 @@ const UI = {
       </div>
       <div class="senate-roster">${rows}</div></div>`;
 
-    this.refs.senateBody.innerHTML = floorPanel + edictPanel + upPanel + rosterPanel;
+    // ---- voting history ----
+    const past = Senate.history(24);
+    const histItems = past.map(b => {
+      const r = b.result || {}, carried = Senate._carried(b);
+      const cls = b.status === "repealed" ? "repealed" : (carried ? "passed" : "failed");
+      const label = b.repealOf ? (carried ? "REPEAL PASSED" : "REPEAL FAILED")
+        : b.status === "repealed" ? "PASSED · LATER REPEALED"
+        : b.status === "expired" ? "PASSED · EXPIRED"
+        : carried ? "PASSED" : "FAILED";
+      const inForce = b.status === "passed" && b.effect && (!b.endsAt || b.endsAt > now);
+      const when = b.votesAt ? `${Util.duration(Math.max(0, now - b.votesAt))} ago` : "";
+      return `<div class="vh-item ${cls}">
+        <div class="vh-item-head"><b>${b.title}</b><span class="vh-badge ${cls}">${label}</span></div>
+        <div class="vh-effect muted-note">${b.blurb}</div>
+        <div class="vh-tally"><span class="up">Aye ${r.aye || 0}</span> · <span class="down">Nay ${r.nay || 0}</span> · <span class="tip-dim">Abstain ${r.abstain || 0}</span>${when ? ` · <span class="muted-note">${when}</span>` : ""}${inForce ? ` · <span class="vh-active">in force${b.endsAt ? `, ${Util.duration(b.endsAt - now)} left` : ""}</span>` : ""}</div>
+        <div class="vh-actions">
+          <button class="btn btn-mini" data-sn="seevote" data-id="${b.id}">See voting results</button>
+          <button class="btn btn-mini" data-sn="watchvote" data-id="${b.id}">▶ Watch the voting session</button>
+        </div></div>`;
+    }).join("") || `<p class="muted-note">No votes have been held yet — check back after the next session.</p>`;
+    const historyPanel = `<div class="panel"><h2>Voting History <small>${past.length} past session(s)</small></h2>
+      <p class="muted-note">Each entry shows the legislation's effect and how it landed. “See voting results” snaps the chamber to the final tally; “Watch the voting session” replays the speaker's roll-call seat by seat.</p>
+      <div class="senate-history-list">${histItems}</div></div>`;
+
+    // ---- sub-tabs ----
+    this.senateTab ||= "overview";
+    const tabs = [["overview", "Overview"], ["edicts", "Active Edicts"], ["reps", "Representatives"], ["history", "Voting History"]];
+    const nav = `<nav class="subtabs senate-subtabs">${tabs.map(([k, l]) =>
+      `<button class="subtab${this.senateTab === k ? " active" : ""}" data-sntab="${k}">${l}</button>`).join("")}</nav>`;
+    const body = this.senateTab === "edicts" ? edictPanel
+      : this.senateTab === "reps" ? rosterPanel
+      : this.senateTab === "history" ? historyPanel
+      : floorPanel + upPanel;
+
+    this.refs.senateBody.innerHTML = headPanel + nav + body;
     this.refs.senateBody.onclick = e => this.onSenateClick(e);
     this.refs.senateBody.onchange = e => this.onSenateFilter(e);
   },
 
   onSenateClick(e) {
+    const tab = e.target.closest("[data-sntab]");
+    if (tab) { this.senateTab = tab.dataset.sntab; this.renderSenate(); return; }
     const b = e.target.closest("[data-sn]"); if (!b) return;
     const act = b.dataset.sn;
     if (act === "chamber") { Senate.openChamber(); return; }
+    if (act === "seevote") { Senate.openVote(b.dataset.id, false); return; }
+    if (act === "watchvote") { Senate.openVote(b.dataset.id, true); return; }
     if (act === "card") { this.openSenatorCard(b.dataset.id); return; }
     if (act === "want") { Senate.setWant(b.dataset.v); window.Game.requestSave(); this.renderSenate(); return; }
     if (act === "lobby") {
