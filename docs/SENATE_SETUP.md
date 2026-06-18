@@ -171,6 +171,55 @@ create policy "insert own influence" on public.world_senate_influence for insert
 > them. Submissions close at a bill's `votes_at`; clients resolve with the final
 > pool, so everyone agrees.
 
+## 1c. Shared outcomes — the same tally for everyone (run this too)
+
+The agenda above is shared, but each client used to **resolve it locally**, so two
+players could compute slightly different tallies (and a one-off admin "Hold vote
+now" never left that admin's machine at all). This table fixes that: the **admin
+client resolves each vote once and publishes the exact result**, and every other
+account (players *and* guests) reads it and applies it **verbatim** — same
+aye/nay/abstain, same passed/failed, same active edicts, galaxy-wide. Non-admin
+clients no longer resolve shared bills themselves, so there is **no mismatch**.
+
+> The cron (§1) is unchanged — it still authors the agenda on the same schedule.
+> The vote for a scheduled bill is resolved (and published) by an admin client
+> at its `votes_at`; **a bill only resolves while an admin is online.** Set your
+> account's role to admin first: `update public.profiles set role = 'admin'
+> where user_id = '<your-auth-uid>';` (the same `profiles` table the app already
+> reads for the Admin panel).
+
+Run in the **SQL Editor**:
+
+```sql
+create table if not exists public.world_senate_result (
+  bill_id    text primary key,         -- client bill id: 'wb' || world_senate.id, or a forced 'bill_<n>'
+  issue      text, type text, lean int,
+  effect     jsonb,                     -- the edict effect (null for a repeal)
+  title      text, blurb text,
+  votes      text,                      -- per-senator vote string: a / n / x, indexed by senator
+  result     jsonb,                     -- { aye, nay, abstain, wAye, wNay }
+  status     text,                      -- passed | failed | repealed | expired
+  repeal_of  text,                      -- target bill id, if this was a repeal
+  votes_at   timestamptz, ends_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists wsr_created_idx on public.world_senate_result (created_at desc);
+alter table public.world_senate_result enable row level security;
+create policy "read world_senate_result" on public.world_senate_result for select using (true);
+-- only an admin (profiles.role = 'admin') may write the canonical outcome
+create policy "admin writes world_senate_result" on public.world_senate_result
+  for all to authenticated
+  using      ((select role from public.profiles where user_id = auth.uid()) = 'admin')
+  with check ((select role from public.profiles where user_id = auth.uid()) = 'admin');
+
+-- optional housekeeping: drop outcomes for bills older than the retention window
+-- delete from public.world_senate_result where created_at < now() - interval '21 days';
+```
+
+> Test it: on your **admin** account open **Admin → Dev → Hold vote now**, then
+> load the game in a second browser (or signed out) — the same edict and tally
+> appear. Guests can see and replay outcomes; they just can't author them.
+
 ## 2. That's it
 
 The client activates automatically once rows exist: on load you'll see
@@ -196,4 +245,5 @@ select cron.unschedule('senate-tick');
 drop function if exists public.senate_tick();
 drop table if exists public.world_senate;
 drop table if exists public.world_senate_influence;
+drop table if exists public.world_senate_result;
 ```

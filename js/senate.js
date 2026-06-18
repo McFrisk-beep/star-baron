@@ -277,12 +277,15 @@ const Senate = {
 
   // ===== resolution (loop + offline catch-up) =============================
   tick(now) { return this.resolve(now); },
+  // only the admin client resolves shared bills (then publishes the one outcome
+  // everyone applies) — so no two clients can compute a mismatched tally.
+  _isAuthority() { return !!(window.Cloud && Cloud.isAdmin()); },
   resolve(now) {
     const senate = this.sen();
     this.ensureSchedule(now);
     const out = []; let guard = 0;
     while (guard++ < SENATECFG.maxResolvePerCatchup) {
-      const due = senate.bills.filter(b => b.status === "upcoming" && b.votesAt <= now && (!this.shared || this._poolReady[b.id])).sort((a, b) => a.votesAt - b.votesAt);
+      const due = senate.bills.filter(b => b.status === "upcoming" && b.votesAt <= now && (!this.shared || (this._poolReady[b.id] && this._isAuthority()))).sort((a, b) => a.votesAt - b.votesAt);
       if (!due.length) break;
       const bill = due[0];
       this._resolveBill(bill, bill.votesAt);
@@ -306,7 +309,10 @@ const Senate = {
     if (!bill) { this._adminRefill(now); bill = this.nextBill(now); }   // shared/empty agenda left nothing → seed a docket
     if (!bill) return null;
     bill.votesAt = now;
-    this._resolveBill(bill, now);
+    this._resolveBill(bill, now);   // publishes itself when already shared
+    // bootstrap: a forced vote should go galaxy-wide even if this client hasn't
+    // flipped to shared yet (e.g. first vote before any shared rows exist).
+    if (!this.shared && window.SenateWorld && SenateWorld.enabled() && this._isAuthority()) SenateWorld.publishResult(bill);
     senate.cycle = (senate.cycle || 0) + 1;
     senate.lastBillId = bill.id;
     if (senate.pending && senate.pending.billId === bill.id) senate.pending = this._emptyPending();
@@ -356,6 +362,26 @@ const Senate = {
       if (passed) bill.endsAt = atTime + SENATECFG.edictDurationMs;
     }
     Bus.emit("senateVote", bill);
+    // galaxy-wide: the admin client publishes this one canonical result so every
+    // other account applies the exact same tally (see senateworld.js).
+    if (this.shared && window.SenateWorld && SenateWorld.enabled()) SenateWorld.publishResult(bill);
+  },
+  // apply a canonical resolved bill from the shared store *verbatim* (never
+  // re-voting), so the tally is identical on every client. Returns the stored
+  // bill if it changed, else null.
+  ingestResolvedBill(b) {
+    const senate = this.sen(); senate.bills ||= [];
+    let cur = senate.bills.find(x => x.id === b.id);
+    if (cur) {
+      if (cur.status === b.status && cur.votes === b.votes) return null;   // already applied
+      Object.assign(cur, b);
+    } else { cur = b; senate.bills.push(cur); }
+    if (b.repealOf && b.status === "passed") {                             // a carried repeal strikes its target
+      const t = senate.bills.find(x => x.id === b.repealOf); if (t && t.status === "passed") t.status = "repealed";
+    }
+    senate.lastBillId = b.id;
+    this._bumpRev();
+    return cur;
   },
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
   _vote(sn, bill, pending, ctx, now) {
