@@ -377,10 +377,14 @@ const SENATECFG = {
   // ---- player influence — gated by Baron Tier (0 = spectator) ----
   lobbyMinTier: 1, bribeMinTier: 2, scandalMinTier: 3,
   tierInfluenceBonus: 0.18,                  // +18% sway strength per Baron Tier
-  lobbyAllStrength: 0.45, lobbyFacStrength: 0.8, bribeStrength: 1.4,
-  relGainOnBribe: 22, relLossOnBackfire: 18,
-  scandalBackfireBase: 0.32, scandalTierRelief: 0.06,  // backfire chance −6%/tier
-  lobbyAllCost: 9000, lobbyFacCost: 5500, bribeCostBase: 3500, scandalCostBase: 7000,
+  lobbyFacStrength: 0.8, bribeStrength: 1.4,
+  lobbyDecay: 0.55,                          // each repeat lobby of a faction sways ×this (diminishing returns)
+  lobbyRivalFactor: 0.6,                     // lobbying a faction shoves its rival bloc this much the OTHER way
+  lobbyRepGain: 6, lobbyRivalRepLoss: 4,     // a lobby lifts the faction's standing and dents its rival's
+  relGainOnBribe: 20, scandalRelLoss: 28,    // bribing warms a senator; coercion (scandal) burns them
+  // base costs (credits). Lobby scales with your FACTION standing; bribe/scandal with the SENATOR relationship.
+  lobbyFacCost: 100000, bribeCostBase: 50000, scandalCostBase: 20000,
+  lobbyCostRelK: 0.4, bribeCostRelK: 0.4, scandalCostRelK: 0.4,  // ±40% cost swing from relationship
   dossierMinPrice: 1500, dossierMaxPrice: 9000, dossierSlots: 3,
   // stance scale −3..+3 → label[v+3]; hidden stances read as the "unknown" string.
   stanceLabels: ["vehemently opposed", "strongly disagree", "slightly disagree", "either way", "slightly agree", "strongly agree", "solid support"],

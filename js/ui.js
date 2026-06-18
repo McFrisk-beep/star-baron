@@ -942,13 +942,12 @@ const UI = {
     let floor = `<button class="btn btn-go" data-sn="chamber">🏛 Enter the Chamber</button>`;
     if (next) {
       const facBtns = Object.keys(FACTIONS).map(f =>
-        `<button class="btn btn-mini" data-sn="lobby" data-v="${f}" ${lobbyGated ? "disabled" : ""}>Lobby ${FACTIONS[f].name} · ${Util.credits(SENATECFG.lobbyFacCost)}c</button>`).join("");
+        `<button class="btn btn-mini" data-sn="lobby" data-v="${f}" ${lobbyGated ? "disabled" : ""} title="rallies ${FACTIONS[f].name}; hardens ${FACTIONS[FACTIONS[f].rival].name} against you">Lobby ${FACTIONS[f].name} · ${Util.credits(Senate._lobbyCost(f))}c</button>`).join("");
       const tu = Senate.targetsUsed(p), mt = Senate.maxTargets();
       const queued = [];
-      if (p.pushAll) queued.push("lobbied the floor");
       if (Object.keys(p.pushFac).length) queued.push(`lobbied ${Object.keys(p.pushFac).length} bloc(s)`);
       if (Object.keys(p.pushSen).length) queued.push(`bribed ${Object.keys(p.pushSen).length}`);
-      if (Object.keys(p.abstain).length) queued.push(`smeared ${Object.keys(p.abstain).length}`);
+      if (Object.keys(p.coerce).length) queued.push(`coerced ${Object.keys(p.coerce).length}`);
       floor += `<div class="bill on-floor">
         <div class="bill-head"><b>${next.title}</b><span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
         <div class="bill-blurb">${next.blurb}</div>
@@ -959,9 +958,8 @@ const UI = {
             <button class="btn btn-mini ${p.want === "block" ? "sel down" : ""}" data-sn="want" data-v="block">Block it</button>
             ${p.want ? `<span class="muted-note">you want this to <b>${p.want === "pass" ? "pass" : "fail"}</b></span>` : `<span class="muted-note">declare a side to lobby or bribe</span>`}</div>
           <div class="lobby-row">
-            <button class="btn btn-mini" data-sn="lobby" data-v="all" ${lobbyGated ? "disabled" : ""}>Lobby the floor · ${Util.credits(SENATECFG.lobbyAllCost)}c</button>
             ${facBtns}
-            ${lobbyGated ? `<span class="muted-note">lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}</span>` : ""}</div>
+            ${lobbyGated ? `<span class="muted-note">lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}</span>` : `<span class="muted-note">cost scales with your standing; each repeat lobby sways less, and rallying a bloc hardens its rival against you</span>`}</div>
           ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — ${Senate.shared ? "pooled with every baron's, applied galaxy-wide when the vote lands." : "applied when the vote lands."}</div>` : ""}
         </div></div>`;
     }
@@ -969,7 +967,7 @@ const UI = {
       <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2></div>`;
     const floorPanel = `<div class="panel senate-floor">
       <p class="muted-note">A galactic senate votes ~daily on edicts that reshape the markets. Your <b>Baron Tier ${tier}</b> sets your leverage:
-        lobby a bloc (Tier ${SENATECFG.lobbyMinTier}) → bribe a senator (Tier ${SENATECFG.bribeMinTier}) → plant a scandal (Tier ${SENATECFG.scandalMinTier}). You can work ${Senate.maxTargets()} senator(s) per session.</p>
+        lobby a bloc (Tier ${SENATECFG.lobbyMinTier}) → bribe a senator (Tier ${SENATECFG.bribeMinTier}) → coerce a senator (Tier ${SENATECFG.scandalMinTier}). You can personally work ${Senate.maxTargets()} senator(s) per session.</p>
       ${floor}</div>`;
 
     // ---- active edicts ----
@@ -1081,12 +1079,13 @@ const UI = {
     const hist = Senate.senatorHistory(id, 12);
     const histHTML = hist.length ? hist.map(h => `<div class="sh-row"><i class="vh vh-${h.vote}"></i> <span>${h.bill.title}</span> <span class="muted-note">${h.vote === "a" ? "aye" : h.vote === "n" ? "nay" : "abstained"}</span></div>`).join("") : `<p class="muted-note">No votes on record yet.</p>`;
     const canB = Senate.can("bribe"), canS = Senate.can("scandal");
-    const bribed = !!p.pushSen[id], smeared = !!p.abstain[id];
-    const lockNote = canB && canS ? "" : `<span class="muted-note">${canB ? "" : `bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}. `}${canS ? "" : `scandals at Baron Tier ${SENATECFG.scandalMinTier}.`}</span>`;
+    const bribed = !!p.pushSen[id], coerced = !!p.coerce[id], worked = bribed || coerced;
+    const lockNote = canB && canS ? "" : `<span class="muted-note">${canB ? "" : `bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}. `}${canS ? "" : `coercion at Baron Tier ${SENATECFG.scandalMinTier}.`}</span>`;
     const actions = next ? `<div class="sen-actions">
-        <button class="btn btn-mini" data-sncard="bribe" data-id="${id}" ${(!canB || bribed) ? "disabled" : ""}>${bribed ? "Bribed ✓" : `Bribe · ${Util.credits(Math.round(SENATECFG.bribeCostBase * sn.weight))}c`}</button>
-        <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || smeared) ? "disabled" : ""}>${smeared ? "Smeared ✓" : `Scandal · ${Util.credits(SENATECFG.scandalCostBase)}c`}</button>
-        ${lockNote}</div>` : `<p class="muted-note">No bill on the floor to influence.</p>`;
+        <button class="btn btn-mini" data-sncard="bribe" data-id="${id}" ${(!canB || worked) ? "disabled" : ""}>${bribed ? "Bribed ✓" : `Bribe · ${Util.credits(Senate._bribeCost(sn))}c`}</button>
+        <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || worked) ? "disabled" : ""}>${coerced ? "Coerced ✓" : `Coerce · ${Util.credits(Senate._scandalCost(sn))}c`}</button>
+        ${lockNote}</div>
+        <p class="muted-note"><b>Bribe</b> nudges them toward your position and warms relations (cheaper with allies). <b>Coerce</b> forces their vote to your position regardless of stance but burns relations (cheaper on senators who dislike you). Declare a position first.</p>` : `<p class="muted-note">No bill on the floor to influence.</p>`;
     this.refs.senatorCard.innerHTML = `
       <div class="sen-card-head">
         <img class="sen-portrait" src="${ASSET.portrait(sn.portrait)}" alt="" onerror="this.style.visibility='hidden'" />
@@ -1101,8 +1100,7 @@ const UI = {
       const btn = e.target.closest("[data-sncard]"); if (!btn) return;
       const r = btn.dataset.sncard === "bribe" ? Senate.bribe(btn.dataset.id) : Senate.scandal(btn.dataset.id);
       if (!r.ok) return this.toast(r.msg, "warn");
-      if (r.backfired) this.toast("The smear backfired — credits wasted and word got back to them.", "bad");
-      else this.toast(btn.dataset.sncard === "bribe" ? "Senator bribed — they'll lean your way." : "Scandal planted — they'll sit the vote out.", "good");
+      this.toast(btn.dataset.sncard === "bribe" ? "Senator bribed — they'll lean your way." : "Senator coerced — they'll vote your position.", "good");
       this.flashCredits(); window.Game.requestSave(); this.updateHeader();
       this.openSenatorCard(id); if (this.page === "senate") this.renderSenate();
     };

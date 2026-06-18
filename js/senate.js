@@ -401,10 +401,9 @@ const Senate = {
   },
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
   _vote(sn, bill, pending, ctx, now) {
-    if (pending && pending.abstain && pending.abstain[sn.id]) return "x";   // smeared → sits it out
+    if (pending && pending.coerce && pending.coerce[sn.id]) return pending.coerce[sn.id] > 0 ? "a" : "n";  // coerced → forced vote
     let score = (this.stanceNow(sn, bill.issue, now) / 3) * bill.lean + (ctx || 0);
     if (pending) {                                            // signed pushes (+ toward pass) — local OR pooled
-      score += pending.pushAll || 0;
       const f = pending.pushFac && pending.pushFac[this.blocNow(sn, now)]; if (f) score += f;
       const s = pending.pushSen && pending.pushSen[sn.id]; if (s) score += s;
       if (!this.shared && pending.want) {                    // personal relationship lean (local mode only)
@@ -491,12 +490,12 @@ const Senate = {
   travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
 
   // ===== player influence =================================================
-  _emptyPending() { return { billId: null, want: null, pushAll: 0, pushFac: {}, pushSen: {}, abstain: {} }; },
+  _emptyPending() { return { billId: null, want: null, pushFac: {}, pushSen: {}, coerce: {}, lobCount: {} }; },
   _pendingFor(bill) {
     const senate = this.sen();
     const p = senate.pending;
-    // reset for a new bill, OR upgrade a pre-refactor pending (old lobbyAll/bribes/scandals shape)
-    if (!p || p.billId !== bill.id || !p.pushSen || !p.pushFac || !p.abstain)
+    // reset for a new bill, OR upgrade an older-shape pending (pushAll/abstain → pushFac/coerce)
+    if (!p || p.billId !== bill.id || !p.pushSen || !p.pushFac || !p.coerce || !p.lobCount)
       senate.pending = Object.assign(this._emptyPending(), { billId: bill.id });
     return senate.pending;
   },
@@ -509,7 +508,18 @@ const Senate = {
   tier() { return (this.s().prestige || {}).tier || 0; },
   power() { return 1 + this.tier() * SENATECFG.tierInfluenceBonus; },
   maxTargets() { return 1 + this.tier(); },
-  targetsUsed(p) { return Object.keys((p && p.pushSen) || {}).length + Object.keys((p && p.abstain) || {}).length; },
+  targetsUsed(p) { return Object.keys((p && p.pushSen) || {}).length + Object.keys((p && p.coerce) || {}).length; },
+  // dynamic costs — lobby scales with FACTION standing, bribe/scandal with the SENATOR relationship
+  _lobbyCost(factionId) {
+    const rep = window.Rep ? Rep.get(factionId) : 0;
+    return Math.round(SENATECFG.lobbyFacCost * Util.clamp(1 - (rep / 100) * SENATECFG.lobbyCostRelK, 0.4, 1.6));
+  },
+  _bribeCost(sn) {   // cheaper the friendlier they already are
+    return Math.round(SENATECFG.bribeCostBase * sn.weight * Util.clamp(1 - (this.relationship(sn.id) / 100) * SENATECFG.bribeCostRelK, 0.4, 1.6));
+  },
+  _scandalCost(sn) {  // cheaper the more they dislike you (you've got dirt); pricey to coerce a friend
+    return Math.round(SENATECFG.scandalCostBase * sn.weight * Util.clamp(1 + (this.relationship(sn.id) / 100) * SENATECFG.scandalCostRelK, 0.4, 1.6));
+  },
   // shared mode needs a signed-in player and an open voting window
   _gate(b) {
     if (!this.shared) return null;
@@ -533,20 +543,27 @@ const Senate = {
     const p = this._pendingFor(b); p.want = (p.want === want ? null : want);
     this._bumpRev(); return { ok: true };
   },
-  lobby(scope) {
+  // lobby a FACTION's bloc toward your position. Repeats sway less (diminishing
+  // returns), it warms your standing with that faction and sours its rival, and
+  // it galvanises the rival bloc to vote the OTHER way.
+  lobby(faction) {
     if (!this.can("lobby")) return { ok: false, msg: `Lobbying unlocks at Baron Tier ${SENATECFG.lobbyMinTier}.` };
+    if (!FACTIONS[faction]) return { ok: false, msg: "Lobby a faction bloc." };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
     const gate = this._gate(b); if (gate) return gate;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first, then lobby." };
-    const cost = scope === "all" ? SENATECFG.lobbyAllCost : SENATECFG.lobbyFacCost;
+    const cost = this._lobbyCost(faction);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
     const dir = p.want === "pass" ? 1 : -1;
-    const strength = (scope === "all" ? SENATECFG.lobbyAllStrength : SENATECFG.lobbyFacStrength) * this.power();
-    if (scope === "all") p.pushAll += dir * strength;
-    else p.pushFac[scope] = (p.pushFac[scope] || 0) + dir * strength;
-    this._submitPool(b.id, scope === "all" ? "lobby_all" : "lobby_fac", scope === "all" ? null : scope, dir, strength);
+    const n = (p.lobCount[faction] = (p.lobCount[faction] || 0) + 1);           // 1st, 2nd, 3rd lobby…
+    const strength = SENATECFG.lobbyFacStrength * this.power() * Math.pow(SENATECFG.lobbyDecay, n - 1);   // …each worth less
+    p.pushFac[faction] = (p.pushFac[faction] || 0) + dir * strength;
+    const rival = FACTIONS[faction].rival;
+    if (rival) p.pushFac[rival] = (p.pushFac[rival] || 0) - dir * strength * SENATECFG.lobbyRivalFactor;   // rival digs in against you
+    if (window.Rep) { Rep.change(faction, SENATECFG.lobbyRepGain); if (rival) Rep.change(rival, -SENATECFG.lobbyRivalRepLoss); }
+    this._submitPool(b.id, "lobby_fac", faction, dir, strength);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
   },
   bribe(senatorId) {
@@ -558,7 +575,7 @@ const Senate = {
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
     if (p.pushSen[senatorId]) return { ok: false, msg: "Already in your pocket this session." };
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
-    const cost = Math.round(SENATECFG.bribeCostBase * sn.weight);
+    const cost = this._bribeCost(sn);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
     const dir = p.want === "pass" ? 1 : -1;
@@ -567,23 +584,27 @@ const Senate = {
     this._submitPool(b.id, "bribe", senatorId, dir, SENATECFG.bribeStrength);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
   },
+  // scandal = coercion: blackmail a senator into voting your declared position no
+  // matter their stance. Guaranteed, but it burns your relationship with them.
   scandal(senatorId) {
-    if (!this.can("scandal")) return { ok: false, msg: `Scandals unlock at Baron Tier ${SENATECFG.scandalMinTier}.` };
+    if (!this.can("scandal")) return { ok: false, msg: `Coercion unlocks at Baron Tier ${SENATECFG.scandalMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
     const gate = this._gate(b); if (gate) return gate;
     const p = this._pendingFor(b);
+    if (!p.want) return { ok: false, msg: "Back or block the bill first — coercion forces that vote." };
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
-    if (p.abstain[senatorId]) return { ok: false, msg: "Already smeared this session." };
+    if (p.coerce[senatorId]) return { ok: false, msg: "Already coerced this session." };
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
-    const cost = SENATECFG.scandalCostBase;
+    const cost = this._scandalCost(sn);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
+    const dir = p.want === "pass" ? 1 : -1;
+    p.coerce[senatorId] = dir;                                   // forces their vote to your position
     const rep = this._rep(senatorId);
-    const backfire = Math.random() < Math.max(0.05, SENATECFG.scandalBackfireBase - this.tier() * SENATECFG.scandalTierRelief);
-    if (backfire) { rep.rel = Util.clamp((rep.rel || 0) - SENATECFG.relLossOnBackfire, -100, 100); Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost, backfired: true }; }
-    p.abstain[senatorId] = true; rep.scandal = (rep.scandal || 0) + 1;
-    this._submitPool(b.id, "scandal", senatorId, 0, 0);
-    Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost, backfired: false };
+    rep.rel = Util.clamp((rep.rel || 0) - SENATECFG.scandalRelLoss, -100, 100);   // …and torches the relationship
+    rep.scandal = (rep.scandal || 0) + 1;
+    this._submitPool(b.id, "coerce", senatorId, dir, 0);
+    Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
   },
 
   // ===== welcome-back recap helper ========================================

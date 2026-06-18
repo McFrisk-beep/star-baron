@@ -123,10 +123,12 @@ const SenateWorld = {
       const p = Senate._emptyPending(); p.billId = bill.id;
       for (const r of (data || [])) {
         const dir = Number(r.dir) || 0, str = Number(r.strength) || 0;
-        if (r.kind === "lobby_all") p.pushAll += dir * str;
-        else if (r.kind === "lobby_fac" && r.target) p.pushFac[r.target] = (p.pushFac[r.target] || 0) + dir * str;
-        else if (r.kind === "bribe" && r.target) p.pushSen[r.target] = (p.pushSen[r.target] || 0) + dir * str;
-        else if (r.kind === "scandal" && r.target) p.abstain[r.target] = true;
+        if (r.kind === "lobby_fac" && r.target) {
+          p.pushFac[r.target] = (p.pushFac[r.target] || 0) + dir * str;
+          const rival = (window.FACTIONS && FACTIONS[r.target]) ? FACTIONS[r.target].rival : null;
+          if (rival) p.pushFac[rival] = (p.pushFac[rival] || 0) - dir * str * SENATECFG.lobbyRivalFactor;   // rival bloc digs in
+        } else if (r.kind === "bribe" && r.target) p.pushSen[r.target] = (p.pushSen[r.target] || 0) + dir * str;
+        else if (r.kind === "coerce" && r.target) p.coerce[r.target] = dir;   // forced vote
       }
       Senate.applyPool(bill.id, p, Date.now() >= bill.votesAt);   // ready (final) once the window has closed
     } catch (e) { /* transient — bill just waits for the next poll */ }
