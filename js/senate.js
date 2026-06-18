@@ -276,6 +276,22 @@ const Senate = {
     if (changed) { this._trim(); this._bumpRev(); }
     return out;
   },
+  // Admin/dev: resolve the next upcoming bill right now (bypasses the schedule
+  // clock + shared-pool gating) so the chamber can be watched on demand. Returns
+  // the resolved bill, or null if there's nothing on the floor.
+  forceResolveNext(now = Date.now()) {
+    const senate = this.sen();
+    const bill = this.nextBill(now);
+    if (!bill) return null;
+    bill.votesAt = now;
+    this._resolveBill(bill, now);
+    senate.cycle = (senate.cycle || 0) + 1;
+    senate.lastBillId = bill.id;
+    if (senate.pending && senate.pending.billId === bill.id) senate.pending = this._emptyPending();
+    this.ensureSchedule(now);
+    this._trim(); this._bumpRev();
+    return bill;
+  },
   _resolveBill(bill, atTime) {
     const roster = this.roster(), senate = this.sen();
     const pending = this.shared

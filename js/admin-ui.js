@@ -40,6 +40,7 @@ const AdminUI = {
       gallery: $("admin-gallery"), imgNote: $("admin-img-note"), imgTabs: $("admin-imgtabs"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
+      devSenateVote: $("dev-senate-vote"), devSenateNext: $("dev-senate-next"),
       closes: document.querySelectorAll(".admin-close"),
     };
     if (this.r.btn) this.r.btn.onclick = () => this.open();
@@ -56,6 +57,7 @@ const AdminUI = {
     if (this.r.devSet) this.r.devSet.onclick = () => adjust(s => { s.credits = Math.max(0, Math.round(+this.r.devCredits.value || 0)); UI.toast(`Credits set to ${Util.creditsFull(s.credits)}.`, "good"); });
     if (this.r.dev10k) this.r.dev10k.onclick = () => adjust(s => { s.credits += 10000; UI.toast("+10,000c (dev)", "good"); });
     if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
+    if (this.r.devSenateVote) this.r.devSenateVote.onclick = () => this.forceSenateVote();
 
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
@@ -80,6 +82,24 @@ const AdminUI = {
     this.r.vImages.classList.toggle("hidden", view !== "images");
     if (this.r.vDev) this.r.vDev.classList.toggle("hidden", view !== "dev");
     if (view === "images") this.buildGallery();
+    if (view === "dev") this.refreshSenateDev();
+  },
+
+  // dev: resolve the next senate bill now and watch it in the chamber
+  refreshSenateDev() {
+    const el = this.r.devSenateNext; if (!el) return;
+    const b = window.Senate && Senate.nextBill();
+    el.textContent = b ? `Next on the floor: ${b.title}` : "No bill on the floor yet.";
+  },
+  forceSenateVote() {
+    if (!window.Senate) return;
+    const bill = Senate.forceResolveNext();           // resolves now + emits "senateVote" (chamber is still closed → just a toast)
+    if (!bill) { if (window.UI) UI.toast("No bill on the floor.", "warn"); return this.refreshSenateDev(); }
+    this.r.modal.classList.add("hidden");             // get the panel out of the way
+    Senate.openChamber();
+    Senate._showVote(bill);                           // play the staggered roll-call for the bill we just resolved
+    Senate._startLoop();
+    this.refreshSenateDev();
   },
 
   populate() {
