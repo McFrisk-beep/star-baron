@@ -801,18 +801,18 @@ const StarMap = {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this._starW = r.width; this._starH = r.height;
       const area = r.width * r.height;
-      const n = Math.max(40, Math.min(reduced ? 90 : 220, Math.round(area / 5200)));
+      const n = Math.max(60, Math.min(reduced ? 130 : 300, Math.round(area / 3600)));
       const stars = [];
       for (let i = 0; i < n; i++) {
         const depth = Math.random();                 // 0 far … 1 near (drives size + parallax)
         stars.push({
           x: Math.random(), y: Math.random(),
-          r: 0.4 + depth * 1.6,
+          r: 0.6 + depth * 2.1,
           depth,
-          a: 0.25 + Math.random() * 0.6,             // base brightness
-          tw: 0.6 + Math.random() * 2.2,             // twinkle speed
+          a: 0.45 + Math.random() * 0.55,            // base brightness
+          tw: 0.6 + Math.random() * 2.4,             // twinkle speed
           ph: Math.random() * Math.PI * 2,           // twinkle phase
-          hue: Math.random() < 0.15 ? (Math.random() < 0.5 ? "#9fb4ff" : "#ffd9a0") : "#eaf0ff",
+          hue: Math.random() < 0.18 ? (Math.random() < 0.5 ? "#9fb4ff" : "#ffd9a0") : "#eaf0ff",
         });
       }
       this._stars = stars;
@@ -836,20 +836,29 @@ const StarMap = {
       ctx.clearRect(0, 0, W, H);
       const mx = this._starMouse.x, my = this._starMouse.y;
       for (const s of this._stars) {
-        const px = mx * s.depth * 26, py = my * s.depth * 26;   // near stars shift more
+        const px = mx * s.depth * 42, py = my * s.depth * 42;   // near stars shift more
         const x = s.x * W + px, y = s.y * H + py;
-        const tw = reduced ? 0.85 : 0.55 + 0.45 * Math.sin(now / 1000 * s.tw + s.ph);
-        ctx.globalAlpha = Math.max(0, Math.min(1, s.a * tw));
+        const tw = reduced ? 0.9 : 0.45 + 0.55 * Math.sin(now / 1000 * s.tw + s.ph);
+        const alpha = Math.max(0, Math.min(1, s.a * tw));
+        if (s.depth > 0.7) {                                    // soft glow halo on the brightest
+          ctx.globalAlpha = alpha * 0.4;
+          ctx.fillStyle = s.hue;
+          ctx.beginPath(); ctx.arc(x, y, s.r * 4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = alpha;
         ctx.fillStyle = s.hue;
         ctx.beginPath(); ctx.arc(x, y, s.r, 0, Math.PI * 2); ctx.fill();
-        if (s.depth > 0.82) {                                   // soft glow on the brightest
-          ctx.globalAlpha *= 0.35;
-          ctx.beginPath(); ctx.arc(x, y, s.r * 3.4, 0, Math.PI * 2); ctx.fill();
+        if (!reduced && s.depth > 0.9) {                        // twinkle glint (4-point sparkle)
+          const g = s.r * (2.4 + tw * 1.6);
+          ctx.globalAlpha = alpha * 0.7; ctx.strokeStyle = s.hue; ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(x - g, y); ctx.lineTo(x + g, y);
+          ctx.moveTo(x, y - g); ctx.lineTo(x, y + g); ctx.stroke();
         }
       }
       // occasional shooting star
       if (!reduced) {
-        if (Math.random() < 0.006 && this._shooters.length < 2) {
+        if (Math.random() < 0.009 && this._shooters.length < 2) {
           const fromLeft = Math.random() < 0.5;
           this._shooters.push({
             x: fromLeft ? -0.05 * W : 1.05 * W, y: Math.random() * H * 0.6,
