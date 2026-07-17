@@ -970,8 +970,7 @@ const UI = {
     const headPanel = `<div class="panel senate-head">
       <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2></div>`;
     const floorPanel = `<div class="panel senate-floor">
-      <p class="muted-note">A galactic senate votes ~daily on edicts that reshape the markets. Your <b>Baron Tier ${tier}</b> sets your leverage:
-        lobby a bloc (Tier ${SENATECFG.lobbyMinTier}) → bribe a senator (Tier ${SENATECFG.bribeMinTier}) → coerce a senator (Tier ${SENATECFG.scandalMinTier}). You can personally work ${Senate.maxTargets()} senator(s) per session.</p>
+      <p class="muted-note">Edicts reshape the markets ~daily. Tier <b>${tier}</b> unlocks lobbying, bribes, and coercion — up to <b>${Senate.maxTargets()}</b> senator(s) per vote.</p>
       ${floor}</div>`;
 
     // ---- active edicts ----
@@ -1205,7 +1204,11 @@ const UI = {
   },
 
   toast(text, kind = "info", ms = 3200) {
-    const t = this.el("div", "toast toast-" + kind, text); this.refs.toast.appendChild(t);
+    const stack = this.refs.toast;
+    // ponytail: cap at 3 — drop the oldest so bursts don't bury the screen
+    while (stack.children.length >= 3) stack.firstChild.remove();
+    const t = this.el("div", "toast toast-" + kind, text);
+    stack.appendChild(t);
     requestAnimationFrame(() => t.classList.add("show"));
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
   },

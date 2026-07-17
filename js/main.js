@@ -176,14 +176,10 @@ const Game = {
 
     Bus.on("missionDone", () => this.requestSave());
 
-    // A senate vote landed during active play — surface the outcome.
+    // A senate vote landed during active play — update the chamber / senate tab
+    // (no toast: batch offline catch-up used to stack a wall of pop-ups).
     Bus.on("senateVote", bill => {
       if (this._booting) return;
-      const carried = bill.status === "passed";
-      const msg = bill.repealOf
-        ? (carried ? `Senate repealed “${bill.title.replace(/^Repeal — /, "")}”.` : `Repeal of an edict failed.`)
-        : (carried ? `Senate PASSED: ${bill.title}.` : `Senate rejected: ${bill.title}.`);
-      UI.toast(msg, bill.repealOf ? "info" : carried ? "warn" : "good", 5000);
       if (window.Senate && Senate._open && bill.votes) Senate._showVote(bill);   // watch it live if you're in the chamber
       if (UI.page === "senate") UI.renderSenate();
       this.requestSave();
