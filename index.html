@@ -37,16 +37,19 @@
 
   <main class="layout">
     <div class="col-main">
-      <nav class="tabs" id="tabs">
-        <button class="tab active" data-page="exchange">Exchange</button>
-        <button class="tab" data-page="fleet">Fleet <span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
-        <button class="tab" data-page="systems">Star Systems</button>
-        <button class="tab" data-page="bazaar">Bazaar</button>
-        <button class="tab" data-page="industries">Industries</button>
-        <button class="tab" data-page="senate">Senate</button>
-        <button class="tab" data-page="barons">Barons</button>
-        <button class="tab" data-page="ach">Milestones</button>
-        <button class="tab" data-page="comms">Comms <span class="tab-badge hidden" id="tab-comms-badge"></span></button>
+      <nav class="floatnav" id="tabs" aria-label="Primary navigation">
+        <div class="floatnav-track" id="floatnav-track">
+          <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
+          <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label">Exchange</span></button>
+          <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label">Star Systems</span></button>
+          <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label">Bazaar</span></button>
+          <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label">Industries</span></button>
+          <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label">Senate</span></button>
+          <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label">Barons</span></button>
+          <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label">Milestones</span></button>
+          <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
+        </div>
       </nav>
 
       <!-- EXCHANGE -->

@@ -38,6 +38,7 @@ const UI = {
       sentiment: $("hud-sentiment-fill"), tier: $("hud-tier"), clock: $("hud-clock"),
       exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"), warBanner: $("war-banner"),
       tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
+      navTrack: $("floatnav-track"), navIndicator: $("floatnav-indicator"),
       fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
       fleetRoutes: $("fleet-routes"), routesSub: $("routes-sub"),
       fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
@@ -83,6 +84,7 @@ const UI = {
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
+    this.updateNavIndicator();
     if (name === "fleet") this.renderFleet();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
@@ -112,6 +114,23 @@ const UI = {
   clearCommsBadge() {
     this._commsUnread = 0;
     if (this.refs.commsBadge) this.refs.commsBadge.classList.add("hidden");
+  },
+
+  // Slide the floating-nav indicator under the active tab and keep it in view
+  // when the pill bar has to scroll horizontally (phones).
+  updateNavIndicator() {
+    const track = this.refs.navTrack, ind = this.refs.navIndicator;
+    if (!track || !ind) return;
+    const active = track.querySelector(".tab.active");
+    if (!active) return;
+    ind.style.width = active.offsetWidth + "px";
+    ind.style.transform = `translateX(${active.offsetLeft}px)`;
+    const target = active.offsetLeft - (track.clientWidth - active.offsetWidth) / 2;
+    const max = track.scrollWidth - track.clientWidth;
+    if (max > 0) {
+      const reduced = !!(this.s().settings && this.s().settings.reduced);
+      track.scrollTo({ left: Math.max(0, Math.min(target, max)), behavior: reduced ? "auto" : "smooth" });
+    }
   },
 
   // ===== exchange ==========================================================
@@ -309,6 +328,7 @@ const UI = {
     const badge = this.refs.fleetBadge;
     if (missionsN + reportsN > 0) { badge.classList.remove("hidden"); badge.textContent = missionsN + reportsN; }
     else badge.classList.add("hidden");
+    if (this.page === "fleet") this.updateNavIndicator();   // badge changes the active pill's width
   },
   flashCredits() { const e = this.refs.credits; e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); },
   updateClock() {
@@ -1356,6 +1376,8 @@ const UI = {
   wireControls() {
     const r = this.refs;
     this.refs.tabs.onclick = e => { const t = e.target.closest(".tab"); if (t) this.showPage(t.dataset.page); };
+    window.addEventListener("resize", () => this.updateNavIndicator());
+    requestAnimationFrame(() => this.updateNavIndicator());
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
     r.btnHelp.onclick = () => this.openTutorial();
