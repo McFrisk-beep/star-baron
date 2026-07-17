@@ -42,9 +42,8 @@
           <div class="floatnav-inner" id="floatnav-inner">
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
             <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label">Exchange</span></button>
-            <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
-            <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label">Star Systems</span></button>
-            <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label">Bazaar</span></button>
+          <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label">Bazaar</span></button>
             <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label">Industries</span></button>
             <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label">Senate</span></button>
             <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label">Barons</span></button>
@@ -98,20 +97,6 @@
         <div class="panel hidden" id="fleet-reports-panel"><h2>Mission Reports</h2><div id="fleet-reports"></div></div>
         <div class="panel"><h2>Owned Ships <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
         <div class="panel"><h2>Inventory <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
-      </section>
-
-      <!-- SYSTEMS -->
-      <section class="page hidden" id="page-systems">
-        <div class="panel">
-          <h2>Star Systems <small>docking takes time — set by your flagship</small></h2>
-          <p class="sys-legend">Each tag is a <b>local price multiplier</b> for that goods category:
-            <span class="mod cheap">&lt;1.00 = cheaper to buy here</span>
-            <span class="mod dear">&gt;1.00 = sells for more here</span>
-            <span class="mod">1.00 = average</span>.
-            <b>dist</b> = distance from Navos Junction — farther systems take longer to dock.
-            Hover any tag for details.</p>
-          <ul class="system-list" id="system-list"></ul>
-        </div>
       </section>
 
       <!-- BAZAAR -->
