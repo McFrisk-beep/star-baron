@@ -928,7 +928,8 @@ const UI = {
 
   // ===== systems ===========================================================
   renderSystems() {
-    const s = this.s(); const ul = this.refs.systemList; ul.innerHTML = "";
+    const ul = this.refs.systemList; if (!ul) return;   // Star Systems tab removed — travel/unlock live in the Star Map
+    const s = this.s(); ul.innerHTML = "";
     for (const sys of SYSTEMS) {
       const unlocked = s.unlockedSystems.includes(sys.id), here = s.currentSystem === sys.id && !s.travel;
       const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));

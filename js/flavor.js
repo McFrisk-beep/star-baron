@@ -777,7 +777,7 @@ const TUTORIAL_STEPS = [
       <li><b>P&amp;L</b> tracks profit on what you're holding.</li></ul>
       Prices differ by <b>system</b> — the whole game is moving goods to where they're worth more.` },
   { icon: "🗺", title: "Travel the galaxy",
-    body: `Open the <b>Star Map</b> (top right) to see the galaxy, or use the <b>Star Systems</b> tab to travel.
+    body: `Open the <b>Star Map</b> (top right) to see the galaxy and travel between systems.
       <ul><li>Each system favors different goods — a system that's <i>cheap</i> in minerals is a great place to <b>buy</b> them.</li>
       <li><b>Docking takes time</b>, set by your flagship's speed. You can't trade while in transit.</li>
       <li>Locked systems can be <b>unlocked</b> with credits for richer routes.</li></ul>` },
