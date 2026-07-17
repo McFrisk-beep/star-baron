@@ -46,6 +46,7 @@
         <button class="tab" data-page="senate">Senate</button>
         <button class="tab" data-page="barons">Barons</button>
         <button class="tab" data-page="ach">Milestones</button>
+        <button class="tab" data-page="comms">Comms <span class="tab-badge hidden" id="tab-comms-badge"></span></button>
       </nav>
 
       <!-- EXCHANGE -->
@@ -143,34 +144,36 @@
           <ul class="ach-list" id="ach-list"></ul>
         </div>
       </section>
+
+      <!-- COMMS (Broadcast + Chat) -->
+      <section class="page hidden" id="page-comms">
+        <div class="comms-grid">
+          <section class="panel" id="panel-broadcast">
+            <div class="bc-head"><h2>Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
+            <div class="screen" id="broadcast-screen">
+              <img id="bc-frame" alt="broadcast" />
+              <div class="screen-overlay">
+                <div class="screen-title" id="bc-title">SIGNAL ACQUIRING…</div>
+                <div class="screen-caption" id="bc-caption"></div>
+              </div>
+              <div class="screen-scanlines"></div>
+            </div>
+            <div class="ticker"><span class="ticker-tag">NEWSWIRE</span>
+              <div class="ticker-track"><span id="ticker-text">Standby for galactic bulletins…</span></div>
+            </div>
+            <details class="newswire" id="newswire-details" open>
+              <summary>Newswire log</summary>
+              <ul id="newswire-list"></ul>
+            </details>
+          </section>
+
+          <section class="panel panel-feed" id="panel-feed">
+            <h2>Chat <small>galactic trader channel</small></h2>
+            <ul class="feed" id="feed-list"></ul>
+          </section>
+        </div>
+      </section>
     </div>
-
-    <!-- RIGHT: persistent flavor sidebar -->
-    <aside class="col-side">
-      <section class="panel" id="panel-broadcast">
-        <div class="bc-head"><h2>Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
-        <div class="screen" id="broadcast-screen">
-          <img id="bc-frame" alt="broadcast" />
-          <div class="screen-overlay">
-            <div class="screen-title" id="bc-title">SIGNAL ACQUIRING…</div>
-            <div class="screen-caption" id="bc-caption"></div>
-          </div>
-          <div class="screen-scanlines"></div>
-        </div>
-        <div class="ticker"><span class="ticker-tag">NEWSWIRE</span>
-          <div class="ticker-track"><span id="ticker-text">Standby for galactic bulletins…</span></div>
-        </div>
-        <details class="newswire" id="newswire-details">
-          <summary>Newswire log</summary>
-          <ul id="newswire-list"></ul>
-        </details>
-      </section>
-
-      <section class="panel panel-feed" id="panel-feed">
-        <h2>Chat</h2>
-        <ul class="feed" id="feed-list"></ul>
-      </section>
-    </aside>
   </main>
 
   <!-- ===== STAR MAP OVERLAY ===== -->
@@ -184,6 +187,7 @@
       <button class="btn" id="sm-close">✕ Close</button>
     </div>
     <div class="galaxy-view" id="galaxy-view">
+      <canvas id="galaxy-stars" class="galaxy-stars"></canvas>
       <svg id="galaxy-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="galaxy-tip" id="galaxy-tip"></div>
       <div class="galaxy-legend">

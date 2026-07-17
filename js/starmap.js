@@ -32,6 +32,7 @@ const StarMap = {
     const $ = id => document.getElementById(id);
     this.refs = {
       overlay: $("starmap-overlay"), svg: $("galaxy-svg"), tip: $("galaxy-tip"),
+      stars: $("galaxy-stars"),
       galaxyView: $("galaxy-view"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"),
@@ -62,6 +63,7 @@ const StarMap = {
     this.open = false;
     this.refs.overlay.classList.add("hidden");
     this.stopSystem();
+    this.stopStars();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
   },
   showGalaxy() {
@@ -71,6 +73,7 @@ const StarMap = {
     this.refs.crumbSys.textContent = "";
     this.refs.title.textContent = "GALACTIC CHART";
     this.renderGalaxy();
+    this.startStars();
     clearInterval(this.galaxyTimer);
     this.galaxyTimer = setInterval(() => this.updateGalaxyNodes(), CONFIG.marketTickMs);
   },
@@ -281,6 +284,7 @@ const StarMap = {
     const sys = Galaxy.get(id);
     if (!sys) return;
     this.current = id;
+    this.stopStars();
     this.refs.galaxyView.classList.add("hidden");
     this.refs.systemView.classList.remove("hidden");
     this.refs.crumbSys.textContent = " ▸ " + sys.name;
@@ -778,11 +782,123 @@ const StarMap = {
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._onResize = null; }
   },
 
+  // ===== galaxy starfield =================================================
+  // A twinkling, mouse-parallax starfield behind the galactic chart — a vanilla
+  // adaptation of the bundui "Stars" interactive background. Respects reduced
+  // motion (single static frame) and the tab-hidden suspend/resume lifecycle.
+  startStars() {
+    const cv = this.refs.stars; if (!cv || !cv.getContext) return;
+    this.stopStars();
+    const reduced = !!(this.s().settings && this.s().settings.reduced);
+    const ctx = cv.getContext("2d");
+    this._starMouse = { x: 0, y: 0 };
+
+    const seed = () => {
+      const r = this.refs.galaxyView.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = Math.max(1, Math.round(r.width * dpr));
+      cv.height = Math.max(1, Math.round(r.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._starW = r.width; this._starH = r.height;
+      const area = r.width * r.height;
+      const n = Math.max(60, Math.min(reduced ? 130 : 300, Math.round(area / 3600)));
+      const stars = [];
+      for (let i = 0; i < n; i++) {
+        const depth = Math.random();                 // 0 far … 1 near (drives size + parallax)
+        stars.push({
+          x: Math.random(), y: Math.random(),
+          r: 0.6 + depth * 2.1,
+          depth,
+          a: 0.45 + Math.random() * 0.55,            // base brightness
+          tw: 0.6 + Math.random() * 2.4,             // twinkle speed
+          ph: Math.random() * Math.PI * 2,           // twinkle phase
+          hue: Math.random() < 0.18 ? (Math.random() < 0.5 ? "#9fb4ff" : "#ffd9a0") : "#eaf0ff",
+        });
+      }
+      this._stars = stars;
+      this._shooters = [];
+    };
+    seed();
+
+    // mouse parallax (canvas is pointer-events:none, so listen on the container)
+    this._onStarMove = e => {
+      const r = this.refs.galaxyView.getBoundingClientRect();
+      this._starMouse.x = ((e.clientX - r.left) / Math.max(1, r.width)) - 0.5;
+      this._starMouse.y = ((e.clientY - r.top) / Math.max(1, r.height)) - 0.5;
+    };
+    if (!reduced) this.refs.galaxyView.addEventListener("pointermove", this._onStarMove);
+
+    this._onStarsResize = () => seed();
+    window.addEventListener("resize", this._onStarsResize);
+
+    const draw = now => {
+      const W = this._starW, H = this._starH;
+      ctx.clearRect(0, 0, W, H);
+      const mx = this._starMouse.x, my = this._starMouse.y;
+      for (const s of this._stars) {
+        const px = mx * s.depth * 42, py = my * s.depth * 42;   // near stars shift more
+        const x = s.x * W + px, y = s.y * H + py;
+        const tw = reduced ? 0.9 : 0.45 + 0.55 * Math.sin(now / 1000 * s.tw + s.ph);
+        const alpha = Math.max(0, Math.min(1, s.a * tw));
+        if (s.depth > 0.7) {                                    // soft glow halo on the brightest
+          ctx.globalAlpha = alpha * 0.4;
+          ctx.fillStyle = s.hue;
+          ctx.beginPath(); ctx.arc(x, y, s.r * 4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = s.hue;
+        ctx.beginPath(); ctx.arc(x, y, s.r, 0, Math.PI * 2); ctx.fill();
+        if (!reduced && s.depth > 0.9) {                        // twinkle glint (4-point sparkle)
+          const g = s.r * (2.4 + tw * 1.6);
+          ctx.globalAlpha = alpha * 0.7; ctx.strokeStyle = s.hue; ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(x - g, y); ctx.lineTo(x + g, y);
+          ctx.moveTo(x, y - g); ctx.lineTo(x, y + g); ctx.stroke();
+        }
+      }
+      // occasional shooting star
+      if (!reduced) {
+        if (Math.random() < 0.009 && this._shooters.length < 2) {
+          const fromLeft = Math.random() < 0.5;
+          this._shooters.push({
+            x: fromLeft ? -0.05 * W : 1.05 * W, y: Math.random() * H * 0.6,
+            vx: (fromLeft ? 1 : -1) * (5 + Math.random() * 4), vy: 2 + Math.random() * 2, life: 1,
+          });
+        }
+        for (const sh of this._shooters) {
+          sh.x += sh.vx; sh.y += sh.vy; sh.life -= 0.012;
+          const len = 14;
+          const g = ctx.createLinearGradient(sh.x, sh.y, sh.x - sh.vx * len / 4, sh.y - sh.vy * len / 4);
+          g.addColorStop(0, `rgba(200,220,255,${Math.max(0, sh.life)})`);
+          g.addColorStop(1, "rgba(200,220,255,0)");
+          ctx.globalAlpha = 1; ctx.strokeStyle = g; ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.moveTo(sh.x, sh.y);
+          ctx.lineTo(sh.x - sh.vx * len / 4, sh.y - sh.vy * len / 4); ctx.stroke();
+        }
+        this._shooters = this._shooters.filter(s => s.life > 0 && s.x > -0.1 * W && s.x < 1.1 * W);
+      }
+      ctx.globalAlpha = 1;
+      if (!reduced) this.starRaf = requestAnimationFrame(draw);
+    };
+    if (reduced) draw(0); else this.starRaf = requestAnimationFrame(draw);
+  },
+  stopStars() {
+    if (this.starRaf) cancelAnimationFrame(this.starRaf);
+    this.starRaf = null;
+    if (this._onStarsResize) { window.removeEventListener("resize", this._onStarsResize); this._onStarsResize = null; }
+    if (this._onStarMove && this.refs.galaxyView) { this.refs.galaxyView.removeEventListener("pointermove", this._onStarMove); this._onStarMove = null; }
+  },
+
   // Pause the animation when the tab is backgrounded; rebuild it on return.
   suspend() {
     if (this.raf && this.current) { this._resumeScene = true; this.stopScene(); }
+    if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); }
   },
   resume() {
+    if (this._resumeStars) {
+      this._resumeStars = false;
+      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) this.startStars();
+    }
     if (!this._resumeScene) return;
     this._resumeScene = false;
     const sys = this.current && Galaxy.get(this.current);
