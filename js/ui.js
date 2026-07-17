@@ -91,7 +91,15 @@ const UI = {
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "comms") this.clearCommsBadge();
+    else if (name === "comms") { this.clearCommsBadge(); this.scrollFeedBottom(); }
+  },
+
+  // Pin the chat to the newest message (the feed lives in a hidden tab until
+  // opened, so scrollHeight is only correct once it's visible — hence the rAF).
+  scrollFeedBottom() {
+    const el = this.refs.feedList; if (!el) return;
+    this.feedPaused = false;
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   },
 
   // Unread indicator on the Comms tab (chat + news arrive while you're elsewhere).
