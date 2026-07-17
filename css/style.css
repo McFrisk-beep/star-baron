@@ -83,7 +83,7 @@ b { color: #fff; font-weight: 600; }
 
 /* ===== layout ===== */
 .layout {
-  display: grid; grid-template-columns: 1fr minmax(280px, 340px); gap: 12px;
+  display: grid; grid-template-columns: 1fr; gap: 12px;
   padding: 12px; max-width: 1500px; margin: 0 auto; width: 100%;
   flex: 1; min-height: 0; align-items: stretch;
 }
@@ -256,17 +256,20 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .wire b { display: block; font-size: 11px; line-height: 1.3; }
 .wire-body { color: var(--ink-dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-/* ===== sidebar: broadcast (fixed) + feed (scrolls) ===== */
-#panel-broadcast { display: flex; flex-direction: column; min-height: 0; flex: none; }
-.panel-feed { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* ===== comms page: broadcast (left) + chat (right) ===== */
+/* Broadcast screen stays a fixed size; the newswire log and the chat feed each
+   scroll inside their own column. Uses the native <details open> state so the
+   open newswire grows to fill the column — no JS toggle needed. */
+#page-comms { overflow: hidden; padding-right: 0; }
+.comms-grid { flex: 1; min-height: 0; display: grid; gap: 12px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: stretch; }
+#panel-broadcast { display: flex; flex-direction: column; min-height: 0; }
+.panel-feed { display: flex; flex-direction: column; min-height: 0; }
 .panel-feed h2 small { color: var(--ink-faint); font-weight: 500; }
 .feed { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0;
   display: flex; flex-direction: column; gap: 7px; scroll-behavior: smooth; }
-/* expanding the GBN newswire takes over the column and hides the trader chat */
-.col-side.news-open .panel-feed { display: none; }
-.col-side.news-open #panel-broadcast { flex: 1; }
-.col-side.news-open .newswire { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.col-side.news-open #newswire-list { flex: 1; min-height: 0; max-height: none; }
+.newswire[open] { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.newswire[open] #newswire-list { flex: 1; min-height: 0; max-height: none; }
 .msg { display: flex; gap: 8px; animation: msgin .25s ease; }
 @keyframes msgin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
 .pfp { width: 26px; height: 26px; border-radius: 6px; flex: none; }
@@ -451,16 +454,16 @@ body.reduced .tt-dot { animation: none; }
   #page-bazaar { overflow: visible; }
   #bazaar-body { flex: none; height: auto; }
   .bz-scroll { flex: none; overflow: visible; padding-right: 0; }
+  #page-comms { overflow: visible; }
+  .comms-grid { grid-template-columns: 1fr; }
   #panel-broadcast { flex: none; }
   .panel-feed { flex: none; min-height: 0; }
   .feed { max-height: 50vh; }
   .screen { max-height: 160px; }
   .toast-stack { left: 12px; right: 12px; top: auto; bottom: 12px; max-width: none; }
-  /* let both panels coexist naturally on mobile rather than hiding the chat */
-  .col-side.news-open .panel-feed { display: flex; }
-  .col-side.news-open #panel-broadcast,
-  .col-side.news-open .newswire { flex: none; }
-  .col-side.news-open #newswire-list { flex: none; max-height: 220px; }
+  /* on mobile the newswire log gets a fixed cap instead of filling the column */
+  .newswire[open] { flex: none; }
+  .newswire[open] #newswire-list { flex: none; max-height: 220px; }
   .stats { gap: 10px 12px; }
   .stat-stealth { display: none; }
 }
@@ -525,8 +528,12 @@ body.reduced .tt-dot { animation: none; }
 
 /* galaxy view */
 .galaxy-view { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+/* interactive twinkling starfield (adapted from the bundui "Stars" component) —
+   sits behind the chart SVG; drawn in starmap.js. */
+.galaxy-stars { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  z-index: 0; pointer-events: none; }
 #galaxy-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
-  touch-action: none; cursor: grab; }
+  z-index: 1; touch-action: none; cursor: grab; }
 #galaxy-svg.grabbing { cursor: grabbing; }
 .sector-halo { opacity: .06; }
 .sector-label { fill: var(--ink-dim); font-size: 15px; font-weight: 700; letter-spacing: 2px;
@@ -972,3 +979,57 @@ body.reduced .cvb-aye, body.reduced .cvb-nay { transition: none; }
   .sen-stances { grid-template-columns: 1fr; }
   .chamber-title { font-size: 13px; letter-spacing: 1px; }
 }
+
+/* ===================================================================
+   Aesthetic polish — additive refinements layered over the base theme.
+   Purely cosmetic (colour, depth, subtle motion); no layout changes.
+   =================================================================== */
+
+/* thin, themed scrollbars for the dark UI */
+* { scrollbar-width: thin; scrollbar-color: #2c3552 transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2c3552; border-radius: 8px;
+  border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #3d4a75; background-clip: padding-box; }
+
+/* deeper, layered space backdrop */
+body {
+  background:
+    radial-gradient(1200px 720px at 82% -12%, #1b2444 0%, transparent 55%),
+    radial-gradient(900px 620px at 6% 112%, #12233b 0%, transparent 55%),
+    var(--bg) fixed;
+}
+
+/* topbar: crisper divider + a soft glow on the brand mark */
+.topbar { box-shadow: 0 1px 0 rgba(255,255,255,.03), 0 6px 18px rgba(0,0,0,.35); }
+.brand-mark { text-shadow: 0 0 12px rgba(123,140,255,.75); }
+
+/* panels: gentle inner highlight + a little more depth */
+.panel { border-color: #263050;
+  box-shadow: 0 8px 26px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.035); }
+/* an accent tick before every panel heading — a consistent design cue */
+.panel h2::before { content: ""; flex: none; align-self: center; width: 3px; height: 12px;
+  border-radius: 2px; background: linear-gradient(180deg, var(--accent), var(--accent2)); }
+
+/* buttons: subtle depth and a satisfying press */
+.btn { box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
+.btn:active { transform: translateY(1px); }
+.btn-go { box-shadow: 0 3px 12px rgba(58,77,255,.32), inset 0 1px 0 rgba(255,255,255,.18); }
+.btn-prestige { box-shadow: 0 3px 12px rgba(240,168,42,.32), inset 0 1px 0 rgba(255,255,255,.3); }
+
+/* tabs: glowing accent underline on the active tab */
+.tab { transition: color .15s ease, background .15s ease; }
+.tab.active::after { content: ""; position: absolute; left: 9px; right: 9px; bottom: -1px; height: 2px;
+  border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent2));
+  box-shadow: 0 0 10px rgba(123,140,255,.6); }
+#tab-comms-badge { background: var(--accent); }
+
+/* market rows: smoother hover wash */
+.market tr { transition: background .15s ease; }
+
+/* comms chat: a hair more breathing room around the broadcast screen */
+#panel-broadcast .bc-head { align-items: center; }
+
+/* reduced-motion: drop the press micro-interaction */
+body.reduced .btn:active { transform: none; }

@@ -52,7 +52,7 @@ const UI = {
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
-      colSide: document.querySelector(".col-side"), newswireDetails: $("newswire-details"),
+      commsBadge: $("tab-comms-badge"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -91,6 +91,19 @@ const UI = {
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
+    else if (name === "comms") this.clearCommsBadge();
+  },
+
+  // Unread indicator on the Comms tab (chat + news arrive while you're elsewhere).
+  bumpComms() {
+    if (this.page === "comms" || !this.refs.commsBadge) return;
+    this._commsUnread = Math.min((this._commsUnread || 0) + 1, 99);
+    this.refs.commsBadge.textContent = this._commsUnread;
+    this.refs.commsBadge.classList.remove("hidden");
+  },
+  clearCommsBadge() {
+    this._commsUnread = 0;
+    if (this.refs.commsBadge) this.refs.commsBadge.classList.add("hidden");
   },
 
   // ===== exchange ==========================================================
@@ -1182,7 +1195,7 @@ const UI = {
     const scr = document.getElementById("broadcast-screen");
     scr.classList.remove("klaxon"); void scr.offsetWidth; scr.classList.add("klaxon");
     this.refs.tickerText.textContent = `${(FACTIONS[entry.faction]?.name || "GBN")}: ${entry.headline} — ${entry.body}`;
-    this.renderNewswire(); window.Game.audio("news");
+    this.renderNewswire(); window.Game.audio("news"); this.bumpComms();
   },
   renderNewswire() {
     this.refs.newswireList.innerHTML = this.s().newswire.map(n => { const f = FACTIONS[n.faction];
@@ -1201,6 +1214,7 @@ const UI = {
     li.append(img, body); ul.appendChild(li);
     while (ul.children.length > CONFIG.chatMaxMessages) ul.removeChild(ul.firstChild);
     if (!this.feedPaused) ul.scrollTop = ul.scrollHeight;
+    this.bumpComms();
   },
 
   toast(text, kind = "info", ms = 3200) {
@@ -1370,13 +1384,6 @@ const UI = {
     this.refs.feedList.addEventListener("scroll", () => {
       const el = this.refs.feedList; this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
     });
-
-    // Expanding the GBN newswire log takes over the sidebar and hides the chat.
-    if (r.newswireDetails && r.colSide) {
-      r.newswireDetails.addEventListener("toggle", () => {
-        r.colSide.classList.toggle("news-open", r.newswireDetails.open);
-      });
-    }
   },
 
   wireBus() {
