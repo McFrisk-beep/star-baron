@@ -152,7 +152,10 @@ const UI = {
         <button class="btn btn-mini" data-act="all">Sell All</button></div>`;
       tr.append(icon, name, price, chg, trend, held, pnl, act);
       body.appendChild(tr);
-      this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin: act.querySelector(".qin") };
+      const qin = act.querySelector(".qin");
+      qin.addEventListener("input", () => this.updateAfford(c.id));
+      this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin,
+        buyBtn: act.querySelector('[data-act="buy"]'), maxBtn: act.querySelector('[data-act="max"]') };
     }
     // assignment (not addEventListener) so re-building on prestige can't stack handlers
     body.onclick = e => {
@@ -251,8 +254,27 @@ const UI = {
       if (q) { const cost = this.s().avgCost[c.id] || 0, upl = (p - cost) * q;
         r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
       else { r.pnl.textContent = "·"; r.pnl.className = "num pnl"; }
+      this.updateAfford(c.id);
     }
     this.renderWarBanner();
+  },
+
+  // Disable Buy when you can't afford the requested quantity, and Buy Max when
+  // you can't afford a single share (also covers negative credits and bans —
+  // maxBuy returns 0 in those cases). maxBuy>=qty is exactly Economy.buy's guard.
+  updateAfford(id) {
+    const r = this.rows[id]; if (!r || !r.buyBtn) return;
+    const affordN = Economy.maxBuy(id);
+    const qty = Math.floor(parseInt(r.qin.value, 10) || 0);
+    r.buyBtn.disabled = !(qty > 0 && affordN >= qty);
+    r.maxBtn.disabled = affordN < 1;
+  },
+
+  // Disable any purchase button (marked with data-cost) the player can't afford.
+  markUnaffordable(container) {
+    if (!container) return;
+    const credits = this.s().credits;
+    for (const btn of container.querySelectorAll("[data-cost]")) btn.disabled = (+btn.dataset.cost || 0) > credits;
   },
 
   renderWarBanner() {
@@ -678,7 +700,7 @@ const UI = {
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="bc-name">${def.name} <span class="cls-tag">${def.cls}</span></div>
       <div class="statline bc-statline">${this.statChips(def)}</div>
-      <button class="btn btn-go" data-buyship="${def.id}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
+      <button class="btn btn-go" data-buyship="${def.id}" data-cost="${Math.round((def.price || 0) * (1 - Rep.discount()))}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
 
     // The free starter ship only shows when the player has no ships at all
     // (the flagship doesn't count).
@@ -694,7 +716,7 @@ const UI = {
         <img src="${ASSET.ship(d.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
         <div class="bc-name">${d.name}</div>
         <div class="bc-stats" title="sector transfer speed — sets how fast you dock between systems">» Transfer speed ${d.travelSpeed} · ${pas}</div>
-        ${owned ? `<span class="badge">current flagship</span>` : `<button class="btn btn-go" data-buymain="${d.id}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button>`}</div>`;
+        ${owned ? `<span class="badge">current flagship</span>` : `<button class="btn btn-go" data-buymain="${d.id}" data-cost="${Math.round((d.price || 0) * (1 - Rep.discount()))}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button>`}</div>`;
     }).join("");
 
     const mercSorters = {
@@ -710,7 +732,7 @@ const UI = {
         <div class="bc-stats">${Fleet.shipDef(m.shipType).name}</div>
         <div class="statline bc-statline">${this.statChips(m, ["firepower", "hull"])}</div>
         <div class="muted-note">serves ${Util.duration(m.serviceMs)} · offer ends ${Util.duration(m.availUntil - Date.now())}</div>
-        <button class="btn btn-go" data-hire="${m.id}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
+        <button class="btn btn-go" data-hire="${m.id}" data-cost="${m.hireCost}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
 
     const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
     const sponChip = f => { const fac = FACTIONS[f]; if (!fac) return ""; const t = Rep.tierOf(f);
@@ -739,7 +761,7 @@ const UI = {
         <div class="c-desc">${c.desc}</div>
         <div class="c-tags">${sponChip(c.faction)}</div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
-        <button class="btn btn-go" data-take="${c.id}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
+        <button class="btn btn-go" data-take="${c.id}" data-cost="${c.cost}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
     const jobCard = c => {
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
@@ -801,7 +823,7 @@ const UI = {
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
         <div class="item-stat">${Items.label(it)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(a.price)}c</span>
-        <button class="btn btn-mini" data-buyacc="${a.id}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyacc="${a.id}" data-cost="${Math.round(a.price * (1 - Rep.discount()))}">Buy</button></div></div>`;
       }).join("") || `<p class="muted-note">${allAcc.length ? "No gear matches this filter." : "Restocking the accessory stalls…"}</p>`;
 
     const exo = (b.extractors || []).map(o => {
@@ -810,7 +832,7 @@ const UI = {
         <div class="item-top"><b>${o.ex.name}</b><span class="rar">${t.label} ×${t.yieldMult}</span></div>
         <div class="item-stat">${Extractors.describe(o.ex)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buyextractor="${o.id}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyextractor="${o.id}" data-cost="${price}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No extractors in stock — check back soon.</p>`;
 
     const comp = (b.components || []).map(o => {
@@ -819,7 +841,7 @@ const UI = {
         <div class="item-top"><b>${o.comp.name}</b><span class="rar" style="color:${col}">${(Items.rarity(o.comp.rarity) || {}).label}</span></div>
         <div class="item-stat">${Components.describe(o.comp)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buycomponent="${o.id}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buycomponent="${o.id}" data-cost="${price}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No components in stock.</p>`;
 
     const dossiers = !window.Senate ? "" : ((b.dossiers || []).map(d => {
@@ -827,7 +849,7 @@ const UI = {
       return `<div class="contract tip"><div class="c-head"><b>${d.name}</b><span class="ctype">dossier</span></div>
         <div class="c-desc">${d.title} · <span style="color:${Senate.blocColor(d.bloc)}">◆ ${Senate.blocName(d.bloc)}</span> · ${d.systemName}</div>
         <div class="c-foot"><span class="muted-note">unlocks their stances &amp; voting record</span>
-        <button class="btn btn-go" data-buydossier="${d.id}">Buy dossier ${Util.credits(price)}c</button></div></div>`;
+        <button class="btn btn-go" data-buydossier="${d.id}" data-cost="${price}">Buy dossier ${Util.credits(price)}c</button></div></div>`;
     }).join("") || `<p class="muted-note">No dossiers for sale right now.</p>`);
 
     const invCost = Bazaar.upgradeInventoryCost();
@@ -842,7 +864,7 @@ const UI = {
         + `<div class="panel"><h2>Senator Dossiers <small>unlock hidden stances &amp; voting records</small></h2><div class="contract-list">${dossiers}</div></div>`,
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
-               <button class="btn btn-go" id="buy-inv">Upgrade — ${Util.credits(invCost)}c</button></div>`,
+               <button class="btn btn-go" id="buy-inv" data-cost="${invCost}">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
              <div class="panel"><h2>Components <small>fit into an extractor to boost yield / cut cycle time</small></h2><div class="item-grid">${comp}</div></div>`,
       standing,
@@ -861,6 +883,7 @@ const UI = {
       `<nav class="subtabs bz-subtabs">${subtabs}</nav>
        <div class="bz-scroll">${sections[this.bazaarTab]}</div>`;
     const ns = this.refs.bazaarBody.querySelector(".bz-scroll"); if (ns) ns.scrollTop = keep;
+    this.markUnaffordable(this.refs.bazaarBody);
     this.refs.bazaarBody.onclick = e => this.onBazaarClick(e);
     this.refs.bazaarBody.onchange = e => this.onBazaarFilter(e);
   },
@@ -916,13 +939,14 @@ const UI = {
         return `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
       }).join("");
       let action;
-      if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}">Unlock ${Util.credits(sys.unlock)}c</button>`;
+      if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}" data-cost="${sys.unlock}">Unlock ${Util.credits(sys.unlock)}c</button>`;
       else if (here) action = `<span class="badge">docked</span>`;
       else if (s.travel && s.travel.to === sys.id) action = `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
       else action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(Fleet.dockTravelMs(s.currentSystem, sys.id))})</button>`;
       li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist" title="distance from Navos Junction — sets docking travel time">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
       ul.appendChild(li);
     }
+    this.markUnaffordable(ul);
     ul.onclick = e => {
       const u = e.target.closest("[data-unlock]"), d = e.target.closest("[data-dock]");
       if (u) { const r = Economy.unlockSystem(u.dataset.unlock); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderSystems(); }

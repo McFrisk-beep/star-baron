@@ -49,7 +49,7 @@ const Economy = {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const p = this.buyPrice(commId);
-    return p > 0 ? Math.floor(this.s().credits / p) : 0;
+    return p > 0 ? Math.max(0, Math.floor(this.s().credits / p)) : 0;
   },
 
   buy(commId, qty) {

@@ -71,6 +71,9 @@ b { color: #fff; font-weight: 600; }
 }
 .btn:hover { background: #243057; border-color: var(--accent); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* can't afford it → the button is inert and clearly greyed out */
+.btn:disabled, .btn[disabled] { opacity: .4; cursor: not-allowed; filter: grayscale(.5); }
+.btn:disabled:hover, .btn[disabled]:hover { background: #1c2440; border-color: var(--line); }
 .btn-mini { padding: 3px 7px; font-size: 11px; }
 .btn-buy { background: #173b2e; border-color: #1f5a44; color: var(--up); }
 .btn-buy:hover { background: #1d4d3b; }
