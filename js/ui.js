@@ -229,7 +229,9 @@ const UI = {
 
   updateExchange() {
     const sys = this.s().currentSystem;
-    this.refs.exchangeSub.textContent = `· prices at ${this.sysName(sys)}`;
+    const sysName = this.sysName(sys);
+    this.refs.exchangeSub.textContent = (window.I18n && I18n.lang === "jp")
+      ? `· ${sysName} ${I18n.t("exchange.pricesAt")}` : `· ${window.I18n ? I18n.t("exchange.pricesAt") : "prices at"} ${sysName}`;
     // transit overlay
     if (this.s().travel) {
       const t = this.s().travel;
@@ -318,7 +320,7 @@ const UI = {
   renderOrders() {
     const list = Orders.list();
     if (!list.length) {
-      this.refs.ordersList.innerHTML = `<li class="muted-note">No standing orders. Set a buy-below, sell-above, or price alert — they fire automatically while you're docked here.</li>`;
+      this.refs.ordersList.innerHTML = `<li class="muted-note">${window.I18n ? I18n.t("orders.empty") : "No standing orders. Set a buy-below, sell-above, or price alert — they fire automatically while you're docked here."}</li>`;
       this.refs.ordersList.onclick = null; return;
     }
     this.refs.ordersList.innerHTML = list.map(o => {
@@ -1409,7 +1411,8 @@ const UI = {
   // by I18n.apply via data-i18n). Called from I18n.apply once the UI is ready.
   onLangChange() {
     this.buildExchange();       // Buy/Sell/Buy Max/Sell All labels
-    this.updateExchange();
+    this.updateExchange();      // refreshes the "prices at …" sub-label too
+    this.renderOrders();        // standing-orders empty-state text
     this.updateNavIndicator();  // JP labels are a different width
     this.applySettings();       // reflect the active language button
   },
