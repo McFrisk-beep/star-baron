@@ -33,7 +33,7 @@ const Game = {
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
-      settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false },
+      settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,

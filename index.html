@@ -13,25 +13,25 @@
     <div class="brand">
       <span class="brand-mark">◆</span>
       <span class="brand-name">COSMOCRAT</span>
-      <span class="brand-sub">galactic exchange</span>
+      <span class="brand-sub" data-i18n="brand.sub">galactic exchange</span>
     </div>
     <div class="stats">
-      <div class="stat"><label>Credits</label><span id="hud-credits">—</span></div>
-      <div class="stat"><label>Net Worth</label><span id="hud-networth">—</span></div>
-      <div class="stat" title="Your place among the galaxy's barons"><label>Rank</label><span id="hud-rank">—</span></div>
-      <div class="stat"><label>Location</label><span id="hud-system">—</span></div>
-      <div class="stat" title="Market sentiment"><label>Sentiment</label>
+      <div class="stat"><label data-i18n="hud.credits">Credits</label><span id="hud-credits">—</span></div>
+      <div class="stat"><label data-i18n="hud.networth">Net Worth</label><span id="hud-networth">—</span></div>
+      <div class="stat" data-i18n-title="hud.rankTip" title="Your place among the galaxy's barons"><label data-i18n="hud.rank">Rank</label><span id="hud-rank">—</span></div>
+      <div class="stat"><label data-i18n="hud.location">Location</label><span id="hud-system">—</span></div>
+      <div class="stat" data-i18n-title="hud.sentimentTip" title="Market sentiment"><label data-i18n="hud.sentiment">Sentiment</label>
         <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
-      <div class="stat" title="Your Baron Tier — ascend in the Barons tab"><label>Title</label><span id="hud-tier">Baron</span></div>
-      <div class="stat stat-stealth"><label>Cycle</label><span id="hud-clock">—</span></div>
+      <div class="stat" data-i18n-title="hud.titleTip" title="Your Baron Tier — ascend in the Barons tab"><label data-i18n="hud.title">Title</label><span id="hud-tier">Baron</span></div>
+      <div class="stat stat-stealth"><label data-i18n="hud.cycle">Cycle</label><span id="hud-clock">—</span></div>
     </div>
     <div class="topbtns">
-      <button id="btn-starmap" class="btn btn-map">🗺 Star Map</button>
-      <button id="btn-account" class="btn hidden">Sign in</button>
-      <button id="btn-admin" class="btn hidden">🛠 Admin</button>
+      <button id="btn-starmap" class="btn btn-map" data-i18n="btn.starmap">🗺 Star Map</button>
+      <button id="btn-account" class="btn hidden" data-i18n="btn.signin">Sign in</button>
+      <button id="btn-admin" class="btn hidden" data-i18n="btn.admin">🛠 Admin</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Ascend ▸</button>
-      <button id="btn-help" class="btn">❔ Help</button>
-      <button id="btn-settings" class="btn">⚙ Settings</button>
+      <button id="btn-help" class="btn" data-i18n="btn.help">❔ Help</button>
+      <button id="btn-settings" class="btn" data-i18n="btn.settings">⚙ Settings</button>
     </div>
   </header>
 
@@ -41,14 +41,14 @@
         <div class="floatnav-track" id="floatnav-track">
           <div class="floatnav-inner" id="floatnav-inner">
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
-            <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label">Exchange</span></button>
-          <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
-          <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label">Bazaar</span></button>
-            <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label">Industries</span></button>
-            <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label">Senate</span></button>
-            <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label">Barons</span></button>
-            <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label">Milestones</span></button>
-            <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
+            <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
+          <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
+            <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label" data-i18n="nav.industries">Industries</span></button>
+            <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label" data-i18n="nav.senate">Senate</span></button>
+            <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label" data-i18n="nav.barons">Barons</span></button>
+            <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label" data-i18n="nav.milestones">Milestones</span></button>
+            <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label" data-i18n="nav.comms">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
           </div>
         </div>
       </nav>
@@ -56,15 +56,15 @@
       <!-- EXCHANGE -->
       <section class="page" id="page-exchange">
         <div class="panel">
-          <h2>Galactic Exchange <small id="exchange-sub"></small></h2>
+          <h2><span data-i18n="exchange.title">Galactic Exchange</span> <small id="exchange-sub"></small></h2>
           <div class="war-banner hidden" id="war-banner"></div>
           <div class="table-wrap">
             <table class="market" id="market-table">
               <thead><tr>
-                <th></th><th>Commodity</th><th class="num">Price</th>
-                <th class="num">Δ</th><th>Trend</th>
-                <th class="num">Held</th><th class="num">P&amp;L</th>
-                <th class="actions">Trade</th>
+                <th></th><th data-i18n="market.commodity">Commodity</th><th class="num" data-i18n="market.price">Price</th>
+                <th class="num">Δ</th><th data-i18n="market.trend">Trend</th>
+                <th class="num" data-i18n="market.held">Held</th><th class="num" data-i18n="market.pnl">P&amp;L</th>
+                <th class="actions" data-i18n="market.trade">Trade</th>
               </tr></thead>
               <tbody id="market-body"></tbody>
             </table>
@@ -72,18 +72,18 @@
           <div class="transit-overlay hidden" id="transit-overlay"></div>
         </div>
         <div class="panel" id="orders-panel">
-          <h2>Standing Orders &amp; Alerts <small>auto-fill while you're docked</small></h2>
+          <h2><span data-i18n="orders.title">Standing Orders &amp; Alerts</span> <small data-i18n="orders.sub">auto-fill while you're docked</small></h2>
           <div class="order-form">
             <select id="ord-comm" aria-label="commodity"></select>
             <select id="ord-kind" aria-label="order type">
-              <option value="buy">Buy below</option>
-              <option value="sell">Sell above</option>
-              <option value="alert-below">Alert: drops to</option>
-              <option value="alert-above">Alert: rises to</option>
+              <option value="buy" data-i18n="orders.buyBelow">Buy below</option>
+              <option value="sell" data-i18n="orders.sellAbove">Sell above</option>
+              <option value="alert-below" data-i18n="orders.alertBelow">Alert: drops to</option>
+              <option value="alert-above" data-i18n="orders.alertAbove">Alert: rises to</option>
             </select>
-            <input type="number" id="ord-price" placeholder="price" min="1" aria-label="trigger price" />
-            <input type="number" id="ord-qty" placeholder="qty" min="1" value="10" aria-label="quantity" />
-            <button class="btn btn-go" id="ord-add">Add</button>
+            <input type="number" id="ord-price" data-i18n-ph="orders.price" placeholder="price" min="1" aria-label="trigger price" />
+            <input type="number" id="ord-qty" data-i18n-ph="orders.qty" placeholder="qty" min="1" value="10" aria-label="quantity" />
+            <button class="btn btn-go" id="ord-add" data-i18n="orders.add">Add</button>
           </div>
           <ul class="orders-list" id="orders-list"></ul>
         </div>
@@ -92,11 +92,11 @@
       <!-- FLEET -->
       <section class="page hidden" id="page-fleet">
         <div class="panel" id="fleet-main"></div>
-        <div class="panel"><h2>Trade Routes <small id="routes-sub"></small></h2><div id="fleet-routes"></div></div>
-        <div class="panel"><h2>Active Missions</h2><div id="fleet-missions"></div></div>
-        <div class="panel hidden" id="fleet-reports-panel"><h2>Mission Reports</h2><div id="fleet-reports"></div></div>
-        <div class="panel"><h2>Owned Ships <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
-        <div class="panel"><h2>Inventory <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
+        <div class="panel"><h2><span data-i18n="fleet.routes">Trade Routes</span> <small id="routes-sub"></small></h2><div id="fleet-routes"></div></div>
+        <div class="panel"><h2 data-i18n="fleet.missions">Active Missions</h2><div id="fleet-missions"></div></div>
+        <div class="panel hidden" id="fleet-reports-panel"><h2 data-i18n="fleet.reports">Mission Reports</h2><div id="fleet-reports"></div></div>
+        <div class="panel"><h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
+        <div class="panel"><h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
       </section>
 
       <!-- BAZAAR -->
@@ -107,8 +107,8 @@
       <!-- INDUSTRIES -->
       <section class="page hidden" id="page-industries">
         <div class="panel">
-          <h2>Industries <small id="ind-count"></small></h2>
-          <p class="sys-legend">Build factories, mines &amp; farms on planets from the <b>Star Map</b> (open a system, pick a planet). They produce that planet's commodity slowly into your tradeable stock while you're away. Licences depend on your standing with the controlling faction; strikes &amp; faction wars can halt a line.</p>
+          <h2><span data-i18n="industries.title">Industries</span> <small id="ind-count"></small></h2>
+          <p class="sys-legend" data-i18n="industries.legend">Build factories, mines &amp; farms on planets from the <b>Star Map</b> (open a system, pick a planet). They produce that planet's commodity slowly into your tradeable stock while you're away. Licences depend on your standing with the controlling faction; strikes &amp; faction wars can halt a line.</p>
           <div id="industry-list"></div>
         </div>
       </section>
@@ -122,7 +122,7 @@
       <section class="page hidden" id="page-barons">
         <div class="panel" id="baron-track"></div>
         <div class="panel">
-          <h2>Baron Leaderboard <small id="lb-sub"></small></h2>
+          <h2><span data-i18n="barons.leaderboard">Baron Leaderboard</span> <small id="lb-sub"></small></h2>
           <ol class="lb-list" id="lb-list"></ol>
         </div>
       </section>
@@ -130,7 +130,7 @@
       <!-- MILESTONES -->
       <section class="page hidden" id="page-ach">
         <div class="panel">
-          <h2>Milestones <small id="ach-count"></small></h2>
+          <h2><span data-i18n="milestones.title">Milestones</span> <small id="ach-count"></small></h2>
           <ul class="ach-list" id="ach-list"></ul>
         </div>
       </section>
@@ -139,26 +139,26 @@
       <section class="page hidden" id="page-comms">
         <div class="comms-grid">
           <section class="panel" id="panel-broadcast">
-            <div class="bc-head"><h2>Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
+            <div class="bc-head"><h2 data-i18n="comms.broadcast">Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
             <div class="screen" id="broadcast-screen">
               <img id="bc-frame" alt="broadcast" />
               <div class="screen-overlay">
-                <div class="screen-title" id="bc-title">SIGNAL ACQUIRING…</div>
+                <div class="screen-title" id="bc-title" data-i18n="comms.signal">SIGNAL ACQUIRING…</div>
                 <div class="screen-caption" id="bc-caption"></div>
               </div>
               <div class="screen-scanlines"></div>
             </div>
-            <div class="ticker"><span class="ticker-tag">NEWSWIRE</span>
-              <div class="ticker-track"><span id="ticker-text">Standby for galactic bulletins…</span></div>
+            <div class="ticker"><span class="ticker-tag" data-i18n="comms.newswire">NEWSWIRE</span>
+              <div class="ticker-track"><span id="ticker-text" data-i18n="comms.ticker">Standby for galactic bulletins…</span></div>
             </div>
             <details class="newswire" id="newswire-details" open>
-              <summary>Newswire log</summary>
+              <summary data-i18n="comms.newswireLog">Newswire log</summary>
               <ul id="newswire-list"></ul>
             </details>
           </section>
 
           <section class="panel panel-feed" id="panel-feed">
-            <h2>Chat <small>galactic trader channel</small></h2>
+            <h2><span data-i18n="comms.chat">Chat</span> <small data-i18n="comms.chatSub">galactic trader channel</small></h2>
             <ul class="feed" id="feed-list"></ul>
           </section>
         </div>
@@ -170,21 +170,21 @@
   <div class="starmap hidden" id="starmap-overlay">
     <div class="starmap-bar">
       <div class="starmap-crumbs" id="sm-crumbs">
-        <button class="crumb" id="sm-to-galaxy">Galaxy</button>
+        <button class="crumb" id="sm-to-galaxy" data-i18n="sm.galaxy">Galaxy</button>
         <span id="sm-crumb-sys"></span>
       </div>
-      <div class="starmap-title" id="sm-title">GALACTIC CHART</div>
-      <button class="btn" id="sm-close">✕ Close</button>
+      <div class="starmap-title" id="sm-title" data-i18n="sm.title">GALACTIC CHART</div>
+      <button class="btn" id="sm-close" data-i18n="sm.close">✕ Close</button>
     </div>
     <div class="galaxy-view" id="galaxy-view">
       <canvas id="galaxy-stars" class="galaxy-stars"></canvas>
       <svg id="galaxy-svg" viewBox="0 0 1000 620" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="galaxy-tip" id="galaxy-tip"></div>
       <div class="galaxy-legend">
-        <span><i class="dot up"></i> rising</span>
-        <span><i class="dot down"></i> falling</span>
-        <span><i class="dot evt"></i> local event</span>
-        <span><i class="dot cap"></i> trade hub</span>
+        <span><i class="dot up"></i> <span data-i18n="legend.rising">rising</span></span>
+        <span><i class="dot down"></i> <span data-i18n="legend.falling">falling</span></span>
+        <span><i class="dot evt"></i> <span data-i18n="legend.localEvent">local event</span></span>
+        <span><i class="dot cap"></i> <span data-i18n="legend.tradeHub">trade hub</span></span>
       </div>
     </div>
     <div class="system-view hidden" id="system-view">
@@ -197,10 +197,10 @@
   <!-- ===== SENATE CHAMBER OVERLAY ===== -->
   <div class="chamber hidden" id="senate-overlay">
     <div class="chamber-bar">
-      <div class="chamber-title">INTERGALACTIC SENATE</div>
+      <div class="chamber-title" data-i18n="chamber.title">INTERGALACTIC SENATE</div>
       <div class="chamber-actions">
-        <button class="btn" id="sc-replay">▶ Replay vote</button>
-        <button class="btn" id="sc-close">✕ Close</button>
+        <button class="btn" id="sc-replay" data-i18n="chamber.replay">▶ Replay vote</button>
+        <button class="btn" id="sc-close" data-i18n="chamber.close">✕ Close</button>
       </div>
     </div>
     <div class="chamber-stage" id="sc-stage">
@@ -224,8 +224,8 @@
 
   <!-- ===== MODALS ===== -->
   <div class="modal-backdrop hidden" id="wywa-modal">
-    <div class="modal"><h3>While You Were Away</h3><div id="wywa-body"></div>
-      <button class="btn btn-go" id="wywa-close">Collect &amp; Continue</button></div>
+    <div class="modal"><h3 data-i18n="wywa.title">While You Were Away</h3><div id="wywa-body"></div>
+      <button class="btn btn-go" id="wywa-close" data-i18n="wywa.collect">Collect &amp; Continue</button></div>
   </div>
 
   <div class="modal-backdrop hidden" id="senator-modal">
@@ -280,7 +280,7 @@
       <div class="tt-log" id="trade-log" aria-live="polite"></div>
       <div class="tt-bar-wrap hidden" id="trade-bar-wrap"><div class="tt-bar" id="trade-bar"></div></div>
       <div class="tt-result hidden" id="trade-result"></div>
-      <div class="settings-actions"><button class="btn btn-go hidden" id="trade-close">Close Trade Screen</button></div>
+      <div class="settings-actions"><button class="btn btn-go hidden" id="trade-close" data-i18n="trade.close">Close Trade Screen</button></div>
     </div>
   </div>
 
@@ -293,10 +293,10 @@
       <div class="tut-body" id="tut-body"></div>
       <div class="tut-dots" id="tut-dots"></div>
       <div class="settings-actions tut-actions">
-        <button class="btn" id="tut-skip">Skip ✕</button>
+        <button class="btn" id="tut-skip" data-i18n="tut.skip">Skip ✕</button>
         <span class="tut-nav">
-          <button class="btn" id="tut-back">◂ Back</button>
-          <button class="btn btn-go" id="tut-next">Next ▸</button>
+          <button class="btn" id="tut-back" data-i18n="tut.back">◂ Back</button>
+          <button class="btn btn-go" id="tut-next" data-i18n="tut.next">Next ▸</button>
         </span>
       </div>
     </div>
@@ -304,22 +304,22 @@
 
   <div class="modal-backdrop hidden" id="auth-modal">
     <div class="modal auth-modal">
-      <h3 id="auth-title">Sign in / Register</h3>
+      <h3 id="auth-title" data-i18n="auth.title">Sign in / Register</h3>
       <div id="auth-signedout">
         <div class="auth-tabs">
-          <button class="auth-tab active" data-auth="login">Log in</button>
-          <button class="auth-tab" data-auth="register">Register</button>
+          <button class="auth-tab active" data-auth="login" data-i18n="auth.login">Log in</button>
+          <button class="auth-tab" data-auth="register" data-i18n="auth.register">Register</button>
         </div>
-        <label class="auth-field">Email
+        <label class="auth-field"><span data-i18n="auth.email">Email</span>
           <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" /></label>
-        <label class="auth-field">Password
+        <label class="auth-field"><span data-i18n="auth.password">Password</span>
           <input type="password" id="auth-pass" autocomplete="current-password" placeholder="at least 6 characters" /></label>
         <p class="auth-err hidden" id="auth-err"></p>
         <div class="settings-actions">
-          <button class="btn btn-go" id="auth-submit">Log in</button>
-          <button class="btn" id="auth-cancel">Play as guest</button>
+          <button class="btn btn-go" id="auth-submit" data-i18n="auth.login">Log in</button>
+          <button class="btn" id="auth-cancel" data-i18n="auth.guest">Play as guest</button>
         </div>
-        <p class="muted-note" id="auth-note">Your cloud save syncs across every device you log in on.</p>
+        <p class="muted-note" id="auth-note" data-i18n="auth.note">Your cloud save syncs across every device you log in on.</p>
       </div>
       <div id="auth-signedin" class="hidden">
         <p>Signed in as <b id="auth-who"></b>.</p>
@@ -413,14 +413,21 @@
   </div>
 
   <div class="modal-backdrop hidden" id="settings-modal">
-    <div class="modal"><h3>Settings</h3>
-      <label class="toggle"><input type="checkbox" id="set-mute" /> Mute audio</label>
-      <label class="toggle"><input type="checkbox" id="set-reduced" /> Reduce motion</label>
-      <div class="settings-actions">
-        <button class="btn btn-danger" id="set-reset">Reset Save</button>
-        <button class="btn btn-go" id="set-close">Close</button>
+    <div class="modal"><h3 data-i18n="settings.title">Settings</h3>
+      <div class="set-row">
+        <span class="set-label" data-i18n="settings.language">Language</span>
+        <div class="lang-toggle" role="group" aria-label="Language">
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+          <button type="button" class="lang-btn" data-lang="jp">日本語</button>
+        </div>
       </div>
-      <p class="muted-note">Cosmocrat · saves to this browser only.</p>
+      <label class="toggle"><input type="checkbox" id="set-mute" /> <span data-i18n="settings.mute">Mute audio</span></label>
+      <label class="toggle"><input type="checkbox" id="set-reduced" /> <span data-i18n="settings.reduced">Reduce motion</span></label>
+      <div class="settings-actions">
+        <button class="btn btn-danger" id="set-reset" data-i18n="settings.reset">Reset Save</button>
+        <button class="btn btn-go" id="set-close" data-i18n="settings.close">Close</button>
+      </div>
+      <p class="muted-note" data-i18n="settings.note">Cosmocrat · saves to this browser only.</p>
     </div>
   </div>
 
@@ -450,6 +457,7 @@
   <script src="js/broadcast.js"></script>
   <script src="js/wars.js"></script>
   <script src="js/worldfeed.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/auth-ui.js"></script>
   <script src="js/admin-ui.js"></script>

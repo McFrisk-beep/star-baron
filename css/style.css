@@ -347,6 +347,14 @@ body.reduced .tt-bar { transition: none; }
 body.reduced .tt-line { animation: none; opacity: 1; }
 body.reduced .tt-dot { animation: none; }
 .toggle { display: flex; align-items: center; gap: 9px; padding: 6px 0; font-size: 13px; cursor: pointer; }
+/* language toggle (Settings) */
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0 10px; }
+.set-label { font-size: 13px; }
+.lang-toggle { display: inline-flex; background: #0c1020; border: 1px solid var(--line); border-radius: 999px; padding: 2px; gap: 2px; }
+.lang-btn { border: none; background: none; color: var(--ink-dim); font-family: var(--sans); font-size: 12px; font-weight: 700;
+  padding: 5px 14px; border-radius: 999px; cursor: pointer; transition: color .15s, background .15s; }
+.lang-btn:hover { color: var(--ink); }
+.lang-btn.active { background: linear-gradient(180deg, #3a4dff, #2a3ad8); color: #fff; box-shadow: 0 2px 8px rgba(58,77,255,.4); }
 .settings-actions { display: flex; gap: 10px; margin-top: 16px; }
 .muted-note { color: var(--ink-faint); font-size: 11px; margin: 14px 0 0; }
 /* ---- Tutorial / Help carousel ---- */
