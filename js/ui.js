@@ -69,7 +69,9 @@ const UI = {
       ordAdd: $("ord-add"), ordersList: $("orders-list"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
+      langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
+    if (window.I18n) I18n.init();
     this.buildExchange();
     this.buildOrders();
     this.wireControls();
@@ -144,12 +146,13 @@ const UI = {
       const name = this.el("td", "name", `${c.name}<span class="cat cat-${c.cat}">${c.cat}</span>`);
       const price = this.el("td", "num price"), chg = this.el("td", "num chg"), trend = this.el("td", "trend");
       const held = this.el("td", "num held"), pnl = this.el("td", "num pnl"), act = this.el("td", "actions");
+      const T = k => (window.I18n ? I18n.t(k) : k);
       act.innerHTML = `<div class="qrow">
         <input type="number" class="qin" min="1" value="10" aria-label="qty ${c.name}" />
-        <button class="btn btn-buy" data-act="buy">Buy</button>
-        <button class="btn btn-sell" data-act="sell">Sell</button>
-        <button class="btn btn-mini" data-act="max">Buy Max</button>
-        <button class="btn btn-mini" data-act="all">Sell All</button></div>`;
+        <button class="btn btn-buy" data-act="buy">${T("btn.buy")}</button>
+        <button class="btn btn-sell" data-act="sell">${T("btn.sell")}</button>
+        <button class="btn btn-mini" data-act="max">${T("btn.buyMax")}</button>
+        <button class="btn btn-mini" data-act="all">${T("btn.sellAll")}</button></div>`;
       tr.append(icon, name, price, chg, trend, held, pnl, act);
       body.appendChild(tr);
       const qin = act.querySelector(".qin");
@@ -1396,6 +1399,19 @@ const UI = {
     document.body.classList.toggle("reduced", !!set.reduced);
     this.refs.setMute.checked = !!set.muted; this.refs.setReduced.checked = !!set.reduced;
     this.refs.setFastNews.checked = !!CONFIG.fastNews; this.refs.setFast.checked = (window.Game.timeScale || 1) > 1;
+    if (this.refs.langToggle) {
+      const lang = window.I18n ? I18n.lang : (set.lang || "en");
+      for (const b of this.refs.langToggle.querySelectorAll(".lang-btn")) b.classList.toggle("active", b.dataset.lang === lang);
+    }
+  },
+
+  // Refresh JS-generated labels after a language switch (static HTML is handled
+  // by I18n.apply via data-i18n). Called from I18n.apply once the UI is ready.
+  onLangChange() {
+    this.buildExchange();       // Buy/Sell/Buy Max/Sell All labels
+    this.updateExchange();
+    this.updateNavIndicator();  // JP labels are a different width
+    this.applySettings();       // reflect the active language button
   },
 
   wireControls() {
@@ -1428,6 +1444,10 @@ const UI = {
       window.Game.requestSave(); this.renderFleet();
     };
 
+    if (r.langToggle) r.langToggle.onclick = e => {
+      const b = e.target.closest(".lang-btn"); if (!b || !window.I18n) return;
+      I18n.set(b.dataset.lang); window.Game.requestSave();
+    };
     r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
