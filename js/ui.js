@@ -168,17 +168,29 @@ const UI = {
       const id = btn.closest("tr").dataset.id, qin = this.rows[id].qin, act = btn.dataset.act;
       if (act === "buy") this.doTrade("buy", id, parseInt(qin.value, 10) || 0);
       else if (act === "sell") this.doTrade("sell", id, parseInt(qin.value, 10) || 0);
-      else if (act === "max") this.doTrade("buy", id, Economy.maxBuy(id));
-      else if (act === "all") this.doTrade("sell", id, Economy.maxSell(id));
+      else if (act === "max") this.doTrade("buy", id, Infinity);       // "as much as allowed"
+      else if (act === "all") this.doTrade("sell", id, Infinity);
     };
   },
   tintBox(c) { const d = this.el("div", "tintbox"); d.textContent = (c.name || "?").slice(0, 2); return d; },
 
-  doTrade(side, id, qty) {
+  // Clamp what the player asked for to what's actually possible — the smaller of
+  // affordability/holdings and the tier trade cap — then reflect the real amount
+  // back into the qty box so it never over-promises.
+  doTrade(side, id, want) {
     const tm = document.getElementById("trade-modal");
     if (tm && !tm.classList.contains("hidden")) return;   // terminal already open → ignore (anti-spam)
+    want = Math.max(0, Math.floor(want || 0));
+    const maxN = side === "buy" ? Economy.maxBuy(id) : Economy.maxSell(id);
+    const capN = side === "buy" ? Economy.buyCapQty(id) : Economy.sellCapQty(id);
+    const qty = Math.min(want, maxN);
+    const row = this.rows[id];
+    if (row && row.qin) row.qin.value = qty > 0 ? qty : 1;             // show the true amount that will trade
+    if (qty <= 0) { this.toast(side === "buy" ? "Can't afford any here." : "Nothing to sell here.", "warn"); return; }
     const r = side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty);
     if (!r.ok) { this.toast(r.msg, "warn"); return; }
+    r.capped = want > maxN && capN <= maxN;   // the CAP (not funds/holdings) was the binding limit
+    if (row && row.buyBtn) this.updateAfford(id);
     window.Game.save();                               // the trade is committed — persist to storage immediately
     this.playTradeAnim(side, COMMODITIES.find(c => c.id === id), r);
   },
@@ -236,6 +248,13 @@ const UI = {
     const pricesAt = (window.I18n && I18n.lang === "jp")
       ? `· ${sysName} ${I18n.t("exchange.pricesAt")}` : `· ${window.I18n ? I18n.t("exchange.pricesAt") : "prices at"} ${sysName}`;
     this.refs.exchangeSub.textContent = `${pricesAt} · trade cap ${Util.credits(Economy.depth())}c/order`;
+    const note = document.getElementById("exchange-note");
+    if (note) note.innerHTML =
+      `<b>How trading works:</b> prices are local to each station — buy where a good is cheap, sell where it's dear. ` +
+      `But <b>large orders move the local price</b> (slippage), and the nudge <b>lingers</b>, so you can't dump unlimited volume — ` +
+      `splitting an order or hopping back and forth won't dodge it. Each order is capped at <b>${Util.credits(Economy.depth())}c</b> ` +
+      `(your <b>${Economy.tierTitle()}</b> tier; it rises as you ascend), and <b>Buy Max / Sell All</b> fill up to that cap. ` +
+      `Your quantity auto-adjusts to what you can afford, hold, and move.`;
     // transit overlay
     if (this.s().travel) {
       const t = this.s().travel;

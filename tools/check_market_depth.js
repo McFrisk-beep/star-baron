@@ -51,20 +51,23 @@ const a30 = Economy.buy(IRON, 30).price; reset();
 const a300 = Economy.buy(IRON, 300).price;
 assert(a30 > spot && a300 > a30, "larger orders slip to a worse average price");
 
-// 4) per-trade cap (tier 0): can't move more than cap/spot units
+// 4) per-trade cap (tier 0): limits the ACTUAL credits moved to ≤ cap
 reset(0);
 const TIER0_CAP = BARON_TIERS[0].cap;
-const capUnits = Math.floor(TIER0_CAP / spot);
 const big = Economy.buy(IRON, 1_000_000);
-assert(big.ok && big.qty === capUnits && big.capped, `buy clamped to tier-0 cap (${capUnits}u @ ${TIER0_CAP}c)`);
-// sell-all is capped too
+assert(big.ok && big.capped && big.cost <= TIER0_CAP, `buy spend clamped to tier-0 cap (${big.cost | 0}c ≤ ${TIER0_CAP})`);
+// sell-all is capped by proceeds too
 reset(0); ctx.Game.state.positions[IRON] = 50000;
-assert(Economy.maxSell(IRON) === capUnits, "Sell All clamped to the tier cap, not the whole stack");
+const sellAllN = Economy.maxSell(IRON);
+assert(sellAllN > 0 && sellAllN < 50000, "Sell All clamped below the whole stack");
+const sa = Economy.sell(IRON, sellAllN);
+assert(sa.proceeds + sa.tax <= TIER0_CAP + spot, `Sell All gross ≤ cap (${(sa.proceeds + sa.tax) | 0}c)`);
 
-// 5) tier scaling: Cosmocrat (tier 6, cap 500k) moves ~50× tier 0
-reset(6);
+// 5) tier scaling: Cosmocrat (tier 6, cap 500k) moves far more per trade than tier 0
 assert(BARON_TIERS[6].cap === 500000, "top tier cap = 500k");
-assert(Economy.buy(IRON, 1_000_000).qty === Math.floor(500000 / spot), "tier 6 cap is 50× tier 0");
+reset(0); const q0 = Economy.buy(IRON, 1_000_000).qty;
+reset(6); const q6 = Economy.buy(IRON, 1_000_000).qty;
+assert(q6 > q0 * 10, `tier 6 moves far more than tier 0 (${q0}u → ${q6}u)`);
 
 // 6) net worth values holdings at SPOT (no self-inflation from your own buying)
 reset(0);
@@ -101,9 +104,20 @@ function bestRoundTrip(tier) {
 const t0 = bestRoundTrip(0), t6 = bestRoundTrip(6);
 assert(t0.best > 0 && t0.best < 3000, `tier-0 best round trip is small & positive (+${t0.best | 0}c @ ${t0.bestQ}u)`);
 assert(t6.best > t0.best * 10, "profit scales with tier (deeper markets)");
-// and you flat-out cannot move 20,000 units in one order at tier 0
+// and a 20,000-unit dump is impossible — clamped, and the spend stays ≤ cap
 reset(0);
-assert(Economy.buy(IRON, 20000).qty === capUnits, "a 20,000-unit dump is impossible — clamped to the cap");
+const dump = Economy.buy(IRON, 20000);
+assert(dump.capped && dump.qty < 20000 && dump.cost <= TIER0_CAP, "a 20,000-unit dump is clamped and never exceeds the cap");
 console.log(`   tier-0 best round trip: +${t0.best | 0}c @ ${t0.bestQ}u  |  tier-6: +${t6.best | 0}c @ ${t6.bestQ}u  (was ~+400,000c uncapped)`);
+
+// 9) REGRESSION (the "73.9Kc spent on a 15Kc cap" bug): the cap limits ACTUAL
+//    credits moved even when your OWN buying has pumped the price far above spot.
+reset(0, "navos");
+const AM = "antimatter";
+for (let i = 0; i < 40; i++) Economy.buy(AM, Economy.maxBuy(AM));       // pump the local price up
+assert(Market.impactAt(AM, "navos") > 1, "repeated buying pumped antimatter above spot");
+const r9 = Economy.buy(AM, Economy.maxBuy(AM));
+assert(r9.ok && r9.price > Market.spot(AM, "navos") * 2, "…trade really is far above spot now");
+assert(r9.cost <= TIER0_CAP + 1, `Buy Max still spends ≤ cap when pumped (spent ${r9.cost | 0}c, cap ${TIER0_CAP}) — the reported bug`);
 
 console.log("check_market_depth: all assertions passed ✔");

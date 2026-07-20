@@ -222,6 +222,8 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .mod.dear { color: var(--warn); background: #2c2616; }
 .sys-legend { font-size: 11.5px; color: var(--ink-dim); line-height: 1.8; margin: 0 0 10px; }
 .sys-legend .mod { vertical-align: middle; }
+.exchange-note { font-size: 11.5px; color: var(--ink-dim); line-height: 1.7; margin: 12px 0 0;
+  padding-top: 10px; border-top: 1px solid var(--line, #263149); }
 .system-head .dist, .mod { cursor: help; }
 
 /* ===== achievements ===== */
