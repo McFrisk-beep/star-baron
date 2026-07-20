@@ -19,7 +19,7 @@ const Game = {
       mainShip: { type: "pinnace" },
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
-      missions: [], reports: [], listings: [], orders: [], routes: [], industries: [], extractors: {}, components: {}, items: {},
+      missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
       inventory: { capacity: 6, upgrades: 0 },
       bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [] },
       travel: null,
@@ -61,9 +61,11 @@ const Game = {
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
       delete s.avgCost; s.avgCost = loaded.avgCost || {};
     }
-    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
+    // a "surveying" ship from a save whose expedition was pruned → free it
+    for (const sh of s.ships) if (sh.status === "surveying" && !s.expeditions.some(e => e.shipUid === sh.uid)) sh.status = "idle";
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
@@ -144,7 +146,7 @@ const Game = {
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
-    const offlineReports = Missions.resolveMatured(now);
+    const offlineReports = Missions.resolveMatured(now).concat(Expeditions.resolve(now));  // missions + anomaly surveys
     const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
@@ -243,13 +245,14 @@ const Game = {
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
     const done = Missions.resolveMatured(now);
+    const surveyed = Expeditions.resolve(now);
     Fleet.pruneMercs(now);
     Rivals.tick(now);
     const routed = Routes.resolve(now);
     const orderEv = Orders.process();
     for (const ev of orderEv) Bus.emit("order", ev);
     const made = Industries.resolve(now);
-    if (done.length || routed.total || orderEv.length || made.length || senateBills.length) this.requestSave();
+    if (done.length || surveyed.length || routed.total || orderEv.length || made.length || senateBills.length) this.requestSave();
     UI.tick();
   },
 
@@ -300,6 +303,7 @@ const Game = {
       Market.advance(elapsed, now);
       Economy.checkArrival(now);
       Missions.resolveMatured(now);
+      Expeditions.resolve(now);
       Fleet.pruneMercs(now);
       Bazaar.tick(now);
       Routes.resolve(now);

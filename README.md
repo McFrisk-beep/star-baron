@@ -80,6 +80,14 @@ pattern.
   **local events** (riots halting an export, a fresh seam, a customs lockdown)
   actually move that system's prices — "valuable insight" for whoever's reading.
   Trading/fleet stay on the curated unlockable capitals (one per sector).
+- **Anomaly surveys** — the ~80 backdrop outposts are no longer just scenery:
+  **dispatch an idle ship to survey one** and, after a distance-scaled trip, it
+  resolves on its own — even while you're away — into **derelict gear**, a
+  **fresh commodity seam** (a real local price event you can trade on), a
+  **credit windfall**, a **faction cache**, a **hazard** that damages the hull
+  (reusing the damage system; *rarely* fatal), or a dry hole. Farther systems
+  are richer *and* rougher; a per-system cooldown stops back-to-back farming.
+  Turns the map into a discovery loop and a use for spare hulls.
 - **Accounts & admin tools** — optional online accounts (Supabase) with two roles:
   **players** get the game (dev toggles hidden), while **admins** get an in-game
   **CMS**: a **📝 Content** editor that renders each collection with the friendliest

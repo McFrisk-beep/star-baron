@@ -63,6 +63,7 @@ const UI = {
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
       equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
       route: $("route-modal"), rtTitle: $("rt-title"), rtBody: $("rt-body"), rtStart: $("rt-start"), rtCancel: $("rt-cancel"),
+      survey: $("survey-modal"), svTitle: $("sv-title"), svBody: $("sv-body"), svStart: $("sv-start"), svCancel: $("sv-cancel"),
       incident: $("incident-modal"), incIcon: $("inc-icon"), incTitle: $("inc-title"), incText: $("inc-text"),
       incChoices: $("inc-choices"), incResult: $("inc-result"), incClose: $("inc-close"),
       ordComm: $("ord-comm"), ordKind: $("ord-kind"), ordPrice: $("ord-price"), ordQty: $("ord-qty"),
@@ -482,6 +483,30 @@ const UI = {
     this.refs.rtStart.disabled = e.profit <= 0;
   },
 
+  // ---- anomaly survey (Star Map) -----------------------------------------
+  openSurvey(sysId) {
+    this._surveySys = sysId;
+    const sys = Galaxy.get(sysId);
+    this.refs.svTitle.textContent = `Survey ${sys ? sys.name : "system"}`;
+    const idle = Fleet.idle().filter(sh => !sh.mercenary);
+    if (!idle.length) {
+      this.refs.svBody.innerHTML = `<p class="down">No idle ships — recall one from a mission, route, or repair it first.</p>`;
+      this.refs.svStart.disabled = true; this.refs.survey.classList.remove("hidden"); return;
+    }
+    const far = Expeditions.isFar(sysId);
+    const rows = idle.map((sh, i) => {
+      const st = Fleet.stats(sh), eta = Expeditions.durationFor(sysId, sh.uid);
+      return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> » ${st.speed} · ETA ~${Util.duration(eta)}</label>`;
+    }).join("");
+    this.refs.svBody.innerHTML =
+      `<p class="muted-note">Dispatch one ship to survey this uncharted outpost. It resolves on its own — even while you're away — into salvage, gear, a tradeable price tip, or trouble.</p>
+       <p class="si-effects"><span class="local-effect ${far ? "down" : "up"}">${far ? "⚠ Far & rough — better finds, but real hazard to the hull (rarely fatal)." : "Nearby — modest finds, low hazard."}</span></p>
+       <div class="rt-ships">${rows}</div>`;
+    this.refs.svStart.disabled = false;
+    this.refs.survey.classList.remove("hidden");
+  },
+  selectedSurveyShip() { const el = this.refs.svBody.querySelector("input[data-svship]:checked"); return el ? el.dataset.svship : null; },
+
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
@@ -493,6 +518,7 @@ const UI = {
     if (sh.status === "mission") status = `<span class="badge">on mission</span>`;
     else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
     else if (sh.status === "trading") status = `<span class="badge trade">trading</span>`;
+    else if (sh.status === "surveying") status = `<span class="badge">surveying</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
     const hullPct = Math.round((1 - dmg) * 100);
@@ -610,6 +636,12 @@ const UI = {
     this.refs.fleetReportsPanel.classList.remove("hidden");
     this.refs.fleetReports.innerHTML = reps.map(r => {
       let detail = "";
+      if (r.type === "survey") {
+        detail = `<span class="${r.success ? "up" : "down"}">🛰 ${r.summary}</span>`;
+        if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
+        return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
+          <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
+      }
       if (r.success) {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
@@ -1349,6 +1381,7 @@ const UI = {
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => {
         const wear = (r.damaged || []).length ? ` · 🔧 ${r.damaged.length} damaged` : "";
+        if (r.type === "survey") return `<li>🛰 <span class="${r.success ? "up" : "down"}">${r.summary}</span></li>`;
         return r.success
           ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : ""}${wear}</li>`
           : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
@@ -1459,6 +1492,15 @@ const UI = {
       r.route.classList.add("hidden");
       window.Game.requestSave(); this.renderFleet();
     };
+    r.svCancel.onclick = () => { this._surveySys = null; r.survey.classList.add("hidden"); };
+    r.svStart.onclick = () => {
+      const res = Expeditions.start(this._surveySys, this.selectedSurveyShip());
+      if (!res.ok) return this.toast(res.msg, "warn");
+      this.toast("Survey dispatched ▸", "good");
+      r.survey.classList.add("hidden");
+      window.Game.requestSave(); this.renderFleet();
+      if (window.StarMap) { StarMap.refreshInfo(); StarMap.updateGalaxyNodes(); }
+    };
 
     if (r.langToggle) r.langToggle.onclick = e => {
       const b = e.target.closest(".lang-btn"); if (!b || !window.I18n) return;
@@ -1486,6 +1528,13 @@ const UI = {
       if (window.Game._booting) return;
       this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`, r.success ? "good" : "bad", 5000);
       if (this.page === "fleet") this.renderFleet(); this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
+    });
+    Bus.on("surveyDone", r => {
+      if (window.Game._booting) return;   // offline surveys land in the "while you were away" recap
+      this.toast(`🛰 ${r.summary}`, r.success ? "good" : "bad", 6000);
+      if (this.page === "fleet") this.renderFleet();
+      if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
+      this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
