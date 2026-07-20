@@ -85,9 +85,31 @@ const Missions = {
     for (const m of s.missions) {
       if (m.resolved || now - m.startedAt < m.totalMs) continue;
       m.resolved = true;
-      const success = Math.random() < m.successChance;
+      let success = Math.random() < m.successChance;
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
-        credits: 0, items: [], stock: null, lost: [], impounded: [] };
+        credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [] };
+
+      // ---- battle damage & attrition: every ship rolls wear against the
+      // mission type's profile (a courier grazes an asteroid; a battle line
+      // comes home shot up). Destruction scales with how long the odds were.
+      const prof = DMGCFG.types[m.type] || DMGCFG.types.transport;
+      const dangerMult = DMGCFG.dangerMult[m.danger] || 1;
+      const riskMult = 1 + (m.stakeTier || 0) * BAZAARCFG.tierRiskMult;
+      const odds = 0.5 + (1 - m.successChance);        // 0.5 (sure thing) → ~1.5 (long shot)
+      for (const u of m.shipUids) {
+        const sh = Fleet.ship(u); if (!sh) continue;
+        const destroyP = Util.clamp((success ? prof.destroy : prof.destroyFail * riskMult) * odds, 0, 0.9);
+        if (Math.random() < destroyP) { report.lost.push({ uid: sh.uid, name: sh.name }); continue; }
+        const hitP = success ? prof.chance : Math.min(1, prof.chance * 1.5);
+        if (Math.random() < hitP) {
+          const before = sh.dmg || 0;
+          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult));
+          report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
+        }
+      }
+      const lostIds = new Set(report.lost.map(x => x.uid));
+      const survivors = m.shipUids.map(u => Fleet.ship(u)).filter(sh => sh && !lostIds.has(sh.uid));
+      if (!survivors.length && report.lost.length) { success = false; report.success = false; report.wipe = true; } // nobody came home
 
       if (success) {
         const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1));
@@ -110,28 +132,19 @@ const Missions = {
           s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
           report.stock = { commId: c.id, name: c.name, qty };
         }
-        for (const u of m.shipUids) { const sh = Fleet.ship(u); if (sh) sh.status = "idle"; }
+        for (const sh of survivors) sh.status = "idle";
       } else {
-        // failure consequences depend on the job — bigger stakes at higher Baron Tiers
-        const riskMult = 1 + (m.stakeTier || 0) * BAZAARCFG.tierRiskMult;
-        for (const u of m.shipUids) {
-          const sh = Fleet.ship(u); if (!sh) continue;
+        // failure: survivors are seized (smuggle jobs) or limp home damaged.
+        // Ship losses were already rolled above with the failure-grade odds.
+        for (const sh of survivors) {
           if (m.impound) {
             sh.status = "impounded";
             sh.retrieveCost = Math.round(((Fleet.shipDef(sh.type).price || 2000) * 0.5) * riskMult) || 1500;
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
-          } else {
-            const baseLoss = { safe: 0.05, low: 0.15, moderate: 0.3, high: 0.5, extreme: 0.7 }[m.danger] || 0.2;
-            const lossP = Util.clamp(baseLoss * riskMult, 0, 0.9);
-            if (Math.random() < lossP) report.lost.push({ uid: sh.uid, name: sh.name });
-            else sh.status = "idle";
-          }
-        }
-        if (report.lost.length) {
-          const lostIds = new Set(report.lost.map(x => x.uid));
-          s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));
+          } else sh.status = "idle";
         }
       }
+      if (report.lost.length) s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));
       s.reports.unshift(report);
       if (s.reports.length > 20) s.reports.length = 20;
       out.push(report);

@@ -64,6 +64,8 @@ const Game = {
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
+    // battle damage: default + clamp (saves predate it / could be tampered)
+    for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});

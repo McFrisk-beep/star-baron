@@ -493,6 +493,9 @@ const UI = {
     else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
     else if (sh.status === "trading") status = `<span class="badge trade">trading</span>`;
     else status = `<span class="badge idle">idle</span>`;
+    const dmg = sh.dmg || 0;
+    const hullPct = Math.round((1 - dmg) * 100);
+    if (dmg) status += ` <span class="badge ${hullPct < 40 ? "bad" : "merc"}" title="damaged — firepower & speed suffer until repaired">hull ${hullPct}%</span>`;
     const merc = sh.mercenary ? `<span class="badge merc">merc · ${Util.duration((sh.expiresAt || 0) - Date.now())}</span>` : "";
     const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
     const equipBtn = sh.status === "idle" && used < slots
@@ -503,23 +506,26 @@ const UI = {
       ? `<button class="btn btn-mini" data-route-ship="${sh.uid}">⇄ Set route</button>` : "";
     const sellBtn = sh.status === "idle" && !sh.mercenary
       ? `<button class="btn btn-mini btn-sellship" data-sellship="${sh.uid}" title="sells with its equipped gear">Sell ${Util.credits(Bazaar.shipSaleValue(sh))}c</button>` : "";
+    const repairBtn = sh.status === "idle" && dmg
+      ? `<button class="btn btn-mini" data-repair="${sh.uid}" title="restores hull, firepower and speed">🔧 Repair ${Util.credits(Fleet.repairCost(sh))}c</button>` : "";
     return `<div class="ship cls-${def.cls}">
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
         <div class="statline">${this.statChips(st)}</div>
-        <div class="acc-row">${acc}${equipBtn}${routeBtn}${sellBtn}</div>
+        <div class="acc-row">${acc}${equipBtn}${repairBtn}${routeBtn}${sellBtn}</div>
       </div></div>`;
   },
 
   onFleetClick(e) {
     const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]");
     const rt = e.target.closest("[data-retrieve]"); const sl = e.target.closest("[data-sellship]");
-    const ro = e.target.closest("[data-route-ship]");
+    const ro = e.target.closest("[data-route-ship]"); const rp = e.target.closest("[data-repair]");
     if (un) { const [shipU, itemU] = un.dataset.unequip.split(":"); Fleet.unequip(shipU, itemU); window.Game.requestSave(); this.renderFleet(); }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
     else if (ro) { this.openRoute(ro.dataset.routeShip); }
+    else if (rp) { const r = Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (sl) {
       const sh = Fleet.ship(sl.dataset.sellship); if (!sh) return;
@@ -607,12 +613,14 @@ const UI = {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
         if (r.items.length) detail += ` · ${r.items.length} item${r.items.length > 1 ? "s" : ""} won`;
+        if (r.lost.length) detail += ` · <span class="down">lost ${r.lost.map(x => x.name).join(", ")}</span>`;
       } else {
-        detail = `<span class="down">FAILED</span>`;
-        if (r.lost.length) detail += ` · lost ${r.lost.map(x => x.name).join(", ")}`;
+        detail = r.wipe ? `<span class="down">FAILED — all ships destroyed</span>` : `<span class="down">FAILED</span>`;
+        if (r.lost.length && !r.wipe) detail += ` · lost ${r.lost.map(x => x.name).join(", ")}`;
         if (r.impounded.length) detail += ` · ${r.impounded.length} ship(s) impounded — pay in Owned Ships to retrieve`;
         if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
       }
+      if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
       return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
         <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
     }).join("");
@@ -1337,9 +1345,12 @@ const UI = {
     if (seized.length) html += `<p class="down">⚠ Seized for low standing: ${seized.join(", ")} (rebuild from the Star Map).</p>`;
 
     if (reports.length) {
-      html += `<ul class="wywa-runs">` + reports.map(r => r.success
-        ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}</li>`
-        : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}</li>`).join("") + `</ul>`;
+      html += `<ul class="wywa-runs">` + reports.map(r => {
+        const wear = (r.damaged || []).length ? ` · 🔧 ${r.damaged.length} damaged` : "";
+        return r.success
+          ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : ""}${wear}</li>`
+          : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
+      }).join("") + `</ul>`;
     }
     if (routeTotal) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;

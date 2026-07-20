@@ -49,9 +49,34 @@ const Fleet = {
       if (k === "slots") continue;
       out[k] = (out[k] + (flat[k] || 0)) * (1 + (pct[k] || 0));
     }
+    // battle damage: hull drops with it, and a battered ship fights & flies worse
+    const dmg = ship.dmg || 0;
+    if (dmg) {
+      out.hull *= 1 - dmg;
+      out.firepower *= 1 - dmg * DMGCFG.statPenalty;
+      out.speed *= 1 - dmg * DMGCFG.statPenalty;
+    }
     for (const k of ["firepower", "hull", "armor", "shields", "cargo"]) out[k] = Math.round(out[k]);
     out.speed = +out.speed.toFixed(2);
     return out;
+  },
+
+  // ---- battle damage & repairs -------------------------------------------
+  addDamage(ship, frac) { ship.dmg = Util.clamp((ship.dmg || 0) + frac, 0, DMGCFG.maxDmg); },
+  repairCost(ship) {
+    const dmg = ship.dmg || 0;
+    return dmg ? Math.max(50, Math.round((this.shipDef(ship.type).price || 2000) * DMGCFG.costRate * dmg)) : 0;
+  },
+  repair(uid) {
+    const sh = this.ship(uid);
+    if (!sh || !(sh.dmg > 0)) return { ok: false, msg: "Nothing to repair." };
+    if (sh.status !== "idle") return { ok: false, msg: "Ship is busy — repairs need a drydock." };
+    const cost = this.repairCost(sh);
+    if (cost > this.s().credits) return { ok: false, msg: "Not enough credits." };
+    this.s().credits -= cost;
+    sh.dmg = 0;
+    Economy.refreshNetWorth();
+    return { ok: true, cost };
   },
 
   power(uids) { return uids.reduce((n, uid) => { const sh = this.ship(uid); return n + (sh ? this.stats(sh).firepower : 0); }, 0); },
