@@ -51,11 +51,12 @@ const a30 = Economy.buy(IRON, 30).price; reset();
 const a300 = Economy.buy(IRON, 300).price;
 assert(a30 > spot && a300 > a30, "larger orders slip to a worse average price");
 
-// 4) per-trade cap (tier 0 = 10,000c): can't move more than cap/spot units
+// 4) per-trade cap (tier 0): can't move more than cap/spot units
 reset(0);
-const capUnits = Math.floor(10000 / spot);
+const TIER0_CAP = BARON_TIERS[0].cap;
+const capUnits = Math.floor(TIER0_CAP / spot);
 const big = Economy.buy(IRON, 1_000_000);
-assert(big.ok && big.qty === capUnits && big.capped, `buy clamped to tier-0 cap (${capUnits}u)`);
+assert(big.ok && big.qty === capUnits && big.capped, `buy clamped to tier-0 cap (${capUnits}u @ ${TIER0_CAP}c)`);
 // sell-all is capped too
 reset(0); ctx.Game.state.positions[IRON] = 50000;
 assert(Economy.maxSell(IRON) === capUnits, "Sell All clamped to the tier cap, not the whole stack");

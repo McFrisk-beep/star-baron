@@ -976,16 +976,27 @@ const UI = {
 
   // ===== systems ===========================================================
   renderSystems() {
-    const ul = this.refs.systemList; if (!ul) return;   // Star Systems tab removed — travel/unlock live in the Star Map
+    const ul = this.refs.systemList; if (!ul) return;
     const s = this.s(); ul.innerHTML = "";
+    // live intro: post-compression multipliers, the per-trade cap, and the slippage rule
+    const intro = document.getElementById("sys-intro");
+    if (intro) intro.innerHTML =
+      `Each tag is the <b>local price multiplier</b> for a goods category: ` +
+      `<span class="mod cheap">&lt;1.00 = cheaper to buy here</span> ` +
+      `<span class="mod dear">&gt;1.00 = sells for more here</span> ` +
+      `<span class="mod">1.00 = average</span>. ` +
+      `Gaps are deliberately modest — and <b>your own trades move the local price</b> (and it lingers), ` +
+      `so arbitrage is a skill loop, not a printer. Per-trade cap at your tier: <b>${Util.credits(Economy.depth())}c/order</b>. ` +
+      `<b>dist</b> sets docking time.`;
     for (const sys of SYSTEMS) {
       const unlocked = s.unlockedSystems.includes(sys.id), here = s.currentSystem === sys.id && !s.travel;
       const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
-      const mods = Object.entries(sys.mods).map(([k, v]) => {
+      const mods = Object.keys(sys.mods).map(k => {
+        const v = window.Market ? Market._mod(k, sys.id) : sys.mods[k];   // the compressed multiplier actually charged
         const tip = v < 1 ? `${k}: ${((1 - v) * 100).toFixed(0)}% cheaper to buy here`
           : v > 1 ? `${k}: ${((v - 1) * 100).toFixed(0)}% pricier — good to sell here`
           : `${k}: average price`;
-        return `<span class="mod ${v < 1 ? "cheap" : v > 1 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
+        return `<span class="mod ${v < 0.995 ? "cheap" : v > 1.005 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
       }).join("");
       let action;
       if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}" data-cost="${sys.unlock}">Unlock ${Util.credits(sys.unlock)}c</button>`;

@@ -43,6 +43,7 @@
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
             <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
           <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
             <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label" data-i18n="nav.industries">Industries</span></button>
             <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label" data-i18n="nav.senate">Senate</span></button>
@@ -97,6 +98,15 @@
         <div class="panel hidden" id="fleet-reports-panel"><h2 data-i18n="fleet.reports">Mission Reports</h2><div id="fleet-reports"></div></div>
         <div class="panel"><h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
         <div class="panel"><h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
+      </section>
+
+      <!-- STAR SYSTEMS -->
+      <section class="page hidden" id="page-systems">
+        <div class="panel">
+          <h2><span data-i18n="systems.title">Star Systems</span> <small data-i18n="systems.sub">dock to trade at local prices</small></h2>
+          <p class="sys-legend" id="sys-intro"></p>
+          <ul class="system-list" id="system-list"></ul>
+        </div>
       </section>
 
       <!-- BAZAAR -->

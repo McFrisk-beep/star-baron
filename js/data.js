@@ -432,7 +432,7 @@ const RIVALS = [
 // that tier: trading near the cap eats heavy slippage, so the exploit of dumping
 // a huge position at one quoted price is gone. Scales with progression.
 const BARON_TIERS = [
-  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  cap: 10000,    threshold: 0 },
+  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  cap: 15000,    threshold: 0 },
   { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  cap: 30000,    threshold: 1000000 },
   { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  cap: 60000,    threshold: 2500000 },
   { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  cap: 120000,   threshold: 6000000 },
