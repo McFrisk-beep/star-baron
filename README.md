@@ -26,6 +26,12 @@ pattern.
   of the stack at the gate** — likelier under Senate border edicts and at
   systems that barely tolerate illicit trade, softened by your Syndicate
   standing. Reading the docket (and picking your ports) is the edge.
+  Prices differ between stations, but cross-station arbitrage is a **skill loop,
+  not a printer**: each order moves the local price (**market depth / slippage**)
+  and the nudge **lingers and decays**, so splitting a big order or hopping back
+  and forth closes the gap just the same. A **per-trade cap scales with your
+  Baron Tier** (10K credits → 500K at Cosmocrat), and **Buy Max / Sell All**
+  respect it — no dumping a whole position at one quoted price.
 - **The Fleet** — a roster of **persistent ships with combat stats** (hull,
   armor, shields, firepower) plus cargo and speed, modified by equipped
   accessories and your flagship's passive bonus. A separate **main/flagship**

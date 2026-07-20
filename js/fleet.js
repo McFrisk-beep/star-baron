@@ -91,7 +91,7 @@ const Fleet = {
     const a = SYSTEMS.find(s => s.id === fromId), b = SYSTEMS.find(s => s.id === toId);
     const dist = Math.max(1, Math.abs((a?.distance ?? 0) - (b?.distance ?? 0)));
     const speed = (this.mainDef().travelSpeed || 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
-    const seconds = (dist * 12) / speed;
+    const seconds = (dist * (window.MARKETCFG ? MARKETCFG.dockK : 12)) / speed;
     return (seconds * 1000) / (window.Game.timeScale || 1);
   },
 

@@ -169,7 +169,7 @@ const UI = {
       if (act === "buy") this.doTrade("buy", id, parseInt(qin.value, 10) || 0);
       else if (act === "sell") this.doTrade("sell", id, parseInt(qin.value, 10) || 0);
       else if (act === "max") this.doTrade("buy", id, Economy.maxBuy(id));
-      else if (act === "all") this.doTrade("sell", id, this.s().positions[id] || 0);
+      else if (act === "all") this.doTrade("sell", id, Economy.maxSell(id));
     };
   },
   tintBox(c) { const d = this.el("div", "tintbox"); d.textContent = (c.name || "?").slice(0, 2); return d; },
@@ -217,7 +217,8 @@ const UI = {
       const pnl = (!isBuy && typeof r.realized === "number")
         ? ` · <span class="${r.realized >= 0 ? "up" : "down"}">${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)}c</span>` : "";
       const taxNote = (!isBuy && r.tax) ? ` · <span class="down">−${Util.credits(r.tax)}c tax</span>` : "";
-      result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}${taxNote}` +
+      const capNote = r.capped ? ` · <span class="down">tier trade cap hit — ${Util.credits(Economy.depth())}c/trade</span>` : "";
+      result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ avg ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}${taxNote}${capNote}` +
         `<br><span class="muted-note">New balance: ${Util.creditsFull(this.s().credits)}c</span>`;
       result.classList.remove("hidden"); close.classList.remove("hidden");
       refresh();                                       // reveal the new balance at the "complete" beat
@@ -232,8 +233,9 @@ const UI = {
   updateExchange() {
     const sys = this.s().currentSystem;
     const sysName = this.sysName(sys);
-    this.refs.exchangeSub.textContent = (window.I18n && I18n.lang === "jp")
+    const pricesAt = (window.I18n && I18n.lang === "jp")
       ? `· ${sysName} ${I18n.t("exchange.pricesAt")}` : `· ${window.I18n ? I18n.t("exchange.pricesAt") : "prices at"} ${sysName}`;
+    this.refs.exchangeSub.textContent = `${pricesAt} · trade cap ${Util.credits(Economy.depth())}c/order`;
     // transit overlay
     if (this.s().travel) {
       const t = this.s().travel;
