@@ -630,14 +630,19 @@ body.reduced .tt-dot { animation: none; }
 .planet-tip .pt-sub { color: var(--ink-dim); font-size: 11px; margin-top: 2px; }
 .planet-tip .pt-go { color: var(--accent); font-size: 11px; margin-top: 4px; }
 
-#planet-modal { z-index: 80; }   /* above the star-map overlay (z-index 70) */
+#planet-modal,
+#survey-modal { z-index: 80; }   /* above the star-map overlay (z-index 70) */
 .modal.planet-modal { max-width: min(920px, 96vw); width: 100%; padding: 0; overflow: hidden; }
 .pm-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .pm-head h3 { margin: 0; }
 .pm-body { display: grid; grid-template-columns: 1fr 320px; height: min(70vh, 520px); }
 .pm-scene { position: relative; background: #05070e; min-width: 0; }
 .pm-scene canvas { width: 100%; height: 100%; display: block; }
-.pm-scene-cap { position: absolute; left: 12px; bottom: 10px; font-size: 10.5px; color: var(--ink-dim);
+/* Live <img> disc for uploaded sprites — canvas drawImage freezes animated GIFs. */
+.pm-sprite { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  border-radius: 50%; object-fit: cover; pointer-events: none; z-index: 1;
+  box-shadow: inset -10px -8px 22px rgba(0, 0, 0, .45); }
+.pm-scene-cap { position: absolute; left: 12px; bottom: 10px; z-index: 2; font-size: 10.5px; color: var(--ink-dim);
   text-transform: uppercase; letter-spacing: 1.5px; text-shadow: 0 1px 5px #000; }
 .pm-info { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
 .pm-tabs { padding: 10px 12px 0; flex: none; }
