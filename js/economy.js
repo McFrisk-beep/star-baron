@@ -46,30 +46,61 @@ const Economy = {
   },
 
   // ---- market depth (per Baron Tier) -------------------------------------
-  // `depth` is the tier's trade cap: it both caps a single trade's notional AND
-  // sets how hard your own trading moves the price (slippage). Buying/selling
-  // pushes a persistent, decaying pressure into Market so splitting a big order
-  // into small ones — or hopping back and forth — closes the gap just the same.
+  // `depth` is the tier's trade cap: it caps a single trade's ACTUAL notional
+  // (credits paid / received, INCLUDING price pressure + slippage) AND sets how
+  // hard your own trading moves the price. Buying/selling pushes a persistent,
+  // decaying pressure into Market so splitting a big order into small ones — or
+  // hopping back and forth — closes the gap just the same.
   depth() { return this.tierInfo().cap || 10000; },
   spotHere(commId) { return Market.spot(commId, this.s().currentSystem); },
-  // most units you may move in one trade (notional ≤ tier cap)
-  capQty(commId) { const sp = this.spotHere(commId); return sp > 0 ? Math.max(0, Math.floor(this.depth() / sp)) : 0; },
 
+  // {a,b} such that a buy costs a·q + b·q² and a sell nets a·q − b·q² (gross,
+  // pre-tax) at the CURRENT pressure — the true credits moved, not units×spot.
+  _quote(commId, side) {
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, this.s().currentSystem);
+    const tax = window.Senate ? Senate.tradeTax(cat, side) : 0;
+    const base = side === "buy" ? spot0 * (1 + this._spread(cat)) * (1 + tax)
+                                : spot0 * (1 - this._spread(cat)) * (1 - tax);
+    return { spot0, p0, base, a: base * (1 + p0), b: base * spot0 / (2 * this.depth()) };
+  },
+  // most units you may BUY without spending more than L credits (cost ≤ L)
+  _buyQtyForSpend(commId, L) {
+    const { a, b } = this._quote(commId, "buy");
+    if (a <= 0 || L <= 0) return 0;
+    const q = b > 0 ? (-a + Math.sqrt(a * a + 4 * b * L)) / (2 * b) : L / a;
+    return Math.max(0, Math.floor(q));
+  },
+  // most units you may SELL without taking more than L credits (gross ≤ L).
+  // Gross proceeds a·q − b·q² peak at q=a/2b; past that you're just dumping into
+  // a crashed (floored) market, so we never allow more than the peak — which also
+  // keeps proceeds ≤ its max there. Below the peak, cap where proceeds hit L.
+  _sellQtyForTake(commId, L) {
+    const { a, b } = this._quote(commId, "sell");
+    if (a <= 0 || L <= 0) return 0;
+    if (b <= 0) return Math.floor(L / a);
+    const qPeak = a / (2 * b);
+    const disc = a * a - 4 * b * L;
+    const qL = disc > 0 ? (a - Math.sqrt(disc)) / (2 * b) : Infinity;   // ascending-branch crossing of L
+    return Math.max(0, Math.floor(Math.min(qPeak, qL)));
+  },
+  // cap-only limits (the per-trade notional ceiling, ignoring what you can afford/hold)
+  buyCapQty(commId) { return this._buyQtyForSpend(commId, this.depth()); },
+  sellCapQty(commId) { return this._sellQtyForTake(commId, this.depth()); },
+
+  // effective ceilings the UI clamps to: bounded by BOTH the cap and afford/holdings
   maxBuy(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
-    const s = this.s(), spot0 = this.spotHere(commId);
-    if (spot0 <= 0 || s.credits <= 0) return 0;
-    const p0 = Market.impactAt(commId, s.currentSystem);
-    const base = spot0 * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
-    // cost(q) = A·q + B·q² (linear price + slippage); solve cost(q) ≤ credits
-    const A = base * (1 + p0), B = base * spot0 / (2 * this.depth());
-    const q = B > 0 ? (-A + Math.sqrt(A * A + 4 * B * s.credits)) / (2 * B) : s.credits / A;
-    return Math.max(0, Math.min(Math.floor(q), this.capQty(commId)));
+    const s = this.s();
+    if (this.spotHere(commId) <= 0 || s.credits <= 0) return 0;
+    return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
   },
-  // Sell All is capped to the tier's per-trade notional so you can't dump a
-  // whole position at one quoted price (the old cross-system arbitrage exploit).
-  maxSell(commId) { return Math.min(this.s().positions[commId] || 0, this.capQty(commId)); },
+  maxSell(commId) {
+    const held = this.s().positions[commId] || 0;
+    if (held <= 0 || this.spotHere(commId) <= 0) return 0;
+    return Math.min(held, this.sellCapQty(commId));
+  },
 
   buy(commId, qty) {
     const s = this.s();
@@ -78,12 +109,11 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const cap = this.capQty(commId);
-    if (cap <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
-    if (qty > cap) qty = cap;                                          // per-trade notional cap
+    const capQ = this.buyCapQty(commId);                              // per-trade notional cap (credits paid ≤ depth)
+    if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
+    const capped = qty > capQ; if (capped) qty = capQ;
     const now = Date.now(), sys = s.currentSystem;
-    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, sys, now);
-    const base = spot0 * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    const { spot0, p0, base } = this._quote(commId, "buy");
     const dP = spot0 * qty / this.depth();                            // pressure this order adds
     const avg = base * (1 + p0 + dP / 2);                             // average fill over the rising price
     const cost = avg * qty;
@@ -94,7 +124,7 @@ const Economy = {
     s.avgCost[commId] = (held * prevCost + cost) / (held + qty);
     Market.addImpact(commId, sys, dP, now);                           // price stays elevated, then decays
     this._afterTrade(commId, "buy", qty, cost, avg);
-    return { ok: true, qty, cost, price: avg, capped: qty === cap };
+    return { ok: true, qty, cost, price: avg, capped };
   },
 
   sell(commId, qty) {
@@ -105,12 +135,11 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const cap = this.capQty(commId);
-    if (cap <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
-    if (qty > cap) qty = cap;                                          // per-trade notional cap
+    const capQ = this.sellCapQty(commId);                            // per-trade notional cap (credits taken ≤ depth)
+    if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
+    const capped = qty > capQ; if (capped) qty = capQ;
     const now = Date.now(), sys = s.currentSystem;
-    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, sys, now);
-    const base = spot0 * (1 - this._spread(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
+    const { spot0, p0, base } = this._quote(commId, "sell");
     const dP = spot0 * qty / this.depth();                            // pressure this order removes
     const price = base * Math.max(MARKETCFG.sellFloorFactor, 1 + p0 - dP / 2);   // average fill over the falling price
     const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
@@ -122,7 +151,7 @@ const Economy = {
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
     Market.addImpact(commId, sys, -dP, now);                          // your selling depresses the local price
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
-    return { ok: true, qty, proceeds, price, realized, tax, capped: qty === cap };
+    return { ok: true, qty, proceeds, price, realized, tax, capped };
   },
 
   // ----- Baron Tier (prestige "ascension") -----
