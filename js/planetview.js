@@ -61,7 +61,7 @@ const PlanetView = {
     if (this._refs) return this._refs;
     const $ = id => document.getElementById(id);
     this._refs = { modal: $("planet-modal"), title: $("pm-title"), subtitle: $("pm-subtitle"),
-      canvas: $("pm-canvas"), tabbody: $("pm-tabbody"), tabs: $("pm-tabs"), close: $("pm-close") };
+      canvas: $("pm-canvas"), sprite: $("pm-sprite"), tabbody: $("pm-tabbody"), tabs: $("pm-tabs"), close: $("pm-close") };
     return this._refs;
   },
   init() {
@@ -89,13 +89,6 @@ const PlanetView = {
     this.startScene(planet);
   },
 
-  // Cached image loader (tracks .ok so the draw loop only paints once loaded).
-  _img(src) {
-    this._imgs = this._imgs || {};
-    let im = this._imgs[src];
-    if (!im) { im = new Image(); im.ok = false; im.onload = () => { im.ok = true; }; im.onerror = () => { im.bad = true; }; im.src = src; this._imgs[src] = im; }
-    return im;
-  },
   // Custom sprite for the open planet: prefer a per-planet upload, then a custom
   // per-type planet sprite; null → keep the built-in procedural rendering.
   _spriteUrl() {
@@ -103,6 +96,31 @@ const PlanetView = {
     const { sys, idx, planet } = this.cur;
     const ov = window.ASSET_OVERRIDES || {};
     return ov[`planetimg:${sys.id}_${idx}`] || ov[`planet:${planet.type}`] || null;
+  },
+  // Show the uploaded sprite as a live DOM <img> (so animated GIFs actually play —
+  // canvas drawImage only ever blits a still frame). Sizes to match the canvas disc.
+  _showSprite(url) {
+    const img = this.refs().sprite; if (!img) return false;
+    if (!url) { this._hideSprite(); return false; }
+    if (img.dataset.url !== url) {
+      img.dataset.url = url; img.ok = false; img.bad = false;
+      img.onload = () => { img.ok = true; this._layoutSprite(); img.classList.remove("hidden"); };
+      img.onerror = () => { img.bad = true; this._hideSprite(); };
+      img.src = url;
+    }
+    this._layoutSprite();
+    if (img.ok) img.classList.remove("hidden");
+    return !img.bad && (img.ok || img.dataset.url === url);
+  },
+  _layoutSprite() {
+    const img = this.refs().sprite; if (!img || !img.parentElement) return;
+    const r = img.parentElement.getBoundingClientRect();
+    const d = Math.min(r.width, r.height) * 0.64;   // matches canvas pr = min * 0.32
+    img.style.width = img.style.height = `${d}px`;
+  },
+  _hideSprite() {
+    const img = this.refs().sprite; if (!img) return;
+    img.classList.add("hidden"); img.removeAttribute("src"); delete img.dataset.url; img.ok = false;
   },
   close() {
     this.stopScene();
@@ -300,11 +318,15 @@ const PlanetView = {
     if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return;
     const ctx = canvas.getContext("2d");
     const reduced = this.s().settings.reduced;
-    const resize = () => { const r = canvas.parentElement.getBoundingClientRect(); canvas.width = Math.max(260, r.width); canvas.height = Math.max(220, r.height); };
+    const spriteUrl = this._spriteUrl();
+    const hasSprite = this._showSprite(spriteUrl);
+    const resize = () => {
+      const r = canvas.parentElement.getBoundingClientRect();
+      canvas.width = Math.max(260, r.width); canvas.height = Math.max(220, r.height);
+      if (hasSprite) this._layoutSprite();
+    };
     resize(); this._onResize = resize; window.addEventListener("resize", resize);
     const pal = PLANET_PAL[planet.type] || PLANET_PAL.rocky;
-    const spriteUrl = this._spriteUrl();
-    const sprite = spriteUrl ? this._img(spriteUrl) : null;
     const stars = []; for (let i = 0; i < 90; i++) stars.push({ x: Math.random(), y: Math.random(), b: Math.random() });
     const sats = []; const nsat = 1 + (planet.name.length % 3);
     for (let i = 0; i < nsat; i++) sats.push({ ang: Math.random() * 6.28, rr: 1.32 + i * 0.26, spd: (0.35 + i * 0.12) * (i % 2 ? -1 : 1), size: 1.6 + Math.random() * 1.8 });
@@ -315,6 +337,8 @@ const PlanetView = {
     const draw = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
       const w = canvas.width, h = canvas.height, cx = w / 2, cy = h / 2, pr = Math.min(w, h) * 0.32, m = Math.min(w, h);
+      const spriteEl = this.refs().sprite;
+      const useSprite = !!(spriteEl && spriteEl.ok && !spriteEl.classList.contains("hidden"));
       ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h);
       ctx.fillStyle = "#fff";
       for (const st of stars) { ctx.globalAlpha = 0.22 + st.b * 0.5; ctx.fillRect(st.x * w, st.y * h, 1.2, 1.2); }
@@ -334,8 +358,8 @@ const PlanetView = {
       const glow = ctx.createRadialGradient(cx, cy, pr * 0.72, cx, cy, pr * 1.5);
       glow.addColorStop(0, this._hexA(pal[1], 0)); glow.addColorStop(0.62, this._hexA(pal[1], pulse)); glow.addColorStop(1, this._hexA(pal[1], 0));
       ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, pr * 1.5, 0, 6.28); ctx.fill();
-      if (sprite && sprite.ok) this._drawSprite(ctx, cx, cy, pr, sprite);
-      else this._drawBody(ctx, cx, cy, pr, planet, pal, now, reduced);
+      // uploaded sprites live in a DOM <img> (GIF animation); otherwise paint procedurally
+      if (!useSprite) this._drawBody(ctx, cx, cy, pr, planet, pal, now, reduced);
       // satellites (tilted orbits)
       for (const sa of sats) {
         if (!reduced) sa.ang += sa.spd * dt;
@@ -345,21 +369,6 @@ const PlanetView = {
       if (!reduced) this.raf = requestAnimationFrame(draw);
     };
     if (reduced) draw(performance.now()); else this.raf = requestAnimationFrame(draw);
-  },
-  // Draw an uploaded sprite as the planet disc (cover-fit, clipped to a circle),
-  // with a soft spherical shadow for depth. Works for PNG/JPG and animated GIF.
-  _drawSprite(ctx, cx, cy, pr, img) {
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, pr, 0, 6.28); ctx.clip();
-    const d = pr * 2;
-    const ar = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
-    let dw = d, dh = d;
-    if (ar > 1) { dh = d; dw = d * ar; } else { dw = d; dh = d / ar; }   // cover the circle
-    try { ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh); } catch (e) {}
-    ctx.restore();
-    const sh = ctx.createRadialGradient(cx - pr * 0.4, cy - pr * 0.45, pr * 0.3, cx, cy, pr * 1.05);
-    sh.addColorStop(0, "rgba(0,0,0,0)"); sh.addColorStop(1, "rgba(0,0,0,.45)");
-    ctx.fillStyle = sh; ctx.beginPath(); ctx.arc(cx, cy, pr, 0, 6.28); ctx.fill();
   },
   _drawBody(ctx, cx, cy, pr, planet, pal, now, reduced) {
     ctx.save();
@@ -393,6 +402,7 @@ const PlanetView = {
   stopScene() {
     if (this.raf) cancelAnimationFrame(this.raf); this.raf = null;
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._onResize = null; }
+    this._hideSprite();
   },
 };
 
