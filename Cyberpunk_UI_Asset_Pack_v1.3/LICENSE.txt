@@ -1,0 +1,24 @@
+====================================================================
+CYBERPUNK 2D UI ASSET PACK - LICENSE AGREEMENT
+====================================================================
+
+Thank you for downloading this Cyberpunk UI Asset Pack!
+
+By downloading this asset pack, you agree to the following terms:
+
+[ YOU CAN ]
+1. Commercial & Personal Use: You are free to use these assets in your personal or commercial projects (games, software, websites, videos, etc.).
+2. Modify & Adapt: You can crop, recolor, edit, and combine these assets to fit your project's needs.
+3. Engine Agnostic: Feel free to use them in any game engine or framework (Pygame, Unity, Godot, Unreal, etc.).
+
+[ YOU CANNOT ]
+1. Resell / Redistribute: You may not repackage, resell, or redistribute these assets (original or modified) as a standalone asset pack, icon library, or NFT.
+2. Claim Ownership: You may not claim to be the original creator of these foundational images.
+
+[ AI-ASSISTED TRANSPARENCY ]
+The base images in this asset pack were generated using AI technology, followed by extensive human curation, precise background removal, formatting, and post-processing to ensure they are game-ready. All assets are cleared for commercial use.
+
+[ ATTRIBUTION ]
+Credit is not mandatory, but highly appreciated! If you wish to credit me in your project, please use:
+- UI Assets by [Your Name / Brand]
+====================================================================
