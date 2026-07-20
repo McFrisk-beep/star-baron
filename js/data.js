@@ -270,6 +270,28 @@ const DANGER = [
   { id: "extreme",  label: "Extreme",  baseSuccess: 0.25, pay: 3.8, fpScale: 450 },
 ];
 
+/* ---- BATTLE DAMAGE --------------------------------------------------------
+   Per-mission-type wear profile, rolled per ship when a mission resolves.
+   `chance` = odds of taking any damage on a success; `dmg` = hull fraction
+   lost per hit (scaled by danger, ×`failMult` on a failed mission);
+   `destroy` / `destroyFail` = odds the ship is outright destroyed on a
+   success / failure. Destruction also scales with (1 − successChance), so
+   overwhelming force comes home intact and long shots get ships killed.
+   Damaged hulls fight worse (see statPenalty) until repaired for credits.   */
+const DMGCFG = {
+  costRate: 0.35,     // full repair of a wrecked hull costs 35% of the ship's price
+  statPenalty: 0.5,   // firepower & speed lose up to half their value at max damage
+  maxDmg: 0.95,       // damage caps here — only a destroy roll removes a ship
+  dangerMult: { safe: 0.5, low: 0.75, moderate: 1, high: 1.3, extreme: 1.6 },
+  types: {            // courier scrapes → smuggler chases → open battle
+    transport:   { chance: 0.20, dmg: [0.02, 0.08], failMult: 2.5, destroy: 0,    destroyFail: 0.06 },
+    escort:      { chance: 0.55, dmg: [0.04, 0.14], failMult: 2.0, destroy: 0.01, destroyFail: 0.15 },
+    combat:      { chance: 0.92, dmg: [0.08, 0.30], failMult: 1.8, destroy: 0.03, destroyFail: 0.30 },
+    smuggle:     { chance: 0.40, dmg: [0.05, 0.20], failMult: 2.0, destroy: 0.02, destroyFail: 0 },   // failure impounds instead
+    assassinate: { chance: 0.70, dmg: [0.06, 0.25], failMult: 1.8, destroy: 0.02, destroyFail: 0.30 },
+  },
+};
+
 /* ---- FACTIONS -------------------------------------------------------------
    Themes the newswire AND is the reputation axis. `domain` = the commodity
    categories a faction controls; `rival` = who you annoy when you help them.  */
@@ -494,6 +516,7 @@ window.ALL_SHIPS = ALL_SHIPS;
 window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
+window.DMGCFG = DMGCFG;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;

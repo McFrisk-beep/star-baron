@@ -179,7 +179,7 @@ const Bazaar = {
   shipSaleValue(sh) {
     if (!sh) return 0;
     const def = Fleet.shipDef(sh.type);
-    const hull = (def?.price || 0) * BAZAARCFG.shipResaleMult;
+    const hull = Math.max(0, (def?.price || 0) * BAZAARCFG.shipResaleMult - Fleet.repairCost(sh)); // buyers dock the repair bill
     const gear = (sh.accessories || []).reduce((n, uid) => {
       const it = this.s().items[uid]; return n + (it ? it.value * BAZAARCFG.itemResaleMult : 0);
     }, 0);

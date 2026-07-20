@@ -27,7 +27,10 @@ pattern.
   accessories and your flagship's passive bonus. A separate **main/flagship**
   sets sector-transfer time and buffs the whole fleet. Ships fly **contract
   missions** with phased progress (outbound → on-site work → return), and on
-  failure you get a report: ships lost, or impounded (pay to retrieve).
+  failure you get a report: ships lost, or impounded (pay to retrieve). Every
+  mission wears the fleet — couriers graze asteroids, smugglers get chased,
+  battle lines come home shot up (and rarely, destroyed — likelier when the odds
+  are long). Damaged hulls fight and fly worse until **repaired for credits**.
 - **The Bazaar** — buy transports & permanent **escort warships**, upgrade your
   flagship, **hire time-limited mercenaries**, work a live **contract board**
   (jobs + insider tips; listings expire or get taken by NPCs), and trade a
