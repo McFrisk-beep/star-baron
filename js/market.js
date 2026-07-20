@@ -13,6 +13,7 @@ const Market = {
   hist: {},          // id -> [recent prices] for sparklines
   effects: [],       // active galactic news effects: {target, mult, startedAt, durationMs, id}
   localEffects: [],  // active LOCAL events: {systemId, target, mult, startedAt, durationMs, id}
+  tradeImpact: {},   // "sysId:commId" -> { p, at }: your persistent, decaying price pressure
   volMult: 1,        // bumped by prestige tier
   histLen: 60,
 
@@ -23,10 +24,42 @@ const Market = {
     this.hist = {};
     this.effects = [];
     this.localEffects = [];
+    this.tradeImpact = {};
     for (const c of COMMODITIES) {
       this.prices[c.id] = c.base;
       this.hist[c.id] = [c.base];
     }
+  },
+
+  // ---- player price pressure (market depth / anti-arbitrage) --------------
+  // Your buying elevates a system's price, selling depresses it; the pressure
+  // DECAYS with a half-life so it recovers, but persists long enough that
+  // splitting a trade or hopping back and forth can't dodge it.
+  _impactKey(commId, sysId) { return sysId + ":" + commId; },
+  impactAt(commId, sysId, now = Date.now()) {
+    const e = this.tradeImpact[this._impactKey(commId, sysId)];
+    if (!e) return 0;
+    const decay = Math.pow(0.5, (now - e.at) / MARKETCFG.impactHalfLifeMs);
+    return e.p * decay;
+  },
+  // Add signed pressure (buy > 0, sell < 0). Decays existing pressure to `now`
+  // first, then folds in the new push; clamped so a price can't cross zero.
+  addImpact(commId, sysId, dP, now = Date.now()) {
+    const k = this._impactKey(commId, sysId);
+    const p = Util.clamp(this.impactAt(commId, sysId, now) + dP, MARKETCFG.impactFloor, 4);
+    this.tradeImpact[k] = { p, at: now };
+  },
+  // A system's per-category mod, with deviations from 1.0 compressed toward it
+  // so cross-station gaps are smaller (the raw arbitrage spread shrinks).
+  _mod(cat, systemId) {
+    const sys = SYSTEMS.find(s => s.id === systemId);
+    const raw = sys ? (sys.mods[cat] ?? 1) : (window.Galaxy ? (Galaxy.modsFor(systemId)[cat] ?? 1) : 1);
+    return 1 + (raw - 1) * MARKETCFG.modCompression;
+  },
+  // Spot price at a system EXCLUDING your own pressure (mods + events only).
+  spot(id, systemId, now = Date.now()) {
+    const c = this.byId(id);
+    return this.prices[id] * this._mod(c.cat, systemId) * this.localMult(c, systemId, now);
   },
 
   // Slow secular drift per category so sectors rotate in and out of favor.
@@ -80,6 +113,10 @@ const Market = {
   pruneEffects(now) {
     this.effects = this.effects.filter(e => now - e.startedAt < e.durationMs);
     this.localEffects = this.localEffects.filter(e => now - e.startedAt < e.durationMs);
+    for (const k in this.tradeImpact) {                         // drop pressure that's decayed to nothing
+      const e = this.tradeImpact[k];
+      if (Math.abs(e.p) * Math.pow(0.5, (now - e.at) / MARKETCFG.impactHalfLifeMs) < 0.002) delete this.tradeImpact[k];
+    }
   },
 
   // Advance one market tick.
@@ -124,12 +161,7 @@ const Market = {
   // × any active local-event distortion at that system. Works for curated
   // capitals (SYSTEMS) and generated galaxy systems (Galaxy.modsFor).
   systemPrice(id, systemId, now = Date.now()) {
-    const c = this.byId(id);
-    let mod = 1;
-    const sys = SYSTEMS.find(s => s.id === systemId);
-    if (sys) mod = sys.mods[c.cat] ?? 1;
-    else if (window.Galaxy) mod = Galaxy.modsFor(systemId)[c.cat] ?? 1;
-    return this.prices[id] * mod * this.localMult(c, systemId, now);
+    return this.spot(id, systemId, now) * (1 + this.impactAt(id, systemId, now));
   },
 
   history(id) { return this.hist[id] || []; },
@@ -159,7 +191,7 @@ const Market = {
   // Snapshot for save (optional — prices are regenerated, but persisting them
   // keeps the chart continuous across reloads).
   serialize() {
-    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects };
+    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects, tradeImpact: this.tradeImpact };
   },
   hydrate(snap) {
     if (!snap) return;
@@ -167,6 +199,7 @@ const Market = {
     if (snap.hist) this.hist = snap.hist;
     if (snap.effects) this.effects = snap.effects;
     if (snap.localEffects) this.localEffects = snap.localEffects;
+    if (snap.tradeImpact) this.tradeImpact = snap.tradeImpact;   // persist so a reload can't reset your price pressure
     // Repair any missing commodities (config may have grown since save).
     for (const c of COMMODITIES) {
       if (this.prices[c.id] == null) this.prices[c.id] = c.base;

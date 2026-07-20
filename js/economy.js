@@ -45,12 +45,31 @@ const Economy = {
     return this.priceHere(commId) * (1 - this._spread(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
   },
 
+  // ---- market depth (per Baron Tier) -------------------------------------
+  // `depth` is the tier's trade cap: it both caps a single trade's notional AND
+  // sets how hard your own trading moves the price (slippage). Buying/selling
+  // pushes a persistent, decaying pressure into Market so splitting a big order
+  // into small ones — or hopping back and forth — closes the gap just the same.
+  depth() { return this.tierInfo().cap || 10000; },
+  spotHere(commId) { return Market.spot(commId, this.s().currentSystem); },
+  // most units you may move in one trade (notional ≤ tier cap)
+  capQty(commId) { const sp = this.spotHere(commId); return sp > 0 ? Math.max(0, Math.floor(this.depth() / sp)) : 0; },
+
   maxBuy(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
-    const p = this.buyPrice(commId);
-    return p > 0 ? Math.max(0, Math.floor(this.s().credits / p)) : 0;
+    const s = this.s(), spot0 = this.spotHere(commId);
+    if (spot0 <= 0 || s.credits <= 0) return 0;
+    const p0 = Market.impactAt(commId, s.currentSystem);
+    const base = spot0 * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    // cost(q) = A·q + B·q² (linear price + slippage); solve cost(q) ≤ credits
+    const A = base * (1 + p0), B = base * spot0 / (2 * this.depth());
+    const q = B > 0 ? (-A + Math.sqrt(A * A + 4 * B * s.credits)) / (2 * B) : s.credits / A;
+    return Math.max(0, Math.min(Math.floor(q), this.capQty(commId)));
   },
+  // Sell All is capped to the tier's per-trade notional so you can't dump a
+  // whole position at one quoted price (the old cross-system arbitrage exploit).
+  maxSell(commId) { return Math.min(this.s().positions[commId] || 0, this.capQty(commId)); },
 
   buy(commId, qty) {
     const s = this.s();
@@ -59,15 +78,23 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const price = this.buyPrice(commId);
-    const cost = price * qty;
+    const cap = this.capQty(commId);
+    if (cap <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
+    if (qty > cap) qty = cap;                                          // per-trade notional cap
+    const now = Date.now(), sys = s.currentSystem;
+    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, sys, now);
+    const base = spot0 * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    const dP = spot0 * qty / this.depth();                            // pressure this order adds
+    const avg = base * (1 + p0 + dP / 2);                             // average fill over the rising price
+    const cost = avg * qty;
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
     const held = s.positions[commId] || 0, prevCost = s.avgCost[commId] || 0;
     s.positions[commId] = held + qty;
     s.avgCost[commId] = (held * prevCost + cost) / (held + qty);
-    this._afterTrade(commId, "buy", qty, cost, price);
-    return { ok: true, qty, cost, price };
+    Market.addImpact(commId, sys, dP, now);                           // price stays elevated, then decays
+    this._afterTrade(commId, "buy", qty, cost, avg);
+    return { ok: true, qty, cost, price: avg, capped: qty === cap };
   },
 
   sell(commId, qty) {
@@ -78,7 +105,14 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
-    const price = this.sellPrice(commId);
+    const cap = this.capQty(commId);
+    if (cap <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
+    if (qty > cap) qty = cap;                                          // per-trade notional cap
+    const now = Date.now(), sys = s.currentSystem;
+    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, sys, now);
+    const base = spot0 * (1 - this._spread(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
+    const dP = spot0 * qty / this.depth();                            // pressure this order removes
+    const price = base * Math.max(MARKETCFG.sellFloorFactor, 1 + p0 - dP / 2);   // average fill over the falling price
     const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
     const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;   // Baron Tier earnings tax (on profit)
     const proceeds = price * qty - tax;                                                // keep principal + after-tax profit
@@ -86,8 +120,9 @@ const Economy = {
     s.credits += proceeds;
     s.positions[commId] = held - qty;
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
+    Market.addImpact(commId, sys, -dP, now);                          // your selling depresses the local price
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
-    return { ok: true, qty, proceeds, price, realized, tax };
+    return { ok: true, qty, proceeds, price, realized, tax, capped: qty === cap };
   },
 
   // ----- Baron Tier (prestige "ascension") -----
@@ -186,7 +221,9 @@ const Economy = {
   netWorth() {
     const s = this.s();
     let nw = s.credits;
-    for (const c of COMMODITIES) { const q = s.positions[c.id] || 0; if (q) nw += q * this.priceHere(c.id); }
+    // value holdings at SPOT (excludes your own price pressure) so a big buy
+    // can't self-inflate net worth / peak-net-worth into an early tier unlock
+    for (const c of COMMODITIES) { const q = s.positions[c.id] || 0; if (q) nw += q * Market.spot(c.id, s.currentSystem); }
     nw += Fleet.fleetValue();
     nw += Bazaar.itemsValue();
     return nw;

@@ -311,6 +311,24 @@ const EXPEDCFG = {
   },
 };
 
+/* ---- MARKET MICROSTRUCTURE ------------------------------------------------
+   Kills cross-system arbitrage as a free-money printer. Three levers:
+   • modCompression — shrinks the per-system price gaps (raw mod deviations from
+     1.0 are scaled by this), so the raw spread between stations is smaller.
+   • Market depth (from your Baron Tier `cap`) + a PERSISTENT, decaying trade
+     impact: buying pushes a system's price up, selling pushes it down, and the
+     nudge lingers (impactHalfLifeMs) — so splitting one big trade into many
+     small ones, or hopping back and forth, closes the gap just the same.
+   • dockK — the docking-time constant; higher = longer hops between stations.
+   See docs and tools/depth_sim for the tuning math.                          */
+const MARKETCFG = {
+  modCompression: 0.6,           // per-system mod deviation kept (0.6 = gaps shrink 40%)
+  dockK: 18,                     // sector docking seconds per distance unit (was 12 — longer hops)
+  impactHalfLifeMs: 25 * 60 * 1000,  // how fast a system's price recovers from your trading
+  impactFloor: -0.85,            // pressure can't drop a price below 15% of spot
+  sellFloorFactor: 0.1,          // a sell fill can't be marked below 10% of spot, however large
+};
+
 /* ---- BATTLE DAMAGE --------------------------------------------------------
    Per-mission-type wear profile, rolled per ship when a mission resolves.
    `chance` = odds of taking any damage on a success; `dmg` = hull fraction
@@ -409,14 +427,18 @@ const RIVALS = [
    ties) and gain a fancier title, a bigger industry-permit cap and fleet cap —
    but pay a permanent, rising tax on all earnings. `threshold` is the net worth
    you must reach to ascend INTO that tier. Beyond the last entry you stay Cosmocrat. */
+// `cap` = the most credits of a single commodity you can move in ONE buy/sell
+// (the per-trade notional ceiling). It also sets the exchange's market depth for
+// that tier: trading near the cap eats heavy slippage, so the exploit of dumping
+// a huge position at one quoted price is gone. Scales with progression.
 const BARON_TIERS = [
-  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  threshold: 0 },
-  { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  threshold: 1000000 },
-  { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  threshold: 2500000 },
-  { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  threshold: 6000000 },
-  { title: "Plutocrat", tax: 0.40, permits: 24, fleet: 7,  threshold: 15000000 },
-  { title: "Potentate", tax: 0.50, permits: 28, fleet: 8,  threshold: 40000000 },
-  { title: "Cosmocrat", tax: 0.60, permits: 32, fleet: 10, threshold: 100000000 },
+  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  cap: 10000,    threshold: 0 },
+  { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  cap: 30000,    threshold: 1000000 },
+  { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  cap: 60000,    threshold: 2500000 },
+  { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  cap: 120000,   threshold: 6000000 },
+  { title: "Plutocrat", tax: 0.40, permits: 24, fleet: 7,  cap: 220000,   threshold: 15000000 },
+  { title: "Potentate", tax: 0.50, permits: 28, fleet: 8,  cap: 350000,   threshold: 40000000 },
+  { title: "Cosmocrat", tax: 0.60, permits: 32, fleet: 10, cap: 500000,   threshold: 100000000 },
 ];
 
 const PRESTIGE = {
@@ -560,6 +582,7 @@ window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
 window.CUSTOMS = CUSTOMS;
 window.EXPEDCFG = EXPEDCFG;
+window.MARKETCFG = MARKETCFG;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
