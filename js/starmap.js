@@ -252,10 +252,11 @@ const StarMap = {
     for (const id in this._nodeEls) {
       const idx = Galaxy.localIndex(id);
       const evt = Galaxy.hasEvent(id);
+      const surv = window.Expeditions && Expeditions.activeFor(id);
       const ring = this._nodeEls[id].ring;
-      ring.setAttribute("stroke", evt ? "#ffc24b" : idx > 0.06 ? "#46d39a" : idx < -0.06 ? "#ff5d73" : "#3a4560");
-      ring.setAttribute("stroke-width", evt ? 3 : 2);
-      ring.classList.toggle("pulse", evt);
+      ring.setAttribute("stroke", surv ? "#5fd7ff" : evt ? "#ffc24b" : idx > 0.06 ? "#46d39a" : idx < -0.06 ? "#ff5d73" : "#3a4560");
+      ring.setAttribute("stroke-width", surv || evt ? 3 : 2);
+      ring.classList.toggle("pulse", !!(surv || evt));
       const docked = this.s().currentSystem === id;
       this._nodeEls[id].g.classList.toggle("docked", docked);
     }
@@ -306,6 +307,12 @@ const StarMap = {
       if (docked) trade = `<span class="badge">you are docked here</span>`;
       else if (unlocked) trade = `<button class="btn btn-go" id="sm-dock">Dock here</button>`;
       else trade = `<button class="btn btn-go" id="sm-unlock">Unlock — ${Util.credits(sys.unlock)}c</button>`;
+    } else if (window.Expeditions) {
+      // backdrop outpost — not a trade hub, but you can dispatch a survey here
+      const exp = Expeditions.activeFor(sys.id), cd = Expeditions.cooldownLeft(sys.id);
+      if (exp) trade = `<span class="badge">🛰 surveying… ETA ${Util.duration(Expeditions.remaining(exp))}</span>`;
+      else if (cd > 0) trade = `<span class="tip-dim">surveyed · again in ${Util.duration(cd)}</span>`;
+      else trade = `<button class="btn btn-go" id="sm-survey">🛰 Survey system</button> <span class="tip-dim">${Expeditions.isFar(sys.id) ? "far · rich but rough" : "nearby · safer"}</span>`;
     } else {
       trade = `<span class="tip-dim">Not a trade hub · view-only outpost</span>`;
     }
@@ -355,6 +362,8 @@ const StarMap = {
       UI.toast(`Unlocked ${sys.name}!`, "good"); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys);
     };
+    const survey = document.getElementById("sm-survey");
+    if (survey) survey.onclick = () => UI.openSurvey(sys.id);
 
     // planet list: hover for a quick-view card, click to open the planet popup
     const tip = this.refs.planetTip;

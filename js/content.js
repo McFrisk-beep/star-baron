@@ -41,6 +41,7 @@ const Content = {
     { key: "DANGER",          label: "Danger tiers",          group: "data" },
     { key: "DMGCFG",          label: "Battle damage",         group: "data" },
     { key: "CUSTOMS",         label: "Customs scans",         group: "data" },
+    { key: "EXPEDCFG",        label: "Anomaly surveys",       group: "data" },
     { key: "RARITIES",        label: "Item rarities",         group: "data" },
     { key: "ACCESSORY_KINDS", label: "Accessory kinds",       group: "data" },
   ],

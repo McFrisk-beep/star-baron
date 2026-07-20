@@ -286,6 +286,31 @@ const CUSTOMS = {
   seize: [0.30, 0.70], // fraction of the held contraband taken on a hit
 };
 
+/* ---- EXPEDITIONS ----------------------------------------------------------
+   Anomaly surveys: dispatch an idle ship to a non-tradeable backdrop system
+   and, after a distance-scaled trip, it resolves (live OR offline) into a
+   weighted outcome — derelict gear, a fresh commodity seam (a real local price
+   event = tradeable insight), a credit windfall, a faction cache, a hazard
+   that damages the hull (reuses the damage system; rarely destroys the ship),
+   or a dry hole. Farther systems are more dangerous: better loot, worse
+   hazards. A per-system cooldown stops back-to-back farming.                  */
+const EXPEDCFG = {
+  legSecondsPerDist: 220,        // round-trip seconds per unit of (0..1) map distance, before ship speed
+  minMs: 20 * 1000,              // floor so a next-door scan still takes a beat
+  cooldownMs: 30 * 60 * 1000,    // a surveyed system can be re-surveyed after this
+  farAt: 0.28,                   // map distance at/above which a system counts as "far" (richer + rougher)
+  rarityBiasMax: 0.6,            // derelict-gear rarity bias at max danger
+  hazardDmg: [0.08, 0.30],       // hull fraction lost on a hazard (scaled by danger)
+  destroyChance: 0.10,           // chance a hazard is catastrophic (ship lost) — scaled by danger
+  creditsBy: { near: [300, 1200], far: [1500, 6000] },
+  seamMult: { scarce: 1.5, glut: 0.62 },   // the price swing a discovered seam applies locally
+  // outcome weights by danger band; rolled once a survey matures
+  weights: {
+    near: { gear: 3, seam: 3, credits: 3, faction: 2, hazard: 1, dry: 4 },
+    far:  { gear: 4, seam: 3, credits: 3, faction: 2, hazard: 4, dry: 2 },
+  },
+};
+
 /* ---- BATTLE DAMAGE --------------------------------------------------------
    Per-mission-type wear profile, rolled per ship when a mission resolves.
    `chance` = odds of taking any damage on a success; `dmg` = hull fraction
@@ -534,6 +559,7 @@ window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
 window.CUSTOMS = CUSTOMS;
+window.EXPEDCFG = EXPEDCFG;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;

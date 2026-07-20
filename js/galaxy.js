@@ -140,9 +140,10 @@ const Galaxy = {
   hasEvent(id) { return Market.activeLocal(id).length > 0; },
 
   // ---- local events (mechanical "valuable insight") ---------------------
-  fireLocalEvent(now = Date.now()) {
-    const sys = Util.pick(this.list);
-    const ev = Util.pick(LOCAL_EVENTS);
+  fireLocalEvent(now = Date.now(), sysId = null, evOverride = null) {
+    const sys = sysId ? this.get(sysId) : Util.pick(this.list);
+    if (!sys) return null;
+    const ev = evOverride || Util.pick(LOCAL_EVENTS);
     let cat, target, commName;
     if (ev.scope === "cat") {
       cat = this.signatureCommodity(sys).cat;
