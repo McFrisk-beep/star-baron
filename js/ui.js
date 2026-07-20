@@ -143,7 +143,8 @@ const UI = {
       const icon = this.el("td", "ico");
       const img = new Image(); img.src = ASSET.commodity(c.id); img.alt = "";
       img.onerror = () => img.replaceWith(this.tintBox(c)); icon.appendChild(img);
-      const name = this.el("td", "name", `${c.name}<span class="cat cat-${c.cat}">${c.cat}</span>`);
+      const risk = c.cat === "illicit" ? `<span class="risk-flag" title="illicit — customs may seize this if you dock while holding it">⚠</span>` : "";
+      const name = this.el("td", "name", `${c.name}<span class="cat cat-${c.cat}">${c.cat}</span>${risk}`);
       const price = this.el("td", "num price"), chg = this.el("td", "num chg"), trend = this.el("td", "trend");
       const held = this.el("td", "num held"), pnl = this.el("td", "num pnl"), act = this.el("td", "actions");
       const T = k => (window.I18n ? I18n.t(k) : k);
@@ -1329,7 +1330,7 @@ const UI = {
     const seized = rc.seized || [], movers = rc.movers || [];
     const senateChanged = rc.senate && (rc.senate.passed.length || rc.senate.repealed.length);
     const anything = reports.length || sold.length || routeTotal || fills.length || made.length
-      || merced.length || seized.length || movers.length || rc.war || rc.warEnded || senateChanged;
+      || merced.length || seized.length || movers.length || rc.war || rc.warEnded || senateChanged || rc.customs;
     if (elapsedMs < 60000 && !anything) return false;
 
     let html = `<p>You were away <b>${Util.duration(elapsedMs)}</b>.</p>`;
@@ -1343,6 +1344,7 @@ const UI = {
     if (rc.war) html += `<p class="wywa-war">⚔ ${rc.war.aggressor} at war with ${rc.war.defender} — ${rc.war.hot} prices spiking, ${rc.war.cold} slumping.</p>`;
     else if (rc.warEnded) html += `<p class="wywa-war">⚔ The ${rc.warEnded} war ended while you were away.</p>`;
     if (seized.length) html += `<p class="down">⚠ Seized for low standing: ${seized.join(", ")} (rebuild from the Star Map).</p>`;
+    if (rc.customs) html += `<p class="down">⚠ Customs seized ${rc.customs.qty} ${rc.customs.name} (${Util.credits(rc.customs.value)}c) as you docked.</p>`;
 
     if (reports.length) {
       html += `<ul class="wywa-runs">` + reports.map(r => {
@@ -1487,6 +1489,13 @@ const UI = {
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
+    Bus.on("customs", ev => {
+      if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
+      this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} (${Util.credits(ev.value)}c) at the ${this.sysName(ev.sysId)} gate.`, "bad", 6000);
+      if (window.Feed) Feed.emit(`customs pulled a baron's ${ev.name.toLowerCase()} at ${this.sysName(ev.sysId)} — ${ev.qty} units gone 🚨`, { kind: "reaction" });
+      this.audioSafe("news"); this.updateHeader();
+      if (this.page === "exchange") this.updateExchange();
+    });
     Bus.on("order", e => {
       if (e.type === "alert") this.toast(`⚐ ${e.comm.name} ${e.side === "below" ? "dropped to" : "rose to"} ${Util.price(e.price)}`, "info", 4500);
       else this.toast(`Order filled — ${e.side === "buy" ? "bought" : "sold"} ${e.qty} ${e.comm.name} @ ${Util.price(e.price)}`, e.side === "buy" ? "buy" : "good", 4500);
