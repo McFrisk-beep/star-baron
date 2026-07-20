@@ -117,6 +117,13 @@ pattern.
   personalities, omens vs. scams, market-moving news events, alien TV, per-system
   local chatter and events, and — on the Star Map — ships that hold **multi-turn
   conversations** with each other. All content lives in `flavor.js`, easy to grow.
+- **Neon command console UI** — the interface is skinned with the *Cyberpunk 2D
+  UI Asset Pack* (by 库克猫 / ckgndodocat — thanks!): a bottom **icon-tile dock**
+  for navigation (each tab is a neon tile; active tile glows), octagon primary
+  buttons on the big CTAs, cyan/magenta accent palette, glow bars, a circuit-board
+  cursor, and faint CRT scanlines. Source art lives in
+  `Cyberpunk_UI_Asset_Pack_v1.3/`; `tools/gen_ui_assets.py` emits the small
+  optimized sprites the game actually ships (`assets/ui/`).
 - **Quality floor** — a fixed **app-shell layout** (the page never scrolls;
   each region — pages, the sub-tabbed Bazaar, the trader chat — scrolls on its
   own), responsive down to phone width (where it relaxes into a natural stack),
