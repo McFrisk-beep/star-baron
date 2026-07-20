@@ -359,19 +359,34 @@ const AdminUI = {
     return grid;
   },
 
+  // Shared upload used by both the gallery and the in-context uploaders (planet
+  // popup, system background). Uploads to the Supabase 'sprites' bucket, records
+  // the URL in ASSET_OVERRIDES (key `cat:item`) and persists it. Returns the URL.
+  async uploadSprite(cat, item, file) {
+    if (!window.Cloud || !Cloud.isAdmin()) throw new Error("Admins only.");
+    if (!(Cloud.client && Cloud.client.storage)) throw new Error("Storage SDK unavailable.");
+    const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const path = `${cat}/${item}.${ext}`;
+    const up = await Cloud.client.storage.from("sprites").upload(path, file, { upsert: true, contentType: file.type || "image/png" });
+    if (up.error) throw up.error;
+    const pub = Cloud.client.storage.from("sprites").getPublicUrl(path);
+    const url = pub.data.publicUrl + "?t=" + Date.now();
+    ASSET_OVERRIDES[`${cat}:${item}`] = url;
+    await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+    return url;
+  },
+  async resetSprite(cat, item) {
+    if (!window.Cloud || !Cloud.isAdmin()) throw new Error("Admins only.");
+    delete ASSET_OVERRIDES[`${cat}:${item}`];
+    await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+  },
+
   async upload(cat, item, file) {
     if (!Cloud.isAdmin()) return;
     if (!Cloud.client.storage) return UI.toast("Storage SDK unavailable.", "warn");
     UI.toast("Uploading…", "info");
     try {
-      const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
-      const path = `${cat}/${item}.${ext}`;
-      const up = await Cloud.client.storage.from("sprites").upload(path, file, { upsert: true, contentType: file.type || "image/png" });
-      if (up.error) throw up.error;
-      const pub = Cloud.client.storage.from("sprites").getPublicUrl(path);
-      const url = pub.data.publicUrl + "?t=" + Date.now();
-      ASSET_OVERRIDES[`${cat}:${item}`] = url;
-      await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+      await this.uploadSprite(cat, item, file);
       UI.toast("Sprite updated. Reload to see it everywhere.", "good");
       this.buildGallery();
     } catch (e) {
@@ -381,8 +396,7 @@ const AdminUI = {
   },
   async resetSlot(cat, item) {
     try {
-      delete ASSET_OVERRIDES[`${cat}:${item}`];
-      await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+      await this.resetSprite(cat, item);
       UI.toast("Reverted to default sprite. Reload to apply.", "good");
       this.buildGallery();
     } catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }

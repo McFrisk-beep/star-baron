@@ -79,9 +79,30 @@ const PlanetView = {
     const sec = Galaxy.sector(sys.sectorId), race = RACES[sys.race];
     r.title.textContent = planet.name;
     r.subtitle.textContent = `${planet.type.replace("_", " ")} · ${sec ? sec.name : ""} · ${race ? race.name : ""} space`;
+    // Admins get an extra tab to set this planet's sprite.
+    const isAdmin = !!(window.Cloud && Cloud.isAdmin());
+    r.tabs.innerHTML = `<button class="subtab active" data-pm="about">About</button>
+      <button class="subtab" data-pm="industries">Industries</button>` +
+      (isAdmin ? `<button class="subtab" data-pm="admin">🛠 Admin</button>` : "");
     this.showTab("about");
     r.modal.classList.remove("hidden");
     this.startScene(planet);
+  },
+
+  // Cached image loader (tracks .ok so the draw loop only paints once loaded).
+  _img(src) {
+    this._imgs = this._imgs || {};
+    let im = this._imgs[src];
+    if (!im) { im = new Image(); im.ok = false; im.onload = () => { im.ok = true; }; im.onerror = () => { im.bad = true; }; im.src = src; this._imgs[src] = im; }
+    return im;
+  },
+  // Custom sprite for the open planet: prefer a per-planet upload, then a custom
+  // per-type planet sprite; null → keep the built-in procedural rendering.
+  _spriteUrl() {
+    if (!this.cur) return null;
+    const { sys, idx, planet } = this.cur;
+    const ov = window.ASSET_OVERRIDES || {};
+    return ov[`planetimg:${sys.id}_${idx}`] || ov[`planet:${planet.type}`] || null;
   },
   close() {
     this.stopScene();
@@ -92,9 +113,51 @@ const PlanetView = {
 
   showTab(name) {
     if (!this.cur) return;
+    if (name === "admin" && !(window.Cloud && Cloud.isAdmin())) name = "about";
     this.tab = name;
     for (const b of this.refs().tabs.querySelectorAll(".subtab")) b.classList.toggle("active", b.dataset.pm === name);
-    if (name === "about") this.renderAbout(); else this.renderIndustries();
+    if (name === "about") this.renderAbout();
+    else if (name === "admin") this.renderAdmin();
+    else this.renderIndustries();
+  },
+
+  // ---- admin: per-planet sprite upload ------------------------------------
+  renderAdmin() {
+    const { sys, idx, planet } = this.cur, r = this.refs();
+    const item = `${sys.id}_${idx}`, key = `planetimg:${item}`;
+    const cur = (window.ASSET_OVERRIDES || {})[key];
+    r.tabbody.innerHTML =
+      `<p class="muted-note">Upload a custom image for <b>${planet.name}</b> — used as this planet's disc here and its thumbnail in the system list. Accepts <b>PNG, JPG or GIF</b> (GIFs animate). <b>Suggested:</b> a square image around <b>512×512px</b>, centered on a transparent background so it reads as a round planet.</p>
+       <div class="pm-admin-preview">${cur ? `<img src="${cur}" alt="current planet sprite" />` : `<span class="muted-note">No custom image — showing the built-in procedural planet.</span>`}</div>
+       <div class="settings-actions">
+         <button class="btn btn-go" id="pm-upload">Upload image</button>
+         ${cur ? `<button class="btn btn-danger" id="pm-reset-img">Reset to default</button>` : ""}
+       </div>
+       <input type="file" id="pm-file" accept="image/png,image/jpeg,image/gif" class="hidden" />`;
+    const file = r.tabbody.querySelector("#pm-file");
+    r.tabbody.querySelector("#pm-upload").onclick = () => file.click();
+    file.onchange = async () => {
+      if (!file.files[0]) return;
+      UI.toast("Uploading…", "info");
+      try {
+        await AdminUI.uploadSprite("planetimg", item, file.files[0]);
+        UI.toast("Planet image updated.", "good");
+        this.startScene(planet); this.showTab("admin");
+        if (window.StarMap) StarMap.refreshInfo();
+      } catch (e) {
+        const msg = (e && e.message) || String(e);
+        UI.toast(/bucket|not found/i.test(msg) ? "Create a public 'sprites' bucket first (see ADMIN_SETUP)." : "Upload failed: " + msg, "warn", 5000);
+      }
+    };
+    const rst = r.tabbody.querySelector("#pm-reset-img");
+    if (rst) rst.onclick = async () => {
+      try {
+        await AdminUI.resetSprite("planetimg", item);
+        UI.toast("Reset to the built-in planet.", "good");
+        this.startScene(planet); this.showTab("admin");
+        if (window.StarMap) StarMap.refreshInfo();
+      } catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }
+    };
   },
 
   renderAbout() {
@@ -240,6 +303,8 @@ const PlanetView = {
     const resize = () => { const r = canvas.parentElement.getBoundingClientRect(); canvas.width = Math.max(260, r.width); canvas.height = Math.max(220, r.height); };
     resize(); this._onResize = resize; window.addEventListener("resize", resize);
     const pal = PLANET_PAL[planet.type] || PLANET_PAL.rocky;
+    const spriteUrl = this._spriteUrl();
+    const sprite = spriteUrl ? this._img(spriteUrl) : null;
     const stars = []; for (let i = 0; i < 90; i++) stars.push({ x: Math.random(), y: Math.random(), b: Math.random() });
     const sats = []; const nsat = 1 + (planet.name.length % 3);
     for (let i = 0; i < nsat; i++) sats.push({ ang: Math.random() * 6.28, rr: 1.32 + i * 0.26, spd: (0.35 + i * 0.12) * (i % 2 ? -1 : 1), size: 1.6 + Math.random() * 1.8 });
@@ -269,7 +334,8 @@ const PlanetView = {
       const glow = ctx.createRadialGradient(cx, cy, pr * 0.72, cx, cy, pr * 1.5);
       glow.addColorStop(0, this._hexA(pal[1], 0)); glow.addColorStop(0.62, this._hexA(pal[1], pulse)); glow.addColorStop(1, this._hexA(pal[1], 0));
       ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, pr * 1.5, 0, 6.28); ctx.fill();
-      this._drawBody(ctx, cx, cy, pr, planet, pal, now, reduced);
+      if (sprite && sprite.ok) this._drawSprite(ctx, cx, cy, pr, sprite);
+      else this._drawBody(ctx, cx, cy, pr, planet, pal, now, reduced);
       // satellites (tilted orbits)
       for (const sa of sats) {
         if (!reduced) sa.ang += sa.spd * dt;
@@ -279,6 +345,21 @@ const PlanetView = {
       if (!reduced) this.raf = requestAnimationFrame(draw);
     };
     if (reduced) draw(performance.now()); else this.raf = requestAnimationFrame(draw);
+  },
+  // Draw an uploaded sprite as the planet disc (cover-fit, clipped to a circle),
+  // with a soft spherical shadow for depth. Works for PNG/JPG and animated GIF.
+  _drawSprite(ctx, cx, cy, pr, img) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, pr, 0, 6.28); ctx.clip();
+    const d = pr * 2;
+    const ar = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
+    let dw = d, dh = d;
+    if (ar > 1) { dh = d; dw = d * ar; } else { dw = d; dh = d / ar; }   // cover the circle
+    try { ctx.drawImage(img, cx - dw / 2, cy - dh / 2, dw, dh); } catch (e) {}
+    ctx.restore();
+    const sh = ctx.createRadialGradient(cx - pr * 0.4, cy - pr * 0.45, pr * 0.3, cx, cy, pr * 1.05);
+    sh.addColorStop(0, "rgba(0,0,0,0)"); sh.addColorStop(1, "rgba(0,0,0,.45)");
+    ctx.fillStyle = sh; ctx.beginPath(); ctx.arc(cx, cy, pr, 0, 6.28); ctx.fill();
   },
   _drawBody(ctx, cx, cy, pr, planet, pal, now, reduced) {
     ctx.save();
