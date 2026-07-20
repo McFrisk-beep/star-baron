@@ -300,6 +300,8 @@ const StarMap = {
     const s = this.s();
     const unlocked = s.unlockedSystems.includes(sys.id);
     const docked = s.currentSystem === sys.id;
+    const isAdmin = !!(window.Cloud && Cloud.isAdmin());
+    const hasBg = !!(window.ASSET_OVERRIDES && ASSET_OVERRIDES[`spacebg:${sys.id}`]);
 
     let trade = "";
     if (sys.tradeable) {
@@ -317,7 +319,7 @@ const StarMap = {
     }).join("");
 
     const planets = sys.planets.map((p, i) => {
-      const im = ASSET.planet(p.type);
+      const im = (window.ASSET_OVERRIDES && ASSET_OVERRIDES[`planetimg:${sys.id}_${i}`]) || ASSET.planet(p.type);
       const ind = window.Industries && Industries.at(sys.id, i);
       let tag = `<span class="p-open">▸ click to open</span>`;
       if (ind) { const st = Industries.status(ind); const comm = COMMODITIES.find(c => c.id === p.commodity);
@@ -335,6 +337,10 @@ const StarMap = {
          <h3>${sys.name}</h3>
          <div class="si-sub" style="color:${race.color}">${sec.name} · ${race.name} space</div>
          <div class="si-trade">${trade}</div>
+         ${isAdmin ? `<div class="si-admin">
+           <button class="btn btn-mini" id="sm-bg-upload" title="Upload PNG / JPG / GIF · suggested 1280×720 (16:9), GIFs animate">🖼 Set space background</button>
+           ${hasBg ? `<button class="btn btn-mini admin-card-reset" id="sm-bg-reset">Reset</button>` : ""}
+         </div>` : ""}
          ${active ? `<div class="si-effects">${active}</div>` : ""}
        </div>
        <h4>Planets &amp; industries</h4>
@@ -355,6 +361,33 @@ const StarMap = {
       UI.toast(`Unlocked ${sys.name}!`, "good"); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys);
     };
+
+    // admin-only: upload a custom space background for this system
+    if (isAdmin) {
+      const up = document.getElementById("sm-bg-upload");
+      if (up) up.onclick = () => {
+        const file = document.createElement("input");
+        file.type = "file"; file.accept = "image/png,image/jpeg,image/gif";
+        file.onchange = async () => {
+          if (!file.files[0]) return;
+          UI.toast("Uploading background…", "info");
+          try {
+            await AdminUI.uploadSprite("spacebg", sys.id, file.files[0]);
+            UI.toast("Space background updated.", "good");
+            this.startScene(sys); this.renderInfo(sys);
+          } catch (e) {
+            const msg = (e && e.message) || String(e);
+            UI.toast(/bucket|not found/i.test(msg) ? "Create a public 'sprites' bucket first (see ADMIN_SETUP)." : "Upload failed: " + msg, "warn", 5000);
+          }
+        };
+        file.click();
+      };
+      const rst = document.getElementById("sm-bg-reset");
+      if (rst) rst.onclick = async () => {
+        try { await AdminUI.resetSprite("spacebg", sys.id); UI.toast("Background reset to default.", "good"); this.startScene(sys); this.renderInfo(sys); }
+        catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }
+      };
+    }
 
     // planet list: hover for a quick-view card, click to open the planet popup
     const tip = this.refs.planetTip;
@@ -432,7 +465,9 @@ const StarMap = {
     }));
     const station = { angle: 0, orbit: 0.16, speed: 0.25, img: this.img(ASSET.station(sys.race)) };
     const starImg = this.img(ASSET.star(sys.star));
-    const neb = this.img(ASSET.nebula(sys.nebula));
+    // Admin-uploaded per-system space background takes precedence over the sector nebula.
+    const bgUrl = (window.ASSET_OVERRIDES && ASSET_OVERRIDES[`spacebg:${sys.id}`]) || ASSET.nebula(sys.nebula);
+    const neb = this.img(bgUrl);
     const aster = sys.asteroidBelt ? this.img(ASSET.asteroids()) : null;
 
     // The hyperspace gate sits at the system's edge: ships warp in here from
