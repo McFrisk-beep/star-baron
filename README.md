@@ -21,7 +21,11 @@ pattern.
 
 - **The Galactic Exchange** — ~12 commodities with live prices (noise + mean
   reversion + slow sector drift), sparklines, % change, held quantity and
-  unrealized P&L. One-click Buy / Sell / Max / All.
+  unrealized P&L. One-click Buy / Sell / Max / All. **Contraband** is a real
+  gamble, not just flavor: dock while holding it and **customs may seize a slice
+  of the stack at the gate** — likelier under Senate border edicts and at
+  systems that barely tolerate illicit trade, softened by your Syndicate
+  standing. Reading the docket (and picking your ports) is the edge.
 - **The Fleet** — a roster of **persistent ships with combat stats** (hull,
   armor, shields, firepower) plus cargo and speed, modified by equipped
   accessories and your flagship's passive bonus. A separate **main/flagship**

@@ -142,7 +142,8 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    Economy.checkArrival(now);
+    const arrival = Economy.checkArrival(now);
+    away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
     const offlineReports = Missions.resolveMatured(now);
     const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
     const offlineSold = Bazaar.tick(now);
@@ -396,7 +397,7 @@ const Game = {
     else if (away.warBefore) warEnded = `${FACTIONS[away.warBefore.a].name}–${FACTIONS[away.warBefore.b].name}`;
     const nwAfter = Economy.netWorth();
     const senate = window.Senate ? Senate.recapSince(away.senateSince, now) : null;
-    return { nwBefore: away.nwBefore, nwAfter, nwDelta: nwAfter - away.nwBefore, movers: movers.slice(0, 3), seized, war, warEnded, senate };
+    return { nwBefore: away.nwBefore, nwAfter, nwDelta: nwAfter - away.nwBefore, movers: movers.slice(0, 3), seized, war, warEnded, senate, customs: away.customs || null };
   },
 
   snapshot() {

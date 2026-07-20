@@ -128,6 +128,7 @@ table.market { width: 100%; border-collapse: collapse; font-family: var(--mono);
   text-transform: uppercase; letter-spacing: .5px; background: #232b45; color: var(--ink-dim); font-weight: 600; }
 .cat-mineral { color: #9aa9c8; } .cat-gas { color: #79c7ff; } .cat-agri { color: #78d278; }
 .cat-tech { color: #5fd7c9; } .cat-luxury { color: #ff9a4b; } .cat-illicit { color: #ff6b6b; }
+.risk-flag { margin-left: 5px; font-size: 10px; color: #ff6b6b; cursor: help; }
 .market .price { font-weight: 700; transition: color .2s; }
 .market .price.up { animation: pflash-up .6s ease; }
 .market .price.down { animation: pflash-down .6s ease; }

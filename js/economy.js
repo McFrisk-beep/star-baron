@@ -142,10 +142,37 @@ const Economy = {
     if (s.travel && now >= s.travel.departedAt + s.travel.etaMs) {
       const to = s.travel.to;
       s.currentSystem = to; s.travel = null;
+      const customs = this.customsScan(to);       // gate scan before the exchange opens
       Bus.emit("dock", { sysId: to, arrived: true });
-      return to;
+      return { to, customs };
     }
     return null;
+  },
+
+  // Customs scan on arrival: if you're carrying contraband, roll a seizure and
+  // confiscate a slice of the stack. Odds rise with Senate border edicts and at
+  // low-tolerance systems, and fall with Syndicate standing. Returns the
+  // seizure event (also emitted on the bus) or null. Reused live + offline.
+  customsScan(sysId) {
+    const s = this.s();
+    const held = s.positions.contraband || 0;
+    if (held <= 0) return null;
+    const comm = COMMODITIES.find(c => c.id === "contraband"); if (!comm) return null;
+    const sys = SYSTEMS.find(x => x.id === sysId);
+    const tol = (sys && sys.mods && sys.mods.illicit) || 1;
+    const scrutiny = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
+    const border = window.Senate ? Senate.smuggleFailAdd() : 0;
+    const shield = Math.max(0, Rep.get("syndicate")) / 100 * CUSTOMS.repShield;
+    const chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
+    if (Math.random() >= chance) return null;
+    const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
+    const value = Math.round(qty * this.priceHere("contraband"));
+    s.positions.contraband = held - qty;
+    if (s.positions.contraband <= 0) { s.positions.contraband = 0; s.avgCost.contraband = 0; } // stack cleared → drop its cost basis
+    this.refreshNetWorth();
+    const ev = { commId: "contraband", name: comm.name, qty, value, sysId, chance };
+    Bus.emit("customs", ev);
+    return ev;
   },
   travelProgress() {
     const t = this.s().travel; if (!t) return 1;

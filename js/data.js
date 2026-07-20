@@ -270,6 +270,22 @@ const DANGER = [
   { id: "extreme",  label: "Extreme",  baseSuccess: 0.25, pay: 3.8, fpScale: 450 },
 ];
 
+/* ---- CUSTOMS --------------------------------------------------------------
+   A docking scan that makes CARRYING contraband on the exchange genuinely
+   risky, not just a flavor commodity. On arrival, if you hold contraband,
+   customs may seize a slice of the stack — likelier under Senate border edicts
+   (reuses smuggleFailAdd) and at systems that barely tolerate illicit trade
+   (their low `illicit` price mod = tighter scrutiny), softened by Syndicate
+   standing (they grease the dockmaster). Losing the goods is the whole
+   penalty — no fine on top. Pairs with the smuggle-contract impound path.    */
+const CUSTOMS = {
+  base: 0.10,          // baseline seizure odds when carrying contraband through a scan
+  cap: 0.85,           // never a certainty — a bribe/tip edge always exists
+  repShield: 0.30,     // Friendly Syndicate cuts the odds by up to this at +100 standing
+  scrutinyClamp: [0.5, 1.6], // system-tolerance multiplier bounds (2 − illicit mod)
+  seize: [0.30, 0.70], // fraction of the held contraband taken on a hit
+};
+
 /* ---- BATTLE DAMAGE --------------------------------------------------------
    Per-mission-type wear profile, rolled per ship when a mission resolves.
    `chance` = odds of taking any damage on a success; `dmg` = hull fraction
@@ -517,6 +533,7 @@ window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
+window.CUSTOMS = CUSTOMS;
 window.ROUTECFG = ROUTECFG;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
