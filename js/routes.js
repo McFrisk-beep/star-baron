@@ -63,10 +63,28 @@ const Routes = {
     return { ok: true };
   },
 
+  // Roll a random event for a banking run (see ROUTE_EVENTS). Returns null for a
+  // quiet, ordinary run. `per` is one cycle's base profit; the event's swing is
+  // scaled to it so a single event can never move more than one shipment — safe
+  // even when a long offline catch-up banks many cycles at once.
+  rollEvent(route, per) {
+    if (!(per > 0) || !window.ROUTE_EVENTS || Math.random() >= ROUTECFG.eventChance) return null;
+    const total = ROUTE_EVENTS.reduce((n, e) => n + e.w, 0);
+    let r = Math.random() * total, ev = ROUTE_EVENTS[0];
+    for (const e of ROUTE_EVENTS) { if ((r -= e.w) < 0) { ev = e; break; } }
+    const delta = Math.round(per * (Util.randFloat(ev.mult[0], ev.mult[1]) - 1));   // change vs a normal shipment
+    const out = { id: ev.id, msg: ev.msg, good: !!ev.good, delta, comm: route.comm, from: route.from, to: route.to };
+    if (ev.dmg) {                                                                    // wear a random ship on the route
+      const sh = Util.pick(this.shipsOf(route));
+      if (sh) { const before = sh.dmg || 0; Fleet.addDamage(sh, Util.randFloat(ev.dmg[0], ev.dmg[1])); out.ship = { name: sh.name, pct: Math.round((sh.dmg - before) * 100) }; }
+    }
+    return out;
+  },
+
   // Bank completed round trips up to `now`. A route whose endpoints are no longer
   // unlocked just pauses; a route whose ships all vanished is removed.
   resolve(now = Date.now()) {
-    let total = 0; const runs = []; const u = this.s().unlockedSystems;
+    let total = 0; const runs = [], events = []; const u = this.s().unlockedSystems;
     for (const route of this.list()) {
       route.shipUids = route.shipUids.filter(uid => { const sh = Fleet.ship(uid); return sh && sh.status === "trading"; });
       if (!route.shipUids.length) { route._dead = true; continue; }
@@ -74,13 +92,16 @@ const Routes = {
       if (!u.includes(route.from) || !u.includes(route.to)) { if (now >= route.nextAt) route.nextAt = now + cycleMs; continue; }
       if (now < route.nextAt) continue;
       const cycles = Math.min(Math.floor((now - route.nextAt) / cycleMs) + 1, ROUTECFG.maxCyclesPerResolve);
-      const gain = this.estimate(route).profit * cycles;
-      if (gain > 0) { total += gain; runs.push({ comm: route.comm, gain, cycles }); }
+      const per = this.estimate(route).profit;
+      const ev = this.rollEvent(route, per);
+      const gain = per * cycles + (ev ? ev.delta : 0);
+      if (gain !== 0) { total += gain; runs.push({ comm: route.comm, gain, cycles }); }
+      if (ev) events.push(ev);
       route.nextAt = now + cycleMs;
     }
     this.s().routes = this.list().filter(r => !r._dead);
-    if (total) { total = Economy.afterTax(total); this.s().credits += total; Economy.refreshNetWorth(); }   // Baron Tier earnings tax
-    return { total, runs };
+    if (total) { total = Economy.afterTax(total); this.s().credits = Math.max(0, this.s().credits + total); Economy.refreshNetWorth(); }   // Baron Tier earnings tax (losses pass through untaxed; never drive credits below 0)
+    return { total, runs, events };
   },
 };
 

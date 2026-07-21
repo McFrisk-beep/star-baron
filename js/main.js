@@ -249,6 +249,7 @@ const Game = {
     Fleet.pruneMercs(now);
     Rivals.tick(now);
     const routed = Routes.resolve(now);
+    for (const ev of routed.events) Bus.emit("routeEvent", ev);
     const orderEv = Orders.process();
     for (const ev of orderEv) Bus.emit("order", ev);
     const made = Industries.resolve(now);

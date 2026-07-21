@@ -174,7 +174,26 @@ const ROUTECFG = {
   margin: 0.5,              // ship keeps this × (spread × cargo) per round trip (the rest is "friction/fuel")
   legSecondsPerDist: 150,   // round-trip seconds = 2 × distance × this ÷ ship speed (tune transit length here)
   maxCyclesPerResolve: 50,  // cap round trips banked in a single catch-up (anti-windfall on long idles)
+  eventChance: 0.45,        // odds a banking run rolls a random event (else it's a quiet, ordinary run)
 };
+
+/* ---- TRADE-ROUTE EVENTS ---------------------------------------------------
+   Rolled once each time an automated route banks a batch of round trips
+   (routes.js). `w` is the relative weight; `mult` is a range applied to ONE
+   shipment's worth of profit so a swing can never exceed a single cycle (safe
+   for long offline catch-ups). `dmg`, if set, wears a random ship on the route
+   by that hull fraction. `good`/`bad` pick the toast tone + ± sign. Flavor is
+   surfaced live as a toast and in the "while you were away" recap.            */
+const ROUTE_EVENTS = [
+  { id: "bribe",    w: 3, mult: [0.55, 0.85], msg: "paid a bribe to slip cargo past a checkpoint" },
+  { id: "pirates",  w: 3, mult: [-0.4, 0.5],  msg: "pirates boarded and skimmed part of the haul" },
+  { id: "reroute",  w: 3, mult: [0.55, 0.9],  msg: "re-routed around a blockade and lost time" },
+  { id: "badtrade", w: 2, mult: [-0.5, 0.4],  msg: "misjudged demand and traded at a loss" },
+  { id: "damage",   w: 2, mult: [0.85, 1.05], dmg: [0.03, 0.09], msg: "took hull damage shaking off a tail" },
+  { id: "customs",  w: 2, mult: [0.4, 0.8],   msg: "customs docked a cut in duties" },
+  { id: "fastdeal", w: 3, mult: [1.25, 1.7],  good: true, msg: "beat rivals to a hot buyer for a bonus" },
+  { id: "windfall", w: 2, mult: [1.2, 1.55],  good: true, msg: "hit a supply crunch and sold dear" },
+];
 
 /* ---- INCIDENTS ------------------------------------------------------------
    Random choice-driven encounters during active play (incidents.js). Timer
@@ -322,11 +341,15 @@ const EXPEDCFG = {
    • dockK — the docking-time constant; higher = longer hops between stations.
    See docs and tools/depth_sim for the tuning math.                          */
 const MARKETCFG = {
-  modCompression: 0.6,           // per-system mod deviation kept (0.6 = gaps shrink 40%)
+  modCompression: 0.35,          // per-system mod deviation kept (0.35 = gaps shrink 65%; smaller cross-station spread → less arbitrage)
   dockK: 18,                     // sector docking seconds per distance unit (was 12 — longer hops)
   impactHalfLifeMs: 25 * 60 * 1000,  // how fast a system's price recovers from your trading
   impactFloor: -0.85,            // pressure can't drop a price below 15% of spot
   sellFloorFactor: 0.1,          // a sell fill can't be marked below 10% of spot, however large
+  // Your own trade moves the local price along a GENTLER slope than the trade
+  // cap: impact is computed against depth × this, so a big order jumps the price
+  // far less than before (still linear, so splitting an order can't dodge it).
+  impactSoftening: 3,            // 1 = old behaviour; higher = flatter price response to order size
 };
 
 /* ---- BATTLE DAMAGE --------------------------------------------------------
@@ -584,6 +607,7 @@ window.CUSTOMS = CUSTOMS;
 window.EXPEDCFG = EXPEDCFG;
 window.MARKETCFG = MARKETCFG;
 window.ROUTECFG = ROUTECFG;
+window.ROUTE_EVENTS = ROUTE_EVENTS;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
 window.INDUSTRYCFG = INDUSTRYCFG;

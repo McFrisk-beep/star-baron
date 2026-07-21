@@ -52,6 +52,10 @@ const Economy = {
   // decaying pressure into Market so splitting a big order into small ones — or
   // hopping back and forth — closes the gap just the same.
   depth() { return this.tierInfo().cap || 10000; },
+  // Depth used ONLY for price impact (how hard your trading moves the local
+  // price). Decoupled from the trade cap so we can flatten the price response to
+  // order size without also raising the notional a single trade may move.
+  impactDepth() { return this.depth() * (window.MARKETCFG ? (MARKETCFG.impactSoftening || 1) : 1); },
   spotHere(commId) { return Market.spot(commId, this.s().currentSystem); },
 
   // {a,b} such that a buy costs a·q + b·q² and a sell nets a·q − b·q² (gross,
@@ -62,7 +66,7 @@ const Economy = {
     const tax = window.Senate ? Senate.tradeTax(cat, side) : 0;
     const base = side === "buy" ? spot0 * (1 + this._spread(cat)) * (1 + tax)
                                 : spot0 * (1 - this._spread(cat)) * (1 - tax);
-    return { spot0, p0, base, a: base * (1 + p0), b: base * spot0 / (2 * this.depth()) };
+    return { spot0, p0, base, a: base * (1 + p0), b: base * spot0 / (2 * this.impactDepth()) };
   },
   // most units you may BUY without spending more than L credits (cost ≤ L)
   _buyQtyForSpend(commId, L) {
@@ -114,7 +118,7 @@ const Economy = {
     const capped = qty > capQ; if (capped) qty = capQ;
     const now = Date.now(), sys = s.currentSystem;
     const { spot0, p0, base } = this._quote(commId, "buy");
-    const dP = spot0 * qty / this.depth();                            // pressure this order adds
+    const dP = spot0 * qty / this.impactDepth();                      // pressure this order adds (gentler than the cap)
     const avg = base * (1 + p0 + dP / 2);                             // average fill over the rising price
     const cost = avg * qty;
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
@@ -140,7 +144,7 @@ const Economy = {
     const capped = qty > capQ; if (capped) qty = capQ;
     const now = Date.now(), sys = s.currentSystem;
     const { spot0, p0, base } = this._quote(commId, "sell");
-    const dP = spot0 * qty / this.depth();                            // pressure this order removes
+    const dP = spot0 * qty / this.impactDepth();                      // pressure this order removes (gentler than the cap)
     const price = base * Math.max(MARKETCFG.sellFloorFactor, 1 + p0 - dP / 2);   // average fill over the falling price
     const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
     const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;   // Baron Tier earnings tax (on profit)

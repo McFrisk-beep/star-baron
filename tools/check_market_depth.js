@@ -29,13 +29,14 @@ const reset = (tier = 0, sysId = "korrin", credits = 1e12) => {
   Market.tradeImpact = {}; ctx.Game = { state: freshState(tier, sysId, credits) };
 };
 
-// 1) mod compression: korrin mineral raw 0.65 → 1+(0.65-1)*0.6 = 0.79
+// 1) mod compression: korrin mineral raw 0.65 → 1+(0.65-1)*K, K = modCompression
 reset();
-assert(approx(Market.spot(IRON, "korrin"), BASE * 0.79, 1e-9), "compressed mod applied to spot");
+const K = MARKETCFG.modCompression;
+assert(approx(Market.spot(IRON, "korrin"), BASE * (1 + (0.65 - 1) * K), 1e-9), "compressed mod applied to spot");
 // raw best/worst gap vs compressed gap for minerals across the capitals
 const rawMods = SYSTEMS.map(s => s.mods.mineral), compMods = SYSTEMS.map(s => Market._mod("mineral", s.id));
 const rawGap = Math.max(...rawMods) - Math.min(...rawMods), compGap = Math.max(...compMods) - Math.min(...compMods);
-assert(compGap < rawGap && approx(compGap, rawGap * 0.6, 1e-9), "inter-system gap compressed 40%");
+assert(compGap < rawGap && approx(compGap, rawGap * K, 1e-9), `inter-system gap compressed to ${(K * 100) | 0}%`);
 
 // 2) split-proof: one order of 300 costs the same as ten orders of 30
 reset();
