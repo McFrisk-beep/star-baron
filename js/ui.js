@@ -1389,11 +1389,12 @@ const UI = {
   // first-run tutorial after it).
   showWYWA({ elapsedMs, reports, sold, routed, orders, industry, mercs, recap }) {
     const routeTotal = (routed && routed.total) || 0;
+    const routeEvents = (routed && routed.events) || [];
     const fills = (orders || []).filter(e => e.type === "filled");
     const made = industry || [], merced = mercs || [], rc = recap || {};
     const seized = rc.seized || [], movers = rc.movers || [];
     const senateChanged = rc.senate && (rc.senate.passed.length || rc.senate.repealed.length);
-    const anything = reports.length || sold.length || routeTotal || fills.length || made.length
+    const anything = reports.length || sold.length || routeTotal || routeEvents.length || fills.length || made.length
       || merced.length || seized.length || movers.length || rc.war || rc.warEnded || senateChanged || rc.customs;
     if (elapsedMs < 60000 && !anything) return false;
 
@@ -1419,7 +1420,13 @@ const UI = {
           : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
       }).join("") + `</ul>`;
     }
-    if (routeTotal) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
+    if (routeTotal > 0) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
+    if (routeEvents.length) html += `<ul class="wywa-runs">` + routeEvents.map(ev => {
+      const cn = (COMMODITIES.find(c => c.id === ev.comm) || {}).name || ev.comm;
+      const amt = ev.delta ? ` <span class="${ev.delta > 0 ? "up" : "down"}">(${ev.delta > 0 ? "+" : "−"}${Util.credits(Math.abs(ev.delta))}c)</span>` : "";
+      const wear = ev.ship ? ` · 🔧 ${ev.ship.name} −${ev.ship.pct}%` : "";
+      return `<li>${cn} run: ${ev.msg}${amt}${wear}</li>`;
+    }).join("") + `</ul>`;
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
     if (made.length) {
       const agg = {};
@@ -1567,6 +1574,16 @@ const UI = {
       if (this.page === "fleet") this.renderFleet();
       if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
+    });
+    Bus.on("routeEvent", ev => {
+      if (window.Game._booting) return;   // offline route events land in the "while you were away" recap
+      const cn = (COMMODITIES.find(c => c.id === ev.comm) || {}).name || ev.comm;
+      const amt = ev.delta ? ` (${ev.delta > 0 ? "+" : "−"}${Util.credits(Math.abs(ev.delta))}c)` : "";
+      const wear = ev.ship ? ` · 🔧 ${ev.ship.name} −${ev.ship.pct}%` : "";
+      this.toast(`${cn} run: ${ev.msg}${amt}${wear}`, ev.good ? "good" : "warn", 5500);
+      if (window.Feed) Feed.emit(`word is a baron's ${cn.toLowerCase()} convoy ${ev.msg}`, { kind: "reaction" });
+      if (this.page === "fleet") this.renderFleet();
+      this.updateHeader(); this.audioSafe(ev.good ? "good" : "news");
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
