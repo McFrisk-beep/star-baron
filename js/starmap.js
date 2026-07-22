@@ -59,6 +59,7 @@ const StarMap = {
     this.refs.overlay.classList.remove("hidden");
     document.body.classList.add("starmap-open");   // floats the command dock above the overlay (see CSS)
     this.showGalaxy();
+    if (window.UI) UI.updateNavIndicator();        // slide the dock glow onto Star Map
   },
   // Nav "Star Map" tab: open when closed, close when already open.
   toggle() { this.open ? this.close() : this.openGalaxy(); },
@@ -69,6 +70,7 @@ const StarMap = {
     this.stopSystem();
     this.stopStars();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
+    if (window.UI) UI.updateNavIndicator();        // restore glow to the underlying page tab
   },
   showGalaxy() {
     this.stopSystem();
