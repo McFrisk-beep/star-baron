@@ -747,6 +747,7 @@ body.starmap-open .tab[data-page="starmap"] { color: var(--accent); }
   filter: brightness(.5) saturate(.7); transition: filter .18s ease; }
 .tab[data-page="exchange"]   .tab-ico { background-image: url("../assets/ui/nav_exchange.png"); }
 .tab[data-page="fleet"]      .tab-ico { background-image: url("../assets/ui/nav_fleet.png"); }
+.tab[data-page="starmap"]    .tab-ico { background-image: url("../assets/ui/nav_starmap.png"); }
 .tab[data-page="systems"]    .tab-ico { background-image: url("../assets/ui/nav_systems.png"); }
 .tab[data-page="bazaar"]     .tab-ico { background-image: url("../assets/ui/nav_bazaar.png"); }
 .tab[data-page="industries"] .tab-ico { background-image: url("../assets/ui/nav_industries.png"); }
