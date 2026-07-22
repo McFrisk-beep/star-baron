@@ -84,6 +84,8 @@ const UI = {
 
   // ===== tabs ==============================================================
   showPage(name) {
+    if (name === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // star map is an overlay, not a page
+    if (window.StarMap && StarMap.open) StarMap.close();                        // picking any section leaves the star map
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
@@ -1504,7 +1506,11 @@ const UI = {
 
   wireControls() {
     const r = this.refs;
-    this.refs.tabs.onclick = e => { const t = e.target.closest(".tab"); if (t) this.showPage(t.dataset.page); };
+    this.refs.tabs.onclick = e => {
+      const t = e.target.closest(".tab"); if (!t) return;
+      if (t.dataset.page === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // overlay, not a page — leaves the underlying page active
+      this.showPage(t.dataset.page);
+    };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
