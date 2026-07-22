@@ -35,10 +35,10 @@ const StarMap = {
       stars: $("galaxy-stars"),
       galaxyView: $("galaxy-view"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
-      title: $("sm-title"), crumbSys: $("sm-crumb-sys"),
+      title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
       btnOpen: $("btn-starmap"), btnClose: $("sm-close"), toGalaxy: $("sm-to-galaxy"),
     };
-    this.refs.btnOpen.onclick = () => this.openGalaxy();
+    if (this.refs.btnOpen) this.refs.btnOpen.onclick = () => this.openGalaxy();   // legacy header button (now the nav "Star Map" tab)
     this.refs.btnClose.onclick = () => this.close();
     this.refs.toGalaxy.onclick = () => this.showGalaxy();
     document.addEventListener("keydown", e => {
@@ -57,11 +57,15 @@ const StarMap = {
   openGalaxy() {
     this.open = true;
     this.refs.overlay.classList.remove("hidden");
+    document.body.classList.add("starmap-open");   // floats the command dock above the overlay (see CSS)
     this.showGalaxy();
   },
+  // Nav "Star Map" tab: open when closed, close when already open.
+  toggle() { this.open ? this.close() : this.openGalaxy(); },
   close() {
     this.open = false;
     this.refs.overlay.classList.add("hidden");
+    document.body.classList.remove("starmap-open");
     this.stopSystem();
     this.stopStars();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
@@ -466,6 +470,72 @@ const StarMap = {
     window.addEventListener("resize", resize);
 
     const W = () => canvas.width, H = () => canvas.height;
+
+    // ---- pan / zoom camera: drag to pan, wheel / pinch to zoom -------------
+    // screen = world × zoom + (x,y). Applied only to the SCENE content (star,
+    // planets, station, ships), so the nebula backdrop + starfield stay put and
+    // give a little parallax as you pan. Reset per system (fresh closure).
+    const cam = { zoom: 1, x: 0, y: 0 };
+    const MINZ = 0.7, MAXZ = 4;
+    const clampCam = () => {
+      cam.zoom = Util.clamp(cam.zoom, MINZ, MAXZ);
+      const cxW = W() / 2, cyW = H() / 2;                 // keep the star (system centre) on-screen
+      cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
+      cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
+    };
+    // the live loop repaints itself; reduced-motion mode draws one frame so it needs a nudge
+    const redraw = () => { if (reduced) draw(performance.now()); };
+    let hintTimer = 0;
+    const hideHint = () => { clearTimeout(hintTimer); if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); };
+    const zoomAt = (fx, fy, factor) => {
+      const wx = (fx - cam.x) / cam.zoom, wy = (fy - cam.y) / cam.zoom;
+      cam.zoom = Util.clamp(cam.zoom * factor, MINZ, MAXZ);
+      cam.x = fx - wx * cam.zoom; cam.y = fy - wy * cam.zoom;
+      clampCam(); hideHint(); redraw();
+    };
+    const panBy = (dx, dy) => { cam.x += dx; cam.y += dy; clampCam(); hideHint(); redraw(); };
+
+    // show the drag/zoom hint fresh each time a system opens; fade after a moment
+    if (this.refs.sceneHint) {
+      this.refs.sceneHint.classList.remove("faded");
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(() => { if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); }, 6000);
+    }
+
+    // input: 1 pointer drag = pan · wheel = zoom · 2 pointers = pinch-zoom
+    const ptrs = new Map();
+    let pinchPrev = null;
+    const rectOf = () => canvas.getBoundingClientRect();
+    const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
+    const onMove = e => {
+      const p = ptrs.get(e.pointerId); if (!p) return;
+      const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+      if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
+        const pts = [...ptrs.values()], r = rectOf();
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
+        if (pinchPrev && dist > 0) { zoomAt(mid.x, mid.y, dist / pinchPrev.dist); panBy(mid.x - pinchPrev.mid.x, mid.y - pinchPrev.mid.y); }
+        pinchPrev = { dist, mid };
+        return;
+      }
+      panBy(e.clientX - px, e.clientY - py);
+    };
+    const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
+    const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
+    canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    this._sceneCtrlCleanup = () => {
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("wheel", onWheel);
+      clearTimeout(hintTimer);
+    };
+
     const planets = sys.planets.map((p, i) => ({
       p, angle: (i * 2.39996) % (Math.PI * 2),
       orbit: 0.28 + (i / Math.max(1, sys.planets.length)) * 0.62,
@@ -565,6 +635,10 @@ const StarMap = {
       ctx.fillStyle = "#fff";
       for (const st of stars) { ctx.globalAlpha = 0.3 + st.b * 0.5; ctx.fillRect(st.x * w, st.y * h, 1.3, 1.3); }
       ctx.globalAlpha = 1;
+
+      // everything below is scene content — apply the pan/zoom camera to it
+      ctx.save();
+      ctx.setTransform(cam.zoom, 0, 0, cam.zoom, cam.x, cam.y);
 
       // orbits
       ctx.strokeStyle = "rgba(150,170,220,.12)"; ctx.lineWidth = 1;
@@ -667,6 +741,8 @@ const StarMap = {
       }
       // speech bubbles ride on top of everything
       for (const sh of ships) this._drawBubble(ctx, sh, w, h);
+
+      ctx.restore();   // end camera transform
 
       if (!reduced) this.raf = requestAnimationFrame(draw);
     };
@@ -824,6 +900,7 @@ const StarMap = {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = null;
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._onResize = null; }
+    if (this._sceneCtrlCleanup) { this._sceneCtrlCleanup(); this._sceneCtrlCleanup = null; }
   },
 
   // ===== galaxy starfield =================================================

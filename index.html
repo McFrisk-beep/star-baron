@@ -26,7 +26,6 @@
       <div class="stat stat-stealth"><label data-i18n="hud.cycle">Cycle</label><span id="hud-clock">—</span></div>
     </div>
     <div class="topbtns">
-      <button id="btn-starmap" class="btn btn-map" data-i18n="btn.starmap">🗺 Star Map</button>
       <button id="btn-account" class="btn hidden" data-i18n="btn.signin">Sign in</button>
       <button id="btn-admin" class="btn hidden" data-i18n="btn.admin">🛠 Admin</button>
       <button id="btn-prestige" class="btn btn-prestige hidden">Ascend ▸</button>
@@ -43,6 +42,7 @@
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
             <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="starmap"><span class="tab-ico" aria-hidden="true">🗺️</span><span class="tab-label" data-i18n="nav.starmap">Star Map</span></button>
           <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
           <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
             <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label" data-i18n="nav.industries">Industries</span></button>
@@ -199,7 +199,9 @@
       </div>
     </div>
     <div class="system-view hidden" id="system-view">
-      <div class="system-scene"><canvas id="system-canvas"></canvas></div>
+      <div class="system-scene"><canvas id="system-canvas"></canvas>
+        <div class="scene-hint" id="sm-scene-hint" aria-hidden="true">✥ drag to pan · scroll or pinch to zoom</div>
+      </div>
       <aside class="system-info" id="system-info"></aside>
       <div class="planet-tip" id="planet-tip"></div>
     </div>
