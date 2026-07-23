@@ -27,6 +27,15 @@ begin
 end;
 $$;
 
+-- Low 32 bits of a 32×32-bit product, matching JS Math.imul(a,b) >>> 0.
+-- Done in `numeric` because a plain bigint multiply of two ~2^32 operands can
+-- reach ~2^64 and overflow bigint (max ~9.2e18); JS wraps mod 2^32, so must we.
+create or replace function market.imul32(p_a bigint, p_b bigint)
+returns bigint
+language sql immutable strict as $$
+  select (((p_a & 4294967295)::numeric * (p_b & 4294967295)::numeric) % 4294967296)::bigint;
+$$;
+
 -- mulberry32 draw n (0-based) → double in [0,1).
 create or replace function market.u01(p_seed bigint, p_n int default 0)
 returns double precision
@@ -40,8 +49,8 @@ begin
   for i in 0..p_n loop
     a := (a + 1831565813) & 4294967295;             -- 0x6D2B79F5
     t := a;
-    t := ((t # (t >> 15)) * ((t | 1) & 4294967295)) & 4294967295;
-    t := (t # ((t + (((t # (t >> 7)) * ((t | 61) & 4294967295)) & 4294967295)) & 4294967295)) & 4294967295;
+    t := market.imul32(t # (t >> 15), t | 1) & 4294967295;
+    t := (t # ((t + market.imul32(t # (t >> 7), t | 61)) & 4294967295)) & 4294967295;
     r := ((t # (t >> 14)) & 4294967295)::double precision / 4294967296.0;
   end loop;
   return r;
