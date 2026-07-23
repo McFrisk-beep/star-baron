@@ -215,6 +215,12 @@ const Cloud = {
   async prestige() {
     return this.rpc("app_prestige");
   },
+  async routeStart(comm, from, to, shipUids) {
+    return this.rpc("app_route_start", { p_comm: comm, p_from: from, p_to: to, p_ship_uids: shipUids });
+  },
+  async routeStop(routeId) {
+    return this.rpc("app_route_stop", { p_route_id: routeId });
+  },
 
   // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------
   async loadRemote() {

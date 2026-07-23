@@ -455,9 +455,12 @@ const UI = {
         <div class="route-foot"><b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip ·
           ~${Util.credits(Math.round(e.perHour))}c/hr · cargo ${e.cargo} · <span class="muted-note">next ${Util.duration(eta)}</span></div></div>`;
     }).join("");
-    this.refs.fleetRoutes.onclick = ev => {
+    this.refs.fleetRoutes.onclick = async ev => {
       const st = ev.target.closest("[data-stoproute]"); if (!st) return;
-      Routes.stop(st.dataset.stoproute); this.toast("Route stopped — ships idle.", "info");
+      if (Economy.busy()) return;
+      const res = await Routes.stop(st.dataset.stoproute);
+      if (res && res.ok === false && res.msg) return this.toast(res.msg, "warn");
+      this.toast("Route stopped — ships idle.", "info");
       window.Game.requestSave(); this.renderFleet();
     };
   },
@@ -1569,9 +1572,10 @@ const UI = {
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
     r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
     r.incClose.onclick = () => r.incident.classList.add("hidden");
-    r.rtStart.onclick = () => {
+    r.rtStart.onclick = async () => {
+      if (Economy.busy()) return;
       const { comm, from, to } = this._routeSel();
-      const res = Routes.start(this.selectedRouteShips(), comm, from, to);
+      const res = await Routes.start(this.selectedRouteShips(), comm, from, to);
       if (!res.ok) return this.toast(res.msg, "warn");
       this.toast("Trade route started ▸", "good");
       r.route.classList.add("hidden");

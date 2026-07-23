@@ -36,6 +36,28 @@ language sql immutable as $$
     else 0.6 end;
 $$;
 
+-- Component effect RECOMPUTED from kind + rarity (never the client's `amount`),
+-- matching Components.gen in js/extractors.js: base × RARITIES[rarity].mult.
+-- Bounds a forged component (e.g. amount:9999) to its legit ceiling (≤0.40).
+create or replace function app._component_amount(p_kind text, p_rarity text)
+returns double precision
+language sql immutable as $$
+  select (case p_kind when 'rate' then 0.08 when 'speed' then 0.06 else 0 end)
+    * (case coalesce(p_rarity, 'common')
+        when 'common' then 1.0 when 'uncommon' then 1.5 when 'rare' then 2.3
+        when 'epic' then 3.4 when 'legendary' then 5.0 else 1.0 end);
+$$;
+
+-- Baron-tier industry permit cap (BARON_TIERS[].permits). Bounds how many
+-- industries can produce in one pull so forged extras can't multiply output.
+create or replace function app._permit_cap(p_tier int)
+returns int
+language sql immutable as $$
+  select case greatest(0, least(coalesce(p_tier, 0), 6))
+    when 0 then 8 when 1 then 12 when 2 then 16 when 3 then 20
+    when 4 then 24 when 5 then 28 else 32 end;
+$$;
+
 -- Planet suitability lookup (PLANET_SUITABILITY in js/data.js). Unknown → 1.
 create or replace function app._planet_suit(p_type text, p_cat text)
 returns double precision
@@ -356,9 +378,13 @@ declare
   rep_v double precision;
   cat text;
   next_at bigint;
+  comp_n int;
+  prod_n int := 0;
+  permit_cap int;
 begin
   positions := coalesce(st->'positions', '{}'::jsonb);
   avg_cost := coalesce(st->'avgCost', '{}'::jsonb);
+  permit_cap := app._permit_cap(coalesce((st->'prestige'->>'tier')::int, 0));
 
   for ind in select value from jsonb_array_elements(coalesce(st->'industries', '[]'::jsonb)) loop
     fac := null;
@@ -392,16 +418,20 @@ begin
       continue;
     end if;
 
-    -- Component bonuses
+    -- Component bonuses — recompute effect from kind+rarity (ignore client
+    -- `amount`) and honor the 2-slot cap, so forged components can't inflate yield.
     rate_bon := 1.0;
     speed_bon := 0.0;
+    comp_n := 0;
     for uid in select jsonb_array_elements_text(coalesce(ex->'components', '[]'::jsonb)) loop
       comp := st->'components'->uid;
       if comp is null then continue; end if;
+      comp_n := comp_n + 1;
+      exit when comp_n > 2;  -- EXTRACTORCFG.componentSlots
       if comp->>'kind' = 'rate' then
-        rate_bon := rate_bon + coalesce((comp->>'amount')::float8, 0);
+        rate_bon := rate_bon + app._component_amount('rate', comp->>'rarity');
       else
-        speed_bon := speed_bon + coalesce((comp->>'amount')::float8, 0);
+        speed_bon := speed_bon + app._component_amount('speed', comp->>'rarity');
       end if;
     end loop;
     cycle_bon := greatest(0.4, 1.0 - speed_bon);
@@ -435,7 +465,9 @@ begin
       8  -- INDUSTRYCFG.maxCyclesPerResolve
     );
     qty := net * cycles;
-    if qty > 0 then
+    prod_n := prod_n + 1;
+    -- Only the tier's permit-cap worth of industries produce (forged extras banked out).
+    if qty > 0 and prod_n <= permit_cap then
       held := coalesce((positions->>(ind->>'commodity'))::float8, 0);
       prev_avg := coalesce((avg_cost->>(ind->>'commodity'))::float8, 0);
       positions := jsonb_set(positions, array[ind->>'commodity'], to_jsonb(held + qty));
@@ -844,11 +876,12 @@ begin
   merged := jsonb_set(merged, '{prestige}', coalesce(server->'prestige', '{"tier":0,"multiplier":1}'::jsonb));
   merged := jsonb_set(merged, '{listings}', coalesce(server->'listings', '[]'::jsonb));
   merged := jsonb_set(merged, '{surveyed}', coalesce(server->'surveyed', '{}'::jsonb));
-  -- Keep server route/industry nextAt & expedition ETA; accept newly-added
-  -- entries from the client (setup), but never let client rewind timers.
-  merged := jsonb_set(merged, '{routes}', app._merge_routes(
-    coalesce(server->'routes', '[]'::jsonb),
-    coalesce(p_state->'routes', '[]'::jsonb)));
+  -- Routes are created/stopped via app_route_start / app_route_stop (they set
+  -- ship 'trading' status server-side), so routes are fully server-owned — the
+  -- client can neither add a route nor reuse trading ships across forged routes.
+  merged := jsonb_set(merged, '{routes}', coalesce(server->'routes', '[]'::jsonb));
+  -- Industries/expeditions keep the client-setup merge (no build RPC yet); their
+  -- production is bounded server-side in app_pull (see _catchup_industries).
   merged := jsonb_set(merged, '{industries}', app._merge_industries(
     coalesce(server->'industries', '[]'::jsonb),
     coalesce(p_state->'industries', '[]'::jsonb)));
@@ -1000,6 +1033,132 @@ begin
 end;
 $$;
 
+-- ===========================================================================
+-- app_route_start / app_route_stop — trade-route ship assignment (server owns
+-- ship status; the client can't mark a ship 'trading' via commit, so routes
+-- need an RPC or _catchup_routes never pays them).
+-- ===========================================================================
+create or replace function public.app_route_start(p_comm text, p_from text, p_to text, p_ship_uids jsonb)
+returns jsonb
+language plpgsql security definer set search_path = public, market, app as $$
+declare
+  now_ms bigint := app._now_ms();
+  st jsonb;
+  ships jsonb;
+  unlocked jsonb;
+  uids jsonb := '[]'::jsonb;
+  uid text;
+  sh jsonb;
+  comm record;
+  min_speed double precision;
+  sp double precision;
+  dist double precision;
+  cycle_ms double precision;
+  route jsonb;
+  seq int;
+begin
+  if p_comm is null or p_from is null or p_to is null or p_from = p_to
+     or jsonb_typeof(p_ship_uids) <> 'array' then
+    return jsonb_build_object('ok', false, 'error', 'Pick two different systems.');
+  end if;
+  select * into comm from market.commodity(p_comm);
+  if comm.id is null then
+    return jsonb_build_object('ok', false, 'error', 'Unknown commodity.');
+  end if;
+
+  st := app._lock_state(now_ms);
+  unlocked := coalesce(st->'unlockedSystems', '[]'::jsonb);
+  if not (unlocked ? p_from) or not (unlocked ? p_to) then
+    return jsonb_build_object('ok', false, 'error', 'Both systems must be unlocked.');
+  end if;
+
+  ships := coalesce(st->'ships', '[]'::jsonb);
+  min_speed := null;
+  for uid in select jsonb_array_elements_text(p_ship_uids) loop
+    select value into sh from jsonb_array_elements(ships) x(value)
+      where x.value->>'uid' = uid limit 1;
+    if sh is null then
+      return jsonb_build_object('ok', false, 'error', 'Ship not found.');
+    end if;
+    if coalesce((sh->>'mercenary')::boolean, false) then
+      return jsonb_build_object('ok', false, 'error', 'Mercenaries can''t run routes.');
+    end if;
+    if sh->>'status' is distinct from 'idle' then
+      return jsonb_build_object('ok', false, 'error', 'All ships must be idle.');
+    end if;
+    uids := uids || jsonb_build_array(uid);
+    sp := app._ship_speed(sh->>'type');
+    if min_speed is null or sp < min_speed then min_speed := sp; end if;
+  end loop;
+  if jsonb_array_length(uids) = 0 then
+    return jsonb_build_object('ok', false, 'error', 'Pick at least one ship.');
+  end if;
+
+  ships := (
+    select coalesce(jsonb_agg(
+      case when exists (select 1 from jsonb_array_elements_text(uids) u where u = x.value->>'uid')
+        then jsonb_set(x.value, '{status}', '"trading"')
+        else x.value end
+    ), '[]'::jsonb)
+    from jsonb_array_elements(ships) x(value)
+  );
+
+  dist := greatest(1.0, abs(app._system_distance(p_from) - app._system_distance(p_to)));
+  cycle_ms := greatest(1000.0, (2.0 * dist * 150.0) / coalesce(min_speed, 1) * 1000.0);
+  seq := coalesce((st->>'seq')::int, 1) + 1;
+  route := jsonb_build_object(
+    'id', 'rt' || seq, 'comm', p_comm, 'from', p_from, 'to', p_to,
+    'shipUids', uids, 'nextAt', (now_ms + cycle_ms::bigint)
+  );
+  st := jsonb_set(st, '{ships}', ships);
+  st := jsonb_set(st, '{routes}', coalesce(st->'routes', '[]'::jsonb) || jsonb_build_array(route));
+  st := jsonb_set(st, '{seq}', to_jsonb(seq));
+  perform app._write_state(st, now_ms);
+  return app.result_slice(st) || jsonb_build_object('route', route);
+end;
+$$;
+
+create or replace function public.app_route_stop(p_route_id text)
+returns jsonb
+language plpgsql security definer set search_path = public, market, app as $$
+declare
+  now_ms bigint := app._now_ms();
+  st jsonb;
+  route jsonb;
+  stop_uids jsonb;
+  ships jsonb;
+  routes jsonb;
+begin
+  st := app._lock_state(now_ms);
+  select value into route from jsonb_array_elements(coalesce(st->'routes', '[]'::jsonb)) x(value)
+    where x.value->>'id' = p_route_id limit 1;
+  if route is null then
+    return jsonb_build_object('ok', false, 'error', 'Route not found.');
+  end if;
+  stop_uids := coalesce(route->'shipUids', '[]'::jsonb);
+  ships := (
+    select coalesce(jsonb_agg(
+      case when x.value->>'status' = 'trading'
+            and exists (select 1 from jsonb_array_elements_text(stop_uids) u where u = x.value->>'uid')
+        then jsonb_set(x.value, '{status}', '"idle"')
+        else x.value end
+    ), '[]'::jsonb)
+    from jsonb_array_elements(coalesce(st->'ships', '[]'::jsonb)) x(value)
+  );
+  routes := (
+    select coalesce(jsonb_agg(value), '[]'::jsonb)
+    from jsonb_array_elements(coalesce(st->'routes', '[]'::jsonb)) x(value)
+    where x.value->>'id' is distinct from p_route_id
+  );
+  st := jsonb_set(st, '{ships}', ships);
+  st := jsonb_set(st, '{routes}', routes);
+  perform app._write_state(st, now_ms);
+  return app.result_slice(st);
+end;
+$$;
+
 grant execute on function public.app_pull() to authenticated;
 grant execute on function public.app_prestige() to authenticated;
+grant execute on function public.app_route_start(text, text, text, jsonb) to authenticated;
+grant execute on function public.app_route_stop(text) to authenticated;
 grant execute on function public.app_commit(jsonb) to authenticated;

@@ -149,5 +149,28 @@ ctx.Extractors = ctx.Extractors || {
   const local = Routes.resolve(T);
   assert(local.runs || local.total >= 0, "fallback local resolve allowed");
 
+  // 6) Route start/stop go through the server RPC when authoritative (ship
+  //    'trading' status is server-owned — commit can't set it).
+  ctx.Cloud.pullReady = true;
+  ctx.Game.state = fresh();
+  const rShip = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
+  ctx.Game.state.ships.push(rShip);
+  const calls = [];
+  ctx.Cloud.routeStart = async (comm, from, to, uids) => {
+    calls.push(["routeStart", comm, from, to, uids.length]);
+    const srvShip = Object.assign({}, rShip, { status: "trading" });
+    return {
+      ok: true, credits: ctx.Game.state.credits, positions: {}, avgCost: {},
+      ships: [srvShip], mainShip: ctx.Game.state.mainShip, missions: [], items: {},
+      inventory: ctx.Game.state.inventory, stats: ctx.Game.state.stats,
+      routes: [{ id: "rt9", comm, from, to, shipUids: uids, nextAt: T + 1000 }],
+    };
+  };
+  const rs = await Routes.start([rShip.uid], "iron_ore", "korrin", "navos");
+  assert(rs && rs.ok, "authoritative route start ok");
+  assert(calls.some(c => c[0] === "routeStart"), "route start used Cloud.routeStart RPC");
+  assert.strictEqual(ctx.Game.state.routes[0].id, "rt9", "server route id applied");
+  assert.strictEqual(ctx.Game.state.ships[0].status, "trading", "server marked ship trading");
+
   console.log("check_phase3_pull_prestige: ok");
 })().catch(e => { console.error(e); process.exit(1); });
