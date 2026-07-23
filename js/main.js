@@ -148,12 +148,31 @@ const Game = {
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
-    const offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));  // missions + anomaly surveys
-    const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
-    const offlineSold = Bazaar.tick(now);
-    const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
-    const offlineOrders = await Orders.process(); // fill standing orders that crossed while away
-    const offlineIndustry = Industries.resolve(now);  // bank offworld production made while away
+
+    let offlineReports, offlineMercs, offlineSold, offlineRoutes, offlineOrders, offlineIndustry;
+    // Phase 3: logged-in catch-up is server-side (app_pull). Guests stay local.
+    // If Phase 3 SQL isn't pasted yet, fall back to the local resolvers.
+    let usedPull = false;
+    if (window.Economy && Economy.authoritative()) {
+      const pulled = await this.pullCatchUp();
+      if (pulled) {
+        usedPull = true;
+        offlineReports = (pulled.resolved || []).concat(pulled.surveys || []);
+        offlineSold = pulled.sold || [];
+        offlineRoutes = pulled.routed || { total: 0, runs: [], events: [] };
+        offlineIndustry = pulled.industry || [];
+        offlineMercs = Fleet.pruneMercs(now);
+        offlineOrders = await Orders.process();
+      }
+    }
+    if (!usedPull) {
+      offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));
+      offlineMercs = Fleet.pruneMercs(now);
+      offlineSold = Bazaar.tick(now);
+      offlineRoutes = Routes.resolve(now);
+      offlineOrders = await Orders.process();
+      offlineIndustry = Industries.resolve(now);
+    }
     Wars.tick(now);               // resolve a faction war that ended while away
     if (window.Senate) Senate.resolve(now);   // run the daily senate votes while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
@@ -246,22 +265,48 @@ const Game = {
     Wars.tick(now);
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
-    // Phase 2: mission resolve may await app_mission_resolve — don't block the tick.
-    void Promise.resolve(Missions.resolveMatured(now)).then(done => {
-      if (done && done.length) this.requestSave();
-    }).catch(e => console.warn("[Missions] resolve failed:", e));
-    const surveyed = Expeditions.resolve(now);
-    Fleet.pruneMercs(now);
-    Rivals.tick(now);
-    const routed = Routes.resolve(now);
-    for (const ev of routed.events) Bus.emit("routeEvent", ev);
-    // Standing orders may await Phase-1 trade RPCs — don't block the tick loop.
-    void Orders.process().then(orderEv => {
-      for (const ev of orderEv) Bus.emit("order", ev);
-      if (orderEv.length) this.requestSave();
-    }).catch(e => console.warn("[Orders] process failed:", e));
-    const made = Industries.resolve(now);
-    if (surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
+    if (window.Economy && Economy.authoritative()) {
+      // Phase 3: soft income banks via app_pull (throttled when something is due).
+      if (Cloud.pullReady && this._softIncomeDue(now) && !this._pullInflight) {
+        this._pullInflight = true;
+        void this.pullCatchUp().then(() => { this._pullInflight = false; this.requestSave(); })
+          .catch(() => { this._pullInflight = false; });
+      }
+      // Missions still have a dedicated RPC; pull also resolves them — either is fine.
+      void Promise.resolve(Missions.resolveMatured(now)).then(done => {
+        if (done && done.length) this.requestSave();
+      }).catch(e => console.warn("[Missions] resolve failed:", e));
+      if (!Cloud.pullReady) {
+        const surveyed = Expeditions.resolve(now);
+        const routed = Routes.resolve(now);
+        for (const ev of routed.events) Bus.emit("routeEvent", ev);
+        const made = Industries.resolve(now);
+        if (surveyed.length || routed.total || made.length) this.requestSave();
+      }
+      Fleet.pruneMercs(now);
+      Rivals.tick(now);
+      Bazaar.tick(now);
+      void Orders.process().then(orderEv => {
+        for (const ev of orderEv) Bus.emit("order", ev);
+        if (orderEv.length) this.requestSave();
+      }).catch(e => console.warn("[Orders] process failed:", e));
+      if (senateBills.length) this.requestSave();
+    } else {
+      void Promise.resolve(Missions.resolveMatured(now)).then(done => {
+        if (done && done.length) this.requestSave();
+      }).catch(e => console.warn("[Missions] resolve failed:", e));
+      const surveyed = Expeditions.resolve(now);
+      Fleet.pruneMercs(now);
+      Rivals.tick(now);
+      const routed = Routes.resolve(now);
+      for (const ev of routed.events) Bus.emit("routeEvent", ev);
+      void Orders.process().then(orderEv => {
+        for (const ev of orderEv) Bus.emit("order", ev);
+        if (orderEv.length) this.requestSave();
+      }).catch(e => console.warn("[Orders] process failed:", e));
+      const made = Industries.resolve(now);
+      if (surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
+    }
     UI.tick();
   },
 
@@ -311,6 +356,37 @@ const Game = {
       this._booting = true;   // suppress catch-up chatter/toasts
       Market.advance(elapsed, now);
       Economy.checkArrival(now);
+      const finish = () => {
+        Wars.tick(now);
+        if (window.Senate) Senate.resolve(now);
+        Rivals.tick(now);
+        this._booting = false;
+        this.state.lastSeenAt = now;
+        this.startSchedulers();
+        if (window.WorldFeed) { WorldFeed.poll(); WorldFeed.start(); }
+        if (window.SenateWorld) { SenateWorld.poll(); SenateWorld.start(); }
+        UI.tick(); UI.renderNewswire();
+        if (window.StarMap) StarMap.resume();
+        if (window.Senate) Senate.resume();
+      };
+      if (window.Economy && Economy.authoritative()) {
+        void this.pullCatchUp().then(() => {
+          if (Cloud.pullReady) {
+            Fleet.pruneMercs(now);
+            void Orders.process();
+          } else {
+            void Promise.resolve(Missions.resolveMatured(now));
+            Expeditions.resolve(now);
+            Fleet.pruneMercs(now);
+            Bazaar.tick(now);
+            Routes.resolve(now);
+            void Orders.process();
+            Industries.resolve(now);
+          }
+          finish();
+        });
+        return;
+      }
       void Promise.resolve(Missions.resolveMatured(now));
       Expeditions.resolve(now);
       Fleet.pruneMercs(now);
@@ -318,10 +394,8 @@ const Game = {
       Routes.resolve(now);
       void Orders.process();
       Industries.resolve(now);
-      Wars.tick(now);
-      if (window.Senate) Senate.resolve(now);
-      Rivals.tick(now);
-      this._booting = false;
+      finish();
+      return;
     }
     this.state.lastSeenAt = now;
     this.startSchedulers();
@@ -330,6 +404,41 @@ const Game = {
     UI.tick(); UI.renderNewswire();
     if (window.StarMap) StarMap.resume();
     if (window.Senate) Senate.resume();
+  },
+
+  // Phase 3: bank soft income on the server. Returns the away recap blob or null
+  // (null = missing RPC / failure — caller should local-fallback).
+  async pullCatchUp() {
+    if (!(window.Economy && Economy.authoritative() && window.Cloud)) return null;
+    try {
+      // Soft-sync setup (new routes/industries/expeditions) before pull so the
+      // server sees them; credits only decrease (spends), never mint via commit.
+      await Cloud.commit(this.snapshot());
+      const r = await Cloud.pull();
+      if (!r || r.ok === false) {
+        console.warn("[Game] app_pull failed:", (r && r.error) || r);
+        return null;
+      }
+      return Economy.applyPull(r) || {};
+    } catch (e) {
+      if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+        console.warn("[Game] app_pull missing — local catch-up (docs/PHASE3_SETUP.md)");
+        return null;
+      }
+      console.warn("[Game] app_pull failed:", e);
+      return null;
+    }
+  },
+
+  // True when a soft-income timer is due (throttle live pulls).
+  _softIncomeDue(now = Date.now()) {
+    const s = this.state;
+    if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
+    if ((s.routes || []).some(r => now >= (r.nextAt || 0))) return true;
+    if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
+    if ((s.expeditions || []).some(e => !e.resolved && now >= e.startedAt + e.etaMs)) return true;
+    if ((s.listings || []).some(l => now >= l.sellAt)) return true;
+    return false;
   },
 
   // Emit newHigh/crash chatter when a commodity moves hard (throttled).

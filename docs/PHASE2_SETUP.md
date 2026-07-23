@@ -43,8 +43,9 @@ client's seeded board matches these generators.
 
 - Guests: unchanged local simulation (procedural board).
 - Logged-in: display board from the same seed; mutations go through RPCs.
-- Soft income (routes, industries, expeditions, listings) still client-side until
-  Phase 3; `app_commit` still accepts those credit deltas.
+- Soft income (routes, industries, expeditions, listings) moved to Phase 3
+  (`docs/PHASE3_SETUP.md`); until that SQL is pasted, `app_commit` still accepts
+  those credit deltas on a Phase-2-only install.
 - Extractors / components / dossiers on the board remain local soft content.
 
 ## Re-paste note

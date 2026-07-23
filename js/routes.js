@@ -81,9 +81,15 @@ const Routes = {
     return out;
   },
 
+  // Phase 3 soft income is server-side when app_pull is live.
+  softIncomeLocal() {
+    return !(window.Cloud && Cloud.authoritative && Cloud.authoritative() && Cloud.pullReady);
+  },
+
   // Bank completed round trips up to `now`. A route whose endpoints are no longer
   // unlocked just pauses; a route whose ships all vanished is removed.
   resolve(now = Date.now()) {
+    if (!this.softIncomeLocal()) return { total: 0, runs: [], events: [] };
     let total = 0; const runs = [], events = []; const u = this.s().unlockedSystems;
     for (const route of this.list()) {
       route.shipUids = route.shipUids.filter(uid => { const sh = Fleet.ship(uid); return sh && sh.status === "trading"; });

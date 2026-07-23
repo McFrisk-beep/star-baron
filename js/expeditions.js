@@ -57,8 +57,15 @@ const Expeditions = {
     const sh = Fleet.ship(shipUid);
     if (!sh || sh.status !== "idle") return { ok: false, msg: "Pick an idle ship." };
     if (sh.mercenary) return { ok: false, msg: "Mercenaries won't fly survey work." };
+    const sys = Galaxy.get(sysId);
+    const sig = sys && Galaxy.signatureCommodity ? Galaxy.signatureCommodity(sys) : null;
+    const fac = sig && window.Rep ? Rep.factionForCategory(sig.cat) : null;
     const exp = { id: "xp" + (++this.s().seq), sysId, shipUid,
-      startedAt: now, etaMs: this.durationFor(sysId, shipUid), far: this.isFar(sysId), danger: this.danger(sysId) };
+      startedAt: now, etaMs: this.durationFor(sysId, shipUid), far: this.isFar(sysId), danger: this.danger(sysId),
+      // Phase 3: seed at dispatch so server resolve is reproducible
+      rngSeed: (now ^ (this.s().seq * 2654435761)) >>> 0,
+      faction: fac,
+    };
     sh.status = "surveying";
     this.list().push(exp);
     Economy.refreshNetWorth();
@@ -71,7 +78,9 @@ const Expeditions = {
 
   // Mature every finished survey up to `now`. Returns the reports (also pushed
   // to state.reports so the Fleet panel + "While You Were Away" recap show them).
+  // Phase 3: logged-in surveys resolve in app_pull.
   resolve(now = Date.now()) {
+    if (window.Cloud && Cloud.authoritative() && Cloud.pullReady) return [];
     const s = this.s(); const out = [];
     for (const exp of this.list()) {
       if (exp.resolved || now < exp.startedAt + exp.etaMs) continue;

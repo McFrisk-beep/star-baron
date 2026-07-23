@@ -1348,12 +1348,13 @@ const UI = {
     const btn = el.querySelector("#baron-ascend");
     if (btn) btn.onclick = () => this.doAscend();
   },
-  doAscend() {
+  async doAscend() {
     if (!Economy.canPrestige()) return;
     const next = Economy.nextTier();
     if (!confirm(`Ascend to ${next.title}? You keep your entire empire — stocks, industries, ships and senator ties — and gain ${next.permits} industry permits + a fleet cap of ${next.fleet}. The price: a permanent ${(next.tax * 100).toFixed(0)}% tax on all earnings (it never goes back down).`)) return;
-    const res = Economy.prestige();
-    if (res.ok) { this.toast(`Ascended — you are now a ${res.title}.`, "good", 5000); this.fullRender(); }
+    const res = await Promise.resolve(Economy.prestige());
+    if (res && res.ok) { this.toast(`Ascended — you are now a ${res.title || next.title}.`, "good", 5000); this.fullRender(); }
+    else if (res && res.msg) this.toast(res.msg, "bad");
   },
 
   // ===== broadcast / feed ==================================================

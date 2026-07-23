@@ -1,9 +1,9 @@
 # Server-authoritative core — technical design
 
-> Status: **Phase 0 + Phase 1 landed** (deterministic market; authoritative
-> trade/dock/unlock RPCs). Phases 2–3 still proposal. This document is the plan
-> to make money-affecting state cheat-resistant by moving the authority for it
-> from the browser to Supabase.
+> Status: **Phase 0–3 landed** (deterministic market; authoritative
+> trade/dock/unlock; missions & bazaar; offline pull & prestige). This document
+> is the plan that was executed to make money-affecting state cheat-resistant by
+> moving the authority for it from the browser to Supabase.
 
 ## 1. Goal & non-goals
 
@@ -315,13 +315,26 @@ you installed an older Phase 1 SQL before the interim reconcile.
   display when logged in; optimistic → soft-sync → RPC → reconcile.
 - `tools/check_phase2_missions_bazaar.js` — wiring + “launch is by id” harness.
 
-**Still soft until Phase 3:** routes / industries / expeditions / listing sales
-(credits accepted on commit). Extractors/components/dossiers board rows stay
-local. Mission loot tables are a simplified server subset (credits + attrition
-are authoritative; payout hard-capped).
+**Still soft (explicit non-goals):** extractor/component/dossier **board**
+purchases; Senate; Wars flavor overlays on industry; accessory-buffed route
+stats; expedition item loot (credit stubs instead). Guest sandbox unchanged.
 
-**You still need to run** `docs/sql/phase2_missions_bazaar.sql` after Phase 1
-(`docs/PHASE2_SETUP.md`). Re-paste if you installed the pre-seeded Phase 2 SQL.
+**You still need to run** `docs/sql/phase3_pull_prestige.sql` after Phase 2
+(`docs/PHASE3_SETUP.md`).
 
-### What I need from you to start building Phase 3
-A go-ahead for offline `app_pull` + prestige (remaining soft credit sources).
+### Phase 3 deliverables (done)
+
+- `docs/sql/phase3_pull_prestige.sql` — `app_pull` (routes / industries /
+  expeditions / listings + mission resolve), `app_prestige`, tightened
+  `app_commit` (credits decrease-only; protect positions/prestige/timers).
+- `docs/PHASE3_SETUP.md` — paste order + trust model.
+- `js/cloud.js` — `pull` / `prestige`; `pullReady` gate.
+- `js/economy.js` — `applyPull`, prestige RPC, Phase 3 slice apply.
+- `js/main.js` — boot/resume/live catch-up via `app_pull` when logged in.
+- `js/routes.js` / `industries.js` / `expeditions.js` / `bazaar.js` — skip local
+  soft income when `Cloud.pullReady`.
+- `tools/check_phase3_pull_prestige.js` — wiring harness.
+
+### What I need from you
+Paste `docs/sql/phase3_pull_prestige.sql` in the Supabase SQL editor (after
+Phases 0–2). Until then, signed-in clients keep Phase 2 local soft income.

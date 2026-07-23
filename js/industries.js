@@ -64,7 +64,15 @@ const Industries = {
     const cost = this.permitCost(sys, sys.planets[idx]);
     if (cost > this.s().credits) return { ok: false, msg: "Not enough credits for the permit." };
     this.s().credits -= cost;
-    this.list().push({ id: this.idFor(systemId, idx), systemId, planetIdx: idx, extractorUid: null, commodity: null, cat: null, nextAt: null });
+    const planet = sys.planets[idx];
+    const fac = this.planetFaction(sys, planet);
+    // Snapshot planetType/faction for Phase 3 server catch-up (no Galaxy on SQL).
+    this.list().push({
+      id: this.idFor(systemId, idx), systemId, planetIdx: idx,
+      extractorUid: null, commodity: null, cat: null, nextAt: null,
+      planetType: planet.type || null, faction: fac || null,
+      suit: null,
+    });
     Economy.refreshNetWorth();
     return { ok: true, cost };
   },
@@ -78,6 +86,13 @@ const Industries = {
     if (!Extractors.canProduce(ex, commodity)) return { ok: false, msg: "This extractor can't produce that." };
     ind.extractorUid = extractorUid; ind.commodity = commodity;
     ind.cat = (COMMODITIES.find(c => c.id === commodity) || {}).cat || null;
+    // Suitability snapshot for server catch-up (clamped later in SQL).
+    const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+    if (planet) {
+      ind.planetType = planet.type || ind.planetType || null;
+      ind.suit = this.suitabilityFor(planet.type, commodity);
+      ind.faction = this.planetFaction(sys, planet);
+    }
     ind.nextAt = now + this.cycleMsFor(ind);
     return { ok: true };
   },
@@ -124,6 +139,8 @@ const Industries = {
   },
 
   resolve(now = Date.now()) {
+    // Phase 3: logged-in production is app_pull — skip local position mutation.
+    if (window.Cloud && Cloud.authoritative() && Cloud.pullReady) return [];
     const s = this.s(); const made = [], lost = [];
     for (const ind of this.list()) {
       const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];

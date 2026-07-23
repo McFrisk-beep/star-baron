@@ -249,8 +249,13 @@ const Bazaar = {
   },
 
   tick(now = Date.now()) {
+    if (this.authoritative() && window.Cloud && Cloud.pullReady) {
+      // Seeded board refresh only — listing payouts are app_pull (Phase 3).
+      this.fillSeededBoard(now);
+      return [];
+    }
     if (this.authoritative()) {
-      // Seeded board: just refresh epoch + listing payouts (listings still soft).
+      // Phase 3 SQL not live yet — keep listing payouts soft (Phase 2 behaviour).
       const sold = [];
       this.s().listings = this.s().listings.filter(l => {
         if (now >= l.sellAt) {

@@ -116,8 +116,19 @@ const Economy = {
     if (r.bazaarBought) s.bazaarBought = r.bazaarBought;
     if (r.seq != null) s.seq = r.seq;
     if (r.reputation) s.reputation = r.reputation;
+    // Phase 3
+    if (r.prestige) s.prestige = r.prestige;
+    if (r.routes) s.routes = r.routes;
+    if (r.industries) s.industries = r.industries;
+    if (r.expeditions) s.expeditions = r.expeditions;
+    if (r.surveyed) s.surveyed = r.surveyed;
+    if (r.listings) s.listings = r.listings;
+    if (r.extractors) s.extractors = r.extractors;
+    if (r.components) s.components = r.components;
+    if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
+    if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
   },
-  // Pull protected fields from an app_commit response into live state.
+  // Pull protected fields from an app_commit / app_pull response into live state.
   applyCommitState(st) {
     if (!st || typeof st !== "object") return;
     const s = this.s();
@@ -134,6 +145,32 @@ const Economy = {
     if (st.bazaarBought) s.bazaarBought = st.bazaarBought;
     if (st.reputation) s.reputation = st.reputation;
     if (st.seq != null) s.seq = st.seq;
+    // Phase 3 protected economy
+    if (st.credits != null) s.credits = st.credits;
+    if (st.positions) s.positions = st.positions;
+    if (st.avgCost) s.avgCost = st.avgCost;
+    if (st.prestige) s.prestige = st.prestige;
+    if (st.routes) s.routes = st.routes;
+    if (st.industries) s.industries = st.industries;
+    if (st.expeditions) s.expeditions = st.expeditions;
+    if (st.surveyed) s.surveyed = st.surveyed;
+    if (st.listings) s.listings = st.listings;
+    if (st.extractors) s.extractors = st.extractors;
+    if (st.components) s.components = st.components;
+    if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
+    if (st.stats) {
+      if (st.stats.peakNetWorth != null) s.stats.peakNetWorth = st.stats.peakNetWorth;
+      if (st.stats.trades != null) s.stats.trades = st.stats.trades;
+      if (st.stats.biggestTrade != null) s.stats.biggestTrade = st.stats.biggestTrade;
+      if (st.stats.contractsDone != null) s.stats.contractsDone = st.stats.contractsDone;
+    }
+  },
+  // Apply an app_pull result (same slice as RPCs + optional away recap).
+  applyPull(r) {
+    if (!r || !r.ok) return null;
+    this._applyServerSlice(r);
+    this.refreshNetWorth();
+    return r.away || null;
   },
   // Push pre-action client income + board to players.state.
   // Uses SNAPSHOT fields so we don't double-apply the optimistic mutation
@@ -545,7 +582,7 @@ const Economy = {
   // ASCEND a Baron Tier: you KEEP your whole empire — credits, stocks, industries,
   // ships, senator relationships, faction standing. The only changes are a fancier
   // title, a bigger industry-permit + fleet cap, and a steeper tax on all earnings.
-  prestige() {
+  _prestigeLocal() {
     const s = this.s();
     if (!this.canPrestige()) return { ok: false, msg: "Net worth too low to ascend." };
     const tier = (s.prestige.tier || 0) + 1;
@@ -554,6 +591,20 @@ const Economy = {
     Bus.emit("prestige", { tier });
     this.checkAchievements();
     return { ok: true, tier, title: this.tierTitle() };
+  },
+  prestige() {
+    if (!this.authoritative()) return this._prestigeLocal();
+    return this._withRpc(
+      () => this._prestigeLocal(),
+      () => Cloud.prestige(),
+      "Couldn't reach the exchange — try again."
+    ).then(r => {
+      if (r && r.ok) {
+        // Server may return title/tier; keep local emit from optimistic path.
+        if (r.tier != null) r.title = r.title || this.tierTitle();
+      }
+      return r;
+    });
   },
 };
 
