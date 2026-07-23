@@ -126,7 +126,11 @@ const UI = {
   updateNavIndicator() {
     const track = this.refs.navTrack, ind = this.refs.navIndicator;
     if (!track || !ind) return;
-    const active = track.querySelector(".tab.active");
+    // Star Map is an overlay, so point the glow at its tab while it's open
+    // instead of leaving the underlying page (e.g. Exchange) lit.
+    const active = (window.StarMap && StarMap.open)
+      ? track.querySelector('.tab[data-page="starmap"]')
+      : track.querySelector(".tab.active");
     if (!active) return;
     ind.style.width = active.offsetWidth + "px";
     ind.style.transform = `translateX(${active.offsetLeft}px)`;

@@ -664,9 +664,16 @@ body.reduced .tt-dot { animation: none; }
 .lf-time { float: right; font-size: 9.5px; color: var(--ink-faint); font-family: var(--mono); margin-left: 6px; }
 .lf-text { display: inline; }
 
+/* Mobile: same composition as desktop — full-bleed map with the info panel on
+   the right — instead of a compressed 45/55 stack. The canvas fills the overlay;
+   the panel floats over it so users pan/zoom to see what it covers. */
 @media (max-width: 820px) {
-  .system-view { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
-  .system-info { border-left: none; border-top: 1px solid var(--line); }
+  .system-view { display: block; }
+  .system-scene { position: absolute; inset: 0; }
+  .system-info { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
+    width: min(300px, 72vw); border-left: 1px solid var(--line);
+    background: rgba(10, 14, 26, .92); backdrop-filter: blur(8px); }
+  .scene-hint { left: calc((100% - min(300px, 72vw)) / 2); max-width: calc(100% - min(300px, 72vw) - 16px); }
   .starmap-title { display: none; }
 }
 
@@ -721,7 +728,12 @@ body.reduced .tt-dot { animation: none; }
    pointer-events are limited to the track, so it never blocks star-map gestures.
    Planet / survey popups (z-index 80) still sit above the dock. */
 body.starmap-open .floatnav { z-index: 71; }
-body.starmap-open .tab[data-page="starmap"] { color: var(--accent); }
+/* Star Map is an overlay, not a .page — mirror .tab.active so the dock glow
+   and icon brightness match Exchange/Fleet/etc. while it's open. */
+body.starmap-open .tab[data-page="starmap"] { color: var(--accent); text-shadow: 0 0 8px rgba(63,227,255,.5); }
+body.starmap-open .tab[data-page="starmap"] .tab-ico { filter: none; }
+body.starmap-open .tab.active:not([data-page="starmap"]) { color: var(--ink-faint); text-shadow: none; }
+body.starmap-open .tab.active:not([data-page="starmap"]) .tab-ico { filter: brightness(.5) saturate(.7); }
 .floatnav-track { position: relative; display: flex; padding: 5px 6px; max-width: 100%;
   background: rgba(8,13,24,.82); border: 1px solid rgba(63,227,255,.28); border-radius: 10px;
   box-shadow: 0 14px 38px rgba(0,0,0,.55), 0 0 22px rgba(63,227,255,.12), inset 0 1px 0 rgba(63,227,255,.1);

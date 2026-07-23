@@ -59,6 +59,7 @@ const StarMap = {
     this.refs.overlay.classList.remove("hidden");
     document.body.classList.add("starmap-open");   // floats the command dock above the overlay (see CSS)
     this.showGalaxy();
+    if (window.UI) UI.updateNavIndicator();        // slide the dock glow onto Star Map
   },
   // Nav "Star Map" tab: open when closed, close when already open.
   toggle() { this.open ? this.close() : this.openGalaxy(); },
@@ -69,6 +70,7 @@ const StarMap = {
     this.stopSystem();
     this.stopStars();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
+    if (window.UI) UI.updateNavIndicator();        // restore glow to the underlying page tab
   },
   showGalaxy() {
     this.stopSystem();
@@ -463,11 +465,18 @@ const StarMap = {
     const reduced = this.s().settings.reduced;
     const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect();
-      canvas.width = Math.max(320, r.width); canvas.height = Math.max(260, r.height);
+      const w = Math.max(320, Math.floor(r.width)), h = Math.max(260, Math.floor(r.height));
+      if (canvas.width === w && canvas.height === h) return;
+      canvas.width = w; canvas.height = h;
     };
     resize();
     this._onResize = resize;
     window.addEventListener("resize", resize);
+    // device-mode / flex / overlay panel changes don't always fire window.resize
+    if (typeof ResizeObserver !== "undefined") {
+      this._sceneRO = new ResizeObserver(resize);
+      this._sceneRO.observe(canvas.parentElement);
+    }
 
     const W = () => canvas.width, H = () => canvas.height;
 
@@ -483,6 +492,19 @@ const StarMap = {
       cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
       cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
     };
+    // Cover-ish start on tall/narrow viewports (same idea as galaxy _fitGalaxy):
+    // fill the view so outer orbits crop — user pans or zooms out to see all.
+    // Deferred one frame so canvas size matches the unhidden system-view.
+    requestAnimationFrame(() => {
+      resize();
+      if (H() > W() * 1.1) {
+        cam.zoom = 1.4;
+        cam.x = W() / 2 * (1 - cam.zoom);
+        cam.y = H() / 2 * (1 - cam.zoom);
+        clampCam();
+        redraw();
+      }
+    });
     // the live loop repaints itself; reduced-motion mode draws one frame so it needs a nudge
     const redraw = () => { if (reduced) draw(performance.now()); };
     let hintTimer = 0;
@@ -900,6 +922,7 @@ const StarMap = {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = null;
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._onResize = null; }
+    if (this._sceneRO) { this._sceneRO.disconnect(); this._sceneRO = null; }
     if (this._sceneCtrlCleanup) { this._sceneCtrlCleanup(); this._sceneCtrlCleanup = null; }
   },
 
