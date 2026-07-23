@@ -664,16 +664,12 @@ body.reduced .tt-dot { animation: none; }
 .lf-time { float: right; font-size: 9.5px; color: var(--ink-faint); font-family: var(--mono); margin-left: 6px; }
 .lf-text { display: inline; }
 
-/* Mobile: same composition as desktop — full-bleed map with the info panel on
-   the right — instead of a compressed 45/55 stack. The canvas fills the overlay;
-   the panel floats over it so users pan/zoom to see what it covers. */
+/* Mobile: keep the stacked layout (map on top, scrollable info below) — but the
+   scene itself uses a cover-scale camera in JS so the system isn't crushed into
+   the short map pane; users pan / zoom out to see the rest. */
 @media (max-width: 820px) {
-  .system-view { display: block; }
-  .system-scene { position: absolute; inset: 0; }
-  .system-info { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2;
-    width: min(300px, 72vw); border-left: 1px solid var(--line);
-    background: rgba(10, 14, 26, .92); backdrop-filter: blur(8px); }
-  .scene-hint { left: calc((100% - min(300px, 72vw)) / 2); max-width: calc(100% - min(300px, 72vw) - 16px); }
+  .system-view { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
+  .system-info { border-left: none; border-top: 1px solid var(--line); }
   .starmap-title { display: none; }
 }
 

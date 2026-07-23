@@ -492,13 +492,14 @@ const StarMap = {
       cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
       cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
     };
-    // Cover-ish start on tall/narrow viewports (same idea as galaxy _fitGalaxy):
-    // fill the view so outer orbits crop — user pans or zooms out to see all.
+    // Squat map panes (mobile stack: short top strip) used to crush the system
+    // into Math.min(w,h). Start cover-zoomed instead — same idea as galaxy
+    // _fitGalaxy — so outer orbits crop and the user pans / zooms out.
     // Deferred one frame so canvas size matches the unhidden system-view.
     requestAnimationFrame(() => {
       resize();
-      if (H() > W() * 1.1) {
-        cam.zoom = 1.4;
+      if (H() < W() * 0.95) {
+        cam.zoom = 1.35;
         cam.x = W() / 2 * (1 - cam.zoom);
         cam.y = H() / 2 * (1 - cam.zoom);
         clampCam();
@@ -650,7 +651,10 @@ const StarMap = {
     let last = performance.now();
     const draw = (now) => {
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
-      const w = W(), h = H(), cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.42;
+      const w = W(), h = H(), cx = w / 2, cy = h / 2;
+      // Cover on squat panes (mobile top strip): size orbits to the long axis so
+      // the system isn't crushed into the short side. Desktop stays contain.
+      const R = (h < w * 0.95 ? Math.max(w, h) : Math.min(w, h)) * 0.42;
       const ctx = canvas.getContext("2d");
       // background
       if (neb.ok) ctx.drawImage(neb, 0, 0, w, h); else { ctx.fillStyle = "#06080f"; ctx.fillRect(0, 0, w, h); }
