@@ -15,6 +15,8 @@ const Cloud = {
   _role: "player",
   // true once app_bootstrap succeeds this session; false → legacy saves path.
   playersReady: false,
+  // true once app_pull succeeds this session; false → local soft-income catch-up.
+  pullReady: false,
 
   // Build the client if (and only if) we're configured and the SDK is present.
   init() {
@@ -120,7 +122,7 @@ const Cloud = {
     // can't silently re-authenticate; we also null our cached user regardless.
     try { await this.client.auth.signOut({ scope: "local" }); }
     catch (e) { console.warn("[Cloud] signOut:", e); }
-    finally { this._user = null; this._pendingRecovery = false; this.playersReady = false; }
+    finally { this._user = null; this._pendingRecovery = false; this.playersReady = false; this.pullReady = false; }
   },
 
   // ---- RPC helpers (Phase 1 players table) --------------------------------
@@ -202,6 +204,28 @@ const Cloud = {
   },
   async sellItem(uid) {
     return this.rpc("app_sell_item", { p_uid: uid });
+  },
+
+  // Phase 3 — offline catch-up + prestige
+  async pull() {
+    const r = await this.rpc("app_pull");
+    this.pullReady = true;
+    return r;
+  },
+  async prestige() {
+    return this.rpc("app_prestige");
+  },
+  async routeStart(comm, from, to, shipUids) {
+    return this.rpc("app_route_start", { p_comm: comm, p_from: from, p_to: to, p_ship_uids: shipUids });
+  },
+  async routeStop(routeId) {
+    return this.rpc("app_route_stop", { p_route_id: routeId });
+  },
+  async buyExtractor(offerId) {
+    return this.rpc("app_buy_extractor", { p_offer_id: offerId });
+  },
+  async buyComponent(offerId) {
+    return this.rpc("app_buy_component", { p_offer_id: offerId });
   },
 
   // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------

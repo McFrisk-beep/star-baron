@@ -10,6 +10,9 @@
 
 const Routes = {
   s() { return window.Game.state; },
+  // Phase 3: signed-in + players RPCs → route ship assignment goes through the
+  // server (it owns ship status), so app_pull can pay the route.
+  authoritative() { return !!(window.Economy && Economy.authoritative()); },
   list() { return this.s().routes || (this.s().routes = []); },
   shipsOf(route) { return route.shipUids.map(u => Fleet.ship(u)).filter(Boolean); },
 
@@ -40,7 +43,7 @@ const Routes = {
   // Estimate for a not-yet-created route (the setup modal).
   preview(shipUids, comm, from, to) { return this.estimate({ comm, from, to, shipUids }); },
 
-  start(shipUids, comm, from, to, now = Date.now()) {
+  _startLocal(shipUids, comm, from, to, now = Date.now()) {
     const ships = (shipUids || []).map(u => Fleet.ship(u)).filter(Boolean);
     if (!ships.length) return { ok: false, msg: "Pick at least one ship." };
     if (ships.some(sh => sh.mercenary)) return { ok: false, msg: "Mercenaries can't run routes." };
@@ -54,13 +57,29 @@ const Routes = {
     this.list().push(route);
     return { ok: true };
   },
+  start(shipUids, comm, from, to, now = Date.now()) {
+    if (!this.authoritative()) return this._startLocal(shipUids, comm, from, to, now);
+    return Economy._withRpc(
+      () => this._startLocal(shipUids, comm, from, to, now),
+      () => Cloud.routeStart(comm, from, to, (shipUids || []).slice()),
+      "Couldn't start the route — try again."
+    );
+  },
 
-  stop(routeId) {
+  _stopLocal(routeId) {
     const route = this.list().find(r => r.id === routeId);
     if (!route) return { ok: false };
     for (const sh of this.shipsOf(route)) if (sh.status === "trading") sh.status = "idle";
     this.s().routes = this.list().filter(r => r.id !== routeId);
     return { ok: true };
+  },
+  stop(routeId) {
+    if (!this.authoritative()) return this._stopLocal(routeId);
+    return Economy._withRpc(
+      () => this._stopLocal(routeId),
+      () => Cloud.routeStop(routeId),
+      "Couldn't stop the route — try again."
+    );
   },
 
   // Roll a random event for a banking run (see ROUTE_EVENTS). Returns null for a
@@ -81,9 +100,15 @@ const Routes = {
     return out;
   },
 
+  // Phase 3 soft income is server-side when app_pull is live.
+  softIncomeLocal() {
+    return !(window.Cloud && Cloud.authoritative && Cloud.authoritative() && Cloud.pullReady);
+  },
+
   // Bank completed round trips up to `now`. A route whose endpoints are no longer
   // unlocked just pauses; a route whose ships all vanished is removed.
   resolve(now = Date.now()) {
+    if (!this.softIncomeLocal()) return { total: 0, runs: [], events: [] };
     let total = 0; const runs = [], events = []; const u = this.s().unlockedSystems;
     for (const route of this.list()) {
       route.shipUids = route.shipUids.filter(uid => { const sh = Fleet.ship(uid); return sh && sh.status === "trading"; });

@@ -107,6 +107,31 @@ function sqlContract(epoch, slot, tier) {
   };
 }
 
+const EX_COMMS = ["iron_ore", "silicon", "rare_earths", "hydrogen", "helium3", "water_ice",
+  "foodstuffs", "synthsilk", "nanochips", "antimatter", "spice", "contraband"];
+const EX_CATS = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
+function sqlExtractor(epoch, slot) {
+  const s = seed(["ex", String(epoch), String(slot)]);
+  const r = u01(s, 0);
+  if (r < 0.45) return { uid: `ex${epoch}x${slot}`, type: "specialized", scope: EX_COMMS[Math.floor(u01(s, 1) * 12) % 12], price: 14000 };
+  if (r < 0.80) return { uid: `ex${epoch}x${slot}`, type: "semi", scope: EX_CATS[Math.floor(u01(s, 1) * 6) % 6], price: 9000 };
+  return { uid: `ex${epoch}x${slot}`, type: "jack", scope: "all", price: 5000 };
+}
+function sqlComponent(epoch, slot) {
+  const s = seed(["cp", String(epoch), String(slot)]);
+  const kind = u01(s, 0) < 0.5 ? "rate" : "speed";
+  const roll = u01(s, 1) * 100;
+  let rarity, rprice;
+  if (roll < 50) { rarity = "common"; rprice = 1.0; }
+  else if (roll < 78) { rarity = "uncommon"; rprice = 2.2; }
+  else if (roll < 92) { rarity = "rare"; rprice = 5.0; }
+  else if (roll < 98) { rarity = "epic"; rprice = 12.0; }
+  else { rarity = "legendary"; rprice = 30.0; }
+  const mult = { common: 1, uncommon: 1.5, rare: 2.3, epic: 3.4, legendary: 5.0 }[rarity];
+  const amount = +((kind === "rate" ? 0.08 : 0.06) * mult).toFixed(3);
+  return { uid: `cp${epoch}c${slot}`, kind, rarity, amount, price: round(1800 * rprice) };
+}
+
 // ---- compare client (bazaar.js) vs SQL mirror ------------------------------
 const epochs = [0, 1, 100, 28_900_000, Math.floor(1_700_000_000_000 / 60000)];
 const tiers = [0, 3, 6];
@@ -125,6 +150,21 @@ for (const epoch of epochs) {
     assert.strictEqual(ca.item.rarity, sa.rarity, `acc rarity @${epoch}-${slot}`);
     assert.strictEqual(ca.item.value, sa.value, `acc value @${epoch}-${slot}: js=${ca.item.value} sql=${sa.value}`);
     assert.strictEqual(ca.price, sa.price, `acc price @${epoch}-${slot}: js=${ca.price} sql=${sa.price}`);
+
+    // extractor (economic fields: type/scope/price)
+    const cx = Bazaar.genSeededExtractor(epoch, slot), sx = sqlExtractor(epoch, slot);
+    assert.strictEqual(cx.ex.uid, sx.uid, `extractor uid @${epoch}-${slot}`);
+    assert.strictEqual(cx.ex.type, sx.type, `extractor type @${epoch}-${slot}: js=${cx.ex.type} sql=${sx.type}`);
+    assert.strictEqual(cx.ex.scope, sx.scope, `extractor scope @${epoch}-${slot}: js=${cx.ex.scope} sql=${sx.scope}`);
+    assert.strictEqual(cx.price, sx.price, `extractor price @${epoch}-${slot}`);
+
+    // component (kind/rarity/amount/price)
+    const cp = Bazaar.genSeededComponent(epoch, slot), sp = sqlComponent(epoch, slot);
+    assert.strictEqual(cp.comp.uid, sp.uid, `component uid @${epoch}-${slot}`);
+    assert.strictEqual(cp.comp.kind, sp.kind, `component kind @${epoch}-${slot}`);
+    assert.strictEqual(cp.comp.rarity, sp.rarity, `component rarity @${epoch}-${slot}: js=${cp.comp.rarity} sql=${sp.rarity}`);
+    assert.strictEqual(cp.comp.amount, sp.amount, `component amount @${epoch}-${slot}: js=${cp.comp.amount} sql=${sp.amount}`);
+    assert.strictEqual(cp.price, sp.price, `component price @${epoch}-${slot}: js=${cp.price} sql=${sp.price}`);
 
     // contract (per tier)
     for (const tier of tiers) {
@@ -145,4 +185,4 @@ for (const epoch of epochs) {
     }
   }
 }
-console.log(`check_bazaar_parity: ${n} contract samples + merc/accessory across ${epochs.length} epochs ✔`);
+console.log(`check_bazaar_parity: ${n} contract samples + merc/accessory/extractor/component across ${epochs.length} epochs ✔`);

@@ -455,9 +455,12 @@ const UI = {
         <div class="route-foot"><b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip ·
           ~${Util.credits(Math.round(e.perHour))}c/hr · cargo ${e.cargo} · <span class="muted-note">next ${Util.duration(eta)}</span></div></div>`;
     }).join("");
-    this.refs.fleetRoutes.onclick = ev => {
+    this.refs.fleetRoutes.onclick = async ev => {
       const st = ev.target.closest("[data-stoproute]"); if (!st) return;
-      Routes.stop(st.dataset.stoproute); this.toast("Route stopped — ships idle.", "info");
+      if (Economy.busy()) return;
+      const res = await Routes.stop(st.dataset.stoproute);
+      if (res && res.ok === false && res.msg) return this.toast(res.msg, "warn");
+      this.toast("Route stopped — ships idle.", "info");
       window.Game.requestSave(); this.renderFleet();
     };
   },
@@ -1348,12 +1351,13 @@ const UI = {
     const btn = el.querySelector("#baron-ascend");
     if (btn) btn.onclick = () => this.doAscend();
   },
-  doAscend() {
+  async doAscend() {
     if (!Economy.canPrestige()) return;
     const next = Economy.nextTier();
     if (!confirm(`Ascend to ${next.title}? You keep your entire empire — stocks, industries, ships and senator ties — and gain ${next.permits} industry permits + a fleet cap of ${next.fleet}. The price: a permanent ${(next.tax * 100).toFixed(0)}% tax on all earnings (it never goes back down).`)) return;
-    const res = Economy.prestige();
-    if (res.ok) { this.toast(`Ascended — you are now a ${res.title}.`, "good", 5000); this.fullRender(); }
+    const res = await Promise.resolve(Economy.prestige());
+    if (res && res.ok) { this.toast(`Ascended — you are now a ${res.title || next.title}.`, "good", 5000); this.fullRender(); }
+    else if (res && res.msg) this.toast(res.msg, "bad");
   },
 
   // ===== broadcast / feed ==================================================
@@ -1568,9 +1572,10 @@ const UI = {
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
     r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
     r.incClose.onclick = () => r.incident.classList.add("hidden");
-    r.rtStart.onclick = () => {
+    r.rtStart.onclick = async () => {
+      if (Economy.busy()) return;
       const { comm, from, to } = this._routeSel();
-      const res = Routes.start(this.selectedRouteShips(), comm, from, to);
+      const res = await Routes.start(this.selectedRouteShips(), comm, from, to);
       if (!res.ok) return this.toast(res.msg, "warn");
       this.toast("Trade route started ▸", "good");
       r.route.classList.add("hidden");
