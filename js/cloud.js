@@ -1,14 +1,19 @@
-/* cloud.js — the ONLY module that talks to Supabase (auth + the `saves` table).
+/* cloud.js — the ONLY module that talks to Supabase (auth + saves/players).
    Everything is wrapped so the rest of the game never imports the SDK directly.
    If CLOUD isn't configured (or the SDK failed to load), `enabled` stays false
-   and the game runs purely on localStorage. Saves are stored as one JSONB row
-   per user, protected by Row-Level Security (auth.uid() = user_id).            */
+   and the game runs purely on localStorage.
+
+   Phase 1: logged-in economy goes through SECURITY DEFINER RPCs on `players`
+   (see docs/PHASE1_SETUP.md). Legacy `saves` upsert remains as fallback when
+   those RPCs aren't installed yet. Guests never hit the network for state.    */
 
 const Cloud = {
   client: null,
   enabled: false,
   _user: null,
   _role: "player",
+  // true once app_bootstrap succeeds this session; false → legacy saves path.
+  playersReady: false,
 
   // Build the client if (and only if) we're configured and the SDK is present.
   init() {
@@ -51,6 +56,9 @@ const Cloud = {
   },
 
   signedIn() { return this.enabled && !!this._user; },
+  // Server-authoritative economy path (Phase 1). Guests and pre-migration
+  // projects stay on the local / saves sandbox.
+  authoritative() { return this.signedIn() && this.playersReady; },
   user() { return this._user; },
   email() { return this._user ? this._user.email : null; },
 
@@ -114,7 +122,53 @@ const Cloud = {
     finally { this._user = null; this._pendingRecovery = false; }
   },
 
-  // ---- save row (one JSONB blob per user) --------------------------------
+  // ---- RPC helpers (Phase 1 players table) --------------------------------
+  async rpc(name, args = {}) {
+    if (!this.signedIn()) throw new Error("not signed in");
+    const { data, error } = await this.client.rpc(name, args);
+    if (error) throw error;
+    return data;
+  },
+  _isMissingRpc(err) {
+    const m = String((err && (err.message || err.details || err)) || "").toLowerCase();
+    return m.includes("could not find the function") || m.includes("pgrst202")
+      || m.includes("does not exist") || (err && err.code === "PGRST202");
+  },
+
+  // Ensure players row + return authoritative state. Falls back (playersReady=
+  // false) when Phase 1 SQL isn't applied yet so older projects keep working.
+  async bootstrap() {
+    if (!this.signedIn()) return null;
+    try {
+      const state = await this.rpc("app_bootstrap");
+      this.playersReady = true;
+      return state;
+    } catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.playersReady = false;
+        console.warn("[Cloud] app_bootstrap missing — using legacy saves (docs/PHASE1_SETUP.md)");
+        return null;
+      }
+      throw e;
+    }
+  },
+  async trade(action, commodity, qty) {
+    return this.rpc("app_trade", { p_action: action, p_commodity: commodity, p_qty: qty | 0 });
+  },
+  async dock(system) {
+    return this.rpc("app_dock", { p_system: system });
+  },
+  async unlock(system) {
+    return this.rpc("app_unlock", { p_system: system });
+  },
+  // Autosave: server keeps economy fields, accepts the rest of the blob.
+  async commit(state) {
+    const r = await this.rpc("app_commit", { p_state: state });
+    if (r && r.state) return r.state;
+    return state;
+  },
+
+  // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------
   async loadRemote() {
     if (!this.signedIn()) return null;
     const { data, error } = await this.client
@@ -124,6 +178,11 @@ const Cloud = {
   },
   async saveRemote(state) {
     if (!this.signedIn()) return;
+    // Prefer authoritative commit when Phase 1 is live.
+    if (this.playersReady) {
+      await this.commit(state);
+      return;
+    }
     const { error } = await this.client.from("saves").upsert({
       user_id: this._user.id, data: state, updated_at: new Date().toISOString(),
     });
@@ -131,8 +190,12 @@ const Cloud = {
   },
   async clearRemote() {
     if (!this.signedIn()) return;
-    const { error } = await this.client.from("saves").delete().eq("user_id", this._user.id);
-    if (error) throw error;
+    // Best-effort: wipe legacy saves; players row is removed with the auth user
+    // (ON DELETE CASCADE) — no client delete policy on players by design.
+    try {
+      const { error } = await this.client.from("saves").delete().eq("user_id", this._user.id);
+      if (error) throw error;
+    } catch (e) { console.warn("[Cloud] clearRemote saves:", e); }
   },
 };
 

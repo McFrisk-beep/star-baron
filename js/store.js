@@ -41,13 +41,15 @@ const Store = {
     return state;
   },
 
-  // Surface a persistent cloud failure once (most commonly: the `saves` table
-  // hasn't been created yet — see docs/CLOUD_SETUP.md).
+  // Surface a persistent cloud failure once.
   _cloudFail(where, e) {
     console.warn(`[Store] cloud ${where} failed:`, e);
     if (this._cloudWarned) return;
     this._cloudWarned = true;
-    if (window.UI && UI.toast) UI.toast("Cloud sync isn't working — has the 'saves' table been created? (docs/CLOUD_SETUP.md)", "warn", 7000);
+    const hint = (window.Cloud && Cloud.playersReady)
+      ? "Cloud sync isn't working — check docs/PHASE1_SETUP.md."
+      : "Cloud sync isn't working — has the 'saves' table been created? (docs/CLOUD_SETUP.md)";
+    if (window.UI && UI.toast) UI.toast(hint, "warn", 7000);
   },
 
   // ---- public API (unchanged signatures) --------------------------------
@@ -58,6 +60,15 @@ const Store = {
     this._cloudReady = !this.signedIn();
     if (this.signedIn()) {
       try {
+        // Phase 1: authoritative players row via app_bootstrap.
+        const boot = await Cloud.bootstrap();
+        if (boot) {
+          this._cloudReady = true;
+          this.localSave(this._stampOwner(boot));
+          console.log("[Store] loaded authoritative players state");
+          return boot;
+        }
+        // Legacy saves path (Phase 1 SQL not applied yet).
         const remote = await Cloud.loadRemote();
         this._cloudReady = true;
         if (remote) {

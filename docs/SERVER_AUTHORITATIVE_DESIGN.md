@@ -1,9 +1,9 @@
 # Server-authoritative core — technical design
 
-> Status: **Phase 0 landed** (deterministic `market.js` + SQL `market_price()` +
-> parity test). Phases 1–3 still proposal. This document is the plan to make
-> money-affecting state cheat-resistant by moving the authority for it from the
-> browser to Supabase.
+> Status: **Phase 0 + Phase 1 landed** (deterministic market; authoritative
+> trade/dock/unlock RPCs). Phases 2–3 still proposal. This document is the plan
+> to make money-affecting state cheat-resistant by moving the authority for it
+> from the browser to Supabase.
 
 ## 1. Goal & non-goals
 
@@ -276,7 +276,22 @@ Client news/local overlays (Broadcast / Wars / Galaxy), Senate banding, and
 trade-impact pressure still multiply on top for today's UX; Phase 1 routes
 logged-in trades through RPC and stops trusting those for fill price.
 
-### What I need from you to start building Phase 1
-A go-ahead to land the `players` table + RLS + `app_bootstrap` / `app_trade` /
-`app_dock` / `app_unlock`, and to run that SQL in the Supabase dashboard (copy-
-paste blocks like `docs/CLOUD_SETUP.md`).
+### Phase 1 deliverables (done)
+
+- `docs/sql/phase1_players.sql` — `players` table (read-own RLS), `app_bootstrap`,
+  `app_trade`, `app_dock`, `app_unlock`, `app_commit` (merge autosave that keeps
+  economy fields server-side).
+- `docs/PHASE1_SETUP.md` — paste-and-run instructions (needs `market_price.sql` first).
+- `js/cloud.js` — `rpc` / `bootstrap` / `trade` / `dock` / `unlock` / `commit`;
+  `authoritative()` when Phase 1 SQL is live; legacy `saves` fallback otherwise.
+- `js/store.js` + `js/auth-ui.js` — signed-in load via `app_bootstrap`.
+- `js/economy.js` + `js/ui.js` — logged-in buy/sell/dock/unlock → optimistic local
+  apply → RPC → reconcile / rollback + toast.
+- `tools/check_phase1_economy.js` — client wiring harness.
+
+**You still need to run the SQL** in the Supabase dashboard (`docs/PHASE1_SETUP.md`).
+Until then, signed-in clients keep using the legacy `saves` path.
+
+### What I need from you to start building Phase 2
+A go-ahead for authoritative missions & bazaar purchases (more SQL + client
+routing). Missions/bazaar remain client-side credit sources until then.

@@ -29,9 +29,83 @@ const ACHIEVEMENTS = [
 
 const Economy = {
   s() { return window.Game.state; },
+  // Phase 1: signed-in + players RPCs live → server fills. Guests / pre-setup stay local.
+  authoritative() { return !!(window.Cloud && Cloud.authoritative()); },
+  _pending: 0,
+  busy() { return this._pending > 0; },
 
   priceHere(commId) { return Market.systemPrice(commId, this.s().currentSystem); },
   inTransit() { return !!this.s().travel; },
+
+  _snapEconomy() {
+    const s = this.s();
+    return {
+      credits: s.credits,
+      positions: JSON.parse(JSON.stringify(s.positions || {})),
+      avgCost: JSON.parse(JSON.stringify(s.avgCost || {})),
+      stats: { trades: s.stats.trades, biggestTrade: s.stats.biggestTrade },
+      currentSystem: s.currentSystem,
+      travel: s.travel ? Object.assign({}, s.travel) : null,
+      unlockedSystems: (s.unlockedSystems || []).slice(),
+      reputation: JSON.parse(JSON.stringify(s.reputation || {})),
+    };
+  },
+  _restoreEconomy(snap) {
+    const s = this.s();
+    s.credits = snap.credits;
+    s.positions = snap.positions;
+    s.avgCost = snap.avgCost;
+    s.currentSystem = snap.currentSystem;
+    s.travel = snap.travel;
+    s.unlockedSystems = snap.unlockedSystems;
+    s.reputation = snap.reputation;
+    s.stats.trades = snap.stats.trades;
+    s.stats.biggestTrade = snap.stats.biggestTrade;
+  },
+  _applyServerSlice(r) {
+    const s = this.s();
+    if (r.credits != null) s.credits = r.credits;
+    if (r.positions) s.positions = r.positions;
+    if (r.avgCost) s.avgCost = r.avgCost;
+    if (r.stats) {
+      if (r.stats.trades != null) s.stats.trades = r.stats.trades;
+      if (r.stats.biggestTrade != null) s.stats.biggestTrade = r.stats.biggestTrade;
+    }
+    if (r.currentSystem) s.currentSystem = r.currentSystem;
+    if ("travel" in r || "travelObj" in r) {
+      const tr = r.travelObj || r.travel;
+      s.travel = tr && typeof tr === "object" ? tr : null;
+    }
+    if (r.unlockedSystems) s.unlockedSystems = r.unlockedSystems;
+  },
+  async _withRpc(optimisticFn, rpcFn, failMsg) {
+    const snap = this._snapEconomy();
+    const local = optimisticFn();
+    if (!local || !local.ok) return local;
+    this._pending++;
+    try {
+      const r = await rpcFn();
+      if (!r || !r.ok) {
+        this._restoreEconomy(snap);
+        return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
+      }
+      this._applyServerSlice(r);
+      // Reconcile fill details for the trade terminal (server is source of truth).
+      if (r.fillPrice != null) local.price = r.fillPrice;
+      if (r.cost != null) local.cost = r.cost;
+      if (r.proceeds != null) local.proceeds = r.proceeds;
+      if (r.tax != null) local.tax = r.tax;
+      if (r.qty != null) local.qty = r.qty;
+      if (r.etaMs != null) local.etaMs = r.etaMs;
+      return local;
+    } catch (e) {
+      console.warn("[Economy] rpc failed:", e);
+      this._restoreEconomy(snap);
+      return { ok: false, msg: failMsg };
+    } finally {
+      this._pending = Math.max(0, this._pending - 1);
+    }
+  },
 
   // effective half-spread for a category: base spread tightened by reputation, but
   // never to zero — so buy price stays above sell price and round-trips can't profit.
@@ -106,7 +180,8 @@ const Economy = {
     return Math.min(held, this.sellCapQty(commId));
   },
 
-  buy(commId, qty) {
+  // Local (guest) fill — also used as the optimistic preview when authoritative.
+  _buyLocal(commId, qty) {
     const s = this.s();
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
     qty = Math.floor(qty);
@@ -131,7 +206,7 @@ const Economy = {
     return { ok: true, qty, cost, price: avg, capped };
   },
 
-  sell(commId, qty) {
+  _sellLocal(commId, qty) {
     const s = this.s();
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
     const held = s.positions[commId] || 0;
@@ -158,6 +233,24 @@ const Economy = {
     return { ok: true, qty, proceeds, price, realized, tax, capped };
   },
 
+  buy(commId, qty) {
+    if (!this.authoritative()) return this._buyLocal(commId, qty);
+    return this._withRpc(
+      () => this._buyLocal(commId, qty),
+      () => Cloud.trade("buy", commId, Math.floor(qty)),
+      "Couldn't reach the exchange — try again."
+    );
+  },
+
+  sell(commId, qty) {
+    if (!this.authoritative()) return this._sellLocal(commId, qty);
+    return this._withRpc(
+      () => this._sellLocal(commId, qty),
+      () => Cloud.trade("sell", commId, Math.floor(qty)),
+      "Couldn't reach the exchange — try again."
+    );
+  },
+
   // ----- Baron Tier (prestige "ascension") -----
   tier() { return (this.s().prestige || {}).tier || 0; },
   tierInfo(t = this.tier()) { return BARON_TIERS[Util.clamp(t, 0, BARON_TIERS.length - 1)]; },
@@ -179,7 +272,7 @@ const Economy = {
     this.checkAchievements();
   },
 
-  unlockSystem(sysId) {
+  _unlockLocal(sysId) {
     const s = this.s();
     if (s.unlockedSystems.includes(sysId)) return { ok: false, msg: "Already unlocked." };
     const sys = SYSTEMS.find(x => x.id === sysId);
@@ -194,7 +287,7 @@ const Economy = {
   },
 
   // Docking now takes time: it starts a transit driven by the main ship's speed.
-  dockAt(sysId) {
+  _dockLocal(sysId) {
     const s = this.s();
     if (!s.unlockedSystems.includes(sysId)) return { ok: false, msg: "System locked." };
     if (s.travel) return { ok: false, msg: "Already in transit." };
@@ -203,6 +296,24 @@ const Economy = {
     s.travel = { from: s.currentSystem, to: sysId, departedAt: Date.now(), etaMs };
     Bus.emit("travelStart", { to: sysId, etaMs });
     return { ok: true, travel: true, etaMs };
+  },
+
+  unlockSystem(sysId) {
+    if (!this.authoritative()) return this._unlockLocal(sysId);
+    return this._withRpc(
+      () => this._unlockLocal(sysId),
+      () => Cloud.unlock(sysId),
+      "Couldn't reach the exchange — try again."
+    );
+  },
+
+  dockAt(sysId) {
+    if (!this.authoritative()) return this._dockLocal(sysId);
+    return this._withRpc(
+      () => this._dockLocal(sysId),
+      () => Cloud.dock(sysId),
+      "Couldn't reach the exchange — try again."
+    );
   },
 
   checkArrival(now) {
