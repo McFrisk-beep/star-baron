@@ -24,8 +24,11 @@ const Cloud = {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
       });
       this.enabled = true;
-      this.client.auth.onAuthStateChange((_evt, session) => {
+      this._pendingRecovery = false;
+      this.client.auth.onAuthStateChange((evt, session) => {
         this._user = session ? session.user : null;
+        // Reset-password email lands here with tokens in the URL hash.
+        if (evt === "PASSWORD_RECOVERY") this._pendingRecovery = true;
         this.fetchRole().finally(() => { if (window.Bus) Bus.emit("auth", this._user); });
       });
       console.log("[Cloud] online accounts enabled (Supabase). Use the Sign in button.");
@@ -67,8 +70,18 @@ const Cloud = {
   role() { return this.signedIn() ? this._role : "guest"; },
 
   // ---- auth --------------------------------------------------------------
+  // Where confirmation / reset emails should send the player back (works on
+  // GitHub Pages subpaths and local http.server alike).
+  authRedirect() {
+    return location.href.split("#")[0].split("?")[0];
+  },
+  isPasswordRecovery() { return !!this._pendingRecovery; },
+  clearPasswordRecovery() { this._pendingRecovery = false; },
+
   async signUp(email, password) {
-    const { data, error } = await this.client.auth.signUp({ email, password });
+    const { data, error } = await this.client.auth.signUp({
+      email, password, options: { emailRedirectTo: this.authRedirect() },
+    });
     if (error) throw error;
     if (data.session && data.user) this._user = data.user;   // null until confirmed if confirm-email is on
     return data;
@@ -80,12 +93,25 @@ const Cloud = {
     await this.fetchRole();
     return data;
   },
+  // Always resolves without revealing whether the email is registered —
+  // Supabase (and we) keep the response uniform for account enumeration.
+  async resetPassword(email) {
+    const { error } = await this.client.auth.resetPasswordForEmail(email, {
+      redirectTo: this.authRedirect(),
+    });
+    if (error) throw error;
+  },
+  async updatePassword(password) {
+    const { data, error } = await this.client.auth.updateUser({ password });
+    if (error) throw error;
+    return data;
+  },
   async signOut() {
     // scope:"local" always clears the local session (even offline) so a reload
     // can't silently re-authenticate; we also null our cached user regardless.
     try { await this.client.auth.signOut({ scope: "local" }); }
     catch (e) { console.warn("[Cloud] signOut:", e); }
-    finally { this._user = null; }
+    finally { this._user = null; this._pendingRecovery = false; }
   },
 
   // ---- save row (one JSONB blob per user) --------------------------------

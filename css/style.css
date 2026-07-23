@@ -439,6 +439,13 @@ body.reduced .tt-dot { animation: none; }
   border-radius: 8px; padding: 9px 10px; font-family: var(--sans); font-size: 14px; text-transform: none; letter-spacing: 0; }
 .auth-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .auth-err { color: var(--down); font-size: 12.5px; margin: 0 0 10px; }
+.auth-ok { color: var(--up); font-size: 12.5px; margin: 0 0 10px; line-height: 1.45; }
+.auth-forgot-wrap { margin: -4px 0 12px; text-align: right; }
+.auth-link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer;
+  font-family: var(--sans); font-size: 12px; font-weight: 600; text-decoration: underline;
+  text-underline-offset: 2px; }
+.auth-link:hover { color: #fff; }
+.auth-account-actions { flex-wrap: wrap; }
 
 /* ---- admin content panel ---- */
 #btn-admin { border-color: var(--gold); color: var(--gold); }
