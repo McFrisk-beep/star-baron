@@ -583,15 +583,19 @@ const UI = {
     else if (rp) { const r = Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (sl) {
-      const sh = Fleet.ship(sl.dataset.sellship); if (!sh) return;
-      const val = Bazaar.shipSaleValue(sh), n = (sh.accessories || []).length, name = sh.name;
-      const extra = n ? ` and its ${n} equipped item${n > 1 ? "s" : ""}` : "";
-      if (!confirm(`Sell ${name}${extra} for ${Util.credits(val)}c? This can't be undone.`)) return;
-      const r = Bazaar.sellShip(sl.dataset.sellship);
-      if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast(`Sold ${name} for ${Util.credits(r.credits)}c`, "good");
-      this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader();
+      void this._sellShipClick(sl.dataset.sellship);
     }
+  },
+  async _sellShipClick(uid) {
+    const sh = Fleet.ship(uid); if (!sh) return;
+    const val = Bazaar.shipSaleValue(sh), n = (sh.accessories || []).length, name = sh.name;
+    const extra = n ? ` and its ${n} equipped item${n > 1 ? "s" : ""}` : "";
+    if (!confirm(`Sell ${name}${extra} for ${Util.credits(val)}c? This can't be undone.`)) return;
+    if (Economy.busy()) return;
+    const r = await Bazaar.sellShip(uid);
+    if (!r.ok) return this.toast(r.msg, "warn");
+    this.toast(`Sold ${name} for ${Util.credits(r.credits)}c`, "good");
+    this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader();
   },
 
   renderInventory() {
@@ -620,9 +624,16 @@ const UI = {
     this.refs.fleetInventory.onclick = e => {
       const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
       if (eq) this.openEquipForItem(eq.dataset.equip);
-      else if (sn) { const r = Bazaar.sellNow(sn.dataset.sellnow); if (!r.ok) return this.toast(r.msg || "Can't sell.", "warn"); this.toast(`Sold for ${Util.credits(r.credits)}c`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+      else if (sn) { void this._sellItemClick(sn.dataset.sellnow); }
       else if (ca) { Bazaar.cancelListing(ca.dataset.cancel); this.toast("Listing cancelled.", "info"); window.Game.requestSave(); this.renderInventory(); }
     };
+  },
+  async _sellItemClick(uid) {
+    if (Economy.busy()) return;
+    const r = await Bazaar.sellNow(uid);
+    if (!r.ok) return this.toast(r.msg || "Can't sell.", "warn");
+    this.toast(`Sold for ${Util.credits(r.credits)}c`, "good");
+    this.flashCredits(); window.Game.requestSave(); this.renderFleet();
   },
 
   // ---- missions -----------------------------------------------------------
@@ -724,9 +735,10 @@ const UI = {
       `success <b class="${chance > 0.6 ? "up" : chance < 0.4 ? "down" : ""}">${(chance * 100).toFixed(0)}%</b> · ETA ~${Util.duration(dur)}`;
     this.refs.mmLaunch.disabled = !uids.length;
   },
-  launchMission() {
+  async launchMission() {
     const c = this._pending; if (!c) return;
-    const r = Missions.launch(c, this.selectedShipUids());
+    if (Economy.busy()) return;
+    const r = await Missions.launch(c, this.selectedShipUids());
     if (!r.ok) return this.toast(r.msg, "warn");
     this.toast("Mission launched ▸", "good");
     this._pending = null; this.refs.mission.classList.add("hidden");
@@ -970,7 +982,7 @@ const UI = {
     this.renderBazaar();
   },
 
-  onBazaarClick(e) {
+  async onBazaarClick(e) {
     const t = e.target;
     const sub = t.closest("[data-bz]");
     if (sub) {
@@ -978,6 +990,7 @@ const UI = {
       const sc = this.refs.bazaarBody.querySelector(".bz-scroll"); if (sc) sc.scrollTop = 0;
       return;
     }
+    if (Economy.busy()) return;
     const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
       ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
@@ -987,17 +1000,27 @@ const UI = {
       ["buydossier", id => Bazaar.buyDossier(id), "Dossier filed — read it in the Senate roster."]];
     for (const [attr, fn, msg] of map) {
       const el = t.closest(`[data-${attr}]`);
-      if (el) { const r = fn(el.dataset[attr.replace("buy", "buy")] || el.getAttribute(`data-${attr}`)); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader(); return; }
+      if (el) {
+        const id = el.getAttribute(`data-${attr}`);
+        const r = await fn(id);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader();
+        return;
+      }
     }
     const take = t.closest("[data-take]");
     if (take) {
-      const r = Bazaar.takeContract(take.dataset.take);
+      const r = await Bazaar.takeContract(take.dataset.take);
       if (!r.ok) return this.toast(r.msg, "warn");
       if (r.tip) { this.toast("Insider tip secured 👀", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); return; }
       if (r.contract) { this.renderBazaar(); this.openMission(r.contract); }
       return;
     }
-    if (t.closest("#buy-inv")) { const r = Bazaar.buyInventoryUpgrade(); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Inventory expanded.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); }
+    if (t.closest("#buy-inv")) {
+      const r = await Bazaar.buyInventoryUpgrade();
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Inventory expanded.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar();
+    }
   },
 
   // ===== systems ===========================================================

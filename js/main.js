@@ -146,7 +146,7 @@ const Game = {
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
-    const offlineReports = Missions.resolveMatured(now).concat(Expeditions.resolve(now));  // missions + anomaly surveys
+    const offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));  // missions + anomaly surveys
     const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
@@ -244,7 +244,10 @@ const Game = {
     Wars.tick(now);
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
-    const done = Missions.resolveMatured(now);
+    // Phase 2: mission resolve may await app_mission_resolve — don't block the tick.
+    void Promise.resolve(Missions.resolveMatured(now)).then(done => {
+      if (done && done.length) this.requestSave();
+    }).catch(e => console.warn("[Missions] resolve failed:", e));
     const surveyed = Expeditions.resolve(now);
     Fleet.pruneMercs(now);
     Rivals.tick(now);
@@ -256,7 +259,7 @@ const Game = {
       if (orderEv.length) this.requestSave();
     }).catch(e => console.warn("[Orders] process failed:", e));
     const made = Industries.resolve(now);
-    if (done.length || surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
+    if (surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
     UI.tick();
   },
 
@@ -306,7 +309,7 @@ const Game = {
       this._booting = true;   // suppress catch-up chatter/toasts
       Market.advance(elapsed, now);
       Economy.checkArrival(now);
-      Missions.resolveMatured(now);
+      void Promise.resolve(Missions.resolveMatured(now));
       Expeditions.resolve(now);
       Fleet.pruneMercs(now);
       Bazaar.tick(now);

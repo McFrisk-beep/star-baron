@@ -7,6 +7,8 @@
 const Bazaar = {
   s() { return window.Game.state; },
   bz() { return this.s().bazaar; },
+  // Phase 2: signed-in + players RPCs → purchase/sell via app_* .
+  authoritative() { return !!(window.Economy && Economy.authoritative()); },
 
   // ---- inventory helpers --------------------------------------------------
   equippedSet() {
@@ -159,7 +161,7 @@ const Bazaar = {
   },
 
   // ---- purchases ----------------------------------------------------------
-  buyShip(catalogId) {
+  _buyShipLocal(catalogId) {
     const def = Fleet.shipDef(catalogId); const s = this.s();
     if (!def || def.cls === "main") return { ok: false, msg: "Unknown ship." };
     const cap = window.Economy ? Economy.fleetCap() : 99;
@@ -171,6 +173,14 @@ const Bazaar = {
     Economy.refreshNetWorth(); Economy.checkAchievements();
     Bus.emit("shipBuy", { type: catalogId });
     return { ok: true };
+  },
+  buyShip(catalogId) {
+    if (!this.authoritative()) return this._buyShipLocal(catalogId);
+    return Economy._withRpc(
+      () => this._buyShipLocal(catalogId),
+      () => Cloud.buyShip(catalogId),
+      "Couldn't reach the bazaar — try again."
+    );
   },
 
   // Resale value of an owned ship: a fraction of its catalog price (the free
@@ -185,7 +195,7 @@ const Bazaar = {
     }, 0);
     return Math.round(hull + gear);
   },
-  sellShip(uid) {
+  _sellShipLocal(uid) {
     const s = this.s();
     const sh = Fleet.ship(uid);
     if (!sh) return { ok: false, msg: "Ship not found." };
@@ -199,8 +209,16 @@ const Bazaar = {
     Economy.refreshNetWorth();
     return { ok: true, credits, soldGear };
   },
+  sellShip(uid) {
+    if (!this.authoritative()) return this._sellShipLocal(uid);
+    return Economy._withRpc(
+      () => this._sellShipLocal(uid),
+      () => Cloud.sellShip(uid),
+      "Couldn't reach the bazaar — try again."
+    );
+  },
 
-  buyMain(catalogId) {
+  _buyMainLocal(catalogId) {
     const def = SHIP_CATALOG.main.find(x => x.id === catalogId); const s = this.s();
     if (!def) return { ok: false, msg: "Unknown flagship." };
     if (def.id === s.mainShip.type) return { ok: false, msg: "Already your flagship." };
@@ -211,8 +229,16 @@ const Bazaar = {
     Economy.refreshNetWorth();
     return { ok: true };
   },
+  buyMain(catalogId) {
+    if (!this.authoritative()) return this._buyMainLocal(catalogId);
+    return Economy._withRpc(
+      () => this._buyMainLocal(catalogId),
+      () => Cloud.buyMain(catalogId),
+      "Couldn't reach the bazaar — try again."
+    );
+  },
 
-  hireMerc(offerId, now = Date.now()) {
+  _hireMercLocal(offerId, now = Date.now()) {
     const b = this.bz(); const s = this.s();
     const offer = b.mercs.find(m => m.id === offerId);
     if (!offer) return { ok: false, msg: "Offer gone." };
@@ -225,8 +251,16 @@ const Bazaar = {
     Bus.emit("shipBuy", { type: offer.shipType });
     return { ok: true };
   },
+  hireMerc(offerId, now = Date.now()) {
+    if (!this.authoritative()) return this._hireMercLocal(offerId, now);
+    return Economy._withRpc(
+      () => this._hireMercLocal(offerId, now),
+      () => Cloud.buyMerc(offerId),
+      "Couldn't reach the bazaar — try again."
+    );
+  },
 
-  buyAccessory(offerId) {
+  _buyAccessoryLocal(offerId) {
     const b = this.bz(); const s = this.s();
     const offer = b.accessories.find(a => a.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
@@ -238,6 +272,14 @@ const Bazaar = {
     b.accessories = b.accessories.filter(a => a.id !== offerId);
     Economy.refreshNetWorth();
     return { ok: true, item: offer.item };
+  },
+  buyAccessory(offerId) {
+    if (!this.authoritative()) return this._buyAccessoryLocal(offerId);
+    return Economy._withRpc(
+      () => this._buyAccessoryLocal(offerId),
+      () => Cloud.buyAccessory(offerId),
+      "Couldn't reach the bazaar — try again."
+    );
   },
 
   buyExtractor(offerId) {
@@ -283,7 +325,7 @@ const Bazaar = {
     const lvl = this.s().inventory.upgrades || 0;
     return Math.round(BAZAARCFG.inventoryUpgradeBase * Math.pow(1.8, lvl));
   },
-  buyInventoryUpgrade() {
+  _buyInventoryUpgradeLocal() {
     const s = this.s(); const cost = this.upgradeInventoryCost();
     if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= cost;
@@ -292,9 +334,17 @@ const Bazaar = {
     Economy.refreshNetWorth();
     return { ok: true };
   },
+  buyInventoryUpgrade() {
+    if (!this.authoritative()) return this._buyInventoryUpgradeLocal();
+    return Economy._withRpc(
+      () => this._buyInventoryUpgradeLocal(),
+      () => Cloud.upgradeInventory(),
+      "Couldn't reach the bazaar — try again."
+    );
+  },
 
   // ---- contracts ----------------------------------------------------------
-  takeContract(id, now = Date.now()) {
+  _takeContractLocal(id, now = Date.now()) {
     const b = this.bz();
     const c = b.contracts.find(x => x.id === id && x.status === "open");
     if (!c) return { ok: false, msg: "Contract no longer available." };
@@ -306,24 +356,40 @@ const Bazaar = {
       Feed.emit(`insider tip secured — a ${c.cat} story is brewing out of ${c.sysName} 👀`, { kind: "omen" });
       b.contracts = b.contracts.filter(x => x.id !== id);
       Economy.refreshNetWorth();
-      return { ok: true, tip: true };
+      return { ok: true, tip: true, cat: c.cat };
     }
     // job: remove from board and hand back to the UI for ship selection
     b.contracts = b.contracts.filter(x => x.id !== id);
     return { ok: true, contract: c };
+  },
+  takeContract(id, now = Date.now()) {
+    if (!this.authoritative()) return this._takeContractLocal(id, now);
+    return Economy._withRpc(
+      () => this._takeContractLocal(id, now),
+      () => Cloud.takeContract(id),
+      "Couldn't reach the bazaar — try again."
+    );
   },
 
   // ---- player item sales -------------------------------------------------
   // Listing items for sale was retired; you sell instantly via sellNow. The
   // tick() resolver + cancelListing remain so any listings already saved before
   // the feature was removed still pay out or can be cancelled (no stranded gear).
-  sellNow(itemUid) {
+  _sellNowLocal(itemUid) {
     const it = this.s().items[itemUid]; if (!it) return { ok: false };
     if (this.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
     const credits = Math.round(it.value * BAZAARCFG.itemResaleMult);
     this.s().credits += credits; delete this.s().items[itemUid];
     Economy.refreshNetWorth();
     return { ok: true, credits };
+  },
+  sellNow(itemUid) {
+    if (!this.authoritative()) return this._sellNowLocal(itemUid);
+    return Economy._withRpc(
+      () => this._sellNowLocal(itemUid),
+      () => Cloud.sellItem(itemUid),
+      "Couldn't reach the bazaar — try again."
+    );
   },
   cancelListing(itemUid) {
     this.s().listings = this.s().listings.filter(l => l.itemUid !== itemUid);

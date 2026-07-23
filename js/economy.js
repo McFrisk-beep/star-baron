@@ -30,7 +30,7 @@ const ACHIEVEMENTS = [
 const Economy = {
   s() { return window.Game.state; },
   // Phase 1: signed-in + players RPCs live → server fills. Guests / pre-setup stay local.
-  authoritative() { return !!(window.Cloud && Cloud.authoritative()); },
+  authoritative() { return !!(window.Cloud && window.Cloud.authoritative()); },
   _pending: 0,
   _rpcQueue: Promise.resolve(),
   busy() { return this._pending > 0; },
@@ -44,11 +44,24 @@ const Economy = {
       credits: s.credits,
       positions: JSON.parse(JSON.stringify(s.positions || {})),
       avgCost: JSON.parse(JSON.stringify(s.avgCost || {})),
-      stats: { trades: s.stats.trades, biggestTrade: s.stats.biggestTrade },
+      stats: {
+        trades: s.stats.trades,
+        biggestTrade: s.stats.biggestTrade,
+        contractsDone: s.stats.contractsDone,
+      },
       currentSystem: s.currentSystem,
       travel: s.travel ? Object.assign({}, s.travel) : null,
       unlockedSystems: (s.unlockedSystems || []).slice(),
       reputation: JSON.parse(JSON.stringify(s.reputation || {})),
+      // Phase 2: pre-action fleet/board so soft-sync doesn't send optimistic removals
+      ships: JSON.parse(JSON.stringify(s.ships || [])),
+      mainShip: JSON.parse(JSON.stringify(s.mainShip || {})),
+      missions: JSON.parse(JSON.stringify(s.missions || [])),
+      reports: JSON.parse(JSON.stringify(s.reports || [])),
+      items: JSON.parse(JSON.stringify(s.items || {})),
+      inventory: JSON.parse(JSON.stringify(s.inventory || {})),
+      bazaar: JSON.parse(JSON.stringify(s.bazaar || {})),
+      seq: s.seq,
     };
   },
   _restoreEconomy(snap) {
@@ -62,6 +75,15 @@ const Economy = {
     s.reputation = snap.reputation;
     s.stats.trades = snap.stats.trades;
     s.stats.biggestTrade = snap.stats.biggestTrade;
+    if (snap.stats.contractsDone != null) s.stats.contractsDone = snap.stats.contractsDone;
+    if (snap.ships) s.ships = snap.ships;
+    if (snap.mainShip) s.mainShip = snap.mainShip;
+    if (snap.missions) s.missions = snap.missions;
+    if (snap.reports) s.reports = snap.reports;
+    if (snap.items) s.items = snap.items;
+    if (snap.inventory) s.inventory = snap.inventory;
+    if (snap.bazaar) s.bazaar = snap.bazaar;
+    if (snap.seq != null) s.seq = snap.seq;
   },
   _applyServerSlice(r) {
     const s = this.s();
@@ -71,6 +93,7 @@ const Economy = {
     if (r.stats) {
       if (r.stats.trades != null) s.stats.trades = r.stats.trades;
       if (r.stats.biggestTrade != null) s.stats.biggestTrade = r.stats.biggestTrade;
+      if (r.stats.contractsDone != null) s.stats.contractsDone = r.stats.contractsDone;
     }
     if (r.currentSystem) s.currentSystem = r.currentSystem;
     if ("travel" in r || "travelObj" in r) {
@@ -78,10 +101,34 @@ const Economy = {
       s.travel = tr && typeof tr === "object" ? tr : null;
     }
     if (r.unlockedSystems) s.unlockedSystems = r.unlockedSystems;
+    if (r.ships) s.ships = r.ships;
+    if (r.mainShip) s.mainShip = r.mainShip;
+    if (r.missions) s.missions = r.missions;
+    if (r.reports) s.reports = r.reports;
+    if (r.items) s.items = r.items;
+    if (r.inventory) s.inventory = r.inventory;
+    if (r.bazaar) s.bazaar = r.bazaar;
+    if (r.seq != null) s.seq = r.seq;
+    if (r.reputation) s.reputation = r.reputation;
   },
-  // Push pre-trade client income (missions/bazaar/routes/…) to players.state.
-  // Uses the SNAPSHOT economy fields so we don't double-apply the optimistic fill.
-  // app_commit keeps travel/unlocks server-authored (see phase1_players.sql).
+  // Pull protected fields from an app_commit response into live state.
+  applyCommitState(st) {
+    if (!st || typeof st !== "object") return;
+    const s = this.s();
+    if (st.currentSystem) s.currentSystem = st.currentSystem;
+    s.travel = st.travel && typeof st.travel === "object" ? st.travel : null;
+    if (st.unlockedSystems) s.unlockedSystems = st.unlockedSystems;
+    if (st.ships) s.ships = st.ships;
+    if (st.mainShip) s.mainShip = st.mainShip;
+    if (st.missions) s.missions = st.missions;
+    if (st.items) s.items = st.items;
+    if (st.inventory) s.inventory = st.inventory;
+    if (st.reports) s.reports = st.reports;
+    if (st.seq != null) s.seq = st.seq;
+  },
+  // Push pre-action client income + board to players.state.
+  // Uses SNAPSHOT fields so we don't double-apply the optimistic mutation
+  // (and so bazaar offers still exist for purchase RPCs).
   async _syncSoftEconomy(snap) {
     if (!this.authoritative()) return true;
     try {
@@ -89,13 +136,30 @@ const Economy = {
         credits: snap.credits,
         positions: snap.positions,
         avgCost: snap.avgCost,
+        ships: snap.ships,
+        mainShip: snap.mainShip,
+        missions: snap.missions,
+        reports: snap.reports,
+        items: snap.items,
+        inventory: snap.inventory,
+        bazaar: snap.bazaar,
+        seq: snap.seq,
         stats: Object.assign({}, this.s().stats, {
           trades: snap.stats.trades,
           biggestTrade: snap.stats.biggestTrade,
+          contractsDone: snap.stats.contractsDone,
         }),
       });
       const r = await Cloud.commit(payload);
       if (r && r.ok === false) return false;
+      // Don't apply fleet/board from commit here — optimistic mutation is live
+      // and Phase 2 commit echoes pre-action ships. Topology only.
+      if (r && r.state) {
+        const st = r.state, s = this.s();
+        if (st.currentSystem) s.currentSystem = st.currentSystem;
+        s.travel = st.travel && typeof st.travel === "object" ? st.travel : null;
+        if (st.unlockedSystems) s.unlockedSystems = st.unlockedSystems;
+      }
       return true;
     } catch (e) {
       console.warn("[Economy] soft sync failed:", e);
@@ -128,10 +192,53 @@ const Economy = {
         if (r.tax != null) local.tax = r.tax;
         if (r.qty != null) local.qty = r.qty;
         if (r.etaMs != null) local.etaMs = r.etaMs;
+        if (r.creditsGained != null) local.credits = r.creditsGained;
+        if (r.contract != null) local.contract = r.contract;
+        if (r.tip != null) local.tip = r.tip;
+        if (r.item != null) local.item = r.item;
+        if (r.mission != null) local.mission = r.mission;
+        if (r.cat != null) local.cat = r.cat;
+        if (r.resolved != null) local.resolved = r.resolved;
         return local;
       } catch (e) {
+        if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+          // Phase 2 SQL not pasted yet — keep optimistic local mutation.
+          console.warn("[Economy] RPC missing — local fallback:", e);
+          return local;
+        }
         console.warn("[Economy] rpc failed:", e);
         this._restoreEconomy(snap);
+        return { ok: false, msg: failMsg };
+      } finally {
+        this._pending = Math.max(0, this._pending - 1);
+      }
+    };
+    const p = this._rpcQueue.then(run, run);
+    this._rpcQueue = p.catch(() => {});
+    return p;
+  },
+
+  // Authoritative call without optimistic mutation (mission resolve).
+  async _rpcOnly(rpcFn, failMsg) {
+    const run = async () => {
+      const snap = this._snapEconomy();
+      this._pending++;
+      try {
+        if (!(await this._syncSoftEconomy(snap))) {
+          return { ok: false, msg: failMsg };
+        }
+        const r = await rpcFn();
+        if (!r || !r.ok) {
+          return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
+        }
+        this._applyServerSlice(r);
+        return r;
+      } catch (e) {
+        if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+          console.warn("[Economy] RPC missing — caller should local-fallback:", e);
+          return { ok: false, missing: true, msg: failMsg };
+        }
+        console.warn("[Economy] rpc failed:", e);
         return { ok: false, msg: failMsg };
       } finally {
         this._pending = Math.max(0, this._pending - 1);

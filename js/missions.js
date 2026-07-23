@@ -1,10 +1,13 @@
 /* missions.js — active contract missions. A mission runs through phases:
    an outbound leg (bar fills left→right), one or two on-site "work" phases with
    flavor text, then a return leg (bar drains right→left). On completion it rolls
-   success vs the computed chance and pays out, or inflicts losses / impound.   */
+   success vs the computed chance and pays out, or inflicts losses / impound.
+
+   Phase 2: logged-in players launch/resolve via app_mission_* RPCs (server RNG). */
 
 const Missions = {
   s() { return window.Game.state; },
+  authoritative() { return !!(window.Economy && Economy.authoritative()); },
 
   // Success probability for a contract flown by the given ships.
   successChance(contract, uids) {
@@ -38,7 +41,7 @@ const Missions = {
     ];
   },
 
-  launch(contract, uids) {
+  _launchLocal(contract, uids) {
     const s = this.s();
     uids = uids.filter(u => { const sh = Fleet.ship(u); return sh && sh.status === "idle"; });
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
@@ -62,6 +65,16 @@ const Missions = {
     return { ok: true, mission };
   },
 
+  launch(contract, uids) {
+    if (!this.authoritative()) return this._launchLocal(contract, uids);
+    const shipUids = (uids || []).slice();
+    return Economy._withRpc(
+      () => this._launchLocal(contract, shipUids),
+      () => Cloud.missionLaunch(contract, shipUids),
+      "Couldn't launch mission — try again."
+    );
+  },
+
   phaseAt(m, now = Date.now()) {
     let elapsed = Util.clamp(now - m.startedAt, 0, m.totalMs);
     const overall = elapsed / m.totalMs;
@@ -79,7 +92,26 @@ const Missions = {
   },
 
   // Resolve finished missions. Returns reports (also pushed to state.reports).
+  // Authoritative path awaits app_mission_resolve (server RNG); guests stay sync.
   resolveMatured(now) {
+    if (!this.authoritative()) return this._resolveLocal(now);
+    const due = this.s().missions.some(m => !m.resolved && now - m.startedAt >= m.totalMs);
+    if (!due) return Promise.resolve([]);
+    return this._resolveAuth(now);
+  },
+
+  async _resolveAuth(now) {
+    const r = await Economy._rpcOnly(() => Cloud.missionResolve(), "Couldn't resolve missions — try again.");
+    if (r && r.missing) return this._resolveLocal(now);
+    if (!r || !r.ok) return [];
+    const out = Array.isArray(r.resolved) ? r.resolved : [];
+    Economy.refreshNetWorth();
+    Economy.checkAchievements();
+    for (const rep of out) Bus.emit("missionDone", rep);
+    return out;
+  },
+
+  _resolveLocal(now) {
     const s = this.s();
     const out = [];
     for (const m of s.missions) {
