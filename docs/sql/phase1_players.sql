@@ -251,7 +251,6 @@ declare
   st jsonb;
   legacy jsonb;
   now_ms bigint := app._now_ms();
-  migrated boolean := false;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -265,36 +264,17 @@ begin
     exception when undefined_table then
       legacy := null;
     end;
-    if legacy is null or legacy = '{}'::jsonb then
-      st := app._default_state();
-    else
-      st := legacy;
-      migrated := true;   -- untrusted legacy client data; clamp credits below
-    end if;
-    -- ensure required economy keys exist
-    st := coalesce(st, app._default_state());
-    if st->'credits' is null then st := jsonb_set(st, '{credits}', '1500'); end if;
-    if st->'positions' is null then st := jsonb_set(st, '{positions}', '{}'::jsonb); end if;
-    if st->'avgCost' is null then st := jsonb_set(st, '{avgCost}', '{}'::jsonb); end if;
-    if st->'currentSystem' is null then st := jsonb_set(st, '{currentSystem}', '"navos"'); end if;
-    if st->'unlockedSystems' is null then
-      st := jsonb_set(st, '{unlockedSystems}', '["navos","korrin","velm"]'::jsonb);
-    end if;
-    if st->'reputation' is null then
-      st := jsonb_set(st, '{reputation}', app._default_state()->'reputation');
-    end if;
-    if st->'prestige' is null then
-      st := jsonb_set(st, '{prestige}', '{"tier":0,"multiplier":1.0}'::jsonb);
-    end if;
-    if st->'stats' is null then
-      st := jsonb_set(st, '{stats}', app._default_state()->'stats');
-    end if;
-    -- Security: a migrated legacy save is untrusted client data — clamp its
-    -- credit balance so a forged `saves` row can't mint a fortune on first boot.
-    -- (The `saves` table is also locked to client writes; see
-    -- docs/sql/security_hardening.sql. This is defense in depth.)
-    if migrated and coalesce((st->>'credits')::float8, 0) > 100000000 then
-      st := jsonb_set(st, '{credits}', '100000000');
+    -- Security: a legacy `saves` row is PRE-AUTHORITATIVE client data — the old
+    -- game trusted it fully, so its economy (credits, positions, ships, unlocks,
+    -- prestige, …) is untrustworthy. Do NOT carry it into the authoritative row.
+    -- Every migrated account starts from the canonical default economy; we keep
+    -- only cosmetic prefs (settings) so language / mute / tutorial-seen survive.
+    -- New accounts (no saves row) get the same default state. Combined with the
+    -- `saves` table being locked to client writes (docs/sql/security_hardening.sql),
+    -- there is no path for a forged save to reach `players.state`.
+    st := app._default_state();
+    if legacy is not null and jsonb_typeof(legacy->'settings') = 'object' then
+      st := jsonb_set(st, '{settings}', legacy->'settings');
     end if;
     st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
     insert into public.players(user_id, state, updated_at) values (uid, st, now());

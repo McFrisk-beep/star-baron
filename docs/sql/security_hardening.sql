@@ -7,8 +7,9 @@
 --            balance: the client could write any JSON to its own `saves` row
 --            (client RLS) and `app_bootstrap` copied it verbatim into the
 --            authoritative `players.state`. Fix: lock `saves` against ALL client
---            writes (so no forged row can be created) + clamp the migrated
---            credit balance as defense in depth for pre-existing rows.
+--            writes (so no forged row can be created) + stop trusting a migrated
+--            legacy save's economy — reset it to the default economy on boot,
+--            keeping only cosmetic prefs.
 --   MEDIUM — `world_senate_influence` accepted unbounded / unvalidated influence
 --            straight from the client (any signed-in user could POST
 --            strength:1e9 or thousands of rows and swing the SHARED senate vote).
@@ -29,12 +30,13 @@ drop policy if exists "delete own save" on public.saves;
 -- (kept) "read own save" — SELECT using (auth.uid() = user_id)
 
 -- ---------------------------------------------------------------------------
--- HIGH (defense in depth) — clamp migrated credits in app_bootstrap
+-- HIGH — reset migrated legacy accounts' economy to defaults in app_bootstrap
 -- ---------------------------------------------------------------------------
--- A legacy save is pre-authoritative data (the old client trusted it fully), so
--- never let its credit magnitude through unbounded. 100M is far above any
--- plausible early-game balance yet neutralises absurd forged values. New
--- accounts (no `saves` row) are unaffected — they boot from _default_state().
+-- A legacy `saves` row is pre-authoritative client data (the old game trusted
+-- it fully), so its economy is untrustworthy. On migration we do NOT carry it
+-- into the authoritative row — every migrated account starts from the canonical
+-- default economy, keeping only cosmetic prefs (settings). New accounts (no
+-- `saves` row) get the same default state.
 create or replace function public.app_bootstrap()
 returns jsonb
 language plpgsql security definer set search_path = public, market, app as $$
@@ -43,7 +45,6 @@ declare
   st jsonb;
   legacy jsonb;
   now_ms bigint := app._now_ms();
-  migrated boolean := false;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -51,40 +52,15 @@ begin
 
   select state into st from public.players where user_id = uid for update;
   if st is null then
-    -- one-time migrate from the local-first `saves` table if present
+    -- one-time read of the local-first `saves` table if present (cosmetic only)
     begin
       select data into legacy from public.saves where user_id = uid;
     exception when undefined_table then
       legacy := null;
     end;
-    if legacy is null or legacy = '{}'::jsonb then
-      st := app._default_state();
-    else
-      st := legacy;
-      migrated := true;
-    end if;
-    -- ensure required economy keys exist
-    st := coalesce(st, app._default_state());
-    if st->'credits' is null then st := jsonb_set(st, '{credits}', '1500'); end if;
-    if st->'positions' is null then st := jsonb_set(st, '{positions}', '{}'::jsonb); end if;
-    if st->'avgCost' is null then st := jsonb_set(st, '{avgCost}', '{}'::jsonb); end if;
-    if st->'currentSystem' is null then st := jsonb_set(st, '{currentSystem}', '"navos"'); end if;
-    if st->'unlockedSystems' is null then
-      st := jsonb_set(st, '{unlockedSystems}', '["navos","korrin","velm"]'::jsonb);
-    end if;
-    if st->'reputation' is null then
-      st := jsonb_set(st, '{reputation}', app._default_state()->'reputation');
-    end if;
-    if st->'prestige' is null then
-      st := jsonb_set(st, '{prestige}', '{"tier":0,"multiplier":1.0}'::jsonb);
-    end if;
-    if st->'stats' is null then
-      st := jsonb_set(st, '{stats}', app._default_state()->'stats');
-    end if;
-    -- Security: a migrated legacy save is untrusted client data — clamp its
-    -- credit balance so a forged `saves` row can't mint a fortune on first boot.
-    if migrated and coalesce((st->>'credits')::float8, 0) > 100000000 then
-      st := jsonb_set(st, '{credits}', '100000000');
+    st := app._default_state();
+    if legacy is not null and jsonb_typeof(legacy->'settings') = 'object' then
+      st := jsonb_set(st, '{settings}', legacy->'settings');
     end if;
     st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
     insert into public.players(user_id, state, updated_at) values (uid, st, now());
