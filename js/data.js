@@ -38,18 +38,20 @@ const CONFIG = {
 
   // Market guardrails. Prices stay in a TIGHT band around base; only senate
   // legislation shifts the band (the one thing that moves price sharply). News,
-  // insight and the random walk just nudge price within it and quickly fade.
+  // insight and the deterministic oscillators nudge price within it.
   priceFloorMult: 0.88,       // price floor = (legislation-adjusted) base × this
   priceCeilMult: 1.12,        // price ceil = (legislation-adjusted) base × this  (≈ ±12%)
-  meanReversion: 0.02,        // per-tick pull toward the drift+news anchor (0–1)
-  newsImpact: 0.10,           // how much a news/insight event nudges price (×nominal). Low = calm.
-  overheatBand: 0.03,         // once price runs >3% off base, "other barons" pile in…
-  overheatPull: 0.05,         // …adding this per-tick pull back toward base, so fast moves stabilise
-  maxTickMove: 0.004,         // hard cap on ordinary per-tick change (legislation's band-shift overrides it)
-  // Per-tick wiggle = gauss(vol × volScale). Tiny → a chill market.
-  volScale: 0.006,
+  newsImpact: 0.10,           // how much a news/insight/schedule event nudges price (×nominal). Low = calm.
   driftAmp: 0.04,             // amplitude of the slow per-category secular drift
   driftPeriodMs: 30 * 60 * 1000, // one full sector-rotation cycle
+
+  // Legacy random-walk knobs (unused by the Phase-0 deterministic market; kept
+  // so old notes/saves mentioning them aren't confusing mid-migration).
+  meanReversion: 0.02,
+  overheatBand: 0.03,
+  overheatPull: 0.05,
+  maxTickMove: 0.004,
+  volScale: 0.006,
 
   // Offline catch-up: cap how much real time we simulate forward on return.
   maxOfflineMs: 7 * 24 * 60 * 60 * 1000, // 7 days
@@ -350,6 +352,18 @@ const MARKETCFG = {
   // cap: impact is computed against depth × this, so a big order jumps the price
   // far less than before (still linear, so splitting an order can't dodge it).
   impactSoftening: 3,            // 1 = old behaviour; higher = flatter price response to order size
+
+  // ---- Deterministic market (Phase 0 — see docs/SERVER_AUTHORITATIVE_DESIGN.md §4)
+  // Seed MUST match the SQL market_price() function. Same seed → same curve.
+  seed: "cosmocrat-market-v1",
+  volGain: 1.15,                 // price *= 1 + vol × volGain × osc; |osc| ≲ 1
+  // Three oscillator period bands (ms); each commodity picks inside its band via hash.
+  oscPeriodMinMs: [2 * 60 * 1000, 8 * 60 * 1000, 25 * 60 * 1000],
+  oscPeriodMaxMs: [6 * 60 * 1000, 20 * 60 * 1000, 70 * 60 * 1000],
+  eventPeriodMs: 90 * 60 * 1000,       // galactic seeded-event slot length
+  localEventPeriodMs: 45 * 60 * 1000,  // per-system seeded-event slot length
+  eventDurationMs: 45 * 60 * 1000,     // how long a scheduled event distorts price
+  localEventDurationMs: 20 * 60 * 1000,
 };
 
 /* ---- BATTLE DAMAGE --------------------------------------------------------

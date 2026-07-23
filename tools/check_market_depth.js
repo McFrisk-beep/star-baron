@@ -32,7 +32,15 @@ const reset = (tier = 0, sysId = "korrin", credits = 1e12) => {
 // 1) mod compression: korrin mineral raw 0.65 → 1+(0.65-1)*K, K = modCompression
 reset();
 const K = MARKETCFG.modCompression;
-assert(approx(Market.spot(IRON, "korrin"), BASE * (1 + (0.65 - 1) * K), 1e-9), "compressed mod applied to spot");
+const iron = Market.byId(IRON);
+const modK = 1 + (0.65 - 1) * K;
+assert(approx(Market._mod("mineral", "korrin"), modK, 1e-9), "compressed mod for korrin mineral");
+// spot = displayed global × mod × seeded local × client local overlays
+assert(approx(
+  Market.spot(IRON, "korrin"),
+  Market.price(IRON) * modK * Market.localEventMult(iron, "korrin", T),
+  1e-9
+), "compressed mod (+ seeded local) applied to spot");
 // raw best/worst gap vs compressed gap for minerals across the capitals
 const rawMods = SYSTEMS.map(s => s.mods.mineral), compMods = SYSTEMS.map(s => Market._mod("mineral", s.id));
 const rawGap = Math.max(...rawMods) - Math.min(...rawMods), compGap = Math.max(...compMods) - Math.min(...compMods);
