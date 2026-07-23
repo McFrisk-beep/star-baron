@@ -156,7 +156,7 @@ begin
   if p_item->'bonus' is not null and jsonb_typeof(p_item->'bonus') = 'object' then
     v := v * 1.4;
   end if;
-  return round(v / 10.0) * 10;
+  return round((v / 10.0)::numeric) * 10;   -- ::numeric = half-up, matching JS Math.round
 end;
 $$;
 
@@ -237,7 +237,7 @@ declare
 begin
   ship_type := escorts[1 + (floor(market.u01(s, 0) * 4)::int % 4)];
   select * into def from app.ship_def(ship_type);
-  hire := round(def.price * 0.2 + def.firepower * 55);
+  hire := round((def.price * 0.2 + def.firepower * 55)::numeric);
   service_ms := (15 + floor(market.u01(s, 1) * 26)::int) * 60 * 1000; -- 15–40 min
   return jsonb_build_object(
     'id', 'mc-' || p_epoch || '-' || p_slot,
@@ -282,7 +282,7 @@ begin
   end if;
   amount := bases[ki] * mult * (0.8 + market.u01(s, 2) * 0.5);
   if pcts[ki] then amount := round(amount::numeric, 3);
-  else amount := round(amount); end if;
+  else amount := round(amount::numeric); end if;
   item := jsonb_build_object(
     'uid', 'i' || p_epoch || 'a' || p_slot,
     'kind', kind,
@@ -301,7 +301,7 @@ begin
   );
   val := app.item_value(item);
   item := jsonb_set(item, '{value}', to_jsonb(val));
-  price := round(val * (0.95 + market.u01(s, 3) * 0.30));
+  price := round((val * (0.95 + market.u01(s, 3) * 0.30))::numeric);
   return jsonb_build_object(
     'id', 'ac-' || p_epoch || '-' || p_slot,
     'item', item,
@@ -388,14 +388,14 @@ begin
     'faction', factions[1 + (floor(market.u01(s, 4) * 4)::int % 4)],
     'stakeTier', stake,
     'impound', impound,
-    'minFirepower', round((case when fp_hi > 0
-      then fp_lo + floor(market.u01(s, 5) * (fp_hi - fp_lo + 1)) else 0 end) * req_mult),
-    'cargoRequired', round((case when cargo_hi > 0
-      then cargo_lo + floor(market.u01(s, 6) * (cargo_hi - cargo_lo + 1)) else 0 end) * req_mult),
+    'minFirepower', round(((case when fp_hi > 0
+      then fp_lo + floor(market.u01(s, 5) * (fp_hi - fp_lo + 1)) else 0 end) * req_mult)::numeric),
+    'cargoRequired', round(((case when cargo_hi > 0
+      then cargo_lo + floor(market.u01(s, 6) * (cargo_hi - cargo_lo + 1)) else 0 end) * req_mult)::numeric),
     'durationMs', (dur_lo + floor(market.u01(s, 7) * (dur_hi - dur_lo + 1))::int) * 60 * 1000,
     'reward', jsonb_build_object(
-      'credits', (round((rew_lo + floor(market.u01(s, 8) * (rew_hi - rew_lo + 1))::int)
-        * pay * stake_mult / 10.0) * 10)::int,
+      'credits', (round(((rew_lo + floor(market.u01(s, 8) * (rew_hi - rew_lo + 1))::int)
+        * pay * stake_mult / 10.0)::numeric) * 10)::int,
       'itemChance', case typ when 'transport' then 0.1 when 'escort' then 0.3
         when 'combat' then 0.5 when 'smuggle' then 0.45 else 0.7 end,
       'stockChance', case typ when 'transport' then 0.28 else 0.1 end

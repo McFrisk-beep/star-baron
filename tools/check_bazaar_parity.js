@@ -9,6 +9,10 @@
    Both sides share Market._seed / Market._u01 (already proven equal to the SQL
    RNG by check_market_parity), so this asserts only the formula/constants layer.
 
+   Rounding: the SQL generators cast to ::numeric before round() (half-up), which
+   matches JS Math.round for these positive values — so the mirror's Math.round is
+   faithful and there's no half-even vs half-up gap left to hide a divergence.
+
    The `sql*` functions below mirror the SQL verbatim — keep them in lockstep
    with docs/sql/phase2_missions_bazaar.sql when tuning the board.
    Run:  node tools/check_bazaar_parity.js                                       */
