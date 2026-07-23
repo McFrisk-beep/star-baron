@@ -356,10 +356,11 @@ const MARKETCFG = {
   // ---- Deterministic market (Phase 0 — see docs/SERVER_AUTHORITATIVE_DESIGN.md §4)
   // Seed MUST match the SQL market_price() function. Same seed → same curve.
   seed: "cosmocrat-market-v1",
-  volGain: 1.15,                 // price *= 1 + vol × volGain × osc; |osc| ≲ 1
+  // Keep short-horizon moves tiny (≪0.1%/tick); real swings play out over minutes–hours.
+  volGain: 0.25,                 // price *= 1 + vol × volGain × osc; |osc| ≲ 1
   // Three oscillator period bands (ms); each commodity picks inside its band via hash.
-  oscPeriodMinMs: [2 * 60 * 1000, 8 * 60 * 1000, 25 * 60 * 1000],
-  oscPeriodMaxMs: [6 * 60 * 1000, 20 * 60 * 1000, 70 * 60 * 1000],
+  oscPeriodMinMs: [15 * 60 * 1000, 40 * 60 * 1000, 90 * 60 * 1000],
+  oscPeriodMaxMs: [30 * 60 * 1000, 70 * 60 * 1000, 180 * 60 * 1000],
   eventPeriodMs: 90 * 60 * 1000,       // galactic seeded-event slot length
   localEventPeriodMs: 45 * 60 * 1000,  // per-system seeded-event slot length
   eventDurationMs: 45 * 60 * 1000,     // how long a scheduled event distorts price

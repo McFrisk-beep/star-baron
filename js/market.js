@@ -125,8 +125,9 @@ const Market = {
       const start = s * periodMs;
       if (t < start || t >= start + durationMs) continue;
       if (ev.target !== comm.id && ev.target !== comm.cat) continue;
-      const remain = 1 - (t - start) / durationMs;
-      m *= 1 + (ev.mult - 1) * remain * CONFIG.newsImpact;
+      // Smooth sin envelope (0→1→0) so slot edges don't step the price.
+      const envelope = Math.sin(((t - start) / durationMs) * Math.PI);
+      m *= 1 + (ev.mult - 1) * envelope * CONFIG.newsImpact;
     }
     return m;
   },

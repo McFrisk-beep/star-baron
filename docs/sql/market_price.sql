@@ -130,8 +130,8 @@ returns double precision
 language plpgsql immutable strict as $$
 declare
   seed_base text := 'cosmocrat-market-v1';
-  amin double precision[] := array[120000, 480000, 1500000];
-  amax double precision[] := array[360000, 1200000, 4200000];
+  amin double precision[] := array[900000, 2400000, 5400000];
+  amax double precision[] := array[1800000, 4200000, 10800000];
   s bigint;
   raw double precision[] := array[0,0,0];
   periods double precision[] := array[0,0,0];
@@ -239,7 +239,8 @@ begin
     start_t := s * p_period;
     if p_t < start_t or p_t >= start_t + p_duration then continue; end if;
     if ev.target is distinct from p_comm_id and ev.target is distinct from p_cat then continue; end if;
-    remain := 1.0 - (p_t - start_t) / p_duration;
+    -- Smooth sin envelope (0→1→0) so slot edges don't step the price.
+    remain := sin(((p_t - start_t) / p_duration) * pi());
     m := m * (1.0 + (ev.mult - 1.0) * remain * news_impact);
   end loop;
   return m;
@@ -253,7 +254,7 @@ declare
   c record;
   drift double precision;
   osc double precision;
-  vol_gain constant double precision := 1.15;
+  vol_gain constant double precision := 0.25;
   floor_m constant double precision := 0.88;
   ceil_m constant double precision := 1.12;
   price double precision;
