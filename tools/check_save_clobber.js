@@ -24,6 +24,7 @@ const cloud = {
 const ctx = {
   console,
   window: {},
+  setTimeout, clearTimeout,
   localStorage: {
     getItem: () => mem.local,
     setItem: (_k, v) => { mem.local = v; },
