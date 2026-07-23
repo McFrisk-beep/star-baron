@@ -329,6 +329,8 @@ declare
   avg_cost jsonb;
   stats jsonb;
   value double precision;
+  fac text;
+  rep jsonb;
 begin
   if action not in ('buy', 'sell') then
     return jsonb_build_object('ok', false, 'error', 'invalid action');
@@ -410,6 +412,17 @@ begin
     stats := jsonb_set(stats, '{biggestTrade}', to_jsonb(value));
   end if;
 
+  -- Light faction standing from large trades (mirrors Rep.onTrade in
+  -- js/reputation.js): trades ≥ 4000 nudge the category's faction. Server-side
+  -- so reputation stays authoritative (app_commit protects it).
+  if value >= 4000 then
+    fac := app._cat_faction(comm.cat);
+    rep := coalesce(st->'reputation', '{}'::jsonb);
+    rep := jsonb_set(rep, array[fac], to_jsonb(greatest(-100.0, least(100.0,
+      coalesce((rep->>fac)::float8, 0) + (case when action = 'sell' then 0.5 else 0.3 end)))));
+    st := jsonb_set(st, '{reputation}', rep);
+  end if;
+
   st := jsonb_set(st, '{credits}', to_jsonb(credits));
   st := jsonb_set(st, '{positions}', positions);
   st := jsonb_set(st, '{avgCost}', avg_cost);
@@ -429,6 +442,7 @@ begin
     'positions', positions,
     'avgCost', avg_cost,
     'stats', stats,
+    'reputation', coalesce(st->'reputation', '{}'::jsonb),
     'currentSystem', sys,
     'travel', st->'travel'
   );

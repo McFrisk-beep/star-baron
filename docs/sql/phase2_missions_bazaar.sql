@@ -88,6 +88,29 @@ begin
 end;
 $$;
 
+-- Faction rival map (match FACTIONS[].rival in js/data.js).
+create or replace function app._faction_rival(p_faction text)
+returns text
+language sql immutable as $$
+  select case p_faction
+    when 'syndicate' then 'free_trade'
+    when 'mining_combine' then 'agri_collective'
+    when 'free_trade' then 'syndicate'
+    when 'agri_collective' then 'mining_combine'
+    else null end;
+$$;
+
+-- Apply a standing delta to one faction, clamped to REP.min/max (-100..100).
+-- Mirrors Rep.change() in js/reputation.js.
+create or replace function app._rep_change(p_rep jsonb, p_faction text, p_delta double precision)
+returns jsonb
+language sql immutable as $$
+  select case when p_faction is null or p_faction = '' then p_rep
+  else jsonb_set(coalesce(p_rep, '{}'::jsonb), array[p_faction],
+    to_jsonb(greatest(-100.0, least(100.0,
+      coalesce((p_rep->>p_faction)::float8, 0) + p_delta)))) end;
+$$;
+
 create or replace function app.make_ship(p_seq int, p_type text, p_name text,
   p_merc boolean, p_expires bigint)
 returns jsonb
@@ -867,6 +890,8 @@ declare
   lost_json jsonb;
   rep jsonb;
   fac text;
+  rival text;
+  gain double precision;
 begin
   st := app._lock_state(now_ms);
   missions := coalesce(st->'missions', '[]'::jsonb);
@@ -915,8 +940,10 @@ begin
     if success then
       gross := round(coalesce((m->'reward'->>'credits')::float8, 0)
         * app.rep_reward_mult(st, m->>'faction'));
-      -- hard cap: template max × extreme pay × high stake ≈ safety net
-      gross := least(gross, 200000);
+      -- Sanity net only. Rewards are server-generated (gen_contract) and rep is
+      -- server-authoritative, so max legit gross ≈ 24000×3.8×4.0×1.25 ≈ 456k;
+      -- this guards a corrupted row without clipping legitimate high-tier pay.
+      gross := least(gross, 1000000);
       payout := case when gross > 0 then round(gross * (1.0 - tax_rate)) else 0 end;
       report := jsonb_set(report, '{credits}', to_jsonb(payout));
       report := jsonb_set(report, '{taxed}', to_jsonb(gross - payout));
@@ -925,12 +952,24 @@ begin
       stats := jsonb_set(stats, '{contractsDone}',
         to_jsonb(coalesce((stats->>'contractsDone')::int, 0) + 1));
       st := jsonb_set(st, '{stats}', stats);
-      -- small server-side rep bump (so standing isn't client-only forever)
+      -- Server-side reputation from the contract (mirrors Rep.onContract):
+      -- danger-scaled gain to the sponsor, half that off its rival, and a small
+      -- Free-Trade penalty for dirty work. Authoritative — commit protects rep.
       fac := m->>'faction';
       if fac is not null and fac <> '' then
+        gain := case m->>'danger'
+          when 'safe' then 3 when 'low' then 5 when 'moderate' then 7
+          when 'high' then 10 when 'extreme' then 13 else 5 end;
         rep := coalesce(st->'reputation', '{}'::jsonb);
-        rep := jsonb_set(rep, array[fac],
-          to_jsonb(least(100.0, coalesce((rep->>fac)::float8, 0) + 1.5)));
+        rep := app._rep_change(rep, fac, gain);
+        rival := app._faction_rival(fac);
+        if rival is not null then
+          -- ::numeric so .5 rounds half-up like JS Math.round (round(float8) is half-even)
+          rep := app._rep_change(rep, rival, -round((gain * 0.5)::numeric));
+        end if;
+        if (m->>'type') in ('smuggle', 'assassinate') then
+          rep := app._rep_change(rep, 'free_trade', -2);
+        end if;
         st := jsonb_set(st, '{reputation}', rep);
       end if;
       ships := (
