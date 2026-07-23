@@ -1,8 +1,9 @@
 # Server-authoritative core — technical design
 
-> Status: **proposal for review.** No game code changes yet. This document is the
-> plan to make money-affecting state cheat-resistant by moving the authority for
-> it from the browser to Supabase.
+> Status: **Phase 0 landed** (deterministic `market.js` + SQL `market_price()` +
+> parity test). Phases 1–3 still proposal. This document is the plan to make
+> money-affecting state cheat-resistant by moving the authority for it from the
+> browser to Supabase.
 
 ## 1. Goal & non-goals
 
@@ -261,8 +262,21 @@ needs them.
 
 ---
 
-### What I need from you to start building Phase 0
-Just a go-ahead. Phase 0 (deterministic market + parity test) changes no visible
-behavior and needs no Supabase work from you yet — it's the safe first step. The
-Supabase SQL (schema + functions) comes with Phase 1, with copy-paste blocks like
-the existing `docs/CLOUD_SETUP.md`.
+### Phase 0 deliverables (done)
+
+- `js/market.js` — O(1) deterministic `formulaGlobal` / `formulaSystem`; tick
+  recomputes from the clock; sparkline hist samples the function.
+- `js/data.js` — `MARKETCFG.seed` + oscillator / event-schedule knobs.
+- `docs/sql/market_price.sql` — Postgres mirror (paste when ready; not required
+  for clients yet).
+- `tools/check_market_parity.js` (+ `tools/market_sql_ref.js`) — JS↔SQL-ref
+  parity over a (commodity × t × system) grid.
+
+Client news/local overlays (Broadcast / Wars / Galaxy), Senate banding, and
+trade-impact pressure still multiply on top for today's UX; Phase 1 routes
+logged-in trades through RPC and stops trusting those for fill price.
+
+### What I need from you to start building Phase 1
+A go-ahead to land the `players` table + RLS + `app_bootstrap` / `app_trade` /
+`app_dock` / `app_unlock`, and to run that SQL in the Supabase dashboard (copy-
+paste blocks like `docs/CLOUD_SETUP.md`).
