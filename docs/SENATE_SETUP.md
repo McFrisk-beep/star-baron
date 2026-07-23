@@ -186,6 +186,13 @@ alter table public.world_senate_influence enable row level security;
 create policy "read influence"      on public.world_senate_influence for select using (true);
 create policy "insert own influence" on public.world_senate_influence for insert with check (auth.uid() = user_id);
 -- (no update/delete → influence is immutable once cast)
+--
+-- IMPORTANT: after this, run docs/sql/security_hardening.sql. It replaces the
+-- direct "insert own influence" policy with the app_senate_influence() RPC,
+-- which validates + clamps strength and rate-limits per bill so a client can't
+-- forge an outsized push (raw inserts let anyone POST strength:1e9). The client
+-- (js/senateworld.js) calls the RPC and only falls back to a raw insert on
+-- projects where the hardening hasn't been applied yet.
 
 -- optional housekeeping: drop influence for bills older than the retention window
 -- (safe to skip; or add to senate_tick: delete from world_senate_influence where created_at < now() - interval '14 days';)

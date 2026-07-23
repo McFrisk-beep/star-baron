@@ -251,6 +251,7 @@ declare
   st jsonb;
   legacy jsonb;
   now_ms bigint := app._now_ms();
+  migrated boolean := false;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -268,6 +269,7 @@ begin
       st := app._default_state();
     else
       st := legacy;
+      migrated := true;   -- untrusted legacy client data; clamp credits below
     end if;
     -- ensure required economy keys exist
     st := coalesce(st, app._default_state());
@@ -286,6 +288,13 @@ begin
     end if;
     if st->'stats' is null then
       st := jsonb_set(st, '{stats}', app._default_state()->'stats');
+    end if;
+    -- Security: a migrated legacy save is untrusted client data — clamp its
+    -- credit balance so a forged `saves` row can't mint a fortune on first boot.
+    -- (The `saves` table is also locked to client writes; see
+    -- docs/sql/security_hardening.sql. This is defense in depth.)
+    if migrated and coalesce((st->>'credits')::float8, 0) > 100000000 then
+      st := jsonb_set(st, '{credits}', '100000000');
     end if;
     st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
     insert into public.players(user_id, state, updated_at) values (uid, st, now());

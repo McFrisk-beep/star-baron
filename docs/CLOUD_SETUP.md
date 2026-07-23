@@ -41,6 +41,13 @@ create policy "delete own save" on public.saves
   for delete using (auth.uid() = user_id);
 ```
 
+> Once the server-authoritative `players` table is live (docs/PHASE1_SETUP.md),
+> run **docs/sql/security_hardening.sql**. It drops the insert/update/delete
+> policies above so clients can no longer write `saves` at all — `players` is the
+> authority, and `app_bootstrap` only ever *reads* a legacy `saves` row (once) to
+> migrate it. Leaving `saves` client-writable let a new account inject a forged
+> balance that `app_bootstrap` would migrate verbatim.
+
 ## 3. Configure auth
 
 In **Authentication → Providers**, make sure **Email** is enabled (it is by

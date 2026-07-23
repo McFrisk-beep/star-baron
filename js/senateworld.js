@@ -106,12 +106,25 @@ const SenateWorld = {
   },
 
   // ---- pooled influence ---------------------------------------------------
-  // submit this player's lobby/bribe/scandal for a bill into the shared pool
+  // submit this player's lobby/bribe/scandal for a bill into the shared pool.
+  // Goes through the SECURITY DEFINER RPC, which validates + clamps strength and
+  // rate-limits per bill (see docs/sql/security_hardening.sql) so no client can
+  // forge an outsized push. Falls back to the legacy direct insert only on
+  // projects where that hardening RPC isn't installed yet.
   async submit(billId, kind, target, dir, strength) {
     if (!this.enabled() || !Cloud.signedIn()) return;
     try {
-      await Cloud.client.from("world_senate_influence")
-        .insert({ bill_id: billId, kind, target: target || null, dir: dir || 0, strength: strength || 0 });
+      const { error } = await Cloud.client.rpc("app_senate_influence", {
+        p_bill_id: billId, p_kind: kind, p_target: target || null,
+        p_dir: dir || 0, p_strength: strength || 0,
+      });
+      if (error) {
+        if (Cloud._isMissingRpc && Cloud._isMissingRpc(error)) {
+          const { error: e2 } = await Cloud.client.from("world_senate_influence")
+            .insert({ bill_id: billId, kind, target: target || null, dir: dir || 0, strength: strength || 0 });
+          if (e2) throw e2;
+        } else throw error;
+      }
     } catch (e) { console.warn("[SenateWorld] influence submit failed:", e.message || e); }
   },
   // fetch + aggregate every player's influence for a bill into one signed-push pool
