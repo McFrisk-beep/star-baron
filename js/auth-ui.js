@@ -309,9 +309,24 @@ const AuthUI = {
     let remote;
     try { remote = await Cloud.loadRemote(); }
     catch (e) { console.warn("[Auth] remote load failed — leaving cloud untouched:", e); return "error"; }
-    if (remote) return "cloud";                       // account has a save → use it
+    if (remote) {
+      // Stamp cloud → local BEFORE reload. Otherwise a guest save written after
+      // the last Sign out (newer lastSeenAt, 1,500c) can win Store.load()'s
+      // "keep newer local" check and then autosave over the real cloud row.
+      Store._cloudReady = true;
+      Store.localSave(Store._stampOwner(remote));
+      return "cloud";
+    }
     const local = Store.localLoad();
-    if (local) { try { await Cloud.saveRemote(local); } catch (e) {} return "uploaded"; }
+    if (local) {
+      try {
+        Store._cloudReady = true;
+        Store._stampOwner(local);
+        await Cloud.saveRemote(local);
+        Store.localSave(local);
+      } catch (e) {}
+      return "uploaded";
+    }
     return "fresh";
   },
 

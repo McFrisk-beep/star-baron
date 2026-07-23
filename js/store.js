@@ -9,6 +9,10 @@ const SAVE_KEY = "starbaron";
 const Store = {
   _cloudTimer: null,
   _cloudMs: 5000,         // debounce window for cloud pushes (local is instant)
+  // When signed in, refuse cloud writes until load() has successfully talked to
+  // Supabase. Prevents a fresh defaultState (1,500c) from overwriting a good
+  // cloud save during an offline / paused-project boot.
+  _cloudReady: true,
 
   // ---- local (always available) -----------------------------------------
   localLoad() {
@@ -25,6 +29,17 @@ const Store = {
   },
 
   signedIn() { return !!(window.Cloud && Cloud.signedIn()); },
+  _userId() { return (window.Cloud && Cloud.user() && Cloud.user().id) || null; },
+
+  // Tag a save with the signed-in user so a post-logout guest cache can never
+  // beat that user's cloud row on the next login (see load()).
+  _stampOwner(state) {
+    if (!state || typeof state !== "object") return state;
+    const uid = this._userId();
+    if (uid) state.cloudUserId = uid;
+    else if ("cloudUserId" in state) delete state.cloudUserId;
+    return state;
+  },
 
   // Surface a persistent cloud failure once (most commonly: the `saves` table
   // hasn't been created yet — see docs/CLOUD_SETUP.md).
@@ -38,24 +53,39 @@ const Store = {
   // ---- public API (unchanged signatures) --------------------------------
   async load() {
     const local = this.localLoad();
+    // Guests never touch the cloud. Signed-in players stay gated until we know
+    // what the remote row looks like (or that it truly doesn't exist yet).
+    this._cloudReady = !this.signedIn();
     if (this.signedIn()) {
       try {
         const remote = await Cloud.loadRemote();
+        this._cloudReady = true;
         if (remote) {
           // Local is written on every change instantly; the cloud push is debounced,
           // so a quick refresh can leave the cloud STALER than local. Keep whichever
-          // was saved more recently so we never clobber unsynced local progress.
-          const lt = (local && local.lastSeenAt) || 0, rt = (remote && remote.lastSeenAt) || 0;
-          if (local && lt > rt) { console.log("[Store] local save newer than cloud — keeping local"); return local; }
-          this.localSave(remote); console.log("[Store] loaded cloud save"); return remote;
+          // was saved more recently — but ONLY if local belongs to this account.
+          // A guest game started after Sign out has a newer lastSeenAt and used to
+          // win here, then autosave would upload 1,500c over the real cloud save.
+          const uid = this._userId();
+          const localMine = !!(local && uid && local.cloudUserId === uid);
+          const lt = localMine ? (local.lastSeenAt || 0) : 0;
+          const rt = (remote && remote.lastSeenAt) || 0;
+          if (localMine && lt > rt) { console.log("[Store] local save newer than cloud — keeping local"); return local; }
+          this.localSave(this._stampOwner(remote));
+          console.log("[Store] loaded cloud save");
+          return remote;
         }
         console.log("[Store] signed in, no cloud save yet — using local");
-      } catch (e) { this._cloudFail("load", e); }
+      } catch (e) {
+        this._cloudFail("load", e);
+        this._cloudReady = false;   // do NOT push a default/guest blob over unknown remote
+      }
     }
     return local;
   },
 
   async save(state) {
+    this._stampOwner(state);
     this.localSave(state);                          // always cache locally first
     if (this.signedIn()) this._queueCloud(state);   // …then sync to cloud (debounced)
     return true;
@@ -63,8 +93,10 @@ const Store = {
 
   // Coalesce frequent autosaves into one cloud write every _cloudMs.
   _queueCloud(state) {
+    if (!this._cloudReady) return;
     clearTimeout(this._cloudTimer);
     this._cloudTimer = setTimeout(() => {
+      if (!this._cloudReady || !this.signedIn()) return;
       Cloud.saveRemote(state).then(() => console.log("[Store] cloud save synced")).catch(e => this._cloudFail("save", e));
     }, this._cloudMs);
   },
@@ -72,8 +104,9 @@ const Store = {
   // Push the latest state to the cloud right now (on logout / tab hide / unload).
   async flush(state) {
     clearTimeout(this._cloudTimer);
-    if (!this.signedIn()) return;
-    try { if (state) await Cloud.saveRemote(state); } catch (e) { this._cloudFail("flush", e); }
+    if (!this.signedIn() || !this._cloudReady) return;
+    try { if (state) { this._stampOwner(state); await Cloud.saveRemote(state); } }
+    catch (e) { this._cloudFail("flush", e); }
   },
 
   async clear() {
