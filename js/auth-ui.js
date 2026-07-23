@@ -306,7 +306,7 @@ const AuthUI = {
       if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
       const msg = how === "cloud" ? "Signed in — loading your saved progress…"
         : how === "uploaded" ? "Signed in — your current progress is now saved to this account…"
-        : how === "error" ? "Signed in, but cloud is unreachable — check the 'saves' table."
+        : how === "error" ? "Signed in, but cloud is unreachable — check docs/CLOUD_SETUP.md / PHASE1_SETUP.md."
         : "Signed in.";
       UI.toast(msg, how === "error" ? "warn" : "good");
       setTimeout(() => location.reload(), how === "error" ? 1300 : 350);
@@ -353,6 +353,19 @@ const AuthUI = {
   // yet — i.e. a brand-new account claiming the progress you're holding. This
   // avoids ever clobbering real cloud progress with a fresh post-logout game.
   async syncOnLogin() {
+    // Phase 1: prefer authoritative bootstrap (migrates saves → players once).
+    try {
+      const boot = await Cloud.bootstrap();
+      if (boot) {
+        Store._cloudReady = true;
+        Store.localSave(Store._stampOwner(boot));
+        return "cloud";
+      }
+    } catch (e) {
+      console.warn("[Auth] bootstrap failed — leaving cloud untouched:", e);
+      return "error";
+    }
+    // Legacy saves path when Phase 1 SQL isn't applied yet.
     let remote;
     try { remote = await Cloud.loadRemote(); }
     catch (e) { console.warn("[Auth] remote load failed — leaving cloud untouched:", e); return "error"; }

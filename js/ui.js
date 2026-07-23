@@ -183,9 +183,10 @@ const UI = {
   // Clamp what the player asked for to what's actually possible — the smaller of
   // affordability/holdings and the tier trade cap — then reflect the real amount
   // back into the qty box so it never over-promises.
-  doTrade(side, id, want) {
+  async doTrade(side, id, want) {
     const tm = document.getElementById("trade-modal");
     if (tm && !tm.classList.contains("hidden")) return;   // terminal already open → ignore (anti-spam)
+    if (Economy.busy()) return;                           // Phase 1 RPC still in flight
     want = Math.max(0, Math.floor(want || 0));
     const maxN = side === "buy" ? Economy.maxBuy(id) : Economy.maxSell(id);
     const capN = side === "buy" ? Economy.buyCapQty(id) : Economy.sellCapQty(id);
@@ -193,8 +194,8 @@ const UI = {
     const row = this.rows[id];
     if (row && row.qin) row.qin.value = qty > 0 ? qty : 1;             // show the true amount that will trade
     if (qty <= 0) { this.toast(side === "buy" ? "Can't afford any here." : "Nothing to sell here.", "warn"); return; }
-    const r = side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty);
-    if (!r.ok) { this.toast(r.msg, "warn"); return; }
+    const r = await (side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty));
+    if (!r.ok) { this.toast(r.msg, "warn"); this.updateHeader(); this.updateExchange(); return; }
     r.capped = want > maxN && capN <= maxN;   // the CAP (not funds/holdings) was the binding limit
     if (row && row.buyBtn) this.updateAfford(id);
     window.Game.save();                               // the trade is committed — persist to storage immediately
@@ -1032,10 +1033,21 @@ const UI = {
       ul.appendChild(li);
     }
     this.markUnaffordable(ul);
-    ul.onclick = e => {
+    ul.onclick = async e => {
       const u = e.target.closest("[data-unlock]"), d = e.target.closest("[data-dock]");
-      if (u) { const r = Economy.unlockSystem(u.dataset.unlock); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderSystems(); }
-      else if (d) { const r = Economy.dockAt(d.dataset.dock); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}`, "good"); window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); }
+      if (u) {
+        if (Economy.busy()) return;
+        const r = await Economy.unlockSystem(u.dataset.unlock);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good");
+        this.flashCredits(); window.Game.requestSave(); this.renderSystems();
+      } else if (d) {
+        if (Economy.busy()) return;
+        const r = await Economy.dockAt(d.dataset.dock);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}`, "good");
+        window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange();
+      }
     };
   },
 

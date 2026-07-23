@@ -362,15 +362,19 @@ const StarMap = {
        <ul class="local-feed" id="sm-local-feed"></ul>`;
 
     const dock = document.getElementById("sm-dock");
-    if (dock) dock.onclick = () => {
-      Economy.dockAt(sys.id); UI.updateExchange(); UI.updateHeader(); UI.renderSystems();
+    if (dock) dock.onclick = async () => {
+      if (Economy.busy()) return;
+      const r = await Economy.dockAt(sys.id);
+      if (!r || !r.ok) return UI.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
+      UI.updateExchange(); UI.updateHeader(); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys); this.updateGalaxyNodes();
-      UI.toast(`Docked at ${sys.name}.`, "good");
+      UI.toast(`Departing for ${sys.name} — ETA ${Util.duration(r.etaMs)}`, "good");
     };
     const unlock = document.getElementById("sm-unlock");
-    if (unlock) unlock.onclick = () => {
-      const r = Economy.unlockSystem(sys.id);
-      if (!r.ok) return UI.toast(r.msg, "warn");
+    if (unlock) unlock.onclick = async () => {
+      if (Economy.busy()) return;
+      const r = await Economy.unlockSystem(sys.id);
+      if (!r || !r.ok) return UI.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
       UI.toast(`Unlocked ${sys.name}!`, "good"); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys);
     };

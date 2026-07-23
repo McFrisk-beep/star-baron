@@ -150,7 +150,7 @@ const Game = {
     const offlineMercs = Fleet.pruneMercs(now);   // mercenaries whose service ended while away
     const offlineSold = Bazaar.tick(now);
     const offlineRoutes = Routes.resolve(now);   // bank trade-route round trips made while away
-    const offlineOrders = Orders.process();      // fill standing orders that crossed while away
+    const offlineOrders = await Orders.process(); // fill standing orders that crossed while away
     const offlineIndustry = Industries.resolve(now);  // bank offworld production made while away
     Wars.tick(now);               // resolve a faction war that ended while away
     if (window.Senate) Senate.resolve(now);   // run the daily senate votes while away
@@ -250,10 +250,13 @@ const Game = {
     Rivals.tick(now);
     const routed = Routes.resolve(now);
     for (const ev of routed.events) Bus.emit("routeEvent", ev);
-    const orderEv = Orders.process();
-    for (const ev of orderEv) Bus.emit("order", ev);
+    // Standing orders may await Phase-1 trade RPCs — don't block the tick loop.
+    void Orders.process().then(orderEv => {
+      for (const ev of orderEv) Bus.emit("order", ev);
+      if (orderEv.length) this.requestSave();
+    }).catch(e => console.warn("[Orders] process failed:", e));
     const made = Industries.resolve(now);
-    if (done.length || surveyed.length || routed.total || orderEv.length || made.length || senateBills.length) this.requestSave();
+    if (done.length || surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
     UI.tick();
   },
 
@@ -308,7 +311,7 @@ const Game = {
       Fleet.pruneMercs(now);
       Bazaar.tick(now);
       Routes.resolve(now);
-      Orders.process();
+      void Orders.process();
       Industries.resolve(now);
       Wars.tick(now);
       if (window.Senate) Senate.resolve(now);
