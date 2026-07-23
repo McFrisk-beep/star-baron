@@ -28,7 +28,7 @@ Market.init();
 
 // 0) constants wired through
 assert.strictEqual(MARKETCFG.seed, "cosmocrat-market-v1");
-assert.strictEqual(MARKETCFG.volGain, 1.15);
+assert.strictEqual(MARKETCFG.volGain, 0.25);
 assert.strictEqual(CONFIG.priceFloorMult, 0.88);
 assert.strictEqual(CONFIG.priceCeilMult, 1.12);
 

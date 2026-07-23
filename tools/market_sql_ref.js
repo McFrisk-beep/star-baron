@@ -4,7 +4,7 @@
 "use strict";
 
 const SEED = "cosmocrat-market-v1";
-const VOL_GAIN = 1.15;
+const VOL_GAIN = 0.25;
 const FLOOR_M = 0.88;
 const CEIL_M = 1.12;
 const DRIFT_AMP = 0.04;
@@ -15,8 +15,8 @@ const EVENT_PERIOD = 5_400_000;
 const EVENT_DUR = 2_700_000;
 const LOCAL_PERIOD = 2_700_000;
 const LOCAL_DUR = 1_200_000;
-const OSC_MIN = [120_000, 480_000, 1_500_000];
-const OSC_MAX = [360_000, 1_200_000, 4_200_000];
+const OSC_MIN = [900_000, 2_400_000, 5_400_000];
+const OSC_MAX = [1_800_000, 4_200_000, 10_800_000];
 const CATS = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
 const COMMS = [
   { id: "iron_ore", cat: "mineral", base: 40, vol: 0.04 },
@@ -114,8 +114,8 @@ function scheduleMult(comm, t, period, duration, kind, system = null) {
     const start = s * period;
     if (t < start || t >= start + duration) continue;
     if (ev.target !== comm.id && ev.target !== comm.cat) continue;
-    const remain = 1 - (t - start) / duration;
-    m *= 1 + (ev.mult - 1) * remain * NEWS_IMPACT;
+    const envelope = Math.sin(((t - start) / duration) * Math.PI);
+    m *= 1 + (ev.mult - 1) * envelope * NEWS_IMPACT;
   }
   return m;
 }
