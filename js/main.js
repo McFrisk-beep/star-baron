@@ -22,6 +22,8 @@ const Game = {
       missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
       inventory: { capacity: 6, upgrades: 0 },
       bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [] },
+      pendingContracts: [],
+      bazaarBought: [],
       travel: null,
       seq: 1,
       unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),

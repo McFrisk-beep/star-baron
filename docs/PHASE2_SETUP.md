@@ -10,33 +10,36 @@ Requires Phase 0 + Phase 1 already applied.
 
 1. `docs/sql/market_price.sql` — if not already applied
 2. `docs/sql/phase1_players.sql` — if not already applied
-3. **`docs/sql/phase2_missions_bazaar.sql`** ← this phase (safe to re-run)
+3. **`docs/sql/phase2_missions_bazaar.sql`** ← this phase (safe to re-run; replaces
+   older Phase 2 functions)
 
-## What it adds
+## Trust model (important)
 
-| RPC | Purpose |
+Bazaar offers and job contracts are a **seeded function of time**
+(`epoch = floor(now_ms / 60000)`, seed `cosmocrat-market-v1|bazaar|…`). Purchase /
+take / launch RPCs **recompute** the offer from its id — they never trust
+client-supplied prices, rewards, ship types, or item values.
+
+| RPC | Authority |
 |---|---|
-| `app_mission_launch` | Validate contract + idle ships; stamp server `startedAt` / chance / phases |
-| `app_mission_resolve` | Resolve matured missions with server RNG; pay credits / attrition |
-| `app_buy_ship` / `app_buy_main` | Deduct credits; append ship / set mainShip |
-| `app_buy_merc` / `app_buy_accessory` | Hire / buy from board offer |
-| `app_take_contract` | Deduct fee; append to `contracts` |
-| `app_upgrade_inventory` | Hangar capacity upgrade |
-| `app_sell_ship` / `app_sell_item` | Sell fleet ship / hangar item (closes dump hole) |
-| `app_commit` (replaced) | Protects ships/missions/items/inventory; still accepts soft-economy credits |
+| `app_bazaar_board` | Returns current seeded board (optional; client can mirror) |
+| `app_buy_ship` / `app_buy_main` / `app_upgrade_inventory` | Catalog / formula prices |
+| `app_buy_merc` / `app_buy_accessory` / `app_take_contract` | Recompute offer by id |
+| `app_mission_launch(contract_id, ships)` | Contract must be in server `pendingContracts` |
+| `app_mission_resolve` | Uses launch-time `rngSeed`; pays server reward (capped) |
+| `app_sell_ship` / `app_sell_item` | Catalog / recomputed `app.item_value` |
+| `app_commit` | Protects ships/missions/items/inventory/rep/claims; **ignores** client bazaar |
 
 ## Client behaviour
 
-- Guests: unchanged local simulation.
-- Logged-in + Phase 2 SQL present: mission/bazaar mutations go through RPCs.
+- Guests: unchanged local simulation (procedural board).
+- Logged-in: display board from the same seed; mutations go through RPCs.
 - Soft income (routes, industries, expeditions, listings) still client-side until
   Phase 3; `app_commit` still accepts those credit deltas.
-- If Phase 2 RPCs are missing, client falls back to local mutation + commit.
+- Extractors / components / dossiers on the board remain local soft content.
 
-## Honest limits
+## Re-paste note
 
-- Bazaar **board generation** is still client-side (synced via commit). Purchase
-  RPCs validate the offer exists in the stored board — a forged offer id fails.
-- Mission outcome RNG is server-side; loot tables are a simplified subset of the
-  client generator (credits + attrition are the high-value parts).
-- Soft income remains forgeable until Phase 3 `app_pull`.
+If you installed an earlier Phase 2 SQL that accepted client boards / contract
+JSON, re-run this file. It drops `app_mission_launch(jsonb, jsonb)` in favor of
+`app_mission_launch(text, jsonb)`.

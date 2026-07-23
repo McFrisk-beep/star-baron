@@ -303,25 +303,25 @@ you installed an older Phase 1 SQL before the interim reconcile.
 
 ### Phase 2 deliverables (done)
 
-- `docs/sql/phase2_missions_bazaar.sql` — `app_mission_launch` / `app_mission_resolve`,
-  `app_buy_ship` / `main` / `merc` / `accessory`, `app_take_contract`,
-  `app_upgrade_inventory`, `app_sell_ship` / `app_sell_item`, tightened `app_commit`.
-- `docs/PHASE2_SETUP.md` — paste order (market → phase1 → phase2).
-- `js/cloud.js` — Phase 2 RPC wrappers; commit reconcile pulls protected fleet slices.
-- `js/economy.js` — broader auth snap/slice (ships/missions/items/bazaar/inventory).
-- `js/missions.js` / `js/bazaar.js` / `js/ui.js` / `js/main.js` — logged-in path
-  optimistic → soft-sync → RPC → reconcile; guests unchanged.
-- `tools/check_phase2_missions_bazaar.js` — client wiring harness.
+- `docs/sql/phase2_missions_bazaar.sql` — seeded bazaar board (`app.gen_*` /
+  `app_bazaar_board`), `app_mission_launch(contract_id)` (pendingContracts only),
+  `app_mission_resolve` (launch-time `rngSeed`), buy/sell RPCs that **recompute**
+  offers, tightened `app_commit` (protects fleet/items/rep/claims; ignores client
+  bazaar).
+- `docs/PHASE2_SETUP.md` — paste order + trust model.
+- `js/cloud.js` — Phase 2 RPC wrappers (launch by id).
+- `js/economy.js` — auth snap/slice includes pendingContracts / bazaarBought / rep.
+- `js/missions.js` / `js/bazaar.js` / `js/ui.js` / `js/main.js` — seeded board
+  display when logged in; optimistic → soft-sync → RPC → reconcile.
+- `tools/check_phase2_missions_bazaar.js` — wiring + “launch is by id” harness.
 
-**Interim limits:** bazaar **board generation** is still client-side (synced via
-commit; purchase RPCs validate offer ids). Soft income (routes/industries/
-expeditions/listings) still client-credited until Phase 3. Extractors/components/
-dossiers stay local. Mission resolve loot is a simplified server subset (credits +
-attrition are authoritative).
+**Still soft until Phase 3:** routes / industries / expeditions / listing sales
+(credits accepted on commit). Extractors/components/dossiers board rows stay
+local. Mission loot tables are a simplified server subset (credits + attrition
+are authoritative; payout hard-capped).
 
 **You still need to run** `docs/sql/phase2_missions_bazaar.sql` after Phase 1
-(`docs/PHASE2_SETUP.md`). Until then, missing Phase 2 RPCs fall back to local
-mutation.
+(`docs/PHASE2_SETUP.md`). Re-paste if you installed the pre-seeded Phase 2 SQL.
 
 ### What I need from you to start building Phase 3
 A go-ahead for offline `app_pull` + prestige (remaining soft credit sources).

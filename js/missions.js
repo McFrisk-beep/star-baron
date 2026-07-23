@@ -60,6 +60,9 @@ const Missions = {
     };
     for (const u of uids) Fleet.ship(u).status = "mission";
     s.missions.push(mission);
+    if (contract && contract.id && s.pendingContracts) {
+      s.pendingContracts = s.pendingContracts.filter(c => c.id !== contract.id);
+    }
     Economy.refreshNetWorth();
     Bus.emit("missionLaunched", mission);
     return { ok: true, mission };
@@ -68,9 +71,11 @@ const Missions = {
   launch(contract, uids) {
     if (!this.authoritative()) return this._launchLocal(contract, uids);
     const shipUids = (uids || []).slice();
+    const contractId = contract && contract.id;
+    if (!contractId) return Promise.resolve({ ok: false, msg: "Contract not in hand." });
     return Economy._withRpc(
       () => this._launchLocal(contract, shipUids),
-      () => Cloud.missionLaunch(contract, shipUids),
+      () => Cloud.missionLaunch(contractId, shipUids),
       "Couldn't launch mission — try again."
     );
   },

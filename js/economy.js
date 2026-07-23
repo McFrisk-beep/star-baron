@@ -61,6 +61,8 @@ const Economy = {
       items: JSON.parse(JSON.stringify(s.items || {})),
       inventory: JSON.parse(JSON.stringify(s.inventory || {})),
       bazaar: JSON.parse(JSON.stringify(s.bazaar || {})),
+      pendingContracts: JSON.parse(JSON.stringify(s.pendingContracts || [])),
+      bazaarBought: (s.bazaarBought || []).slice(),
       seq: s.seq,
     };
   },
@@ -83,6 +85,8 @@ const Economy = {
     if (snap.items) s.items = snap.items;
     if (snap.inventory) s.inventory = snap.inventory;
     if (snap.bazaar) s.bazaar = snap.bazaar;
+    if (snap.pendingContracts) s.pendingContracts = snap.pendingContracts;
+    if (snap.bazaarBought) s.bazaarBought = snap.bazaarBought;
     if (snap.seq != null) s.seq = snap.seq;
   },
   _applyServerSlice(r) {
@@ -108,6 +112,8 @@ const Economy = {
     if (r.items) s.items = r.items;
     if (r.inventory) s.inventory = r.inventory;
     if (r.bazaar) s.bazaar = r.bazaar;
+    if (r.pendingContracts) s.pendingContracts = r.pendingContracts;
+    if (r.bazaarBought) s.bazaarBought = r.bazaarBought;
     if (r.seq != null) s.seq = r.seq;
     if (r.reputation) s.reputation = r.reputation;
   },
@@ -124,6 +130,9 @@ const Economy = {
     if (st.items) s.items = st.items;
     if (st.inventory) s.inventory = st.inventory;
     if (st.reports) s.reports = st.reports;
+    if (st.pendingContracts) s.pendingContracts = st.pendingContracts;
+    if (st.bazaarBought) s.bazaarBought = st.bazaarBought;
+    if (st.reputation) s.reputation = st.reputation;
     if (st.seq != null) s.seq = st.seq;
   },
   // Push pre-action client income + board to players.state.
@@ -143,6 +152,8 @@ const Economy = {
         items: snap.items,
         inventory: snap.inventory,
         bazaar: snap.bazaar,
+        pendingContracts: snap.pendingContracts,
+        bazaarBought: snap.bazaarBought,
         seq: snap.seq,
         stats: Object.assign({}, this.s().stats, {
           trades: snap.stats.trades,

@@ -170,11 +170,14 @@ const Cloud = {
   },
 
   // Phase 2 — missions & bazaar
-  async missionLaunch(contract, shipUids) {
-    return this.rpc("app_mission_launch", { p_contract: contract, p_ship_uids: shipUids });
+  async missionLaunch(contractId, shipUids) {
+    return this.rpc("app_mission_launch", { p_contract_id: contractId, p_ship_uids: shipUids });
   },
   async missionResolve() {
     return this.rpc("app_mission_resolve");
+  },
+  async bazaarBoard() {
+    return this.rpc("app_bazaar_board");
   },
   async buyShip(catalogId) {
     return this.rpc("app_buy_ship", { p_catalog_id: catalogId });
