@@ -19,10 +19,11 @@ const ctx = vm.createContext({ console, Math });
 ctx.window = ctx;
 let T = 1_700_000_000_000; // pinned clock
 ctx.Date = { now: () => T };
-for (const f of ["store.js", "data.js", "market.js"]) {
+for (const f of ["store.js", "data.js", "cloud-config.js", "cloud.js", "content.js", "market.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
 }
-const { Market, COMMODITIES, SYSTEMS, MARKETCFG, CONFIG } = ctx;
+const { Market, COMMODITIES, SYSTEMS, MARKETCFG, CONFIG, Content } = ctx;
+Content.snapshotDefaults();
 Market.init();
 
 // 0) constants wired through
@@ -83,5 +84,14 @@ for (const c of COMMODITIES) {
       `${c.id} out of band @${t}: ${p}`);
   }
 }
+
+// 6) stale CMS MARKETCFG overlay must not wipe Phase-0 keys (Content.apply backfill)
+Content.apply("MARKETCFG", { modCompression: 0.35, dockK: 18, impactHalfLifeMs: 1 }); // pre-Phase-0 shape
+assert.strictEqual(MARKETCFG.seed, "cosmocrat-market-v1", "stale CMS overlay keeps seed");
+assert(Array.isArray(MARKETCFG.oscPeriodMinMs) && MARKETCFG.oscPeriodMinMs.length === 3,
+  "stale CMS overlay keeps oscPeriodMinMs");
+assert.strictEqual(MARKETCFG.dockK, 18, "override still wins for keys it sets");
+Market._oscCache = {};
+assert(Number.isFinite(Market.formulaGlobal("iron_ore", t0)), "market still prices after stale overlay");
 
 console.log(`check_market_parity: ${n} system samples + determinism/tick/advance/band ✔`);

@@ -88,7 +88,14 @@ const Content = {
     }
     if (target && typeof target === "object" && !Array.isArray(target)
         && typeof value === "object" && !Array.isArray(value)) {
+      // Object overrides replace key-by-key, but start from shipped defaults so a
+      // stale CMS row (saved before a schema growth) can't delete new required
+      // fields — e.g. MARKETCFG.seed / oscPeriod* added in Phase 0.
+      const defaults = this._defaults[key];
       for (const k of Object.keys(target)) delete target[k];
+      if (defaults && typeof defaults === "object" && !Array.isArray(defaults)) {
+        try { Object.assign(target, JSON.parse(JSON.stringify(defaults))); } catch (e) {}
+      }
       Object.assign(target, value); return true;
     }
     console.warn("[Content] type mismatch, skipping override:", key);
