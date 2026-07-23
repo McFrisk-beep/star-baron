@@ -446,6 +446,16 @@ body.reduced .tt-dot { animation: none; }
   text-underline-offset: 2px; }
 .auth-link:hover { color: #fff; }
 .auth-account-actions { flex-wrap: wrap; }
+/* live password-rule checklist (register + change/reset) */
+.auth-rules { display: flex; flex-direction: column; gap: 5px; margin: -4px 0 12px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a0e1a; }
+.auth-rule { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+  letter-spacing: 0; text-transform: none; color: var(--ink-dim); cursor: default; user-select: none; }
+.auth-rule input { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; flex: none;
+  margin: 0; border: 1.5px solid #3a4560; border-radius: 3px; background: #0c1020; pointer-events: none; }
+.auth-rule.ok { color: var(--up); }
+.auth-rule.ok input { border-color: var(--up); background: var(--up);
+  box-shadow: inset 0 0 0 2px #0a0e1a; }
 
 /* ---- admin content panel ---- */
 #btn-admin { border-color: var(--gold); color: var(--gold); }

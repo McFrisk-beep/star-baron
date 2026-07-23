@@ -334,7 +334,12 @@
         <label class="auth-field" id="auth-email-wrap"><span data-i18n="auth.email">Email</span>
           <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" /></label>
         <label class="auth-field" id="auth-pass-wrap"><span data-i18n="auth.password">Password</span>
-          <input type="password" id="auth-pass" autocomplete="current-password" placeholder="at least 6 characters" data-i18n-ph="auth.passPh" /></label>
+          <input type="password" id="auth-pass" autocomplete="current-password" placeholder="at least 8 characters" data-i18n-ph="auth.passPh" /></label>
+        <div class="auth-rules hidden" id="auth-pass-rules" aria-live="polite">
+          <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="len" /> <span data-i18n="auth.ruleLen">At least 8 characters</span></label>
+          <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="num" /> <span data-i18n="auth.ruleNum">At least 1 number</span></label>
+          <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="special" /> <span data-i18n="auth.ruleSpecial">At least 1 special character</span></label>
+        </div>
         <label class="auth-field hidden" id="auth-pass2-wrap"><span data-i18n="auth.confirmPass">Confirm password</span>
           <input type="password" id="auth-pass2" autocomplete="new-password" placeholder="re-enter password" data-i18n-ph="auth.confirmPassPh" /></label>
         <p class="auth-forgot-wrap" id="auth-forgot-wrap">
@@ -361,7 +366,12 @@
         <div id="auth-changepass" class="hidden">
           <p class="muted-note" id="auth-changepass-note" data-i18n="auth.changePassNote">Choose a new password for your account.</p>
           <label class="auth-field"><span data-i18n="auth.newPass">New password</span>
-            <input type="password" id="auth-newpass" autocomplete="new-password" placeholder="at least 6 characters" data-i18n-ph="auth.passPh" /></label>
+            <input type="password" id="auth-newpass" autocomplete="new-password" placeholder="at least 8 characters" data-i18n-ph="auth.passPh" /></label>
+          <div class="auth-rules" id="auth-newpass-rules" aria-live="polite">
+            <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="len" /> <span data-i18n="auth.ruleLen">At least 8 characters</span></label>
+            <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="num" /> <span data-i18n="auth.ruleNum">At least 1 number</span></label>
+            <label class="auth-rule"><input type="checkbox" disabled tabindex="-1" data-rule="special" /> <span data-i18n="auth.ruleSpecial">At least 1 special character</span></label>
+          </div>
           <label class="auth-field"><span data-i18n="auth.confirmNewPass">Confirm new password</span>
             <input type="password" id="auth-newpass2" autocomplete="new-password" placeholder="re-enter password" data-i18n-ph="auth.confirmPassPh" /></label>
           <p class="auth-err hidden" id="auth-changepass-err"></p>
