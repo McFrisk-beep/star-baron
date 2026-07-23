@@ -3,9 +3,10 @@
    If CLOUD isn't configured (or the SDK failed to load), `enabled` stays false
    and the game runs purely on localStorage.
 
-   Phase 1: logged-in economy goes through SECURITY DEFINER RPCs on `players`
-   (see docs/PHASE1_SETUP.md). Legacy `saves` upsert remains as fallback when
-   those RPCs aren't installed yet. Guests never hit the network for state.    */
+   Phase 1–2: logged-in economy goes through SECURITY DEFINER RPCs on `players`
+   (see docs/PHASE1_SETUP.md + docs/PHASE2_SETUP.md). Legacy `saves` upsert
+   remains as fallback when those RPCs aren't installed yet. Guests never hit
+   the network for state.                                                      */
 
 const Cloud = {
   client: null,
@@ -162,9 +163,45 @@ const Cloud = {
     return this.rpc("app_unlock", { p_system: system });
   },
   // Autosave / soft-economy sync. Returns the RPC result `{ ok, state }`.
-  // Phase 1 interim: server accepts client credits/positions; protects travel.
+  // Phase 1–2 interim: server accepts client credits/positions (+ bazaar board);
+  // protects travel and (Phase 2) ships/missions/items/inventory.
   async commit(state) {
     return this.rpc("app_commit", { p_state: state });
+  },
+
+  // Phase 2 — missions & bazaar
+  async missionLaunch(contractId, shipUids) {
+    return this.rpc("app_mission_launch", { p_contract_id: contractId, p_ship_uids: shipUids });
+  },
+  async missionResolve() {
+    return this.rpc("app_mission_resolve");
+  },
+  async bazaarBoard() {
+    return this.rpc("app_bazaar_board");
+  },
+  async buyShip(catalogId) {
+    return this.rpc("app_buy_ship", { p_catalog_id: catalogId });
+  },
+  async buyMain(catalogId) {
+    return this.rpc("app_buy_main", { p_catalog_id: catalogId });
+  },
+  async buyMerc(offerId) {
+    return this.rpc("app_buy_merc", { p_offer_id: offerId });
+  },
+  async buyAccessory(offerId) {
+    return this.rpc("app_buy_accessory", { p_offer_id: offerId });
+  },
+  async takeContract(offerId) {
+    return this.rpc("app_take_contract", { p_offer_id: offerId });
+  },
+  async upgradeInventory() {
+    return this.rpc("app_upgrade_inventory");
+  },
+  async sellShip(uid) {
+    return this.rpc("app_sell_ship", { p_uid: uid });
+  },
+  async sellItem(uid) {
+    return this.rpc("app_sell_item", { p_uid: uid });
   },
 
   // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------
@@ -181,8 +218,10 @@ const Cloud = {
     if (this.playersReady) {
       const r = await this.commit(state);
       if (r && r.ok === false) throw new Error((r && r.error) || "app_commit failed");
-      // Pull server-protected travel/unlocks back into the live game state.
-      if (r && r.state && window.Game && Game.state === state) {
+      // Pull server-protected slices back into the live game state.
+      if (r && r.state && window.Game && Game.state === state && window.Economy) {
+        Economy.applyCommitState(r.state);
+      } else if (r && r.state && window.Game && Game.state === state) {
         const st = r.state;
         if (st.currentSystem) state.currentSystem = st.currentSystem;
         state.travel = st.travel && typeof st.travel === "object" ? st.travel : null;

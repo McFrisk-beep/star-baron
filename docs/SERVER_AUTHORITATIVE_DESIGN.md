@@ -301,6 +301,27 @@ when the validated RPC runs. Full credit authority moves in Phase 2–3.
 Until then, signed-in clients keep using the legacy `saves` path. Re-paste if
 you installed an older Phase 1 SQL before the interim reconcile.
 
-### What I need from you to start building Phase 2
-A go-ahead for authoritative missions & bazaar purchases (more SQL + client
-routing). Missions/bazaar remain client-side credit sources until then.
+### Phase 2 deliverables (done)
+
+- `docs/sql/phase2_missions_bazaar.sql` — seeded bazaar board (`app.gen_*` /
+  `app_bazaar_board`), `app_mission_launch(contract_id)` (pendingContracts only),
+  `app_mission_resolve` (launch-time `rngSeed`), buy/sell RPCs that **recompute**
+  offers, tightened `app_commit` (protects fleet/items/rep/claims; ignores client
+  bazaar).
+- `docs/PHASE2_SETUP.md` — paste order + trust model.
+- `js/cloud.js` — Phase 2 RPC wrappers (launch by id).
+- `js/economy.js` — auth snap/slice includes pendingContracts / bazaarBought / rep.
+- `js/missions.js` / `js/bazaar.js` / `js/ui.js` / `js/main.js` — seeded board
+  display when logged in; optimistic → soft-sync → RPC → reconcile.
+- `tools/check_phase2_missions_bazaar.js` — wiring + “launch is by id” harness.
+
+**Still soft until Phase 3:** routes / industries / expeditions / listing sales
+(credits accepted on commit). Extractors/components/dossiers board rows stay
+local. Mission loot tables are a simplified server subset (credits + attrition
+are authoritative; payout hard-capped).
+
+**You still need to run** `docs/sql/phase2_missions_bazaar.sql` after Phase 1
+(`docs/PHASE2_SETUP.md`). Re-paste if you installed the pre-seeded Phase 2 SQL.
+
+### What I need from you to start building Phase 3
+A go-ahead for offline `app_pull` + prestige (remaining soft credit sources).
