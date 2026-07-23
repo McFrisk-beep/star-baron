@@ -119,7 +119,7 @@ const Cloud = {
     // can't silently re-authenticate; we also null our cached user regardless.
     try { await this.client.auth.signOut({ scope: "local" }); }
     catch (e) { console.warn("[Cloud] signOut:", e); }
-    finally { this._user = null; this._pendingRecovery = false; }
+    finally { this._user = null; this._pendingRecovery = false; this.playersReady = false; }
   },
 
   // ---- RPC helpers (Phase 1 players table) --------------------------------
@@ -161,11 +161,10 @@ const Cloud = {
   async unlock(system) {
     return this.rpc("app_unlock", { p_system: system });
   },
-  // Autosave: server keeps economy fields, accepts the rest of the blob.
+  // Autosave / soft-economy sync. Returns the RPC result `{ ok, state }`.
+  // Phase 1 interim: server accepts client credits/positions; protects travel.
   async commit(state) {
-    const r = await this.rpc("app_commit", { p_state: state });
-    if (r && r.state) return r.state;
-    return state;
+    return this.rpc("app_commit", { p_state: state });
   },
 
   // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------
@@ -180,7 +179,15 @@ const Cloud = {
     if (!this.signedIn()) return;
     // Prefer authoritative commit when Phase 1 is live.
     if (this.playersReady) {
-      await this.commit(state);
+      const r = await this.commit(state);
+      if (r && r.ok === false) throw new Error((r && r.error) || "app_commit failed");
+      // Pull server-protected travel/unlocks back into the live game state.
+      if (r && r.state && window.Game && Game.state === state) {
+        const st = r.state;
+        if (st.currentSystem) state.currentSystem = st.currentSystem;
+        state.travel = st.travel && typeof st.travel === "object" ? st.travel : null;
+        if (st.unlockedSystems) state.unlockedSystems = st.unlockedSystems;
+      }
       return;
     }
     const { error } = await this.client.from("saves").upsert({

@@ -7,7 +7,10 @@
 
    ponytail: offline fills resolve once at the post-catch-up price, so a brief
    dip while you were away can be missed. Track per-tick min/max in Market if we
-   want offline fills to be exact.                                              */
+   want offline fills to be exact.
+
+   Phase 1: process() is async — Economy.buy/sell return a Promise when
+   authoritative, so callers must await (main.js loop/resume/init do).          */
 
 const Orders = {
   s() { return window.Game.state; },
@@ -20,7 +23,7 @@ const Orders = {
 
   // Check every order against current prices. Fills/fires the ones that crossed
   // and returns events for the UI to surface. No trading happens in transit.
-  process() {
+  async process() {
     const s = this.s();
     if (s.travel || !s.orders || !s.orders.length) return [];
     const events = [], keep = [];
@@ -33,11 +36,17 @@ const Orders = {
         else keep.push(o);                                   // one-shot: fires once, else stays
       } else if (o.kind === "buy" && p <= o.price) {
         const q = Math.min(o.qty, Economy.maxBuy(o.commId));
-        if (q > 0) { const r = Economy.buy(o.commId, q); if (r.ok) { events.push({ type: "filled", side: "buy", comm, qty: r.qty, price: r.price }); o.qty -= r.qty; } }
+        if (q > 0) {
+          const r = await Economy.buy(o.commId, q);
+          if (r && r.ok) { events.push({ type: "filled", side: "buy", comm, qty: r.qty, price: r.price }); o.qty -= r.qty; }
+        }
         if (o.qty > 0) keep.push(o);                         // couldn't afford the lot yet — keep the rest
       } else if (o.kind === "sell" && p >= o.price) {
         const q = Math.min(o.qty, s.positions[o.commId] || 0);
-        if (q > 0) { const r = Economy.sell(o.commId, q); if (r.ok) { events.push({ type: "filled", side: "sell", comm, qty: r.qty, price: r.price, realized: r.realized }); o.qty -= r.qty; } }
+        if (q > 0) {
+          const r = await Economy.sell(o.commId, q);
+          if (r && r.ok) { events.push({ type: "filled", side: "sell", comm, qty: r.qty, price: r.price, realized: r.realized }); o.qty -= r.qty; }
+        }
         if (o.qty > 0) keep.push(o);                         // nothing (more) to sell yet — keep it
       } else keep.push(o);
     }

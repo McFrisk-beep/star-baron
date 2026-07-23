@@ -32,6 +32,7 @@ const Economy = {
   // Phase 1: signed-in + players RPCs live → server fills. Guests / pre-setup stay local.
   authoritative() { return !!(window.Cloud && Cloud.authoritative()); },
   _pending: 0,
+  _rpcQueue: Promise.resolve(),
   busy() { return this._pending > 0; },
 
   priceHere(commId) { return Market.systemPrice(commId, this.s().currentSystem); },
@@ -78,33 +79,67 @@ const Economy = {
     }
     if (r.unlockedSystems) s.unlockedSystems = r.unlockedSystems;
   },
-  async _withRpc(optimisticFn, rpcFn, failMsg) {
-    const snap = this._snapEconomy();
-    const local = optimisticFn();
-    if (!local || !local.ok) return local;
-    this._pending++;
+  // Push pre-trade client income (missions/bazaar/routes/…) to players.state.
+  // Uses the SNAPSHOT economy fields so we don't double-apply the optimistic fill.
+  // app_commit keeps travel/unlocks server-authored (see phase1_players.sql).
+  async _syncSoftEconomy(snap) {
+    if (!this.authoritative()) return true;
     try {
-      const r = await rpcFn();
-      if (!r || !r.ok) {
-        this._restoreEconomy(snap);
-        return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
-      }
-      this._applyServerSlice(r);
-      // Reconcile fill details for the trade terminal (server is source of truth).
-      if (r.fillPrice != null) local.price = r.fillPrice;
-      if (r.cost != null) local.cost = r.cost;
-      if (r.proceeds != null) local.proceeds = r.proceeds;
-      if (r.tax != null) local.tax = r.tax;
-      if (r.qty != null) local.qty = r.qty;
-      if (r.etaMs != null) local.etaMs = r.etaMs;
-      return local;
+      const payload = Object.assign({}, this.s(), {
+        credits: snap.credits,
+        positions: snap.positions,
+        avgCost: snap.avgCost,
+        stats: Object.assign({}, this.s().stats, {
+          trades: snap.stats.trades,
+          biggestTrade: snap.stats.biggestTrade,
+        }),
+      });
+      const r = await Cloud.commit(payload);
+      if (r && r.ok === false) return false;
+      return true;
     } catch (e) {
-      console.warn("[Economy] rpc failed:", e);
-      this._restoreEconomy(snap);
-      return { ok: false, msg: failMsg };
-    } finally {
-      this._pending = Math.max(0, this._pending - 1);
+      console.warn("[Economy] soft sync failed:", e);
+      return false;
     }
+  },
+
+  async _withRpc(optimisticFn, rpcFn, failMsg) {
+    // Serialize authoritative actions so parallel order fills / clicks can't
+    // interleave snapshot → commit → trade.
+    const run = async () => {
+      const snap = this._snapEconomy();
+      const local = optimisticFn();
+      if (!local || !local.ok) return local;
+      this._pending++;
+      try {
+        if (!(await this._syncSoftEconomy(snap))) {
+          this._restoreEconomy(snap);
+          return { ok: false, msg: failMsg };
+        }
+        const r = await rpcFn();
+        if (!r || !r.ok) {
+          this._restoreEconomy(snap);
+          return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
+        }
+        this._applyServerSlice(r);
+        if (r.fillPrice != null) local.price = r.fillPrice;
+        if (r.cost != null) local.cost = r.cost;
+        if (r.proceeds != null) local.proceeds = r.proceeds;
+        if (r.tax != null) local.tax = r.tax;
+        if (r.qty != null) local.qty = r.qty;
+        if (r.etaMs != null) local.etaMs = r.etaMs;
+        return local;
+      } catch (e) {
+        console.warn("[Economy] rpc failed:", e);
+        this._restoreEconomy(snap);
+        return { ok: false, msg: failMsg };
+      } finally {
+        this._pending = Math.max(0, this._pending - 1);
+      }
+    };
+    const p = this._rpcQueue.then(run, run);
+    this._rpcQueue = p.catch(() => {});
+    return p;
   },
 
   // effective half-spread for a category: base spread tightened by reputation, but

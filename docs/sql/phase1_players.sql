@@ -87,12 +87,14 @@ $$;
 create or replace function app._system_distance(p_system text)
 returns double precision
 language sql immutable as $$
+  -- Curated capitals have fixed distances; anything else (future trade hubs /
+  -- generated ids that somehow get unlocked) gets a mid-range hop so dock works.
   select coalesce((
     select d from (values
       ('navos', 0::float8), ('korrin', 3), ('velm', 5),
       ('thessa', 7), ('orin', 10), ('sable', 14)
     ) as x(id, d) where x.id = p_system
-  ), 0);
+  ), 8);
 $$;
 
 create or replace function app._system_unlock(p_system text)
@@ -450,7 +452,8 @@ declare
   eta_ms bigint;
   dock_k constant double precision := 18;  -- MARKETCFG.dockK
 begin
-  if dest is null or app._system_unlock(dest) is null then
+  -- Any unlocked system id is dockable (not only the six curated capitals).
+  if dest is null or length(dest) = 0 then
     return jsonb_build_object('ok', false, 'error', 'Unknown system.');
   end if;
 
@@ -527,7 +530,13 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- app_commit(client_state) → merge non-protected keys; economy stays server's
+-- app_commit(client_state) → persist client blob with travel topology protected
+--
+-- Phase 1 interim: credits / positions / avgCost are taken from the CLIENT so
+-- mission / bazaar / industry / route income still persists (those systems are
+-- still client-side until Phase 2). Travel / currentSystem / unlockedSystems
+-- stay server-authored so you can't teleport or forge unlocks via autosave.
+-- Trade *fills* remain validated by app_trade against market_price().
 -- ---------------------------------------------------------------------------
 create or replace function public.app_commit(p_state jsonb)
 returns jsonb
@@ -536,7 +545,6 @@ declare
   now_ms bigint := app._now_ms();
   server jsonb;
   merged jsonb;
-  stats jsonb;
 begin
   if p_state is null or jsonb_typeof(p_state) <> 'object' then
     return jsonb_build_object('ok', false, 'error', 'invalid state');
@@ -545,20 +553,13 @@ begin
   server := app._lock_state(now_ms);
   merged := p_state;
 
-  -- Force authoritative economy / travel / unlocks from the server row.
-  merged := jsonb_set(merged, '{credits}', server->'credits');
-  merged := jsonb_set(merged, '{positions}', coalesce(server->'positions', '{}'::jsonb));
-  merged := jsonb_set(merged, '{avgCost}', coalesce(server->'avgCost', '{}'::jsonb));
+  -- Protect docking topology (anti-teleport / anti-forge-unlock).
   merged := jsonb_set(merged, '{currentSystem}', server->'currentSystem');
   merged := jsonb_set(merged, '{travel}',
     case when app._in_transit(server) then server->'travel' else 'null'::jsonb end);
   merged := jsonb_set(merged, '{unlockedSystems}', coalesce(server->'unlockedSystems', '[]'::jsonb));
 
-  -- Keep trade counters authoritative; allow other stats from the client.
-  stats := coalesce(merged->'stats', '{}'::jsonb);
-  stats := jsonb_set(stats, '{trades}', coalesce(server->'stats'->'trades', '0'::jsonb));
-  stats := jsonb_set(stats, '{biggestTrade}', coalesce(server->'stats'->'biggestTrade', '0'::jsonb));
-  merged := jsonb_set(merged, '{stats}', stats);
+  -- credits / positions / avgCost / stats / … come from the client (interim).
 
   perform app._write_state(merged, now_ms);
   return jsonb_build_object('ok', true, 'state', merged);

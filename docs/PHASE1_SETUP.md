@@ -25,7 +25,7 @@ This creates:
 | `app_bootstrap()` | Ensure row (migrates from `saves` once); return state. |
 | `app_trade(action, commodity, qty)` | Validated buy/sell at docked system. |
 | `app_dock(system)` / `app_unlock(system)` | Travel + unlock-by-credits. |
-| `app_commit(state)` | Autosave merge: keeps economy fields server-side, accepts the rest. |
+| `app_commit(state)` | Autosave merge: accepts client credits/positions (interim), protects travel/unlocks. |
 
 ## 3. Deploy the client
 
@@ -49,8 +49,15 @@ not authoritative.
 
 | Action | Authority after Phase 1 |
 |---|---|
-| Exchange buy/sell, dock, unlock | **Server** |
-| Missions, bazaar, industries, prestige, … | Still client (Phase 2–3) |
+| Exchange **fill price** / qty validation, dock, unlock | **Server** (`app_trade` / `app_dock` / `app_unlock`) |
+| Credits & positions from missions, bazaar, industries, routes, … | Still **client** via `app_commit` (interim) |
+| Travel / currentSystem / unlockedSystems on autosave | **Server** (anti-teleport) |
 
-So a determined player can still mint credits via missions until later phases.
-Trades themselves are no longer forgeable by editing localStorage / the save row.
+So a determined player can still mint credits by forging `app_commit` payloads
+until Phase 2 seals those income sources. What they *can't* do is invent a
+favorable exchange fill: `app_trade` prices against `market_price()` at the
+server's docked system after locking the row.
+
+**Re-run note:** if you already installed an older `phase1_players.sql`, re-paste
+the file (or at least recreate `app_commit` / `app_dock`) so the interim credit
+reconcile and unlocked-system docking land.
