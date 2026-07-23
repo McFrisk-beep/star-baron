@@ -221,6 +221,12 @@ const Cloud = {
   async routeStop(routeId) {
     return this.rpc("app_route_stop", { p_route_id: routeId });
   },
+  async buyExtractor(offerId) {
+    return this.rpc("app_buy_extractor", { p_offer_id: offerId });
+  },
+  async buyComponent(offerId) {
+    return this.rpc("app_buy_component", { p_offer_id: offerId });
+  },
 
   // ---- legacy save row (guest migrate / Phase-1 fallback) ----------------
   async loadRemote() {

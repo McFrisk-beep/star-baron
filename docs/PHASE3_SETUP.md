@@ -21,7 +21,8 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
 | `app_pull` | Banks routes / industries / expeditions / listings; also runs mission resolve. Server clock only. Caps offline window at 7 days. |
 | `app_prestige` | Recomputes net worth (spot prices + catalog fleet + item values); bumps tier if ≥ next threshold |
 | `app_route_start` / `app_route_stop` | Assign/free route ships **server-side** (sets `'trading'` status). Routes are fully server-owned; `app_commit` forces the `routes` slice from the server. |
-| `app_commit` | **Protects** positions / avgCost / prestige / routes / listings / surveyed timers. **Credits:** accepts client value only when *lower* (permit spends, repairs) — never an increase. Merges new industries/expeditions from client; server `nextAt` / ETA win for known ids. |
+| `app_buy_extractor` / `app_buy_component` | Recompute the seeded offer by id, charge credits, add the **server-authored** extractor/component. `app_commit` forces the component pool and keeps only server-owned extractors. |
+| `app_commit` | **Protects** positions / avgCost / prestige / routes / extractors / components / listings / surveyed timers. **Credits:** accepts client value only when *lower* (permit spends, repairs) — never an increase. Merges new industries/expeditions from client; server `nextAt` / ETA win for known ids. |
 
 Soft income can no longer be forged by editing the save and upserting. Routes
 now go through RPCs (the client can't mark a ship `'trading'` via commit, so a
@@ -30,22 +31,32 @@ client and merges via commit; production is applied only by `app_pull`.
 
 ### Industry hardening (Gap 2)
 
-`app_pull` bounds industry production so client-set inputs can't inflate it:
-- each component's effect is **recomputed** from its `kind` + `rarity`
-  (`app._component_amount`), never the client's `amount` — a forged
-  `amount:9999` is clamped to its legit ceiling (≤0.40);
-- at most **2 components** per extractor count (the real slot cap);
-- extractor yield is the bounded catalog multiplier (0.6–1.5);
-- only the tier's **permit cap** worth of industries produce per pull.
+Extractors and components are now **server-authored**, so industry production
+can't be inflated by editing the save:
+- **Seeded board + buy RPCs** — `app.gen_extractor` / `app.gen_component` define
+  each offer's type/scope/rarity/price from `(seed, epoch, slot)`;
+  `app_buy_extractor` / `app_buy_component` recompute the offer, charge server
+  credits, and add the server-authored item. `check_bazaar_parity.js` asserts the
+  client board matches.
+- `app_commit` **forces** the component pool from the server and keeps only
+  server-owned extractors (`_merge_extractors`), taking the client's
+  component-attachment array but nothing else — a forged extractor/component is
+  dropped.
+- `app_pull` still **recomputes** each component's effect from `kind`+`rarity`
+  (≤0.40), honors the **2-slot** cap, uses the bounded catalog yield (0.6–1.5),
+  validates the industry's **commodity is inside the extractor's scope**
+  (specialized→exact / semi→category / jack→any), pays only **one industry per
+  extractor**, and caps producing industries at the **tier permit cap**.
 
-**Known residual (needs server-side planet data):** the industry's `commodity`
-and `planetType` are still client snapshots — the server can't validate a
-procedurally-generated planet without porting galaxy generation to SQL. So a
-determined cheater can still run a *bounded, legit-magnitude* industry on a
-fabricated planet/commodity for free. Production magnitude is capped; the
-open lever is only *which* commodity and *skipping setup cost*. Fully closing
-it means a seeded server extractor board + `app_buy_extractor`/`_component` +
-`app_build_industry` RPCs (a later pass).
+Net: a logged-in player can't forge a high-yield extractor, an inflated
+component, a free/mismatched commodity, or clone one extractor across permits.
+
+**Remaining soft (minor, bounded):** the industry *permit* (planet slot) is
+still bought client-side, and planet suitability (`suit`) is a client snapshot
+clamped server-side — so a cheater can skip the ~6k permit and assert a planet
+type, but production magnitude stays capped and the commodity is bounded to a
+**purchased** extractor's scope. The server can't fully validate a
+procedurally-generated planet without porting galaxy generation to SQL.
 
 ### Simplifications (ponytail)
 

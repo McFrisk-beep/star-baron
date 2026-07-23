@@ -381,6 +381,8 @@ declare
   comp_n int;
   prod_n int := 0;
   permit_cap int;
+  used_ex text[] := '{}'::text[];
+  can_prod boolean;
 begin
   positions := coalesce(st->'positions', '{}'::jsonb);
   avg_cost := coalesce(st->'avgCost', '{}'::jsonb);
@@ -417,6 +419,21 @@ begin
       inds := inds || jsonb_build_array(ind);
       continue;
     end if;
+
+    -- One extractor powers one industry per pull (can't clone it across permits).
+    if (ind->>'extractorUid') = any(used_ex) then
+      inds := inds || jsonb_build_array(ind);
+      continue;
+    end if;
+    used_ex := array_append(used_ex, ind->>'extractorUid');
+
+    -- The commodity must be within the extractor's server-authored scope
+    -- (specialized → that exact commodity; semi → that category; jack → any).
+    can_prod := case ex->>'type'
+      when 'jack' then true
+      when 'specialized' then (ind->>'commodity') = (ex->>'scope')
+      when 'semi' then (select cat from market.commodity(ind->>'commodity')) is not distinct from (ex->>'scope')
+      else false end;
 
     -- Component bonuses — recompute effect from kind+rarity (ignore client
     -- `amount`) and honor the 2-slot cap, so forged components can't inflate yield.
@@ -466,8 +483,9 @@ begin
     );
     qty := net * cycles;
     prod_n := prod_n + 1;
-    -- Only the tier's permit-cap worth of industries produce (forged extras banked out).
-    if qty > 0 and prod_n <= permit_cap then
+    -- Only the tier's permit-cap worth of industries produce, and only when the
+    -- commodity is in the extractor's scope (forged extras banked out).
+    if qty > 0 and prod_n <= permit_cap and can_prod then
       held := coalesce((positions->>(ind->>'commodity'))::float8, 0);
       prev_avg := coalesce((avg_cost->>(ind->>'commodity'))::float8, 0);
       positions := jsonb_set(positions, array[ind->>'commodity'], to_jsonb(held + qty));
@@ -888,12 +906,15 @@ begin
   merged := jsonb_set(merged, '{expeditions}', app._merge_expeditions(
     coalesce(server->'expeditions', '[]'::jsonb),
     coalesce(p_state->'expeditions', '[]'::jsonb)));
-  -- Extractors/components: accept client (still soft board buys) but don't
-  -- let them erase server-owned keys mid-pull — union by uid.
-  merged := jsonb_set(merged, '{extractors}',
-    coalesce(server->'extractors', '{}'::jsonb) || coalesce(p_state->'extractors', '{}'::jsonb));
-  merged := jsonb_set(merged, '{components}',
-    coalesce(server->'components', '{}'::jsonb) || coalesce(p_state->'components', '{}'::jsonb));
+  -- Extractors/components are bought via app_buy_extractor / app_buy_component
+  -- (server-authored stats), so the component pool is forced from the server and
+  -- the extractor pool keeps server type/scope while accepting the client's
+  -- component-attachment array (validated at production). A forged extractor
+  -- (not server-owned) is dropped; a forged component uid is ignored on pull.
+  merged := jsonb_set(merged, '{extractors}', app._merge_extractors(
+    coalesce(server->'extractors', '{}'::jsonb),
+    coalesce(p_state->'extractors', '{}'::jsonb)));
+  merged := jsonb_set(merged, '{components}', coalesce(server->'components', '{}'::jsonb));
 
   if coalesce((server->'stats'->>'trades')::int, 0) > coalesce((merged->'stats'->>'trades')::int, 0) then
     merged := jsonb_set(merged, '{stats,trades}', server->'stats'->'trades');
@@ -1157,8 +1178,210 @@ begin
 end;
 $$;
 
+-- ===========================================================================
+-- Seeded extractor / component board (server-authored stats) + buy RPCs.
+-- Ids: ex-{epoch}-{slot} | cp-{epoch}-{slot}. Mirrors Extractors.gen /
+-- Components.gen in js/extractors.js so the client can render the same board.
+-- ===========================================================================
+create or replace function app.gen_extractor(p_epoch bigint, p_slot int)
+returns jsonb
+language plpgsql immutable as $$
+declare
+  s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'ex', p_epoch::text, p_slot::text);
+  cats text[] := array['mineral','gas','agri','tech','luxury','illicit'];
+  comms text[] := array['iron_ore','silicon','rare_earths','hydrogen','helium3','water_ice',
+                        'foodstuffs','synthsilk','nanochips','antimatter','spice','contraband'];
+  r double precision := market.u01(s, 0);
+  typ text;
+  scope text;
+  price double precision;
+  nm text;
+begin
+  if r < 0.45 then
+    typ := 'specialized'; scope := comms[1 + (floor(market.u01(s, 1) * 12)::int % 12)]; price := 14000;
+  elsif r < 0.80 then
+    typ := 'semi'; scope := cats[1 + (floor(market.u01(s, 1) * 6)::int % 6)]; price := 9000;
+  else
+    typ := 'jack'; scope := 'all'; price := 5000;
+  end if;
+  nm := case typ when 'specialized' then initcap(scope) || ' Rig'
+                 when 'semi' then initcap(scope) || ' Works'
+                 else 'Universal Unit' end;
+  return jsonb_build_object(
+    'id', 'ex-' || p_epoch || '-' || p_slot,
+    'ex', jsonb_build_object(
+      'uid', 'ex' || p_epoch || 'x' || p_slot, 'type', typ, 'scope', scope,
+      'name', nm, 'components', '[]'::jsonb),
+    'price', price
+  );
+end;
+$$;
+
+create or replace function app.gen_component(p_epoch bigint, p_slot int)
+returns jsonb
+language plpgsql immutable as $$
+declare
+  s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'cp', p_epoch::text, p_slot::text);
+  kind text;
+  rar text;
+  rmult double precision;
+  rprice double precision;
+  amt double precision;
+  roll double precision;
+begin
+  kind := case when market.u01(s, 0) < 0.5 then 'rate' else 'speed' end;
+  roll := market.u01(s, 1) * 100.0;   -- RARITIES weights 50/28/14/6/2
+  if roll < 50 then rar := 'common'; rmult := 1.0; rprice := 1.0;
+  elsif roll < 78 then rar := 'uncommon'; rmult := 1.5; rprice := 2.2;
+  elsif roll < 92 then rar := 'rare'; rmult := 2.3; rprice := 5.0;
+  elsif roll < 98 then rar := 'epic'; rmult := 3.4; rprice := 12.0;
+  else rar := 'legendary'; rmult := 5.0; rprice := 30.0;
+  end if;
+  amt := round(((case kind when 'rate' then 0.08 else 0.06 end) * rmult)::numeric, 3);
+  return jsonb_build_object(
+    'id', 'cp-' || p_epoch || '-' || p_slot,
+    'comp', jsonb_build_object(
+      'uid', 'cp' || p_epoch || 'c' || p_slot, 'kind', kind, 'rarity', rar,
+      'amount', amt, 'name', initcap(kind) || ' Component'),
+    'price', round((1800.0 * rprice)::numeric)
+  );
+end;
+$$;
+
+create or replace function public.app_buy_extractor(p_offer_id text)
+returns jsonb
+language plpgsql security definer set search_path = public, market, app as $$
+declare
+  now_ms bigint := app._now_ms();
+  st jsonb;
+  parts text[];
+  epoch bigint;
+  slot int;
+  offer jsonb;
+  ex jsonb;
+  price double precision;
+  credits double precision;
+  extractors jsonb;
+begin
+  st := app._lock_state(now_ms);
+  if app.claim_used(st, p_offer_id) then
+    return jsonb_build_object('ok', false, 'error', 'Sold to another buyer.');
+  end if;
+  parts := string_to_array(coalesce(p_offer_id, ''), '-');
+  if array_length(parts, 1) < 3 or parts[1] <> 'ex' then
+    return jsonb_build_object('ok', false, 'error', 'Unknown offer.');
+  end if;
+  begin
+    epoch := parts[2]::bigint; slot := parts[3]::int;
+  exception when others then
+    return jsonb_build_object('ok', false, 'error', 'Unknown offer.');
+  end;
+  if not app.offer_epoch_ok(epoch, now_ms) then
+    return jsonb_build_object('ok', false, 'error', 'Sold to another buyer.');
+  end if;
+  offer := app.gen_extractor(epoch, slot);
+  ex := offer->'ex';
+  price := round((coalesce((offer->>'price')::float8, 0) * (1.0 - app.rep_discount(st)))::numeric);
+  credits := coalesce((st->>'credits')::float8, 0);
+  if price > credits then
+    return jsonb_build_object('ok', false, 'error', 'Not enough credits.');
+  end if;
+  extractors := coalesce(st->'extractors', '{}'::jsonb);
+  extractors := jsonb_set(extractors, array[ex->>'uid'], ex);
+  st := jsonb_set(st, '{credits}', to_jsonb(credits - price));
+  st := jsonb_set(st, '{extractors}', extractors);
+  st := app.mark_claimed(st, p_offer_id);
+  perform app._write_state(st, now_ms);
+  return app.result_slice(st) || jsonb_build_object('ex', ex);
+end;
+$$;
+
+create or replace function public.app_buy_component(p_offer_id text)
+returns jsonb
+language plpgsql security definer set search_path = public, market, app as $$
+declare
+  now_ms bigint := app._now_ms();
+  st jsonb;
+  parts text[];
+  epoch bigint;
+  slot int;
+  offer jsonb;
+  comp jsonb;
+  price double precision;
+  credits double precision;
+  components jsonb;
+begin
+  st := app._lock_state(now_ms);
+  if app.claim_used(st, p_offer_id) then
+    return jsonb_build_object('ok', false, 'error', 'Sold to another buyer.');
+  end if;
+  parts := string_to_array(coalesce(p_offer_id, ''), '-');
+  if array_length(parts, 1) < 3 or parts[1] <> 'cp' then
+    return jsonb_build_object('ok', false, 'error', 'Unknown offer.');
+  end if;
+  begin
+    epoch := parts[2]::bigint; slot := parts[3]::int;
+  exception when others then
+    return jsonb_build_object('ok', false, 'error', 'Unknown offer.');
+  end;
+  if not app.offer_epoch_ok(epoch, now_ms) then
+    return jsonb_build_object('ok', false, 'error', 'Sold to another buyer.');
+  end if;
+  offer := app.gen_component(epoch, slot);
+  comp := offer->'comp';
+  price := round((coalesce((offer->>'price')::float8, 0) * (1.0 - app.rep_discount(st)))::numeric);
+  credits := coalesce((st->>'credits')::float8, 0);
+  if price > credits then
+    return jsonb_build_object('ok', false, 'error', 'Not enough credits.');
+  end if;
+  components := coalesce(st->'components', '{}'::jsonb);
+  components := jsonb_set(components, array[comp->>'uid'], comp);
+  st := jsonb_set(st, '{credits}', to_jsonb(credits - price));
+  st := jsonb_set(st, '{components}', components);
+  st := app.mark_claimed(st, p_offer_id);
+  perform app._write_state(st, now_ms);
+  return app.result_slice(st) || jsonb_build_object('comp', comp);
+end;
+$$;
+
+-- Keep only server-owned extractors (bought via app_buy_extractor); take the
+-- client's component-attachment array (real ids validated at production; the
+-- 2-slot cap is enforced here and in _catchup_industries).
+create or replace function app._merge_extractors(p_server jsonb, p_client jsonb)
+returns jsonb
+language plpgsql immutable as $$
+declare
+  out jsonb := '{}'::jsonb;
+  k text;
+  sv jsonb;
+  cv jsonb;
+  comp_arr jsonb;
+begin
+  for k in select jsonb_object_keys(coalesce(p_server, '{}'::jsonb)) loop
+    sv := p_server->k;
+    cv := p_client->k;
+    if cv is not null and jsonb_typeof(cv->'components') = 'array' then
+      comp_arr := (
+        select coalesce(jsonb_agg(value), '[]'::jsonb) from (
+          select value from jsonb_array_elements(cv->'components') with ordinality
+          order by ordinality limit 2
+        ) t
+      );
+    elsif jsonb_typeof(sv->'components') = 'array' then
+      comp_arr := sv->'components';
+    else
+      comp_arr := '[]'::jsonb;
+    end if;
+    out := jsonb_set(out, array[k], jsonb_set(sv, '{components}', comp_arr), true);
+  end loop;
+  return out;
+end;
+$$;
+
 grant execute on function public.app_pull() to authenticated;
 grant execute on function public.app_prestige() to authenticated;
 grant execute on function public.app_route_start(text, text, text, jsonb) to authenticated;
 grant execute on function public.app_route_stop(text) to authenticated;
+grant execute on function public.app_buy_extractor(text) to authenticated;
+grant execute on function public.app_buy_component(text) to authenticated;
 grant execute on function public.app_commit(jsonb) to authenticated;

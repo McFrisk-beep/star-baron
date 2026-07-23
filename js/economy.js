@@ -63,6 +63,11 @@ const Economy = {
       bazaar: JSON.parse(JSON.stringify(s.bazaar || {})),
       pendingContracts: JSON.parse(JSON.stringify(s.pendingContracts || [])),
       bazaarBought: (s.bazaarBought || []).slice(),
+      // Phase 3: routes / extractors / components so a failed route or bazaar
+      // buy rolls back the optimistic mutation.
+      routes: JSON.parse(JSON.stringify(s.routes || [])),
+      extractors: JSON.parse(JSON.stringify(s.extractors || {})),
+      components: JSON.parse(JSON.stringify(s.components || {})),
       seq: s.seq,
     };
   },
@@ -87,6 +92,9 @@ const Economy = {
     if (snap.bazaar) s.bazaar = snap.bazaar;
     if (snap.pendingContracts) s.pendingContracts = snap.pendingContracts;
     if (snap.bazaarBought) s.bazaarBought = snap.bazaarBought;
+    if (snap.routes) s.routes = snap.routes;
+    if (snap.extractors) s.extractors = snap.extractors;
+    if (snap.components) s.components = snap.components;
     if (snap.seq != null) s.seq = snap.seq;
   },
   _applyServerSlice(r) {

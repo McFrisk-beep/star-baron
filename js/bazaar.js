@@ -56,6 +56,38 @@ const Bazaar = {
     return { id: `ac-${epoch}-${slot}`, item, price };
   },
 
+  // Seeded extractor offer — mirrors app.gen_extractor in phase3 SQL.
+  genSeededExtractor(epoch, slot) {
+    const s = this._seed(["ex", String(epoch), String(slot)]);
+    const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
+    const comms = COMMODITIES.map(c => c.id);
+    const r = this._u01(s, 0);
+    let type, scope, price;
+    if (r < 0.45) { type = "specialized"; scope = comms[Math.floor(this._u01(s, 1) * 12) % 12]; price = EXTRACTORCFG.types.specialized.price; }
+    else if (r < 0.80) { type = "semi"; scope = cats[Math.floor(this._u01(s, 1) * 6) % 6]; price = EXTRACTORCFG.types.semi.price; }
+    else { type = "jack"; scope = "all"; price = EXTRACTORCFG.types.jack.price; }
+    const cn = type === "specialized" ? (COMMODITIES.find(c => c.id === scope) || {}).name || scope : scope;
+    const name = type === "specialized" ? `${cn} Rig` : type === "semi" ? `${scope[0].toUpperCase() + scope.slice(1)} Works` : "Universal Unit";
+    return { id: `ex-${epoch}-${slot}`, ex: { uid: `ex${epoch}x${slot}`, type, scope, name, components: [] }, price };
+  },
+  // Seeded component offer — mirrors app.gen_component in phase3 SQL.
+  genSeededComponent(epoch, slot) {
+    const s = this._seed(["cp", String(epoch), String(slot)]);
+    const kind = this._u01(s, 0) < 0.5 ? "rate" : "speed";
+    const roll = this._u01(s, 1) * 100;
+    let rarity;
+    if (roll < 50) rarity = "common"; else if (roll < 78) rarity = "uncommon";
+    else if (roll < 92) rarity = "rare"; else if (roll < 98) rarity = "epic"; else rarity = "legendary";
+    const rar = RARITIES.find(x => x.id === rarity) || RARITIES[0];
+    const base = kind === "rate" ? COMPONENTCFG.rateBase : COMPONENTCFG.speedBase;
+    const amount = +(base * rar.mult).toFixed(3);
+    return {
+      id: `cp-${epoch}-${slot}`,
+      comp: { uid: `cp${epoch}c${slot}`, kind, rarity, amount, name: `${kind[0].toUpperCase() + kind.slice(1)} Component` },
+      price: Math.round(COMPONENTCFG.priceBase * rar.price),
+    };
+  },
+
   genSeededContract(epoch, slot, tier = 0) {
     const s = this._seed(["ct", String(epoch), String(slot)]);
     const stake = tier | 0;
@@ -124,10 +156,18 @@ const Bazaar = {
       const o = this.genSeededContract(epoch, i, tier);
       if (!bought.has(o.id)) b.contracts.push(o);
     }
-    b.extractors ||= []; b.components ||= []; b.dossiers ||= [];
-    // Extractors/components/dossiers remain local soft content until a later phase.
-    while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
-    while (b.components.length < COMPONENTCFG.bazaarSlots) b.components.push(this.genComponent());
+    b.extractors = [];
+    for (let i = 0; i < EXTRACTORCFG.bazaarSlots; i++) {
+      const o = this.genSeededExtractor(epoch, i);
+      if (!bought.has(o.id)) b.extractors.push(o);
+    }
+    b.components = [];
+    for (let i = 0; i < COMPONENTCFG.bazaarSlots; i++) {
+      const o = this.genSeededComponent(epoch, i);
+      if (!bought.has(o.id)) b.components.push(o);
+    }
+    b.dossiers ||= [];
+    // Dossiers remain local soft content (Senate flavor, no credit impact).
     while (window.Senate && b.dossiers.length < SENATECFG.dossierSlots) {
       const d = this.genDossier(now); if (!d) break; b.dossiers.push(d);
     }
@@ -436,29 +476,47 @@ const Bazaar = {
     );
   },
 
-  buyExtractor(offerId) {
+  _buyExtractorLocal(offerId) {
     const b = this.bz(); const s = this.s();
     const offer = (b.extractors || []).find(o => o.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
     const price = Math.round(offer.price * (1 - Rep.discount()));
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
-    Extractors.acquire(offer.ex);
+    Extractors.acquire(JSON.parse(JSON.stringify(offer.ex)));
     b.extractors = b.extractors.filter(o => o.id !== offerId);
+    if (this.authoritative()) (s.bazaarBought ||= []).push(offerId);
     Economy.refreshNetWorth();
     return { ok: true, ex: offer.ex };
   },
-  buyComponent(offerId) {
+  buyExtractor(offerId) {
+    if (!this.authoritative()) return this._buyExtractorLocal(offerId);
+    return Economy._withRpc(
+      () => this._buyExtractorLocal(offerId),
+      () => Cloud.buyExtractor(offerId),
+      "Couldn't reach the bazaar — try again."
+    );
+  },
+  _buyComponentLocal(offerId) {
     const b = this.bz(); const s = this.s();
     const offer = (b.components || []).find(o => o.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
     const price = Math.round(offer.price * (1 - Rep.discount()));
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
-    Components.acquire(offer.comp);
+    Components.acquire(JSON.parse(JSON.stringify(offer.comp)));
     b.components = b.components.filter(o => o.id !== offerId);
+    if (this.authoritative()) (s.bazaarBought ||= []).push(offerId);
     Economy.refreshNetWorth();
     return { ok: true, comp: offer.comp };
+  },
+  buyComponent(offerId) {
+    if (!this.authoritative()) return this._buyComponentLocal(offerId);
+    return Economy._withRpc(
+      () => this._buyComponentLocal(offerId),
+      () => Cloud.buyComponent(offerId),
+      "Couldn't reach the bazaar — try again."
+    );
   },
 
   buyDossier(offerId) {
