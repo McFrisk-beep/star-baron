@@ -87,6 +87,7 @@ const UI = {
   showPage(name) {
     if (name === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // star map is an overlay, not a page
     if (window.StarMap && StarMap.open) StarMap.close();                        // picking any section leaves the star map
+    if (this.page === "hub" && name !== "hub" && window.Hub) Hub.deactivate();  // pause the walker when leaving the hub
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
@@ -100,7 +101,7 @@ const UI = {
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
     else if (name === "comms") { this.clearCommsBadge(); this.scrollFeedBottom(); }
-    else if (name === "hub") this.renderHub();
+    else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
   },
 
   // Station hub (Phase A): a clickable concourse built once from HUB_PROPS. Each

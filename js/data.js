@@ -617,6 +617,21 @@ const ASSET = {
    nudge props by editing numbers — no code. Art is optional: drop
    assets/hub/<id>.png to replace the emoji placeholder; a missing file just keeps
    the emoji. `icon` is the fallback glyph shown until real art exists.          */
+/* HUBCFG — Phase-B walkable character tuning. The player walks the concourse
+   (arrows / WASD, or tap-to-walk); coming within `radius` of a kiosk raises a
+   "▸ Open X" prompt you click to enter — nothing auto-opens. Position persists
+   while you visit other tabs and pick up where you left off on return.
+   Optional art: drop a 4-direction walk sheet at assets/hub/player.png (rows =
+   facing per `sheet.order`, columns = walk frames); with no file the astronaut
+   emoji + a facing pip is used instead.                                        */
+const HUBCFG = {
+  playerEmoji: "🧑‍🚀",
+  speed: 0.36,             // move speed as a fraction of scene WIDTH per second
+  radius: 0.12,            // kiosk interaction radius (fraction of scene width)
+  spawn: { x: 50, y: 88 }, // spawn/return position, percent of the scene
+  sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 },
+};
+
 const HUB_PROPS = [
   { id: "exchange",   page: "exchange",   label: "Exchange",     icon: "📈", x: 12, y: 32, w: 13 },
   { id: "fleet",      page: "fleet",      label: "Fleet Bay",    icon: "🚀", x: 31, y: 32, w: 13 },
@@ -668,4 +683,5 @@ window.PLANET_TYPES = PLANET_TYPES;
 window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;
 window.HUB_PROPS = HUB_PROPS;
+window.HUBCFG = HUBCFG;
 window.ASSET_OVERRIDES = ASSET_OVERRIDES;
