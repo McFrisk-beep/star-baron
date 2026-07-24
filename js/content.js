@@ -45,6 +45,9 @@ const Content = {
     { key: "MARKETCFG",       label: "Market depth & travel", group: "data" },
     { key: "RARITIES",        label: "Item rarities",         group: "data" },
     { key: "ACCESSORY_KINDS", label: "Accessory kinds",       group: "data" },
+    { key: "HUB_ROOMS",       label: "Hub map (rooms)",       group: "data" },
+    { key: "HUB_PROPS",       label: "Hub stations",          group: "data" },
+    { key: "HUBCFG",          label: "Hub settings",          group: "data" },
   ],
   // Non-collection keys that are also persisted in the content table (managed by
   // the image manager, not the JSON editor).
