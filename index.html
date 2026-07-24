@@ -40,7 +40,8 @@
         <div class="floatnav-track" id="floatnav-track">
           <div class="floatnav-inner" id="floatnav-inner">
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
-            <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
+            <button class="tab active" data-page="hub"><span class="tab-ico" aria-hidden="true">🛰️</span><span class="tab-label" data-i18n="nav.hub">Hub</span></button>
+            <button class="tab" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
           <button class="tab" data-page="starmap"><span class="tab-ico" aria-hidden="true">🗺️</span><span class="tab-label" data-i18n="nav.starmap">Star Map</span></button>
           <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
@@ -54,8 +55,17 @@
         </div>
       </nav>
 
+      <!-- HUB (station concourse — default landing; the tabs still work) -->
+      <section class="page" id="page-hub">
+        <div class="hub-scene" id="hub-scene">
+          <div class="hub-starfield" aria-hidden="true"></div>
+          <div class="hub-props" id="hub-props" aria-label="Station concourse"></div>
+          <p class="hub-hint" data-i18n="hub.hint">Tap a station to open it — the tabs below still work too.</p>
+        </div>
+      </section>
+
       <!-- EXCHANGE -->
-      <section class="page" id="page-exchange">
+      <section class="page hidden" id="page-exchange">
         <div class="panel">
           <h2><span data-i18n="exchange.title">Galactic Exchange</span> <small id="exchange-sub"></small></h2>
           <div class="war-banner hidden" id="war-banner"></div>
@@ -513,6 +523,7 @@
   <script src="js/worldfeed.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/hub.js"></script>
   <script src="js/auth-ui.js"></script>
   <script src="js/admin-ui.js"></script>
   <script src="js/planetview.js"></script>

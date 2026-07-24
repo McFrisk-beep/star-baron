@@ -80,12 +80,14 @@ const UI = {
     this.renderSystems();
     this.renderAchievements();
     this.applySettings();
+    this.showPage("hub");   // default landing: the station concourse
   },
 
   // ===== tabs ==============================================================
   showPage(name) {
     if (name === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // star map is an overlay, not a page
     if (window.StarMap && StarMap.open) StarMap.close();                        // picking any section leaves the star map
+    if (this.page === "hub" && name !== "hub" && window.Hub) Hub.deactivate();  // pause the walker when leaving the hub
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
@@ -99,6 +101,42 @@ const UI = {
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
     else if (name === "comms") { this.clearCommsBadge(); this.scrollFeedBottom(); }
+    else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
+  },
+
+  // Station hub (Phase A): a clickable concourse built once from HUB_PROPS. Each
+  // hotspot carries data-page and routes through the SAME showPage() the bottom
+  // tabs use (see wireControls), so there's no parallel navigation to keep in
+  // sync. Art is optional — assets/hub/<id>.png replaces the emoji placeholder.
+  renderHub() {
+    const host = document.getElementById("hub-props");
+    if (!host || host._built) return;          // static scene — build once
+    host._built = true;
+    // optional room backdrop; if assets/hub/bg.png is missing, keep the CSS starscape
+    const scene = document.getElementById("hub-scene");
+    if (scene) {
+      const bg = new Image();
+      bg.onload = () => { scene.style.backgroundImage = `url("${ASSET.hubBg()}")`; scene.classList.add("has-bg"); };
+      bg.src = ASSET.hubBg();
+    }
+    for (const p of (window.HUB_PROPS || [])) {
+      const btn = document.createElement("button");
+      btn.className = "hub-hotspot"; btn.type = "button";
+      btn.dataset.page = p.page;
+      btn.style.left = p.x + "%"; btn.style.top = p.y + "%";
+      if (p.w) btn.style.width = p.w + "%";
+      btn.setAttribute("aria-label", p.label);
+      const ico = document.createElement("span"); ico.className = "hub-ico";
+      const emoji = document.createElement("span"); emoji.className = "hub-emoji"; emoji.textContent = p.icon || "▢";
+      const img = document.createElement("img"); img.className = "hub-img"; img.alt = "";
+      img.onload = () => ico.classList.add("has-img");   // real art loaded → hide the emoji
+      img.onerror = () => img.remove();                  // no file → emoji placeholder stays
+      img.src = ASSET.hub(p.id);
+      ico.append(emoji, img);
+      const label = document.createElement("span"); label.className = "hub-label"; label.textContent = p.label;
+      btn.append(ico, label);
+      host.appendChild(btn);
+    }
   },
 
   // Pin the chat to the newest message (the feed lives in a hidden tab until
@@ -1553,6 +1591,13 @@ const UI = {
       const t = e.target.closest(".tab"); if (!t) return;
       if (t.dataset.page === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // overlay, not a page — leaves the underlying page active
       this.showPage(t.dataset.page);
+    };
+    // Hub concourse hotspots reuse the exact same nav path as the tabs above.
+    const hubProps = document.getElementById("hub-props");
+    if (hubProps) hubProps.onclick = e => {
+      const h = e.target.closest(".hub-hotspot"); if (!h) return;
+      if (h.dataset.page === "starmap") { if (window.StarMap) StarMap.toggle(); return; }
+      this.showPage(h.dataset.page);
     };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());

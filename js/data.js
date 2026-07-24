@@ -606,7 +606,44 @@ const ASSET = {
   raceship: race => _asset(`raceship:${race}`, `assets/raceships/${race}.png`),
   nebula: name => _asset(`nebula:${name}`, `assets/nebula/${name}.png`),
   asteroids: () => _asset(`asteroids:_`, `assets/space/asteroids.png`),
+  hub: id => _asset(`hub:${id}`, `assets/hub/${id}.png`),   // prop/NPC sprites for the station hub
+  hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
 };
+
+/* HUB_PROPS — the clickable "stations" in the Phase-A hub concourse. Each is a
+   hotspot that opens an existing page via UI.showPage(page) (same path as the
+   bottom tabs), so nothing new is wired into navigation. Position is in PERCENT
+   of the scene (x,y = center; w = width) so the layout is responsive and you can
+   nudge props by editing numbers — no code. Art is optional: drop
+   assets/hub/<id>.png to replace the emoji placeholder; a missing file just keeps
+   the emoji. `icon` is the fallback glyph shown until real art exists.          */
+/* HUBCFG — Phase-B walkable character tuning. The player walks the concourse
+   (arrows / WASD, or tap-to-walk); coming within `radius` of a kiosk raises a
+   "▸ Open X" prompt you click to enter — nothing auto-opens. Position persists
+   while you visit other tabs and pick up where you left off on return.
+   Optional art: drop a 4-direction walk sheet at assets/hub/player.png (rows =
+   facing per `sheet.order`, columns = walk frames); with no file the astronaut
+   emoji + a facing pip is used instead.                                        */
+const HUBCFG = {
+  playerEmoji: "🧑‍🚀",
+  speed: 0.36,             // move speed as a fraction of scene WIDTH per second
+  radius: 0.12,            // kiosk interaction radius (fraction of scene width)
+  spawn: { x: 50, y: 88 }, // spawn/return position, percent of the scene
+  sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 },
+};
+
+const HUB_PROPS = [
+  { id: "exchange",   page: "exchange",   label: "Exchange",     icon: "📈", x: 12, y: 32, w: 13 },
+  { id: "fleet",      page: "fleet",      label: "Fleet Bay",    icon: "🚀", x: 31, y: 32, w: 13 },
+  { id: "bazaar",     page: "bazaar",     label: "Bazaar",       icon: "🛒", x: 50, y: 32, w: 13 },
+  { id: "industries", page: "industries", label: "Foundry",      icon: "🏭", x: 69, y: 32, w: 13 },
+  { id: "senate",     page: "senate",     label: "Senate",       icon: "🏛️", x: 88, y: 32, w: 13 },
+  { id: "starmap",    page: "starmap",    label: "Star Map",     icon: "🗺️", x: 12, y: 74, w: 13 },
+  { id: "systems",    page: "systems",    label: "Star Systems", icon: "🪐", x: 31, y: 74, w: 13 },
+  { id: "barons",     page: "barons",     label: "Barons",       icon: "👑", x: 50, y: 74, w: 13 },
+  { id: "comms",      page: "comms",      label: "Comms",        icon: "📡", x: 69, y: 74, w: 13 },
+  { id: "ach",        page: "ach",        label: "Milestones",   icon: "🏆", x: 88, y: 74, w: 13 },
+];
 
 // Make data available as globals (works on file:// and GitHub Pages, no fetch).
 window.CONFIG = CONFIG;
@@ -645,4 +682,6 @@ window.STAR_TYPES = STAR_TYPES;
 window.PLANET_TYPES = PLANET_TYPES;
 window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;
+window.HUB_PROPS = HUB_PROPS;
+window.HUBCFG = HUBCFG;
 window.ASSET_OVERRIDES = ASSET_OVERRIDES;
