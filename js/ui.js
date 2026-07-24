@@ -80,7 +80,23 @@ const UI = {
     this.renderSystems();
     this.renderAchievements();
     this.applySettings();
-    this.showPage("hub");   // default landing: the station concourse
+    // Hub is admin-only: admins land on the walkable station, everyone else
+    // (players + guests) lands on the Exchange. Role is resolved before init
+    // (main.js awaits Cloud.restore), and re-checked on every auth change.
+    this.applyHubGate();
+    this.showPage(this.hubAllowed() ? "hub" : "exchange");
+    if (window.Bus) Bus.on("auth", () => this.applyHubGate());
+  },
+
+  // Server-verified admin role (same source as the Admin button); guests/players false.
+  hubAllowed() { return !!(window.Cloud && Cloud.isAdmin()); },
+  // Show/hide the Hub tab by role, and bounce a non-admin off the hub page.
+  applyHubGate() {
+    const admin = this.hubAllowed();
+    const tab = document.getElementById("tab-hub");
+    if (tab) tab.classList.toggle("hidden", !admin);
+    if (!admin && this.page === "hub") this.showPage("exchange");
+    this.updateNavIndicator();
   },
 
   // ===== tabs ==============================================================

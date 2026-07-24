@@ -40,8 +40,8 @@
         <div class="floatnav-track" id="floatnav-track">
           <div class="floatnav-inner" id="floatnav-inner">
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
-            <button class="tab active" data-page="hub"><span class="tab-ico" aria-hidden="true">🛰️</span><span class="tab-label" data-i18n="nav.hub">Hub</span></button>
-            <button class="tab" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
+            <button class="tab hidden" id="tab-hub" data-page="hub"><span class="tab-ico" aria-hidden="true">🛰️</span><span class="tab-label" data-i18n="nav.hub">Hub</span></button>
+            <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
           <button class="tab" data-page="starmap"><span class="tab-ico" aria-hidden="true">🗺️</span><span class="tab-label" data-i18n="nav.starmap">Star Map</span></button>
           <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
@@ -55,8 +55,8 @@
         </div>
       </nav>
 
-      <!-- HUB (walkable station — default landing; the tabs still work) -->
-      <section class="page" id="page-hub">
+      <!-- HUB (walkable station — admin-only; default landing for admins) -->
+      <section class="page hidden" id="page-hub">
         <div class="hub-scene" id="hub-scene">
           <div class="hub-starfield" aria-hidden="true"></div>
           <canvas id="hub-canvas" class="hub-canvas" aria-label="Walkable station map"></canvas>
@@ -66,7 +66,7 @@
       </section>
 
       <!-- EXCHANGE -->
-      <section class="page hidden" id="page-exchange">
+      <section class="page" id="page-exchange">
         <div class="panel">
           <h2><span data-i18n="exchange.title">Galactic Exchange</span> <small id="exchange-sub"></small></h2>
           <div class="war-banner hidden" id="war-banner"></div>
