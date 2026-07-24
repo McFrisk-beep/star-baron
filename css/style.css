@@ -1224,3 +1224,37 @@ body.reduced .btn:active { transform: none; }
 @media (prefers-reduced-motion: reduce) { .hub-starfield { animation: none; } .hub-prompt { animation: none; } }
 body.reduced .hub-starfield { animation: none; }
 body.reduced .hub-prompt { animation: none; }
+
+/* ----- admin map editor (js/hubedit.js) ----- */
+.hub-edit-btn {
+  position: absolute; top: 8px; right: 10px; z-index: 8;
+  background: rgba(20, 30, 58, .92); color: #cfe0ff; cursor: pointer;
+  border: 1px solid rgba(130, 170, 255, .5); border-radius: 8px;
+  padding: 5px 10px; font: inherit; font-size: 12px; font-weight: 600;
+}
+.hub-edit-btn:hover { background: rgba(34, 50, 92, .95); }
+.hub-editbar {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 9;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  padding: 7px 10px; background: rgba(8, 13, 28, .95);
+  border-bottom: 1px solid rgba(130, 170, 255, .3);
+}
+.hub-editbar .hgrp { display: flex; align-items: center; gap: 4px; }
+.hub-editbar .hgrp-end { margin-left: auto; }
+.hub-editbar .hbtn {
+  background: rgba(30, 42, 76, .9); color: #d6e2ff; cursor: pointer;
+  border: 1px solid rgba(120, 150, 220, .35); border-radius: 6px;
+  padding: 4px 9px; font: inherit; font-size: 12px;
+}
+.hub-editbar .hbtn:hover { background: rgba(44, 60, 104, .95); }
+.hub-editbar .hbtn.on { background: #2f6f8f; border-color: #56c8dc; color: #fff; }
+.hub-editbar .hbtn-go { background: #2b7a4b; border-color: #4fd08a; color: #fff; }
+.hub-editbar .hsel, .hub-editbar .hnum, .hub-editbar .htext {
+  background: rgba(12, 18, 38, .95); color: #dbe6ff;
+  border: 1px solid rgba(120, 150, 220, .35); border-radius: 6px; padding: 3px 6px; font: inherit; font-size: 12px;
+}
+.hub-editbar .hnum { width: 52px; }
+.hub-editbar .htext { width: 150px; }
+.hub-editbar .hlbl { font-size: 11px; color: rgba(190, 208, 255, .7); }
+.hub-editbar .hstatus { font-size: 12px; color: #8fd6a6; }
+.hub-editbar .hstatus.bad { color: #ff9a9a; }

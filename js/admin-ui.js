@@ -316,6 +316,7 @@ const AdminUI = {
       { group: "Commodities", cat: "commodity", items: COMMODITIES.map(c => c.id), url: id => ASSET.commodity(id) },
       { group: "Nebulae", cat: "nebula", items: nebulae, url: n => ASSET.nebula(n) },
       { group: "Broadcast screens", cat: "broadcast", items: ["news", "tv_drama", "tv_ads", "tv_weather"], url: n => ASSET.broadcast(n) },
+      { group: "Hub — character & stations", cat: "hub", items: ["player"].concat((window.HUB_PROPS || []).map(p => p.id)), url: id => ASSET.hub(id) },
     ];
   },
 
