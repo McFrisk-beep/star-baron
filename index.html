@@ -55,12 +55,13 @@
         </div>
       </nav>
 
-      <!-- HUB (station concourse — default landing; the tabs still work) -->
+      <!-- HUB (walkable station — default landing; the tabs still work) -->
       <section class="page" id="page-hub">
         <div class="hub-scene" id="hub-scene">
           <div class="hub-starfield" aria-hidden="true"></div>
-          <div class="hub-props" id="hub-props" aria-label="Station concourse"></div>
-          <p class="hub-hint" data-i18n="hub.hint">Tap a station to open it — the tabs below still work too.</p>
+          <canvas id="hub-canvas" class="hub-canvas" aria-label="Walkable station map"></canvas>
+          <button type="button" id="hub-prompt" class="hub-prompt hidden"></button>
+          <p class="hub-hint" data-i18n="hub.hint">Walk with arrows / WASD (or tap). Doors lead between rooms; step up to a station to open it. The tabs below still work too.</p>
         </div>
       </section>
 

@@ -610,40 +610,135 @@ const ASSET = {
   hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
 };
 
-/* HUB_PROPS — the clickable "stations" in the Phase-A hub concourse. Each is a
-   hotspot that opens an existing page via UI.showPage(page) (same path as the
-   bottom tabs), so nothing new is wired into navigation. Position is in PERCENT
-   of the scene (x,y = center; w = width) so the layout is responsive and you can
-   nudge props by editing numbers — no code. Art is optional: drop
-   assets/hub/<id>.png to replace the emoji placeholder; a missing file just keeps
-   the emoji. `icon` is the fallback glyph shown until real art exists.          */
-/* HUBCFG — Phase-B walkable character tuning. The player walks the concourse
-   (arrows / WASD, or tap-to-walk); coming within `radius` of a kiosk raises a
-   "▸ Open X" prompt you click to enter — nothing auto-opens. Position persists
-   while you visit other tabs and pick up where you left off on return.
-   Optional art: drop a 4-direction walk sheet at assets/hub/player.png (rows =
-   facing per `sheet.order`, columns = walk frames); with no file the astronaut
-   emoji + a facing pip is used instead.                                        */
+/* HUB_PROPS — the feature registry for the walkable hub. Each entry is a
+   "station" the player can walk up to; opening it calls UI.showPage(page) (the
+   SAME path as the bottom tabs), so nothing new is wired into navigation. Props
+   are PLACED into rooms by id in HUB_ROOMS below. `icon` is the emoji shown
+   until you drop real art at assets/hub/<id>.png.                              */
+const HUB_PROPS = [
+  { id: "exchange",   page: "exchange",   label: "Exchange",     icon: "📈" },
+  { id: "fleet",      page: "fleet",      label: "Fleet Bay",    icon: "🚀" },
+  { id: "bazaar",     page: "bazaar",     label: "Bazaar",       icon: "🛒" },
+  { id: "industries", page: "industries", label: "Foundry",      icon: "🏭" },
+  { id: "senate",     page: "senate",     label: "Senate",       icon: "🏛️" },
+  { id: "starmap",    page: "starmap",    label: "Star Map",     icon: "🗺️" },
+  { id: "systems",    page: "systems",    label: "Star Systems", icon: "🪐" },
+  { id: "barons",     page: "barons",     label: "Barons",       icon: "👑" },
+  { id: "comms",      page: "comms",      label: "Comms",        icon: "📡" },
+  { id: "ach",        page: "ach",        label: "Milestones",   icon: "🏆" },
+];
+
+/* HUBCFG — walkable-hub tuning (canvas tilemap). The player walks room to room;
+   walking onto a door tile loads the connected room; coming within `interact`
+   tiles of a prop raises a "▸ Open X" prompt you click (or press E) to enter —
+   nothing auto-opens. Optional art: a 4-row walk sheet at assets/hub/player.png
+   (rows = facing per `sheet.order`, cols = frames) swaps the astronaut emoji;
+   assets/hub/tiles.png is reserved for a future floor/wall tileset.            */
 const HUBCFG = {
   playerEmoji: "🧑‍🚀",
-  speed: 0.36,             // move speed as a fraction of scene WIDTH per second
-  radius: 0.12,            // kiosk interaction radius (fraction of scene width)
-  spawn: { x: 50, y: 88 }, // spawn/return position, percent of the scene
+  startRoom: "atrium",
+  speed: 4.2,          // tiles per second
+  interact: 1.15,      // prop interaction radius, in tiles
   sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 },
 };
 
-const HUB_PROPS = [
-  { id: "exchange",   page: "exchange",   label: "Exchange",     icon: "📈", x: 12, y: 32, w: 13 },
-  { id: "fleet",      page: "fleet",      label: "Fleet Bay",    icon: "🚀", x: 31, y: 32, w: 13 },
-  { id: "bazaar",     page: "bazaar",     label: "Bazaar",       icon: "🛒", x: 50, y: 32, w: 13 },
-  { id: "industries", page: "industries", label: "Foundry",      icon: "🏭", x: 69, y: 32, w: 13 },
-  { id: "senate",     page: "senate",     label: "Senate",       icon: "🏛️", x: 88, y: 32, w: 13 },
-  { id: "starmap",    page: "starmap",    label: "Star Map",     icon: "🗺️", x: 12, y: 74, w: 13 },
-  { id: "systems",    page: "systems",    label: "Star Systems", icon: "🪐", x: 31, y: 74, w: 13 },
-  { id: "barons",     page: "barons",     label: "Barons",       icon: "👑", x: 50, y: 74, w: 13 },
-  { id: "comms",      page: "comms",      label: "Comms",        icon: "📡", x: 69, y: 74, w: 13 },
-  { id: "ach",        page: "ach",        label: "Milestones",   icon: "🏆", x: 88, y: 74, w: 13 },
-];
+/* HUB_ROOMS — each room is its own screen (top-down). `grid` is ASCII tile art:
+   '#' wall (solid), '.' floor, '+' door (walkable; transitions per `doors`).
+   `doors` link a door tile [tx,ty] to another room + the spawn tile there.
+   `props` place features (by HUB_PROPS id) at tile [tx,ty]. `spawn` is the
+   default entry tile. Draw new rooms by editing the ASCII — no code.           */
+const HUB_ROOMS = {
+  atrium: {
+    name: "Concourse",
+    grid: [
+      "#############",
+      "#...........#",
+      "#...........#",
+      "#...........#",
+      "+...........+",
+      "#...........#",
+      "#...........#",
+      "#.....+.....#",
+      "#############",
+    ],
+    spawn: [6, 4],
+    doors: [
+      { tx: 0,  ty: 4, to: "market", spawn: [8, 4] },
+      { tx: 12, ty: 4, to: "fleet",  spawn: [2, 4] },
+      { tx: 6,  ty: 7, to: "hall",   spawn: [6, 1] },
+    ],
+    props: [],
+    signs: [
+      { tx: 0,  ty: 3, text: "Market ◂" },
+      { tx: 12, ty: 3, text: "▸ Fleet" },
+      { tx: 6,  ty: 8, text: "Senate Hall ▾" },
+    ],
+  },
+  market: {
+    name: "Market Wing",
+    grid: [
+      "###########",
+      "#.........#",
+      "#.........#",
+      "#.........#",
+      "#.........+",
+      "#.........#",
+      "#.........#",
+      "###########",
+    ],
+    spawn: [8, 4],
+    doors: [{ tx: 10, ty: 4, to: "atrium", spawn: [1, 4] }],
+    props: [
+      { id: "exchange", tx: 3, ty: 2 },
+      { id: "bazaar",   tx: 6, ty: 2 },
+    ],
+    signs: [{ tx: 10, ty: 3, text: "Concourse ▸" }],
+  },
+  fleet: {
+    name: "Fleet Bay",
+    grid: [
+      "###########",
+      "#.........#",
+      "#.........#",
+      "#.........#",
+      "+.........#",
+      "#.........#",
+      "#.........#",
+      "###########",
+    ],
+    spawn: [2, 4],
+    doors: [{ tx: 0, ty: 4, to: "atrium", spawn: [11, 4] }],
+    props: [
+      { id: "fleet",   tx: 3, ty: 2 },
+      { id: "starmap", tx: 6, ty: 2 },
+      { id: "systems", tx: 8, ty: 5 },
+    ],
+    signs: [{ tx: 0, ty: 3, text: "◂ Concourse" }],
+  },
+  hall: {
+    name: "Senate Hall",
+    grid: [
+      "######+######",
+      "#...........#",
+      "#...........#",
+      "#...........#",
+      "#...........#",
+      "#...........#",
+      "#...........#",
+      "#############",
+    ],
+    spawn: [6, 1],
+    doors: [{ tx: 6, ty: 0, to: "atrium", spawn: [6, 6] }],
+    props: [
+      { id: "senate",     tx: 3,  ty: 3 },
+      { id: "industries", tx: 6,  ty: 2 },
+      { id: "barons",     tx: 9,  ty: 3 },
+      { id: "comms",      tx: 4,  ty: 5 },
+      { id: "ach",        tx: 8,  ty: 5 },
+    ],
+    signs: [{ tx: 6, ty: 0, text: "▴ Concourse" }],
+  },
+};
 
 // Make data available as globals (works on file:// and GitHub Pages, no fetch).
 window.CONFIG = CONFIG;
@@ -684,4 +779,5 @@ window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;
 window.HUB_PROPS = HUB_PROPS;
 window.HUBCFG = HUBCFG;
+window.HUB_ROOMS = HUB_ROOMS;
 window.ASSET_OVERRIDES = ASSET_OVERRIDES;
