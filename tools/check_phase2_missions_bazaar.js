@@ -13,7 +13,7 @@ ctx.Date = { now: () => T };
 ctx.localStorage = { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } };
 ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 
-for (const f of ["store.js", "data.js", "flavor.js", "market.js", "items.js", "fleet.js", "economy.js", "reputation.js", "missions.js", "bazaar.js"]) {
+for (const f of ["store.js", "data.js", "flavor.js", "market.js", "items.js", "extractors.js", "fleet.js", "economy.js", "reputation.js", "missions.js", "bazaar.js"]) {
   const p = path.join(__dirname, "../js", f);
   if (!fs.existsSync(p)) continue;
   vm.runInContext(fs.readFileSync(p, "utf8"), ctx, { filename: f });

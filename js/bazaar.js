@@ -16,6 +16,9 @@ const Bazaar = {
   _boughtSet() { return new Set(this.s().bazaarBought || []); },
   _seed(parts) { return Market._seed(["bazaar", ...parts]); },
   _u01(seed, n) { return Market._u01(seed, n); },
+  // Deterministic pick from a pool — keeps seeded board flavor consistent across
+  // clients/reloads (unlike Util.pick, which is random). Use a fresh index `n`.
+  _pick(seed, n, arr) { return arr[Math.floor(this._u01(seed, n) * arr.length) % arr.length]; },
 
   genSeededMerc(epoch, slot) {
     const s = this._seed(["merc", String(epoch), String(slot)]);
@@ -24,7 +27,8 @@ const Bazaar = {
     return {
       id: `mc-${epoch}-${slot}`,
       shipType: esc.id,
-      name: `${esc.name || esc.id} Merc ${slot}`,
+      // flavor company name (e.g. "Iron Talons") — cosmetic, seeded so it stays stable
+      name: `${this._pick(s, 10, MERC_PREFIX)} ${this._pick(s, 11, MERC_UNIT)}`,
       firepower: esc.firepower, hull: esc.hull,
       serviceMs: (15 + Math.floor(this._u01(s, 1) * 26)) * 60 * 1000,
       hireCost: Math.round(esc.price * 0.2 + esc.firepower * 55),
@@ -45,9 +49,13 @@ const Bazaar = {
     else if (roll >= 0.92) { rarity = "epic"; mult = 3.4; }
     let amount = k.base * mult * (0.8 + this._u01(s, 2) * 0.5);
     amount = k.pct ? +amount.toFixed(3) : Math.round(amount);
+    // flavor name (e.g. 'Vex Mk.III Shield Cell "Tempest"') — cosmetic, mirrors Items._name
+    const mk = ["I", "II", "III", "IV", "V"][Math.floor(this._u01(s, 10) * 5) % 5];
+    let nm = `${this._pick(s, 11, ITEM_BRANDS)} Mk.${mk} ${k.label}`;
+    if (rarity === "epic") nm += ` "${this._pick(s, 12, ITEM_SUFFIXES)}"`;
     const item = {
       uid: `i${epoch}a${slot}`, kind: kindId, rarity,
-      name: `${k.label} ${rarity}`,
+      name: nm,
       primary: { stat: k.stat, amount, pct: k.pct, kind: kindId },
       bonus: null,
     };
@@ -66,8 +74,13 @@ const Bazaar = {
     if (r < 0.45) { type = "specialized"; scope = comms[Math.floor(this._u01(s, 1) * 12) % 12]; price = EXTRACTORCFG.types.specialized.price; }
     else if (r < 0.80) { type = "semi"; scope = cats[Math.floor(this._u01(s, 1) * 6) % 6]; price = EXTRACTORCFG.types.semi.price; }
     else { type = "jack"; scope = "all"; price = EXTRACTORCFG.types.jack.price; }
-    const cn = type === "specialized" ? (COMMODITIES.find(c => c.id === scope) || {}).name || scope : scope;
-    const name = type === "specialized" ? `${cn} Rig` : type === "semi" ? `${scope[0].toUpperCase() + scope.slice(1)} Works` : "Universal Unit";
+    // flavor name (e.g. "Volkov Iron Borer") — cosmetic, mirrors Extractors.name, seeded
+    const mfr = this._pick(s, 10, EXTRACTOR_MFR);
+    const suf = this._pick(s, 11, EXTRACTOR_SUFFIX[type] || EXTRACTOR_SUFFIX.jack);
+    const core = type === "specialized" ? ((COMMODITIES.find(c => c.id === scope) || {}).name || scope)
+      : type === "semi" ? (scope[0].toUpperCase() + scope.slice(1))
+        : this._pick(s, 12, EXTRACTOR_JACK_CORE);
+    const name = `${mfr} ${core} ${suf}`;
     return { id: `ex-${epoch}-${slot}`, ex: { uid: `ex${epoch}x${slot}`, type, scope, name, components: [] }, price };
   },
   // Seeded component offer — mirrors app.gen_component in phase3 SQL.
@@ -83,7 +96,8 @@ const Bazaar = {
     const amount = +(base * rar.mult).toFixed(3);
     return {
       id: `cp-${epoch}-${slot}`,
-      comp: { uid: `cp${epoch}c${slot}`, kind, rarity, amount, name: `${kind[0].toUpperCase() + kind.slice(1)} Component` },
+      // flavor name (e.g. "Cygnus Yield Booster") — cosmetic, mirrors Components.gen, seeded
+      comp: { uid: `cp${epoch}c${slot}`, kind, rarity, amount, name: `${this._pick(s, 10, EXTRACTOR_MFR)} ${COMPONENTCFG.kinds[kind].label}` },
       price: Math.round(COMPONENTCFG.priceBase * rar.price),
     };
   },
@@ -94,12 +108,24 @@ const Bazaar = {
     const reqMult = 1 + stake * BAZAARCFG.tierReqMult;
     const stakeMult = 1 + stake * BAZAARCFG.tierStakeMult;
     const factions = Object.keys(FACTIONS);
+    // Cosmetic display flavor: real system / commodity / broker names + CONTRACT_TEMPLATES
+    // titles+desc, all seeded so they stay stable. Mechanical fields are untouched below.
+    const sysList = (window.Galaxy && Galaxy.list) || [];
+    const sysName = sysList.length ? this._pick(s, 20, sysList).name : `Sector ${1 + (Math.floor(this._u01(s, 2) * 20) % 20)}`;
+    const comm = this._pick(s, 21, COMMODITIES);
+    const broker = (window.NPCS && NPCS.length) ? this._pick(s, 22, NPCS).handle : "a broker";
+    const flavor = type => (window.CONTRACT_TEMPLATES || []).find(t => t.type === type) || null;
+    const fill = (t, cat) => t.replace(/\{SYS\}/g, sysName).replace(/\{COMM\}/g, comm.name)
+      .replace(/\{CAT\}/g, cat || comm.cat).replace(/\{NAME\}/g, broker);
     if (this._u01(s, 0) < 0.16) {
+      const cat = ["mineral", "gas", "agri", "tech", "luxury", "illicit"][Math.floor(this._u01(s, 1) * 6) % 6];
+      const ft = flavor("insider");
       return {
         id: `ct-${epoch}-${slot}`, kind: "tip", type: "insider", status: "open",
-        title: "Insider whisper", desc: "Pay for a tip and front-run the newswire.",
-        cat: ["mineral", "gas", "agri", "tech", "luxury", "illicit"][Math.floor(this._u01(s, 1) * 6) % 6],
-        sysName: `Sector ${1 + (Math.floor(this._u01(s, 2) * 20) % 20)}`,
+        title: ft ? fill(this._pick(s, 23, ft.titles), cat) : "Insider whisper",
+        desc: ft ? fill(ft.desc, cat) : "Pay for a tip and front-run the newswire.",
+        cat,
+        sysName,
         faction: factions[Math.floor(this._u01(s, 3) * factions.length) % factions.length],
         cost: 1500 + Math.floor(this._u01(s, 4) * 7501),
         stakeTier: stake,
@@ -118,11 +144,12 @@ const Bazaar = {
     const ri = (lo, hi, n) => lo + Math.floor(this._u01(s, n) * (hi - lo + 1));
     const fp = tpl.fp[1] > 0 ? ri(tpl.fp[0], tpl.fp[1], 5) : 0;
     const cargo = tpl.cargo[1] > 0 ? ri(tpl.cargo[0], tpl.cargo[1], 6) : 0;
+    const ft = flavor(tpl.type);
     return {
       id: `ct-${epoch}-${slot}`, kind: "job", type: tpl.type, status: "open",
-      title: `${tpl.type} contract #${slot}`,
-      desc: "A seeded board contract.",
-      sysName: `Sector ${1 + (Math.floor(this._u01(s, 3) * 20) % 20)}`,
+      title: ft ? fill(this._pick(s, 23, ft.titles)) : `${tpl.type} contract #${slot}`,
+      desc: ft ? fill(ft.desc) : "A seeded board contract.",
+      sysName,
       danger, faction: factions[Math.floor(this._u01(s, 4) * factions.length) % factions.length],
       stakeTier: stake, impound: !!tpl.impound,
       minFirepower: Math.round(fp * reqMult),

@@ -23,7 +23,10 @@ const ctx = vm.createContext({ console, Math });
 ctx.window = ctx;
 let T = 1_700_000_000_000;
 ctx.Date = { now: () => T };
-for (const f of ["store.js", "data.js", "content.js", "market.js", "items.js", "bazaar.js"]) {
+// flavor.js + extractors.js supply the seeded board's cosmetic name pools
+// (MERC_PREFIX, ITEM_BRANDS, EXTRACTOR_MFR, CONTRACT_TEMPLATES, …). Names aren't
+// part of SQL parity — they're loaded only so the generators resolve their pools.
+for (const f of ["store.js", "data.js", "content.js", "market.js", "items.js", "flavor.js", "extractors.js", "bazaar.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
 }
 const { Market, Bazaar, Content } = ctx;
