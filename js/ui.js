@@ -54,7 +54,7 @@ const UI = {
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
       commsBadge: $("tab-comms-badge"),
-      dispatchActive: $("dispatch-active"), dispatchThread: $("dispatch-thread"),
+      dispatchBody: $("dispatch-body"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -117,7 +117,7 @@ const UI = {
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "comms") { if (window.Story) Story.markRead(); this.clearCommsBadge(); this.renderDispatches(); this.scrollFeedBottom(); }
+    else if (name === "comms") { this._dispatchArc = null; this.clearCommsBadge(); this.renderDispatches(); this.scrollFeedBottom(); }
     else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
   },
 
@@ -133,44 +133,87 @@ const UI = {
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   },
 
-  // ---- Dispatches (story/quest inbox in Comms) ----------------------------
+  // ---- Dispatches (story/quest mailbox in Comms) --------------------------
+  // Two views in one panel: a conversation LIST (up to 30 contacts) and, when a
+  // contact is opened, their THREAD with the current accept/objective/choice
+  // dialog and flavour replies. UI._dispatchArc null = list, else = open thread.
   renderDispatches() {
-    if (!window.Story || !this.refs.dispatchThread) return;
-    const aEl = this.refs.dispatchActive;
-    const active = Story.activeGoals();
-    if (!active.length) {
-      aEl.innerHTML = `<p class="muted-note">No open dispatches. Keep trading and building — someone always wants a word with a rising baron.</p>`;
-    } else {
-      aEl.innerHTML = active.map(g => {
-        const head = `<span class="disp-from">${g.from}</span> <span class="disp-kind">${g.kind === "arc" ? "story" : "job"}</span>`;
-        if (g.choices) {
-          const btns = g.choices.map(c =>
-            `<button class="btn btn-mini" data-story-choice="${g.arc}:${c.i}" ${c.ok ? "" : "disabled"}>${c.label}${c.cost ? ` (−${Util.credits(c.cost)})` : ""}</button>`
-          ).join("");
-          return `<div class="disp-goal"><div class="disp-goal-head">${head}</div><div class="disp-choices">${btns}</div></div>`;
-        }
-        return `<div class="disp-goal${g.done ? " done" : ""}"><div class="disp-goal-head">${head}</div><div class="disp-obj">${g.done ? "✓ objective met — reward incoming" : "▸ " + g.desc}</div></div>`;
-      }).join("");
-    }
-    aEl.onclick = e => {
-      const b = e.target.closest("[data-story-choice]"); if (!b || b.disabled) return;
-      const [arc, idx] = b.dataset.storyChoice.split(":");
-      const r = Story.choose(arc, +idx);
-      if (!r.ok && r.msg) return this.toast(r.msg, "warn");
-      this.renderDispatches(); this.updateHeader();
-    };
+    const el = this.refs.dispatchBody; if (!window.Story || !el) return;
+    el.onclick = e => this.onDispatchClick(e);
+    if (this._dispatchArc && Story.thread(this._dispatchArc).length) this._renderThread(el, this._dispatchArc);
+    else { this._dispatchArc = null; this._renderMailbox(el); }
+  },
 
-    this.refs.dispatchThread.innerHTML = Story.inbox().map(m => {
+  _avatar(portrait) {
+    return (portrait != null && window.ASSET)
+      ? `<img class="disp-av" src="${ASSET.portrait(portrait)}" alt="" onerror="this.style.visibility='hidden'">`
+      : `<span class="disp-av disp-av-blank"></span>`;
+  },
+
+  _renderMailbox(el) {
+    const rows = Story.conversations();
+    if (!rows.length) {
+      el.innerHTML = `<p class="muted-note">No dispatches yet. Keep trading and building — someone always wants a word with a rising baron.</p>`;
+      return;
+    }
+    el.innerHTML = `<ul class="disp-list">` + rows.map(c => {
+      const dot = c.unread ? `<span class="disp-dot">${c.unread}</span>` : (c.action ? `<span class="disp-dot act">●</span>` : "");
+      const tag = c.status === "active" ? (c.kind === "arc" ? "story" : "job") : c.status;
+      return `<li class="disp-row${c.unread ? " unread" : ""}" data-open="${c.arc}">${this._avatar(c.portrait)}` +
+             `<div class="disp-row-main"><div class="disp-row-top"><b>${c.from}</b> <span class="disp-kind">${tag}</span>` +
+             `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}</li>`;
+    }).join("") + `</ul>`;
+  },
+
+  _renderThread(el, arc) {
+    const sv = Story.stepView(arc);
+    const msgs = Story.thread(arc).map(m => {
       const side = m.type === "out" ? "out" : "in";
-      const av = (m.portrait != null && window.ASSET)
-        ? `<img class="disp-av" src="${ASSET.portrait(m.portrait)}" alt="" onerror="this.style.visibility='hidden'">` : "";
       const cls = m.type === "reward" ? "disp-msg reward" : "disp-msg " + side;
       const who = m.type === "out" ? "You" : m.from;
-      return `<li class="${cls}">${side === "in" ? av : ""}<div class="disp-bub">` +
+      return `<li class="${cls}">${side === "in" ? this._avatar(m.portrait) : ""}<div class="disp-bub">` +
              `<div class="disp-who">${who} <span class="disp-time">${Util.ago(m.ts)}</span></div>` +
              `<div class="disp-text">${m.text}</div></div></li>`;
     }).join("");
-    requestAnimationFrame(() => { const t = this.refs.dispatchThread; if (t) t.scrollTop = t.scrollHeight; });
+
+    // action bar: gate (accept/decline) · objective progress · branching choice · flavour replies
+    let actions = "";
+    if (sv && sv.type === "gate") {
+      actions = `<div class="disp-obj">▸ ${sv.desc}</div><div class="disp-choices">` +
+        `<button class="btn btn-mini btn-go" data-act="${arc}:accept">${sv.accept.label}</button>` +
+        (sv.decline ? `<button class="btn btn-mini" data-act="${arc}:decline">${sv.decline.label}</button>` : "") + `</div>`;
+    } else if (sv && sv.type === "objective") {
+      actions = `<div class="disp-obj${sv.done ? " done" : ""}">${sv.done ? "✓ objective met — reward incoming" : "▸ " + sv.desc}</div>`;
+    } else if (sv && sv.type === "choice") {
+      actions = `<div class="disp-choices">` + sv.buttons.map(b =>
+        `<button class="btn btn-mini" data-act="${arc}:choice:${b.i}" ${b.ok ? "" : "disabled"}>${b.label}${b.cost ? ` (−${Util.credits(b.cost)})` : ""}</button>`
+      ).join("") + `</div>`;
+    } else {
+      actions = `<div class="muted-note">Conversation closed.</div>`;
+    }
+    if (sv && sv.replies && sv.replies.length) {
+      actions += `<div class="disp-replies">` + sv.replies.map(r =>
+        `<button class="chip" data-act="${arc}:reply:${r.i}">${r.label}</button>`).join("") + `</div>`;
+    }
+
+    el.innerHTML =
+      `<div class="disp-thread-head"><button class="btn btn-mini" data-back="1">‹ Inbox</button>` +
+      `<b>${sv ? sv.from : arc}</b></div>` +
+      `<ul class="dispatch-thread">${msgs}</ul>` +
+      `<div class="disp-actions">${actions}</div>`;
+    requestAnimationFrame(() => { const t = el.querySelector(".dispatch-thread"); if (t) t.scrollTop = t.scrollHeight; });
+  },
+
+  onDispatchClick(e) {
+    const back = e.target.closest("[data-back]");
+    if (back) { this._dispatchArc = null; this.renderDispatches(); return; }
+    const row = e.target.closest("[data-open]");
+    if (row) { this._dispatchArc = row.dataset.open; Story.openConversation(this._dispatchArc); this.clearCommsBadge(); this.renderDispatches(); return; }
+    const b = e.target.closest("[data-act]"); if (!b || b.disabled) return;
+    const [arc, ...rest] = b.dataset.act.split(":");
+    const r = Story.act(arc, rest.join(":"));
+    if (!r.ok && r.msg) return this.toast(r.msg, "warn");
+    this.renderDispatches(); this.updateHeader();
   },
 
   // Unread indicator on the Comms tab (chat + news arrive while you're elsewhere).
