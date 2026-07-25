@@ -159,6 +159,11 @@
 
       <!-- COMMS (Broadcast + Chat) -->
       <section class="page hidden" id="page-comms">
+        <section class="panel" id="panel-dispatches">
+          <h2><span data-i18n="comms.dispatches">Dispatches</span> <small data-i18n="comms.dispatchesSub">private channel</small></h2>
+          <div id="dispatch-active"></div>
+          <ul class="dispatch-thread" id="dispatch-thread"></ul>
+        </section>
         <div class="comms-grid">
           <section class="panel" id="panel-broadcast">
             <div class="bc-head"><h2 data-i18n="comms.broadcast">Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
@@ -524,6 +529,7 @@
   <script src="js/worldfeed.js"></script>
   <script src="js/i18n.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/story.js"></script>
   <script src="js/hub.js"></script>
   <script src="js/sprite-manifest.js"></script>
   <script src="js/hubedit.js"></script>

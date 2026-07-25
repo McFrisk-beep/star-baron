@@ -54,6 +54,7 @@ const UI = {
       tickerText: $("ticker-text"), newswireList: $("newswire-list"),
       feedList: $("feed-list"), toast: $("toast-stack"),
       commsBadge: $("tab-comms-badge"),
+      dispatchActive: $("dispatch-active"), dispatchThread: $("dispatch-thread"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -116,7 +117,7 @@ const UI = {
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "comms") { this.clearCommsBadge(); this.scrollFeedBottom(); }
+    else if (name === "comms") { if (window.Story) Story.markRead(); this.clearCommsBadge(); this.renderDispatches(); this.scrollFeedBottom(); }
     else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
   },
 
@@ -130,6 +131,46 @@ const UI = {
     const el = this.refs.feedList; if (!el) return;
     this.feedPaused = false;
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  },
+
+  // ---- Dispatches (story/quest inbox in Comms) ----------------------------
+  renderDispatches() {
+    if (!window.Story || !this.refs.dispatchThread) return;
+    const aEl = this.refs.dispatchActive;
+    const active = Story.activeGoals();
+    if (!active.length) {
+      aEl.innerHTML = `<p class="muted-note">No open dispatches. Keep trading and building — someone always wants a word with a rising baron.</p>`;
+    } else {
+      aEl.innerHTML = active.map(g => {
+        const head = `<span class="disp-from">${g.from}</span> <span class="disp-kind">${g.kind === "arc" ? "story" : "job"}</span>`;
+        if (g.choices) {
+          const btns = g.choices.map(c =>
+            `<button class="btn btn-mini" data-story-choice="${g.arc}:${c.i}" ${c.ok ? "" : "disabled"}>${c.label}${c.cost ? ` (−${Util.credits(c.cost)})` : ""}</button>`
+          ).join("");
+          return `<div class="disp-goal"><div class="disp-goal-head">${head}</div><div class="disp-choices">${btns}</div></div>`;
+        }
+        return `<div class="disp-goal${g.done ? " done" : ""}"><div class="disp-goal-head">${head}</div><div class="disp-obj">${g.done ? "✓ objective met — reward incoming" : "▸ " + g.desc}</div></div>`;
+      }).join("");
+    }
+    aEl.onclick = e => {
+      const b = e.target.closest("[data-story-choice]"); if (!b || b.disabled) return;
+      const [arc, idx] = b.dataset.storyChoice.split(":");
+      const r = Story.choose(arc, +idx);
+      if (!r.ok && r.msg) return this.toast(r.msg, "warn");
+      this.renderDispatches(); this.updateHeader();
+    };
+
+    this.refs.dispatchThread.innerHTML = Story.inbox().map(m => {
+      const side = m.type === "out" ? "out" : "in";
+      const av = (m.portrait != null && window.ASSET)
+        ? `<img class="disp-av" src="${ASSET.portrait(m.portrait)}" alt="" onerror="this.style.visibility='hidden'">` : "";
+      const cls = m.type === "reward" ? "disp-msg reward" : "disp-msg " + side;
+      const who = m.type === "out" ? "You" : m.from;
+      return `<li class="${cls}">${side === "in" ? av : ""}<div class="disp-bub">` +
+             `<div class="disp-who">${who} <span class="disp-time">${Util.ago(m.ts)}</span></div>` +
+             `<div class="disp-text">${m.text}</div></div></li>`;
+    }).join("");
+    requestAnimationFrame(() => { const t = this.refs.dispatchThread; if (t) t.scrollTop = t.scrollHeight; });
   },
 
   // Unread indicator on the Comms tab (chat + news arrive while you're elsewhere).

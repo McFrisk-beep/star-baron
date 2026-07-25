@@ -35,6 +35,7 @@ const Game = {
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
+      story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0 },
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
       lastSeenAt: Date.now(),
       market: null,
@@ -185,6 +186,7 @@ const Game = {
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
     if (window.Senate) Senate.init();
+    if (window.Story) Story.init();
     Feed.wire();
     Feed.prime();                 // fill the chat so it isn't empty on arrival
     UI.fullRender();
@@ -262,6 +264,7 @@ const Game = {
     const now = Date.now();
     Market.tick(now);
     this.detectMoves();
+    if (window.Story) Story.check(now);   // drip storyline messages / pay out finished objectives
     Wars.tick(now);
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
