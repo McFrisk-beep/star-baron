@@ -947,10 +947,13 @@ body.reduced .floatnav-indicator { transition: none; }
 .inv-sub { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-dim); margin: 10px 0 6px; }
 .item.listed { opacity: .8; }
 .item-art, .item .tintbox.item-art { width: 48px; height: 36px; object-fit: contain; display: block; margin: 0 auto 6px; }
-.inv-card { text-align: center; }
+/* Inventory uses fixed-ish card widths so a single item doesn't stretch full-bleed. */
+#fleet-inventory .buy-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 200px)); justify-content: start; }
+.inv-card { text-align: center; max-width: 200px; }
 .inv-card .bc-name { margin-top: 2px; font-size: 12px; line-height: 1.25; }
 .inv-card .rar { display: block; margin: 2px 0 4px; }
 .inv-card .bc-stats { margin: 0 0 8px; }
+.inv-card .item-art, .inv-card .tintbox.item-art { width: 56px; height: 44px; }
 .inv-acts { justify-content: center; }
 .inv-acts .item-val { margin-right: 0; width: 100%; text-align: center; }
 .contract > .item-art, .contract > .tintbox.item-art { float: right; margin: 0 0 6px 8px; width: 40px; height: 32px; }
