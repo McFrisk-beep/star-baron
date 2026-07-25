@@ -18,7 +18,8 @@ const Hub = {
   roomId: null, px: 1.5, py: 1.5, facing: "down", moving: false,
   keys: new Set(), target: null, _near: null, _armed: false,
   _frame: 0, _frameT: 0, _ts: 32, _ox: 0, _oy: 0, _w: 0, _h: 0,
-  _imgs: {}, _playerImg: null,
+  _imgs: {}, _playerImg: null, _bgImgs: {},
+  editing: false, _hoverTile: null,   // set by the admin map editor (js/hubedit.js)
 
   cfg() { return window.HUBCFG || { startRoom: "atrium", speed: 4.2, interact: 1.15, sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 } }; },
   rooms() { return window.HUB_ROOMS || {}; },
@@ -75,7 +76,7 @@ const Hub = {
     else if (down && (k === "e" || k === "enter") && this._near) { e.preventDefault(); this._open(); }
   },
   _point(e) {
-    if (!this._active || this._blocked() || !this._ts) return;
+    if (!this._active || this._blocked() || this.editing || !this._ts) return;
     const r = this.canvas.getBoundingClientRect();
     this.target = { x: (e.clientX - r.left - this._ox) / this._ts, y: (e.clientY - r.top - this._oy) / this._ts };
     this.keys.clear();
@@ -83,7 +84,20 @@ const Hub = {
 
   // ---- tiles / collision ---------------------------------------------------
   _tile(tx, ty) { const g = this.room() && this.room().grid; if (!g || ty < 0 || ty >= g.length) return "#"; const row = g[ty]; if (tx < 0 || tx >= row.length) return "#"; return row[tx]; },
-  _walk(tx, ty) { const c = this._tile(tx, ty); return c === "." || c === "+"; },
+  _solidPropAt(tx, ty) { return ((this.room() && this.room().props) || []).some(p => p.solid && p.tx === tx && p.ty === ty); },
+  _walk(tx, ty) { const c = this._tile(tx, ty); if (c !== "." && c !== "+") return false; return !this._solidPropAt(tx, ty); },
+  // client px → tile coords (used by the editor); relies on the last render's layout
+  screenToTile(cx, cy) {
+    const r = this.canvas.getBoundingClientRect();
+    return { tx: Math.floor((cx - r.left - this._ox) / this._ts), ty: Math.floor((cy - r.top - this._oy) / this._ts) };
+  },
+  setRoom(id) {
+    if (!this.rooms()[id]) return;
+    this.roomId = id;
+    const sp = this.room().spawn || [1, 1];
+    this.px = sp[0] + 0.5; this.py = sp[1] + 0.5;
+    this._near = null; if (this.prompt) this.prompt.classList.add("hidden");
+  },
   _canMove(x, y) {
     const h = 0.30;
     return this._walk(Math.floor(x - h), Math.floor(y - h)) && this._walk(Math.floor(x + h), Math.floor(y - h))
@@ -98,6 +112,7 @@ const Hub = {
     this._raf = requestAnimationFrame(x => this._loop(x));
   },
   _update(dt) {
+    if (this.editing) { this.moving = false; return; }   // editor drives the canvas; player is parked
     if (this._blocked()) { this.keys.clear(); this.target = null; this.moving = false; return; }
     let ix = 0, iy = 0;
     if (this.keys.size) {
@@ -181,6 +196,18 @@ const Hub = {
     const ox = Math.floor((cw - ts * cols) / 2), oy = Math.floor((ch - ts * rows) / 2);
     this._ts = ts; this._ox = ox; this._oy = oy;
 
+    // per-room background (color like "#123" / "rgb(...)", or a sprite key/path), behind the tiles
+    const bg = room.bg;
+    if (bg) {
+      const rw = ts * cols, rh = ts * rows;
+      if (/^(#|rgb|hsl)/i.test(bg)) { ctx.fillStyle = bg; ctx.fillRect(ox, oy, rw, rh); }
+      else {
+        let im = this._bgImgs[bg];
+        if (!im) { im = new Image(); im.src = /[./]/.test(bg) ? bg : ASSET.hub(bg); this._bgImgs[bg] = im; }
+        if (im.complete && im.naturalWidth) ctx.drawImage(im, ox, oy, rw, rh);
+      }
+    }
+
     // tiles
     for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < cols; tx++) {
       const c = room.grid[ty][tx]; const x = ox + tx * ts, y = oy + ty * ts;
@@ -225,6 +252,24 @@ const Hub = {
     if (this._near && this.prompt && !this.prompt.classList.contains("hidden")) {
       this.prompt.style.left = (ox + (this._near.tx + 0.5) * ts) + "px";
       this.prompt.style.top = (oy + this._near.ty * ts - ts * 0.15) + "px";
+    }
+
+    if (this.editing) this._editOverlay(ox, oy, ts, cols, rows, room);
+  },
+  // Edit-mode overlay: a grid, red rings on solid props, and the hovered tile.
+  _editOverlay(ox, oy, ts, cols, rows, room) {
+    const ctx = this.ctx;
+    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.lineWidth = 1;
+    for (let x = 0; x <= cols; x++) { ctx.beginPath(); ctx.moveTo(ox + x * ts, oy); ctx.lineTo(ox + x * ts, oy + rows * ts); ctx.stroke(); }
+    for (let y = 0; y <= rows; y++) { ctx.beginPath(); ctx.moveTo(ox, oy + y * ts); ctx.lineTo(ox + cols * ts, oy + y * ts); ctx.stroke(); }
+    for (const p of (room.props || [])) if (p.solid) {
+      ctx.strokeStyle = "rgba(255,90,90,.9)"; ctx.lineWidth = 2;
+      ctx.strokeRect(ox + p.tx * ts + 2, oy + p.ty * ts + 2, ts - 4, ts - 4);
+    }
+    const h = this._hoverTile;
+    if (h && h.tx >= 0 && h.ty >= 0 && h.tx < cols && h.ty < rows) {
+      ctx.fillStyle = "rgba(120,200,255,.22)"; ctx.fillRect(ox + h.tx * ts, oy + h.ty * ts, ts, ts);
+      ctx.strokeStyle = "rgba(150,220,255,.9)"; ctx.lineWidth = 2; ctx.strokeRect(ox + h.tx * ts + 1, oy + h.ty * ts + 1, ts - 2, ts - 2);
     }
   },
   _drawPlayer(sx, sy, ts) {
