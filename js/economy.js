@@ -135,7 +135,27 @@ const Economy = {
     if (r.components) s.components = r.components;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
+    this.repairCosmeticNames();
   },
+
+  // Phase-2/3 SQL used to stamp stub names ("Battleship", "Shield uncommon").
+  // Rebuild cosmetic flavor names in-memory whenever a server slice lands.
+  repairCosmeticNames(state) {
+    const s = state || this.s(); if (!s) return;
+    if (window.Fleet) for (const sh of s.ships || []) {
+      if (Fleet.isStubName(sh)) sh.name = Fleet.nameFromUid(sh.uid, sh.type, sh.mercenary);
+    }
+    if (window.Items) for (const it of Object.values(s.items || {})) {
+      if (Items.isStubName(it)) it.name = Items.nameFromUid(it);
+    }
+    if (window.Extractors) for (const ex of Object.values(s.extractors || {})) {
+      if (Extractors.isStubName(ex)) ex.name = Extractors.nameFromUid(ex);
+    }
+    if (window.Components) for (const c of Object.values(s.components || {})) {
+      if (Components.isStubName(c)) c.name = Components.nameFromUid(c);
+    }
+  },
+
   // Pull protected fields from an app_commit / app_pull response into live state.
   applyCommitState(st) {
     if (!st || typeof st !== "object") return;
@@ -172,7 +192,27 @@ const Economy = {
       if (st.stats.biggestTrade != null) s.stats.biggestTrade = st.stats.biggestTrade;
       if (st.stats.contractsDone != null) s.stats.contractsDone = st.stats.contractsDone;
     }
+    this.repairCosmeticNames();
   },
+
+  // Snapshot non-stub cosmetic names before a server slice clobbers them.
+  _snapCosmeticNames() {
+    const s = this.s(), out = { ships: {}, items: {}, extractors: {}, components: {} };
+    if (window.Fleet) for (const sh of s.ships || []) if (!Fleet.isStubName(sh)) out.ships[sh.uid] = sh.name;
+    if (window.Items) for (const it of Object.values(s.items || {})) if (!Items.isStubName(it)) out.items[it.uid] = it.name;
+    if (window.Extractors) for (const ex of Object.values(s.extractors || {})) if (!Extractors.isStubName(ex)) out.extractors[ex.uid] = ex.name;
+    if (window.Components) for (const c of Object.values(s.components || {})) if (!Components.isStubName(c)) out.components[c.uid] = c.name;
+    return out;
+  },
+  _restoreCosmeticNames(snap) {
+    if (!snap) return;
+    const s = this.s();
+    for (const sh of s.ships || []) if (snap.ships[sh.uid]) sh.name = snap.ships[sh.uid];
+    for (const it of Object.values(s.items || {})) if (snap.items[it.uid]) it.name = snap.items[it.uid];
+    for (const ex of Object.values(s.extractors || {})) if (snap.extractors[ex.uid]) ex.name = snap.extractors[ex.uid];
+    for (const c of Object.values(s.components || {})) if (snap.components[c.uid]) c.name = snap.components[c.uid];
+  },
+
   // Apply an app_pull result (same slice as RPCs + optional away recap).
   applyPull(r) {
     if (!r || !r.ok) return null;
@@ -241,7 +281,10 @@ const Economy = {
           this._restoreEconomy(snap);
           return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
         }
+        // Keep optimistic flavor names (board / makeShip) when the server returns stubs.
+        const names = this._snapCosmeticNames();
         this._applyServerSlice(r);
+        this._restoreCosmeticNames(names);
         if (r.fillPrice != null) local.price = r.fillPrice;
         if (r.cost != null) local.cost = r.cost;
         if (r.proceeds != null) local.proceeds = r.proceeds;

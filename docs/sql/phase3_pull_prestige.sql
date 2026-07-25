@@ -1204,9 +1204,23 @@ begin
   else
     typ := 'jack'; scope := 'all'; price := 5000;
   end if;
-  nm := case typ when 'specialized' then initcap(scope) || ' Rig'
-                 when 'semi' then initcap(scope) || ' Works'
-                 else 'Universal Unit' end;
+  -- Flavor name mirrors js/bazaar.js genSeededExtractor (mfr/suffix/core pools).
+  nm := case typ
+    when 'specialized' then
+      (array['Korr','Volkov','Cygnus','Drell','Maru','Oort','Tassen','Bell4','Hjar','Nuvo'])[1 + (floor(market.u01(s, 10) * 10)::int % 10)]
+      || ' ' || initcap(replace(scope, '_', ' ')) || ' '
+      || (array['Rig','Borer','Driver','Extractor'])[1 + (floor(market.u01(s, 11) * 4)::int % 4)]
+    when 'semi' then
+      (array['Korr','Volkov','Cygnus','Drell','Maru','Oort','Tassen','Bell4','Hjar','Nuvo'])[1 + (floor(market.u01(s, 10) * 10)::int % 10)]
+      || ' ' || initcap(scope) || ' '
+      || (array['Harvester','Processor','Refinery','Works'])[1 + (floor(market.u01(s, 11) * 4)::int % 4)]
+    else
+      (array['Korr','Volkov','Cygnus','Drell','Maru','Oort','Tassen','Bell4','Hjar','Nuvo'])[1 + (floor(market.u01(s, 10) * 10)::int % 10)]
+      || ' '
+      || (array['Universal','Omni','All-Purpose','Versatile'])[1 + (floor(market.u01(s, 12) * 4)::int % 4)]
+      || ' '
+      || (array['Array','Plant','Unit','Fabricator'])[1 + (floor(market.u01(s, 11) * 4)::int % 4)]
+  end;
   return jsonb_build_object(
     'id', 'ex-' || p_epoch || '-' || p_slot,
     'ex', jsonb_build_object(
@@ -1242,7 +1256,9 @@ begin
     'id', 'cp-' || p_epoch || '-' || p_slot,
     'comp', jsonb_build_object(
       'uid', 'cp' || p_epoch || 'c' || p_slot, 'kind', kind, 'rarity', rar,
-      'amount', amt, 'name', initcap(kind) || ' Component'),
+      'amount', amt,
+      'name', (array['Korr','Volkov','Cygnus','Drell','Maru','Oort','Tassen','Bell4','Hjar','Nuvo'])[1 + (floor(market.u01(s, 10) * 10)::int % 10)]
+           || ' ' || case kind when 'rate' then 'Yield Booster' else 'Cycle Optimizer' end),
     'price', round((1800.0 * rprice)::numeric)
   );
 end;

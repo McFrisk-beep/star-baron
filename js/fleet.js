@@ -10,6 +10,26 @@ const Fleet = {
   shipDef(typeId) { return ALL_SHIPS.find(x => x.id === typeId); },
   mainDef() { return SHIP_CATALOG.main.find(x => x.id === this.s().mainShip.type) || SHIP_CATALOG.main[0]; },
 
+  // Server stubs: catalog name ("Battleship"), initcap(type), or "Battleship Merc 0".
+  isStubName(sh) {
+    if (!sh || !sh.name) return true;
+    const def = this.shipDef(sh.type);
+    if (def && sh.name === def.name) return true;
+    const t = String(sh.type || "");
+    if (sh.name === t.charAt(0).toUpperCase() + t.slice(1)) return true;
+    if (/ Merc \d+$/.test(sh.name)) return true;
+    return false;
+  },
+  nameFromUid(uid, type, mercenary) {
+    const a = window.SHIP_NAME_A || ["Iron"], b = window.SHIP_NAME_B || ["Widow"];
+    const mp = window.MERC_PREFIX || ["Red"], mu = window.MERC_UNIT || ["Talons"];
+    let h = 2166136261; const s = String(uid || type || "ship");
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h >>>= 0;
+    if (mercenary) return `${mp[h % mp.length]} ${mu[(h >>> 7) % mu.length]}`;
+    return `${a[h % a.length]} ${b[(h >>> 7) % b.length]}`;
+  },
+
   // Build a fresh owned-ship instance from a catalog id.
   makeShip(catalogId, opts = {}) {
     const def = this.shipDef(catalogId);

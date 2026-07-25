@@ -117,14 +117,28 @@ returns jsonb
 language plpgsql immutable as $$
 declare
   def record;
+  a text[] := array['Iron','Crimson','Silent','Void','Star','Ghost','Onyx','Gilded',
+                    'Howling','Drift','Pale','Hollow','Burning','Twin','Last','Lucky','Black','Wandering'];
+  b text[] := array['Widow','Vagrant','Lance','Verdict','Sparrow','Maw','Comet','Promise',
+                    'Reaver','Mistral','Talon','Harbinger','Sovereign','Drake','Errant','Petrel','Coil','Wake'];
+  s bigint;
+  nm text;
 begin
   select * into def from app.ship_def(p_type);
   if def.id is null then return null; end if;
+  if nullif(p_name, '') is not null then
+    nm := p_name;
+  else
+    s := market.seed_hash('cosmocrat-market-v1', 'shipname', p_seq::text, p_type);
+    nm := a[1 + (floor(market.u01(s, 0) * array_length(a, 1))::int % array_length(a, 1))]
+       || ' '
+       || b[1 + (floor(market.u01(s, 1) * array_length(b, 1))::int % array_length(b, 1))];
+  end if;
   return jsonb_build_object(
     'uid', 's' || p_seq,
     'type', p_type,
     'cls', def.cls,
-    'name', coalesce(nullif(p_name, ''), initcap(p_type)),
+    'name', nm,
     'status', 'idle',
     'accessories', '[]'::jsonb,
     'mercenary', coalesce(p_merc, false),
@@ -223,26 +237,32 @@ language sql immutable as $$
   );
 $$;
 
--- Merc offer (escort hire)
+-- Merc offer (escort hire) — flavor company name matches js/bazaar.js seeds 10/11
 create or replace function app.gen_merc(p_epoch bigint, p_slot int)
 returns jsonb
 language plpgsql immutable as $$
 declare
   s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'merc', p_epoch::text, p_slot::text);
   escorts text[] := array['corvette','frigate','cruiser','battleship'];
+  prefixes text[] := array['Red','Iron','Ash','Storm','Void','Grim','Gilt','Razor','Black','Free'];
+  units text[] := array['Talons','Lances','Wolves','Reavers','Hounds','Vultures','Sabres','Corsairs','Jackals','Ravens'];
   ship_type text;
   def record;
   hire double precision;
   service_ms bigint;
+  nm text;
 begin
   ship_type := escorts[1 + (floor(market.u01(s, 0) * 4)::int % 4)];
   select * into def from app.ship_def(ship_type);
   hire := round((def.price * 0.2 + def.firepower * 55)::numeric);
   service_ms := (15 + floor(market.u01(s, 1) * 26)::int) * 60 * 1000; -- 15–40 min
+  nm := prefixes[1 + (floor(market.u01(s, 10) * array_length(prefixes, 1))::int % array_length(prefixes, 1))]
+     || ' '
+     || units[1 + (floor(market.u01(s, 11) * array_length(units, 1))::int % array_length(units, 1))];
   return jsonb_build_object(
     'id', 'mc-' || p_epoch || '-' || p_slot,
     'shipType', ship_type,
-    'name', initcap(ship_type) || ' Merc ' || p_slot,
+    'name', nm,
     'firepower', def.firepower,
     'hull', def.hull,
     'serviceMs', service_ms,
@@ -251,13 +271,19 @@ begin
 end;
 $$;
 
--- Accessory offer (server-authored item + price)
+-- Accessory offer (server-authored item + price). Flavor name matches client seeds.
 create or replace function app.gen_accessory(p_epoch bigint, p_slot int)
 returns jsonb
 language plpgsql immutable as $$
 declare
   s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'acc', p_epoch::text, p_slot::text);
   kinds text[] := array['engine','reactor','cannon','plating','shield','hold'];
+  labels text[] := array['Engine','Reactor','Cannon','Plating','Shield','Cargo Pod'];
+  brands text[] := array['Vex','Korr','Aether','Nyx','Helion','Dragoon','Orbital','Mechan',
+                         'Solar','Pulse','Grav','Volt','Hadron','Quark','Tachy','Umbra'];
+  suffixes text[] := array['Howl','Vanguard','Reaver','Whisper','Tempest','Wraith','Sovereign',
+                           'Verdict','Eclipse','Onslaught','Paragon','Nemesis','Requiem','Zenith'];
+  mks text[] := array['I','II','III','IV','V'];
   kind text;
   bases double precision[] := array[0.04, 0.06, 12, 18, 16, 8];
   pcts boolean[] := array[true, true, false, false, false, false];
@@ -270,6 +296,7 @@ declare
   item jsonb;
   val double precision;
   price double precision;
+  nm text;
 begin
   ki := 1 + (floor(market.u01(s, 0) * 6)::int % 6);
   kind := kinds[ki];
@@ -283,11 +310,17 @@ begin
   amount := bases[ki] * mult * (0.8 + market.u01(s, 2) * 0.5);
   if pcts[ki] then amount := round(amount::numeric, 3);
   else amount := round(amount::numeric); end if;
+  nm := brands[1 + (floor(market.u01(s, 11) * array_length(brands, 1))::int % array_length(brands, 1))]
+     || ' Mk.' || mks[1 + (floor(market.u01(s, 10) * 5)::int % 5)]
+     || ' ' || labels[ki];
+  if rarity = 'epic' then
+    nm := nm || ' "' || suffixes[1 + (floor(market.u01(s, 12) * array_length(suffixes, 1))::int % array_length(suffixes, 1))] || '"';
+  end if;
   item := jsonb_build_object(
     'uid', 'i' || p_epoch || 'a' || p_slot,
     'kind', kind,
     'rarity', rarity,
-    'name', initcap(kind) || ' ' || rarity,
+    'name', nm,
     'primary', jsonb_build_object(
       'stat', case kind
         when 'engine' then 'speed' when 'reactor' then 'firepower'
