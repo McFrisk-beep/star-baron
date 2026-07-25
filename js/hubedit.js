@@ -8,7 +8,10 @@
      • Decor — drag sprites from the 🎨 Sprites palette onto the map; with the
        Decor tool selected, click a sprite to move it, drag its corner to resize,
        Delete to remove. "snap" locks to the tile grid; off = free placement.
-       "solid" makes a placed sprite block the player.
+       "solid" makes a placed sprite block the player. layer ⤒/⤓ send the
+       selected sprite to the front / back so decor overlaps the way you want.
+     • Pan / zoom — the ✋ Pan tool (or middle-mouse) drags the map, the mouse
+       wheel or view ±/⟲ buttons zoom (camera resets to fit-to-screen on Done).
      • Select — click a prop to delete it or toggle its solid flag.
      • Room — switch / add / rename; Size — grow/shrink the grid; Background — a
        colour (#123 / rgb()) or a sprite key; Door target — where a placed door
@@ -24,6 +27,7 @@ const HubEdit = {
   tool: "floor", solid: false, doorTarget: null, sel: null, painting: false,
   bar: null, btn: null, status: null, on: false,
   snap: true, selDeco: null, palette: null, _decoMode: null, _grab: null, _drag: null,
+  _panning: false, _panlast: null,
 
   el(tag, props = {}, kids = []) {
     const e = document.createElement(tag);
@@ -52,7 +56,7 @@ const HubEdit = {
     if (on && !this.admin()) return;
     this.on = on;
     if (on) { if (window.Hub) { Hub.editing = true; Hub._near = null; if (Hub.prompt) Hub.prompt.classList.add("hidden"); } this.buildBar(); this.bindCanvas(); }
-    else { if (window.Hub) { Hub.editing = false; Hub._hoverTile = null; } this.unbindCanvas(); if (this.bar) { this.bar.remove(); this.bar = null; } if (this.palette) { this.palette.remove(); this.palette = null; } this.selDeco = null; }
+    else { if (window.Hub) { Hub.editing = false; Hub._hoverTile = null; Hub.resetCam(); } this.unbindCanvas(); if (this.bar) { this.bar.remove(); this.bar = null; } if (this.palette) { this.palette.remove(); this.palette = null; } this.selDeco = null; }
     if (this.btn) this.btn.classList.toggle("hidden", on || !this.admin());
   },
 
@@ -103,10 +107,17 @@ const HubEdit = {
     this.status = this.el("span", { class: "hstatus", text: "" });
 
     this.bar = this.el("div", { class: "hub-editbar" }, [
-      this.el("div", { class: "hgrp" }, [brush("floor", "Floor"), brush("wall", "Wall"), brush("door", "Door"), brush("erase", "Erase"), brush("prop", "Prop"), brush("decor", "Decor"), brush("select", "Select")]),
+      this.el("div", { class: "hgrp" }, [brush("floor", "Floor"), brush("wall", "Wall"), brush("door", "Door"), brush("erase", "Erase"), brush("prop", "Prop"), brush("decor", "Decor"), brush("select", "Select"), brush("pan", "✋ Pan")]),
       this.el("button", { class: "hbtn", type: "button", text: "🎨 Sprites", title: "Drag-and-drop sprite palette", onclick: () => this.togglePalette() }),
       this.el("label", { class: "hlbl", title: "Solid props/decor block the player" }, [solid, this.el("span", { text: " solid" })]),
       this.el("label", { class: "hlbl", title: "Snap decor to the tile grid (off = free placement)" }, [snap, this.el("span", { text: " snap" })]),
+      this.el("div", { class: "hgrp" }, [this.el("span", { class: "hlbl", text: "view" }),
+        this.el("button", { class: "hbtn", type: "button", text: "－", title: "Zoom out", onclick: () => this.zoom(1 / 1.2) }),
+        this.el("button", { class: "hbtn", type: "button", text: "＋", title: "Zoom in", onclick: () => this.zoom(1.2) }),
+        this.el("button", { class: "hbtn", type: "button", text: "⟲", title: "Reset view (fit to screen)", onclick: () => Hub.resetCam() })]),
+      this.el("div", { class: "hgrp" }, [this.el("span", { class: "hlbl", text: "layer" }),
+        this.el("button", { class: "hbtn", type: "button", text: "⤒ Front", title: "Bring selected sprite to front", onclick: () => this.layer("front") }),
+        this.el("button", { class: "hbtn", type: "button", text: "⤓ Back", title: "Send selected sprite to back", onclick: () => this.layer("back") })]),
       this.el("div", { class: "hgrp" }, [this.el("span", { class: "hlbl", text: "prop" }), propSel, this.el("span", { class: "hlbl", text: "door→" }), doorSel]),
       this.el("div", { class: "hgrp" }, [this.el("span", { class: "hlbl", text: "room" }), roomSel,
         this.el("button", { class: "hbtn", type: "button", text: "＋", title: "Add room", onclick: () => this.addRoom() }),
@@ -122,15 +133,27 @@ const HubEdit = {
     ]);
     scene.append(this.bar);
   },
-  setTool(id) { this.tool = id; if (this.bar) for (const b of this.bar.querySelectorAll(".hbtn[data-tool]")) b.classList.toggle("on", b.dataset.tool === id); },
+  setTool(id) {
+    this.tool = id;
+    if (this.bar) for (const b of this.bar.querySelectorAll(".hbtn[data-tool]")) b.classList.toggle("on", b.dataset.tool === id);
+    if (window.Hub && Hub.canvas) Hub.canvas.style.cursor = id === "pan" ? "grab" : "";
+  },
   say(msg, bad) { if (this.status) { this.status.textContent = msg; this.status.className = "hstatus" + (bad ? " bad" : ""); } },
 
   // ---- canvas paint --------------------------------------------------------
   bindCanvas() {
     const cv = window.Hub && Hub.canvas; if (!cv) return;
-    this._down = e => { this.painting = true; this.apply(e, true); };
-    this._move = e => { const t = Hub.screenToTile(e.clientX, e.clientY); Hub._hoverTile = t; if (this.painting) this.apply(e, false); };
-    this._up = () => { this.painting = false; this._decoMode = null; };
+    this._down = e => {
+      // ✋ Pan tool or middle-mouse drag pans the map; everything else paints/places
+      if (this.tool === "pan" || e.button === 1) { e.preventDefault(); this._panning = true; this._panlast = { x: e.clientX, y: e.clientY }; return; }
+      this.painting = true; this.apply(e, true);
+    };
+    this._move = e => {
+      if (this._panning) { Hub.panBy(e.clientX - this._panlast.x, e.clientY - this._panlast.y); this._panlast = { x: e.clientX, y: e.clientY }; return; }
+      const t = Hub.screenToTile(e.clientX, e.clientY); Hub._hoverTile = t; if (this.painting) this.apply(e, false);
+    };
+    this._up = () => { this.painting = false; this._decoMode = null; this._panning = false; };
+    this._wheel = e => { e.preventDefault(); Hub.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.1 : 1 / 1.1); };
     // drag a sprite out of the palette and drop it onto the map
     this._over = e => { if (this._drag || (e.dataTransfer && [].includes.call(e.dataTransfer.types, "text/sprite"))) e.preventDefault(); };
     this._drop = e => { e.preventDefault(); this.dropSprite(e); };
@@ -146,6 +169,7 @@ const HubEdit = {
     cv.addEventListener("pointerleave", () => { Hub._hoverTile = null; });
     cv.addEventListener("dragover", this._over);
     cv.addEventListener("drop", this._drop);
+    cv.addEventListener("wheel", this._wheel, { passive: false });
     window.addEventListener("keydown", this._keydel);
   },
   unbindCanvas() {
@@ -155,7 +179,21 @@ const HubEdit = {
     window.removeEventListener("pointerup", this._up);
     cv.removeEventListener("dragover", this._over);
     cv.removeEventListener("drop", this._drop);
+    cv.removeEventListener("wheel", this._wheel);
     window.removeEventListener("keydown", this._keydel);
+  },
+  // ---- view (zoom) + layering ----------------------------------------------
+  zoom(factor) {
+    // zoom toward the canvas centre when driven by the toolbar buttons
+    const r = Hub.canvas.getBoundingClientRect();
+    Hub.zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+  },
+  layer(dir) {
+    const r = this.room(), d = this.selDeco;
+    if (!r || !d || !(r.deco || []).includes(d)) return this.say("pick a sprite (Decor tool) first", true);
+    const i = r.deco.indexOf(d); r.deco.splice(i, 1);
+    if (dir === "front") r.deco.push(d); else r.deco.unshift(d);
+    this.say(dir === "front" ? "brought to front" : "sent to back");
   },
   apply(e, isDown) {
     const room = this.room(); if (!room) return;
