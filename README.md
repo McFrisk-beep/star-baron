@@ -151,7 +151,7 @@ star-baron/
 │   ├── cloud.js          # Supabase wrapper: auth + roles + per-user save row (RLS)
 │   ├── content.js        # admin-editable content overrides (loaded over defaults)
 │   ├── auth-ui.js        # account button + register/login modal + save sync
-│   ├── admin-ui.js       # admin gate (roles) + in-game content editor
+│   ├── admin-ui.js       # admin gate (roles) + content/image CMS + Missions (dispatch) editor
 │   ├── market.js         # price simulation, news modifiers, mean reversion
 │   ├── galaxy.js         # procedural galaxy (sectors/systems) + local events
 │   ├── items.js          # procedural ship accessories (rarity, naming, value)

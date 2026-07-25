@@ -38,6 +38,8 @@ const AdminUI = {
       editor: $("admin-editor"), status: $("admin-status"),
       validate: $("admin-validate"), save: $("admin-save"), reset: $("admin-reset"),
       gallery: $("admin-gallery"), imgNote: $("admin-img-note"), imgTabs: $("admin-imgtabs"),
+      vMissions: $("admin-view-missions"), mList: $("admin-mission-list"), mDetail: $("admin-mission-detail"),
+      mStatus: $("admin-mission-status"), mNew: $("admin-mission-new"), mListActions: $("admin-mission-listactions"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
       devSenateVote: $("dev-senate-vote"), devSenateNext: $("dev-senate-next"),
@@ -60,6 +62,7 @@ const AdminUI = {
     if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
     if (this.r.devSenateVote) this.r.devSenateVote.onclick = () => this.forceSenateVote();
     if (this.r.devGlobalReset) this.r.devGlobalReset.onclick = () => this.issueGlobalReset();
+    if (this.r.mNew) this.r.mNew.onclick = () => this.newMission();
 
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
@@ -82,8 +85,10 @@ const AdminUI = {
     this.r.navs.forEach(b => b.classList.toggle("active", b.dataset.view === view));
     this.r.vContent.classList.toggle("hidden", view !== "content");
     this.r.vImages.classList.toggle("hidden", view !== "images");
+    if (this.r.vMissions) this.r.vMissions.classList.toggle("hidden", view !== "missions");
     if (this.r.vDev) this.r.vDev.classList.toggle("hidden", view !== "dev");
     if (view === "images") this.buildGallery();
+    if (view === "missions") this.buildMissions();
     if (view === "dev") this.refreshSenateDev();
   },
 
@@ -401,6 +406,350 @@ const AdminUI = {
       UI.toast("Reverted to default sprite. Reload to apply.", "good");
       this.buildGallery();
     } catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }
+  },
+
+  // ===== missions editor ===================================================
+  // Authors "Dispatches" storylines (see js/story.js). Built-in ones are shown
+  // read-only (their triggers/goals are code functions); custom ones are pure
+  // data — triggers/goals are declarative { metric, op, value } conditions — so
+  // they save to the cloud (STORY_CUSTOM) and run for every player.
+  setMStatus(msg, kind) { const e = this.r.mStatus; if (!e) return; e.textContent = msg; e.className = "admin-status" + (kind ? " " + kind : ""); },
+  _customList() { if (!Array.isArray(window.STORY_CUSTOM)) window.STORY_CUSTOM = []; return window.STORY_CUSTOM; },
+
+  buildMissions() { this._showMissionList(); },
+  _showMissionList() {
+    this.mDraft = null; this.mIndex = -1;
+    this.r.mDetail.classList.add("hidden"); this.r.mDetail.innerHTML = "";
+    this.r.mList.classList.remove("hidden");
+    if (this.r.mListActions) this.r.mListActions.classList.remove("hidden");
+    this.setMStatus("", "");
+    const list = this.r.mList; list.innerHTML = "";
+    const custom = this._customList();
+    list.append(this.el("h4", { class: "admin-subhead", text: "Your missions" }));
+    if (!custom.length) list.append(this.el("p", { class: "admin-mhint", text: "None yet — click “+ New mission” below." }));
+    custom.forEach((sl, i) => list.append(this._missionCard(sl, true, i)));
+    list.append(this.el("h4", { class: "admin-subhead", text: "Built-in missions (read-only)" }));
+    (window.STORYLINES || []).forEach(sl => list.append(this._missionCard(sl, false)));
+  },
+  _missionCard(sl, custom, i) {
+    const steps = (sl.steps || []).length;
+    const head = this.el("div", { class: "admin-mcard-head" }, [
+      this.el("span", { class: "admin-mbadge", text: sl.kind === "arc" ? "ARC" : "JOB" }),
+      this.el("strong", { text: sl.from || "(no sender)" }),
+      this.el("span", { class: "admin-mtag " + (custom ? "is-custom" : "is-builtin"), text: custom ? "custom" : "built-in" }),
+    ]);
+    const meta = this.el("div", { class: "admin-mcard-meta", text: `id: ${sl.id} · ${steps} step${steps === 1 ? "" : "s"}` });
+    const actions = this.el("div", { class: "admin-mcard-actions" });
+    if (custom) {
+      actions.append(this.el("button", { class: "btn btn-mini", text: "Edit", onclick: () => this.editMission(i) }));
+      actions.append(this.el("button", { class: "btn btn-mini btn-danger", text: "Delete", onclick: () => this.deleteMission(i) }));
+    } else {
+      actions.append(this.el("button", { class: "btn btn-mini", text: "Preview", onclick: () => this.previewMission(sl) }));
+    }
+    return this.el("div", { class: "admin-mission-card" }, [head, meta, actions]);
+  },
+
+  newMission() { this.setView("missions"); this.mIndex = -1; this.mDraft = this._toDraft({ kind: "job" }); this._openEditor(); },
+  editMission(i) { const sl = this._customList()[i]; if (!sl) return; this.mIndex = i; this.mDraft = this._toDraft(sl); this._openEditor(); },
+  _openEditor() {
+    this.r.mList.classList.add("hidden");
+    if (this.r.mListActions) this.r.mListActions.classList.add("hidden");
+    this.r.mDetail.classList.remove("hidden");
+    this.setMStatus("", "");
+    this.renderMissionEditor();
+  },
+
+  // read-only flow view for a built-in mission
+  previewMission(sl) {
+    this.r.mList.classList.add("hidden");
+    if (this.r.mListActions) this.r.mListActions.classList.add("hidden");
+    const d = this.r.mDetail; d.classList.remove("hidden"); d.innerHTML = "";
+    d.append(this.el("div", { class: "admin-mission-toolbar" }, [
+      this.el("button", { class: "btn btn-mini", text: "← Back", onclick: () => this._showMissionList() }),
+      this.el("strong", { text: (sl.from || "") + " — " + sl.id }),
+    ]));
+    (sl.steps || []).forEach((s, i) => {
+      const box = this.el("div", { class: "admin-step" });
+      box.append(this.el("div", { class: "admin-step-head" }, [this.el("span", { class: "admin-step-num", text: "Step " + (i + 1) + (s.choices ? " · choice" : " · objective") })]));
+      box.append(this.el("p", { class: "admin-mprev-text", text: s.text || "" }));
+      if (s.goal) box.append(this.el("p", { class: "admin-mhint", text: "Objective: " + (s.goal.desc || "") }));
+      if (s.choices) s.choices.forEach(c => box.append(this.el("p", { class: "admin-mhint", text: "▸ " + (c.label || "") + (c.reward ? "  → " + this._rewardSummary(c.reward) : "") })));
+      if (s.reward) box.append(this.el("p", { class: "admin-mhint", text: "Reward: " + this._rewardSummary(s.reward) }));
+      d.append(box);
+    });
+    d.append(this.el("div", { class: "settings-actions" }, [this.el("button", { class: "btn", text: "Back to list", onclick: () => this._showMissionList() })]));
+  },
+  _rewardSummary(r) {
+    const b = []; if (r.credits) b.push("+" + r.credits + "c"); if (r.ship) b.push("ship:" + r.ship);
+    if (r.component) b.push("component"); if (r.extractor) b.push("extractor");
+    if (r.item) b.push("item:" + (r.item === true ? "random" : r.item));
+    if (r.taxBreak) b.push("tax −" + Math.round((r.taxBreak.pct || 0) * 100) + "%");
+    return b.join(", ") || "—";
+  },
+
+  // ---- draft model (adds UI-only helper fields _type/_gate; stripped on save)
+  _blankChoice() { return { label: "", reply: "", cost: 0, reward: {}, end: true }; },
+  _blankStep() {
+    return { _type: "objective", _gate: false, key: "", text: "", replies: [],
+      goal: { desc: "", cond: { metric: "", op: ">=", value: 0, delta: false } },
+      reward: {}, accept: { label: "", reply: "", ack: "" }, decline: { label: "", reply: "", outro: "" },
+      choices: [this._blankChoice()] };
+  },
+  _toDraft(m) {
+    const d = JSON.parse(JSON.stringify(m || {}));
+    d.id = d.id || ""; d.kind = d.kind === "arc" ? "arc" : "job"; d.from = d.from || ""; d.portrait = d.portrait || 0;
+    d.triggerCond = d.triggerCond ? Object.assign({ metric: "", op: ">=", value: 0 }, d.triggerCond) : { metric: "", op: ">=", value: 0 };
+    d.outro = d.outro || "";
+    d.steps = (Array.isArray(d.steps) ? d.steps : []).map(s => this._toDraftStep(s));
+    if (!d.steps.length) d.steps.push(this._blankStep());
+    return d;
+  },
+  _toDraftStep(s) {
+    s = s || {};
+    const isChoice = Array.isArray(s.choices);
+    const step = {
+      _type: isChoice ? "choice" : "objective", _gate: !!s.accept,
+      key: s.key || "", text: s.text || "",
+      replies: (s.replies || []).map(r => typeof r === "string" ? r : (r.label || "")),
+      goal: { desc: (s.goal && s.goal.desc) || "", cond: Object.assign({ metric: "", op: ">=", value: 0, delta: false }, s.goal && s.goal.cond) },
+      reward: s.reward || {},
+      accept: { label: (s.accept && s.accept.label) || "", reply: (s.accept && s.accept.reply) || "", ack: (s.accept && s.accept.ack) || "" },
+      decline: { label: (s.decline && s.decline.label) || "", reply: (s.decline && s.decline.reply) || "", outro: (s.decline && s.decline.outro) || "" },
+      choices: (s.choices || []).map(c => ({ label: c.label || "", reply: c.reply || "", cost: c.cost || 0, reward: c.reward || {}, end: c.end !== false })),
+    };
+    if (!step.choices.length) step.choices.push(this._blankChoice());
+    return step;
+  },
+
+  // ---- normalize draft → clean, serializable mission ----
+  _cleanCond(c) { if (!c || !c.metric) return undefined; const o = { metric: c.metric, op: c.op || ">=", value: +c.value || 0 }; if (c.delta) o.delta = true; return o; },
+  _cleanReward(r) {
+    if (!r) return undefined; const o = {};
+    if (+r.credits) o.credits = Math.round(+r.credits);
+    if (r.ship) o.ship = r.ship;
+    if (r.component) o.component = true;
+    if (r.extractor) o.extractor = true;
+    if (r.item) o.item = (r.item === true || r.item === "true") ? true : r.item;
+    if (r.taxBreak && +r.taxBreak.pct > 0) { o.taxBreak = { pct: +r.taxBreak.pct }; if (+r.taxBreak.ms > 0) o.taxBreak.ms = +r.taxBreak.ms; }
+    return Object.keys(o).length ? o : undefined;
+  },
+  _normalizeDraft() {
+    const d = this.mDraft;
+    const m = { id: (d.id || "").trim(), kind: d.kind === "arc" ? "arc" : "job", from: (d.from || "").trim(), portrait: +d.portrait || 0 };
+    const tc = this._cleanCond(d.triggerCond); if (tc) { delete tc.delta; m.triggerCond = tc; }
+    if ((d.outro || "").trim()) m.outro = d.outro.trim();
+    m.steps = d.steps.map(s => {
+      const step = {};
+      if ((s.key || "").trim()) step.key = s.key.trim();
+      step.text = (s.text || "").trim();
+      const replies = (s.replies || []).map(x => (x || "").trim()).filter(Boolean);
+      if (replies.length) step.replies = replies;
+      if (s._type === "choice") {
+        step.choices = s.choices.map(c => {
+          const ch = { label: (c.label || "").trim() };
+          if ((c.reply || "").trim()) ch.reply = c.reply.trim();
+          if (+c.cost) ch.cost = Math.round(+c.cost);
+          const rw = this._cleanReward(c.reward); if (rw) ch.reward = rw;
+          if (c.end) ch.end = true;
+          return ch;
+        }).filter(c => c.label);
+      } else {
+        step.goal = { desc: (s.goal.desc || "").trim() };
+        const gc = this._cleanCond(s.goal.cond); if (gc) step.goal.cond = gc;
+        const rw = this._cleanReward(s.reward); if (rw) step.reward = rw;
+        if (s._gate) {
+          step.accept = {}; if (s.accept.label.trim()) step.accept.label = s.accept.label.trim();
+          if (s.accept.reply.trim()) step.accept.reply = s.accept.reply.trim();
+          if (s.accept.ack.trim()) step.accept.ack = s.accept.ack.trim();
+          step.decline = {}; if (s.decline.label.trim()) step.decline.label = s.decline.label.trim();
+          if (s.decline.reply.trim()) step.decline.reply = s.decline.reply.trim();
+          if (s.decline.outro.trim()) step.decline.outro = s.decline.outro.trim();
+        }
+      }
+      return step;
+    });
+    return m;
+  },
+  _validateMission(m) {
+    if (!m.id) return "Mission needs an id.";
+    if (!/^[a-z0-9_]+$/i.test(m.id)) return "Id may only contain letters, numbers and underscores.";
+    if ((window.STORYLINES || []).some(s => s.id === m.id)) return "That id belongs to a built-in mission — pick another.";
+    if (this._customList().some((s, i) => s.id === m.id && i !== this.mIndex)) return "Another custom mission already uses that id.";
+    if (!m.from) return "Give the sender a name.";
+    if (!m.steps.length) return "Add at least one step.";
+    for (let i = 0; i < m.steps.length; i++) {
+      const s = m.steps[i];
+      if (!s.text) return `Step ${i + 1}: needs an inbound message.`;
+      if (s.choices) { if (!s.choices.length) return `Step ${i + 1}: add at least one choice with a label.`; }
+      else if (!s.goal.desc) return `Step ${i + 1}: the objective needs a description.`;
+    }
+    return null;
+  },
+
+  async saveMission() {
+    const m = this._normalizeDraft();
+    const err = this._validateMission(m);
+    if (err) return this.setMStatus("✗ " + err, "bad");
+    const list = this._customList();
+    const next = this.mIndex >= 0 ? list.map((s, j) => j === this.mIndex ? m : s) : list.concat([m]);
+    this.setMStatus("Saving…", "");
+    try {
+      await Content.save("STORY_CUSTOM", next);       // applies to window.STORY_CUSTOM in place
+      if (window.UI) UI.toast(`Mission “${m.from || m.id}” saved.`, "good");
+      this._showMissionList();
+      this.setMStatus("✓ Saved. Live for every player.", "good");
+    } catch (e) { this.setMStatus("✗ " + ((e && e.message) || e), "bad"); }
+  },
+  async deleteMission(i) {
+    const list = this._customList(); const sl = list[i]; if (!sl) return;
+    if (!confirm(`Delete custom mission “${sl.from || sl.id}”? This removes it for every player.`)) return;
+    const next = list.filter((_, j) => j !== i);
+    try { await Content.save("STORY_CUSTOM", next); if (window.UI) UI.toast("Mission deleted.", "good"); this._showMissionList(); }
+    catch (e) { this.setMStatus("✗ " + ((e && e.message) || e), "bad"); }
+  },
+
+  // ---- editor DOM ---------------------------------------------------------
+  renderMissionEditor() {
+    const d = this.mDraft; const host = this.r.mDetail; host.innerHTML = "";
+    host.append(this.el("div", { class: "admin-mission-toolbar" }, [
+      this.el("button", { class: "btn btn-mini", text: "← Back", onclick: () => this._showMissionList() }),
+      this.el("strong", { text: this.mIndex >= 0 ? "Edit mission" : "New mission" }),
+    ]));
+    host.append(this.el("div", { class: "admin-mtop" }, [
+      this.el("label", { class: "admin-mfield" }, ["Id (unique)", this._txt(d, "id", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Sender name", this._txt(d, "from", {})]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Portrait #", this._num(d, "portrait", { min: "0" })]),
+      this.el("label", { class: "admin-mfield" }, ["Type", this._sel(d, "kind", [["job", "Job (one-off)"], ["arc", "Arc (series)"]])]),
+    ]));
+    host.append(this.el("div", { class: "admin-mfield" }, [
+      this.el("span", { class: "admin-mlabel", text: "Arrives when… (leave blank = as soon as there’s a free inbox slot):" }),
+      this._condEditor(d.triggerCond, false),
+    ]));
+    const steps = this.el("div", { class: "admin-steps" });
+    d.steps.forEach((s, i) => steps.append(this._stepEditor(s, i)));
+    host.append(steps);
+    host.append(this.el("button", { class: "btn btn-mini", text: "+ Add step", onclick: () => { d.steps.push(this._blankStep()); this.renderMissionEditor(); } }));
+    host.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Sign-off posted when the mission ends (optional)", this._txt(d, "outro", { rows: 2 })]));
+    host.append(this.el("div", { class: "settings-actions" }, [
+      this.el("button", { class: "btn btn-go", text: "Save mission", onclick: () => this.saveMission() }),
+      this.el("button", { class: "btn", text: "Cancel", onclick: () => this._showMissionList() }),
+    ]));
+  },
+  _stepEditor(s, i) {
+    const box = this.el("div", { class: "admin-step" });
+    box.append(this.el("div", { class: "admin-step-head" }, [
+      this.el("span", { class: "admin-step-num", text: "Step " + (i + 1) }),
+      this._sel(s, "_type", [["objective", "Objective"], ["choice", "Choice / fork"]], () => this.renderMissionEditor()),
+      this.el("button", { class: "admin-x", text: "✕", title: "Remove step", onclick: () => { this.mDraft.steps.splice(i, 1); if (!this.mDraft.steps.length) this.mDraft.steps.push(this._blankStep()); this.renderMissionEditor(); } }),
+    ]));
+    box.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Inbound message (what the contact says)", this._txt(s, "text", { rows: 2 })]));
+    if (s._type === "choice") {
+      const cw = this.el("div", { class: "admin-choices" });
+      s.choices.forEach((c, ci) => cw.append(this._choiceEditor(s, c, ci)));
+      box.append(cw);
+      box.append(this.el("button", { class: "btn btn-mini", text: "+ Add choice", onclick: () => { s.choices.push(this._blankChoice()); this.renderMissionEditor(); } }));
+    } else {
+      box.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Objective (shown to the player)", this._txt(s.goal, "desc", {})]));
+      box.append(this.el("div", { class: "admin-mfield" }, [this.el("span", { class: "admin-mlabel", text: "Completed when:" }), this._condEditor(s.goal.cond, true)]));
+      box.append(this._chk(s, "_gate", "Ask the player to Accept / Decline before it tracks"));
+      if (s._gate) box.append(this.el("div", { class: "admin-gate" }, [
+        this.el("label", { class: "admin-mfield" }, ["Accept button", this._txt(s.accept, "label", {})]),
+        this.el("label", { class: "admin-mfield" }, ["Reply on accept", this._txt(s.accept, "reply", {})]),
+        this.el("label", { class: "admin-mfield" }, ["Sender’s ack after accept", this._txt(s.accept, "ack", {})]),
+        this.el("label", { class: "admin-mfield" }, ["Decline button", this._txt(s.decline, "label", {})]),
+        this.el("label", { class: "admin-mfield" }, ["Reply on decline", this._txt(s.decline, "reply", {})]),
+        this.el("label", { class: "admin-mfield" }, ["Sign-off on decline", this._txt(s.decline, "outro", {})]),
+      ]));
+      box.append(this.el("div", { class: "admin-mfield admin-mfield-wide" }, [this.el("span", { class: "admin-mlabel", text: "Reward on completion:" }), this._rewardEditor(s.reward)]));
+    }
+    box.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Flavour replies — one per line, pure colour", this._lines(s, "replies")]));
+    return box;
+  },
+  _choiceEditor(step, c, ci) {
+    const box = this.el("div", { class: "admin-choice" });
+    box.append(this.el("div", { class: "admin-choice-head" }, [
+      this.el("span", { class: "admin-mlabel", text: "Choice " + (ci + 1) }),
+      this.el("button", { class: "admin-x", text: "✕", onclick: () => { step.choices.splice(ci, 1); if (!step.choices.length) step.choices.push(this._blankChoice()); this.renderMissionEditor(); } }),
+    ]));
+    box.append(this.el("label", { class: "admin-mfield" }, ["Button label", this._txt(c, "label", {})]));
+    box.append(this.el("label", { class: "admin-mfield" }, ["Player’s reply", this._txt(c, "reply", {})]));
+    box.append(this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Cost (credits)", this._num(c, "cost", { min: "0" })]));
+    box.append(this.el("div", { class: "admin-mfield admin-mfield-wide" }, [this.el("span", { class: "admin-mlabel", text: "Reward:" }), this._rewardEditor(c.reward)]));
+    box.append(this._chk(c, "end", "End the storyline after this choice"));
+    return box;
+  },
+
+  // ---- small two-way-bound controls (mutate the draft object directly) ----
+  _txt(obj, key, props) {
+    props = props || {};
+    const e = this.el(props.rows ? "textarea" : "input", props.rows ? { rows: props.rows } : { type: "text" });
+    e.value = obj[key] == null ? "" : obj[key];
+    e.oninput = () => { obj[key] = e.value; };
+    return e;
+  },
+  _num(obj, key, props) {
+    props = props || {};
+    const e = this.el("input", { type: "number", step: props.step || "any" });
+    if (props.min != null) e.min = props.min;
+    if (props.class) e.className = props.class;
+    e.value = (obj[key] == null || obj[key] === "") ? "" : obj[key];
+    e.oninput = () => { obj[key] = e.value === "" ? 0 : parseFloat(e.value); };
+    return e;
+  },
+  _chk(obj, key, label) {
+    const box = this.el("input", { type: "checkbox" });
+    box.checked = !!obj[key];
+    box.onchange = () => { obj[key] = box.checked; if (key === "_gate") this.renderMissionEditor(); };
+    const lab = this.el("label", { class: "admin-mchk" });
+    lab.append(box, document.createTextNode(" " + label));
+    return lab;
+  },
+  _sel(obj, key, options, onAfter) {
+    const s = this.el("select");
+    for (const [v, l] of options) s.append(this.el("option", { value: v, text: l }));
+    s.value = obj[key] == null ? "" : String(obj[key]);
+    s.onchange = () => { obj[key] = s.value; if (onAfter) onAfter(); };
+    return s;
+  },
+  _lines(obj, key) {
+    const ta = this.el("textarea", { rows: 2, class: "admin-mlines" });
+    ta.value = (obj[key] || []).join("\n");
+    ta.oninput = () => { obj[key] = ta.value.split("\n"); };
+    return ta;
+  },
+  _shipOpts() {
+    const sc = window.SHIP_CATALOG || {};
+    return [].concat(sc.transport || [], sc.escort || [], sc.main || []).map(s => [s.id, s.name || s.id]);
+  },
+  _condEditor(cond, withDelta) {
+    const metricOpts = [["", "— no condition —"]].concat((window.Story ? Story.METRICS : []).map(m => [m.id, m.label]));
+    const opOpts = [[">=", "≥"], [">", ">"], ["<=", "≤"], ["<", "<"], ["==", "="]];
+    const row = this.el("div", { class: "admin-cond" }, [
+      this._sel(cond, "metric", metricOpts),
+      this._sel(cond, "op", opOpts),
+      this._num(cond, "value", { class: "admin-cond-val" }),
+    ]);
+    if (withDelta) row.append(this._chk(cond, "delta", "more (since this step began)"));
+    return row;
+  },
+  _rewardEditor(reward) {
+    reward.taxBreak = reward.taxBreak || { pct: 0, ms: 0 };
+    const ships = [["", "— no ship —"]].concat(this._shipOpts());
+    const items = [["", "— none —"], ["true", "Random item"]].concat((window.RARITIES || []).map(r => [r.id, r.label || r.id]));
+    const tb = reward.taxBreak;
+    const pct = this.el("input", { type: "number", step: "1", min: "0", max: "100" });
+    pct.value = tb.pct ? Math.round(tb.pct * 100) : ""; pct.oninput = () => { tb.pct = (parseFloat(pct.value) || 0) / 100; };
+    const min = this.el("input", { type: "number", step: "1", min: "0" });
+    min.value = tb.ms ? Math.round(tb.ms / 60000) : ""; min.oninput = () => { tb.ms = (parseFloat(min.value) || 0) * 60000; };
+    return this.el("div", { class: "admin-reward" }, [
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Credits", this._num(reward, "credits", { min: "0" })]),
+      this.el("label", { class: "admin-mfield" }, ["Ship", this._sel(reward, "ship", ships)]),
+      this.el("label", { class: "admin-mfield" }, ["Item", this._sel(reward, "item", items)]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Tax break %", pct]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["…for minutes (0 = permanent)", min]),
+      this._chk(reward, "component", "Component"),
+      this._chk(reward, "extractor", "Extractor"),
+    ]);
   },
 };
 

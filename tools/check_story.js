@@ -135,4 +135,53 @@ assert.ok(Story.conversations().length <= Story.MAX_CONTACTS, "conversations() n
 const active = Object.values(Story.s().prog).filter(p => p.status === "active").length;
 assert.ok(active <= Story.MAX_ACTIVE, "never exceeds MAX_ACTIVE concurrent storylines");
 
-console.log("check_story: mailbox + accept/decline gate + flavour replies + choice + tax break + contact cap ✔");
+// --- 8) declarative conditions (the admin-editor / custom-mission engine) --
+{
+  const s = freshState();
+  // evalCond: absolute vs delta, and the operators
+  assert.strictEqual(Story.evalCond({ metric: "credits", op: ">=", value: 1000 }, s), true, "credits >= 1000 (1500) true");
+  assert.strictEqual(Story.evalCond({ metric: "credits", op: ">", value: 1500 }, s), false, "credits > 1500 false");
+  assert.strictEqual(Story.evalCond({ metric: "ships", op: "==", value: 1 }, s), true, "ships == 1 true");
+  const base = Story.snap(s);                       // baseline for delta
+  s.stats.trades = 3;
+  assert.strictEqual(Story.evalCond({ metric: "trades", op: ">=", value: 3, delta: true }, s, base), true, "delta trades +3 met");
+  assert.strictEqual(Story.evalCond({ metric: "trades", op: ">=", value: 4, delta: true }, s, base), false, "delta trades +4 not met");
+  assert.strictEqual(Story.evalCond(null, s), true, "blank condition = no gate (true)");
+  assert.strictEqual(Story.evalCond({ metric: "escorts", op: ">=", value: 1 }, s), false, "escorts metric reads fleet class");
+}
+
+// --- 9) a custom (data-only) mission runs start→objective→reward→done ------
+{
+  ctx.Game = { state: freshState(), requestSave() {} };
+  ctx.STORY_CUSTOM = [{
+    id: "cust_test", kind: "job", from: "Admin NPC", portrait: 1,
+    triggerCond: { metric: "credits", op: ">=", value: 1000 },   // true immediately
+    outro: "Admin NPC: done.",
+    steps: [{
+      text: "Bank 3,000 credits.",
+      goal: { desc: "Reach 3,000c", cond: { metric: "credits", op: ">=", value: 3000 } },
+      reward: { credits: 500 },
+    }],
+  }];
+  let NOW2 = 5_000_000;
+  Story.check(NOW2);
+  assert.ok(Story.s().prog.cust_test, "custom mission triggers from a declarative condition");
+  assert.strictEqual(Story.storyline("cust_test").from, "Admin NPC", "storyline() finds custom missions");
+  Story.check(NOW2);                                    // objective not met yet (1500 < 3000)
+  assert.strictEqual(Story.s().prog.cust_test.status, "active", "custom objective still open below target");
+  ctx.Game.state.credits = 3200;
+  Story.check(NOW2);
+  assert.strictEqual(Story.s().prog.cust_test.status, "done", "custom objective completes when the condition is met");
+  assert.strictEqual(ctx.Game.state.credits, 3200 + 500, "custom mission reward paid out");
+
+  // malformed / colliding custom rows are filtered by all() (cloud trust boundary)
+  ctx.STORY_CUSTOM = [{ id: "first_contact", from: "Imposter", steps: [{ text: "x" }] },  // shadows a built-in → dropped
+                      { id: "broken", from: "No Steps" },                                  // no steps → dropped
+                      { id: "ok_one", from: "Fine", steps: [{ text: "hi" }] }];            // valid
+  const ids = Story.all().map(x => x.id);
+  assert.ok(Story.all().find(x => x.id === "first_contact").from !== "Imposter", "custom id cannot shadow a built-in mission");
+  assert.ok(!ids.includes("broken"), "stepless custom mission is dropped");
+  assert.ok(ids.includes("ok_one"), "valid custom mission is kept");
+}
+
+console.log("check_story: mailbox + accept/decline gate + flavour replies + choice + tax break + contact cap + declarative conditions + custom missions ✔");

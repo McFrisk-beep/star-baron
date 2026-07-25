@@ -405,6 +405,7 @@
       <h3>🛠 Admin</h3>
       <div class="admin-nav">
         <button class="admin-navbtn active" data-view="content">📝 Content</button>
+        <button class="admin-navbtn" data-view="missions">📨 Missions</button>
         <button class="admin-navbtn" data-view="images">🖼 Images</button>
         <button class="admin-navbtn" data-view="dev">🧪 Dev</button>
       </div>
@@ -421,6 +422,17 @@
           <button class="btn" id="admin-validate">Validate</button>
           <button class="btn btn-go" id="admin-save">Save</button>
           <button class="btn btn-danger" id="admin-reset">Reset to default</button>
+          <button class="btn admin-close">Close</button>
+        </div>
+      </div>
+
+      <div id="admin-view-missions" class="hidden">
+        <p class="muted-note" id="admin-mission-note">Dispatches missions — the story threads players get in Comms. Built-in missions are read-only; add and edit your own below. Custom missions save to the cloud for every player.</p>
+        <div id="admin-mission-list"></div>
+        <div id="admin-mission-detail" class="hidden"></div>
+        <p class="admin-status" id="admin-mission-status"></p>
+        <div class="settings-actions" id="admin-mission-listactions">
+          <button class="btn btn-go" id="admin-mission-new">+ New mission</button>
           <button class="btn admin-close">Close</button>
         </div>
       </div>
