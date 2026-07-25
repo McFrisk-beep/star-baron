@@ -1021,8 +1021,8 @@ const UI = {
       ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
-      ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — install it in Industries."],
-      ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it to an extractor in Industries."],
+      ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — see Industries → storage (then install on a planet)."],
+      ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it on an extractor in Industries."],
       ["buydossier", id => Bazaar.buyDossier(id), "Dossier filed — read it in the Senate roster."]];
     for (const [attr, fn, msg] of map) {
       const el = t.closest(`[data-${attr}]`);
@@ -1109,36 +1109,115 @@ const UI = {
   },
 
   // ===== industries ========================================================
+  // Component chips + optional Fit control for one extractor (storage or installed).
+  _exCompRow(ex) {
+    if (!ex) return "";
+    const fitted = Extractors.componentsOf(ex), slots = Extractors.componentSlots(), avail = Components.unequipped();
+    const chips = fitted.map(c =>
+      `<span class="acc-chip" style="border-color:${Components.rarity(c.rarity).color}">${c.name} <span class="muted-note">${Components.describe(c)}</span> <button class="x" data-ind-detach="${ex.uid}:${c.uid}">✕</button></span>`
+    ).join("");
+    let row = `<div class="ind-foot">Components ${fitted.length}/${slots}</div><div class="acc-row">${chips || `<span class="muted-note">none fitted</span>`}</div>`;
+    if (fitted.length < slots && avail.length) {
+      row += `<div class="rt-form"><label>Fit <select data-comp-sel="${ex.uid}">${
+        avail.map(c => `<option value="${c.uid}">${c.name} — ${Components.describe(c)}</option>`).join("")
+      }</select></label><button class="btn btn-mini" data-ind-attach="${ex.uid}">Fit</button></div>`;
+    } else if (fitted.length < slots) {
+      row += `<p class="muted-note">Buy components in the <b>Bazaar → Extractors</b> to boost this extractor.</p>`;
+    }
+    return row;
+  },
+
   renderIndustries() {
     const list = Industries.list();
-    const storage = Extractors.unequipped().length;
-    this.refs.indCount.textContent = `${list.length}/${INDUSTRYCFG.maxPerPlayer} permits${storage ? ` · ${storage} extractor${storage > 1 ? "s" : ""} in storage` : ""}`;
+    const spareEx = Extractors.unequipped();
+    const spareComp = Components.unequipped();
+    const ownedEx = Object.keys(Extractors.pool()).length;
+    const ownedComp = Object.keys(Components.pool()).length;
+    const bits = [`${list.length}/${INDUSTRYCFG.maxPerPlayer} permits`];
+    if (spareEx.length) bits.push(`${spareEx.length} extractor${spareEx.length > 1 ? "s" : ""} in storage`);
+    if (spareComp.length) bits.push(`${spareComp.length} component${spareComp.length > 1 ? "s" : ""} free`);
+    this.refs.indCount.textContent = bits.join(" · ");
+
+    let html = "";
     if (!list.length) {
-      this.refs.indList.innerHTML = `<p class="muted-note">No permits yet. Open the <b>Star Map</b>, click a planet, buy a permit, then install an extractor (from the Bazaar) — it produces into your tradeable stock while you're away.</p>`;
-      this.refs.indList.onclick = null; return;
+      html += `<p class="muted-note">No permits yet. Open the <b>Star Map</b>, click a planet, buy a permit, then install an extractor (from the Bazaar) — it produces into your tradeable stock while you're away.</p>`;
+    } else {
+      html += list.map(ind => {
+        const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
+        const where = planet ? planet.name : ind.systemId;
+        const st = Industries.status(ind);
+        const facId = planet ? Industries.planetFaction(sys, planet) : null, fac = facId ? FACTIONS[facId] : null;
+        const owner = `<span class="ind-fac" style="color:${fac ? fac.color : "var(--accent2)"}">◆ ${fac ? fac.name : "Navos"}</span>`;
+        const head = `<div class="ind-head"><b>${where}</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}${st === "boom" ? ` ×${INDUSTRYCFG.warBoost}` : ""}</span><button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>`;
+        if (!ind.extractorUid) {
+          return `<div class="industry">${head}<div class="ind-foot">permit held — open the planet (Star Map) to install an extractor · ${owner}</div></div>`;
+        }
+        const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
+        const b = Industries.batch(ind), ex = Extractors.get(ind.extractorUid);
+        const halted = st === "struck" || st === "disrupted";
+        const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
+        const warn = st === "at risk" ? `<div class="ind-warn">⚠ standing collapsing — works seized at ${INDUSTRYCFG.destroyRep}</div>` : "";
+        return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ${owner}</div>${warn}${this._exCompRow(ex)}</div>`;
+      }).join("");
     }
-    this.refs.indList.innerHTML = list.map(ind => {
-      const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
-      const where = planet ? planet.name : ind.systemId;
-      const st = Industries.status(ind);
-      const facId = planet ? Industries.planetFaction(sys, planet) : null, fac = facId ? FACTIONS[facId] : null;
-      const owner = `<span class="ind-fac" style="color:${fac ? fac.color : "var(--accent2)"}">◆ ${fac ? fac.name : "Navos"}</span>`;
-      const head = `<div class="ind-head"><b>${where}</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}${st === "boom" ? ` ×${INDUSTRYCFG.warBoost}` : ""}</span><button class="btn btn-mini" data-demolish="${ind.id}">Close</button></div>`;
-      if (!ind.extractorUid) {
-        return `<div class="industry">${head}<div class="ind-foot">permit held — open the planet (Star Map) to install an extractor · ${owner}</div></div>`;
-      }
-      const comm = COMMODITIES.find(c => c.id === ind.commodity), name = comm ? comm.name : ind.commodity;
-      const b = Industries.batch(ind), ex = Extractors.get(ind.extractorUid);
-      const halted = st === "struck" || st === "disrupted";
-      const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
-      const warn = st === "at risk" ? `<div class="ind-warn">⚠ standing collapsing — works seized at ${INDUSTRYCFG.destroyRep}</div>` : "";
-      return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ${owner}</div>${warn}</div>`;
-    }).join("");
-    this.refs.indList.onclick = e => {
-      const d = e.target.closest("[data-demolish]"); if (!d) return;
+
+    // Always show storage — bazaar extractors/components live here, not in Fleet inventory.
+    html += `<div class="inv-sub">Extractor storage</div>`;
+    if (!ownedEx) {
+      html += `<p class="muted-note">No extractors owned. Buy them in the <b>Bazaar → Extractors</b>.</p>`;
+    } else if (!spareEx.length) {
+      html += `<p class="muted-note">All extractors are installed. Fit components on a permit above, or remove one from a planet to free it.</p>`;
+    } else {
+      html += spareEx.map(ex =>
+        `<div class="industry"><div class="ind-head"><b>${ex.name}</b><span class="ind-stat">in storage</span></div>
+          <div class="ind-foot">${Extractors.describe(ex)}</div>${this._exCompRow(ex)}
+          <div class="ind-foot">Install on a planet permit via the <b>Star Map</b>.</div></div>`
+      ).join("");
+    }
+
+    html += `<div class="inv-sub">Component storage</div>`;
+    if (!ownedComp) {
+      html += `<p class="muted-note">No components owned. Buy them in the <b>Bazaar → Extractors</b>, then fit them to an extractor above.</p>`;
+    } else if (!spareComp.length) {
+      html += `<p class="muted-note">All components are fitted. Detach one (✕) to free a slot.</p>`;
+    } else {
+      html += spareComp.map(c =>
+        `<div class="item" style="border-left-color:${Components.rarity(c.rarity).color}">
+          <div class="item-top"><b>${c.name}</b><span class="rar" style="color:${Components.rarity(c.rarity).color}">${Components.rarity(c.rarity).label}</span></div>
+          <div class="item-stat">${Components.describe(c)}</div>
+          <div class="item-acts"><span class="muted-note">use Fit on an extractor above</span></div></div>`
+      ).join("");
+    }
+
+    this.refs.indList.innerHTML = html;
+    this.refs.indList.onclick = e => this.onIndustriesClick(e);
+  },
+
+  onIndustriesClick(e) {
+    const d = e.target.closest("[data-demolish]");
+    if (d) {
       Industries.demolish(d.dataset.demolish); this.toast("Permit closed.", "info");
       window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
-    };
+      return;
+    }
+    const att = e.target.closest("[data-ind-attach]");
+    if (att) {
+      const exUid = att.dataset.indAttach;
+      const sel = this.refs.indList.querySelector(`select[data-comp-sel="${exUid}"]`);
+      if (!sel) return;
+      const r = Extractors.attachComponent(exUid, sel.value);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Component fitted.", "good");
+      window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
+      return;
+    }
+    const det = e.target.closest("[data-ind-detach]");
+    if (det) {
+      const [exu, cu] = det.dataset.indDetach.split(":");
+      Extractors.detachComponent(exu, cu);
+      this.toast("Component removed to storage.", "info");
+      window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
+    }
   },
 
   // ===== SENATE / space politics ===========================================
