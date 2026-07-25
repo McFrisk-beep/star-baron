@@ -45,6 +45,7 @@ const Industries = {
       else r *= (1 + Math.min(1, (-rep) / Math.abs(INDUSTRYCFG.destroyRep)) * INDUSTRYCFG.taxNegPenalty);
     }
     if (window.Senate) r += Senate.industryTaxAdd(fac);   // senate levies / tax holidays
+    if (window.Story) r -= Story.taxRelief();             // storyline reward: temporary tax break
     return Util.clamp(r, 0.02, 0.75);
   },
 
