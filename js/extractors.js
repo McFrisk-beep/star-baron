@@ -58,10 +58,13 @@ const Extractors = {
     const scope = type === "specialized" ? Util.pick(COMMODITIES).id
       : type === "semi" ? Util.pick([...new Set(COMMODITIES.map(c => c.cat))])
         : "all";
-    return { uid: "ex" + (++this.s().seq), type, scope, name: this.name(type, scope) };
+    return { uid: "ex" + (++this.s().seq), type, scope, name: this.name(type, scope), components: [] };
   },
   // Add a bought extractor (offer.ex) to the owned pool.
-  acquire(ex) { this.pool()[ex.uid] = ex; return ex; },
+  acquire(ex) {
+    if (!Array.isArray(ex.components)) ex.components = [];
+    this.pool()[ex.uid] = ex; return ex;
+  },
 
   // ---- components fitted to an extractor ----------------------------------
   componentSlots() { return EXTRACTORCFG.componentSlots; },
