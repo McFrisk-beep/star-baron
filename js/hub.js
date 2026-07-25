@@ -18,7 +18,7 @@ const Hub = {
   roomId: null, px: 1.5, py: 1.5, facing: "down", moving: false,
   keys: new Set(), target: null, _near: null, _armed: false,
   _frame: 0, _frameT: 0, _ts: 32, _ox: 0, _oy: 0, _w: 0, _h: 0,
-  _imgs: {}, _playerImg: null, _bgImgs: {},
+  _imgs: {}, _playerImg: null, _bgImgs: {}, _decoImgs: {},
   editing: false, _hoverTile: null,   // set by the admin map editor (js/hubedit.js)
 
   cfg() { return window.HUBCFG || { startRoom: "atrium", speed: 4.2, interact: 1.15, sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 } }; },
@@ -85,11 +85,28 @@ const Hub = {
   // ---- tiles / collision ---------------------------------------------------
   _tile(tx, ty) { const g = this.room() && this.room().grid; if (!g || ty < 0 || ty >= g.length) return "#"; const row = g[ty]; if (tx < 0 || tx >= row.length) return "#"; return row[tx]; },
   _solidPropAt(tx, ty) { return ((this.room() && this.room().props) || []).some(p => p.solid && p.tx === tx && p.ty === ty); },
-  _walk(tx, ty) { const c = this._tile(tx, ty); if (c !== "." && c !== "+") return false; return !this._solidPropAt(tx, ty); },
+  // A solid decoration blocks every tile its (fractional) bounding box overlaps.
+  _solidDecoAt(tx, ty) {
+    return ((this.room() && this.room().deco) || []).some(d => d.solid &&
+      tx >= Math.floor(d.x) && tx < Math.ceil(d.x + (d.w || 1)) &&
+      ty >= Math.floor(d.y) && ty < Math.ceil(d.y + (d.h || 1)));
+  },
+  _walk(tx, ty) { const c = this._tile(tx, ty); if (c !== "." && c !== "+") return false; return !this._solidPropAt(tx, ty) && !this._solidDecoAt(tx, ty); },
+  // lazy image cache for decorations (arbitrary sprite paths); mirrors _bgImgs
+  _decoImg(src) {
+    let im = this._decoImgs[src];
+    if (!im) { im = new Image(); im.src = src; this._decoImgs[src] = im; }
+    return im;
+  },
   // client px → tile coords (used by the editor); relies on the last render's layout
   screenToTile(cx, cy) {
     const r = this.canvas.getBoundingClientRect();
     return { tx: Math.floor((cx - r.left - this._ox) / this._ts), ty: Math.floor((cy - r.top - this._oy) / this._ts) };
+  },
+  // fractional tile coords (used by the editor for free / sub-tile decoration placement)
+  screenToTileF(cx, cy) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: (cx - r.left - this._ox) / this._ts, y: (cy - r.top - this._oy) / this._ts };
   },
   setRoom(id) {
     if (!this.rooms()[id]) return;
@@ -227,6 +244,19 @@ const Hub = {
     ctx.fillStyle = "rgba(190,210,255,.72)";
     for (const s of (room.signs || [])) ctx.fillText(s.text, ox + (s.tx + 0.5) * ts, oy + (s.ty + 0.5) * ts);
 
+    // decorations — free-placed sprites (x,y,w,h in tile units); drawn on the floor,
+    // beneath stations and the player. Solid ones get a faint outline in edit mode.
+    for (const d of (room.deco || [])) {
+      const im = this._decoImg(d.src);
+      if (im.complete && im.naturalWidth) {
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(im, ox + d.x * ts, oy + d.y * ts, (d.w || 1) * ts, (d.h || 1) * ts);
+      } else {
+        ctx.fillStyle = "rgba(120,150,220,.25)";
+        ctx.fillRect(ox + d.x * ts, oy + d.y * ts, (d.w || 1) * ts, (d.h || 1) * ts);
+      }
+    }
+
     // props
     for (const pr of (room.props || [])) {
       const meta = this.prop(pr.id);
@@ -265,6 +295,16 @@ const Hub = {
     for (const p of (room.props || [])) if (p.solid) {
       ctx.strokeStyle = "rgba(255,90,90,.9)"; ctx.lineWidth = 2;
       ctx.strokeRect(ox + p.tx * ts + 2, oy + p.ty * ts + 2, ts - 4, ts - 4);
+    }
+    // decorations: red box if solid, cyan box + handle on the selected one
+    const selDeco = window.HubEdit && HubEdit.selDeco;
+    for (const d of (room.deco || [])) {
+      const x = ox + d.x * ts, y = oy + d.y * ts, w = (d.w || 1) * ts, h = (d.h || 1) * ts;
+      if (d.solid) { ctx.strokeStyle = "rgba(255,90,90,.9)"; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2); }
+      if (d === selDeco) {
+        ctx.strokeStyle = "rgba(150,220,255,.95)"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = "rgba(150,220,255,.95)"; ctx.fillRect(x + w - 8, y + h - 8, 8, 8);   // resize handle
+      }
     }
     const h = this._hoverTile;
     if (h && h.tx >= 0 && h.ty >= 0 && h.tx < cols && h.ty < rows) {

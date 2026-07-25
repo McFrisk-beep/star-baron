@@ -646,7 +646,10 @@ const HUBCFG = {
    '#' wall (solid), '.' floor, '+' door (walkable; transitions per `doors`).
    `doors` link a door tile [tx,ty] to another room + the spawn tile there.
    `props` place features (by HUB_PROPS id) at tile [tx,ty]. `spawn` is the
-   default entry tile. Draw new rooms by editing the ASCII — no code.           */
+   default entry tile. Draw new rooms by editing the ASCII — no code.
+   `deco` (optional) holds decorative sprites dropped in via the map editor:
+   { src, x, y, w, h, solid? } where x/y/w/h are in tile units (fractional for
+   free placement); `solid` makes the sprite block the player.                  */
 const HUB_ROOMS = {
   atrium: {
     name: "Concourse",

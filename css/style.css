@@ -1258,3 +1258,30 @@ body.reduced .hub-prompt { animation: none; }
 .hub-editbar .hlbl { font-size: 11px; color: rgba(190, 208, 255, .7); }
 .hub-editbar .hstatus { font-size: 12px; color: #8fd6a6; }
 .hub-editbar .hstatus.bad { color: #ff9a9a; }
+
+/* sprite palette — drag-and-drop source for map decorations */
+.hub-palette {
+  position: absolute; top: 46px; right: 10px; bottom: 10px; width: 260px; z-index: 10;
+  display: flex; flex-direction: column; overflow-y: auto;
+  background: rgba(8, 13, 28, .96); border: 1px solid rgba(130, 170, 255, .3);
+  border-radius: 10px; padding: 8px;
+}
+.hub-palette .hpal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; font-weight: 600; color: #cfe0ff; margin-bottom: 6px;
+}
+.hub-palette .hpal-empty { font-size: 12px; color: #ff9a9a; padding: 6px; }
+.hub-palette .hpal-cat { margin-bottom: 4px; }
+.hub-palette .hpal-cat > summary {
+  cursor: pointer; font-size: 11px; color: rgba(200, 216, 255, .85);
+  padding: 4px 2px; list-style-position: inside;
+}
+.hub-palette .hpal-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px 0 8px;
+}
+.hub-palette .hpal-img {
+  width: 100%; aspect-ratio: 1; object-fit: contain; cursor: grab;
+  background: rgba(20, 30, 58, .6); border: 1px solid rgba(120, 150, 220, .25);
+  border-radius: 4px; image-rendering: pixelated;
+}
+.hub-palette .hpal-img:hover { border-color: #56c8dc; background: rgba(34, 50, 92, .8); }
