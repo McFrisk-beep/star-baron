@@ -66,6 +66,26 @@ const Extractors = {
     this.pool()[ex.uid] = ex; return ex;
   },
 
+  // Server Phase-3 stubs: "Iron_ore Rig" / "Mineral Works" / "Universal Unit".
+  isStubName(ex) {
+    if (!ex || !ex.name) return true;
+    if (ex.type === "jack" && ex.name === "Universal Unit") return true;
+    if (ex.type === "semi" && ex.name === (String(ex.scope).charAt(0).toUpperCase() + String(ex.scope).slice(1) + " Works")) return true;
+    if (ex.type === "specialized") {
+      const stub = String(ex.scope).charAt(0).toUpperCase() + String(ex.scope).slice(1) + " Rig";
+      if (ex.name === stub) return true;
+    }
+    return false;
+  },
+  nameFromUid(ex) {
+    if (!ex) return "Extractor";
+    const m = /^ex(\d+)x(\d+)$/.exec(ex.uid || "");
+    if (m && window.Bazaar && Bazaar.genSeededExtractor) {
+      try { return Bazaar.genSeededExtractor(+m[1], +m[2]).ex.name; } catch (e) {}
+    }
+    return this.name(ex.type, ex.scope);
+  },
+
   // ---- components fitted to an extractor ----------------------------------
   componentSlots() { return EXTRACTORCFG.componentSlots; },
   componentsOf(ex) { return ((ex && ex.components) || []).map(u => Components.get(u)).filter(Boolean); },
@@ -116,7 +136,26 @@ const Components = {
   describe(c) { return c.kind === "rate" ? `+${(c.amount * 100).toFixed(0)}% yield` : `−${(c.amount * 100).toFixed(0)}% cycle time`; },
   price(c) { return Math.round(COMPONENTCFG.priceBase * this.rarity(c.rarity).price); },
   acquire(c) { this.pool()[c.uid] = c; return c; },
+
+  // Server stubs: "Rate Component" / "Speed Component".
+  isStubName(c) {
+    if (!c || !c.name) return true;
+    const kind = String(c.kind || "");
+    return c.name === (kind.charAt(0).toUpperCase() + kind.slice(1) + " Component");
+  },
+  nameFromUid(c) {
+    if (!c) return "Component";
+    const m = /^cp(\d+)c(\d+)$/.exec(c.uid || "");
+    if (m && window.Bazaar && Bazaar.genSeededComponent) {
+      try { return Bazaar.genSeededComponent(+m[1], +m[2]).comp.name; } catch (e) {}
+    }
+    const mfr = window.EXTRACTOR_MFR || ["Korr"];
+    let h = 2166136261; const s = String(c.uid || c.kind);
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return `${mfr[(h >>> 0) % mfr.length]} ${(COMPONENTCFG.kinds[c.kind] || {}).label || c.kind}`;
+  },
 };
 
+window.EXTRACTOR_MFR = EXTRACTOR_MFR;
 window.Extractors = Extractors;
 window.Components = Components;

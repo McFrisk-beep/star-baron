@@ -516,6 +516,12 @@ body.reduced .tt-dot { animation: none; }
 .admin-thumb { width: 56px; height: 56px; object-fit: contain; image-rendering: auto; display: block; margin: 0 auto 6px; background: #05070e; border-radius: 6px; }
 .admin-card-name { font-size: 10px; color: var(--ink-dim); margin-bottom: 6px; word-break: break-word; }
 .admin-card-reset { margin-top: 4px; color: var(--down); }
+.admin-pool-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.admin-pool-card { min-width: 0; }
+.admin-pool-thumbs { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-bottom: 4px; min-height: 56px; }
+.admin-pool-one { position: relative; }
+.admin-pool-one .admin-thumb { margin: 0; width: 48px; height: 48px; }
+.admin-pool-one .admin-card-reset { position: absolute; top: -2px; right: -2px; margin: 0; padding: 0 4px; font-size: 10px; line-height: 1.4; }
 
 /* ===== missions editor ===== */
 .admin-mhint { font-size: 11px; color: var(--ink-dim); margin: 6px 0; }
@@ -940,6 +946,17 @@ body.reduced .floatnav-indicator { transition: none; }
 .item-val { font-family: var(--mono); font-size: 11px; color: var(--gold); margin-right: auto; }
 .inv-sub { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-dim); margin: 10px 0 6px; }
 .item.listed { opacity: .8; }
+.item-art, .item .tintbox.item-art { width: 48px; height: 36px; object-fit: contain; display: block; margin: 0 auto 6px; }
+/* Inventory uses fixed-ish card widths so a single item doesn't stretch full-bleed. */
+#fleet-inventory .buy-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 200px)); justify-content: start; }
+.inv-card { text-align: center; max-width: 200px; }
+.inv-card .bc-name { margin-top: 2px; font-size: 12px; line-height: 1.25; }
+.inv-card .rar { display: block; margin: 2px 0 4px; }
+.inv-card .bc-stats { margin: 0 0 8px; }
+.inv-card .item-art, .inv-card .tintbox.item-art { width: 56px; height: 44px; }
+.inv-acts { justify-content: center; }
+.inv-acts .item-val { margin-right: 0; width: 100%; text-align: center; }
+.contract > .item-art, .contract > .tintbox.item-art { float: right; margin: 0 0 6px 8px; width: 40px; height: 32px; }
 
 /* ===== bazaar ===== */
 .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }

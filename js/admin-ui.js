@@ -311,6 +311,7 @@ const AdminUI = {
     const races = Object.keys(RACES);
     const nebulae = [...new Set(SECTORS.map(s => s.nebula))];
     const range = n => Array.from({ length: n }, (_, i) => String(i));
+    const escorts = (SHIP_CATALOG.escort || []).map(s => s.id);
     return [
       { group: "Character portraits", cat: "portrait", items: range(CONFIG.portraitCount), url: i => ASSET.portrait(+i) },
       { group: "Ship hulls", cat: "ship", items: ["shuttle", "hauler", "freighter", "leviathan"], url: s => ASSET.ship(s) },
@@ -322,6 +323,20 @@ const AdminUI = {
       { group: "Nebulae", cat: "nebula", items: nebulae, url: n => ASSET.nebula(n) },
       { group: "Broadcast screens", cat: "broadcast", items: ["news", "tv_drama", "tv_ads", "tv_weather"], url: n => ASSET.broadcast(n) },
       { group: "Hub — character & stations", cat: "hub", items: ["player"].concat((window.HUB_PROPS || []).map(p => p.id)), url: id => ASSET.hub(id) },
+      // Bazaar content — pools for randomized gear; single PNG for fixed types.
+      { group: "Gear kinds (pools)", cat: "accessory", items: Object.keys(ACCESSORY_KINDS),
+        url: k => ASSET.accessory(k, "preview"), pool: true,
+        hint: "Each reactor/shield/… rolls a random PNG from its pool." },
+      { group: "Extractors (pools)", cat: "extractor", items: Object.keys(EXTRACTORCFG.types),
+        url: t => ASSET.extractor(t, "preview"), pool: true },
+      { group: "Components (pools)", cat: "component", items: Object.keys(COMPONENTCFG.kinds),
+        url: k => ASSET.component(k, "preview"), pool: true },
+      { group: "Contracts", cat: "contract",
+        items: ["transport", "escort", "combat", "smuggle", "assassinate", "tip"],
+        url: t => ASSET.contract(t) },
+      { group: "Mercenaries (pools)", cat: "merc", items: escorts,
+        url: t => ASSET.merc(t, "preview"), pool: true,
+        hint: "Optional — falls back to the escort ship sprite when empty." },
     ];
   },
 
@@ -330,7 +345,11 @@ const AdminUI = {
     if (this.imgCat == null) this.imgCat = 0;
     const slots = this.slots();
     if (this.imgCat >= slots.length) this.imgCat = 0;
-    this.r.imgNote.textContent = "Upload a PNG/JPG to replace any sprite (stored in your Supabase 'sprites' bucket — see docs/ADMIN_SETUP.md). Changes show on reload.";
+    const active = slots[this.imgCat];
+    this.r.imgNote.textContent = active.pool
+      ? "Pool slots: add multiple PNGs — randomized items (reactors, etc.) pick one from the pool. Stored in Supabase 'sprites'."
+      : "Upload a PNG/JPG to replace any sprite (stored in your Supabase 'sprites' bucket — see docs/ADMIN_SETUP.md).";
+    if (active.hint) this.r.imgNote.textContent += " " + active.hint;
     // category sub-tabs
     this.r.imgTabs.innerHTML = "";
     slots.forEach((slot, i) => {
@@ -341,7 +360,7 @@ const AdminUI = {
     });
     // just the active category's grid (scrolls on its own)
     this.r.gallery.innerHTML = "";
-    this.r.gallery.append(this.renderImageGrid(slots[this.imgCat]));
+    this.r.gallery.append(active.pool ? this.renderPoolGrid(active) : this.renderImageGrid(active));
   },
 
   renderImageGrid(slot) {
@@ -365,6 +384,44 @@ const AdminUI = {
     return grid;
   },
 
+  // Pool slots: each kind (reactor, specialized, …) holds 0..N PNGs.
+  renderPoolGrid(slot) {
+    const grid = this.el("div", { class: "admin-grid admin-pool-grid" });
+    for (const item of slot.items) {
+      const key = `${slot.cat}:${item}`;
+      const cur = ASSET_OVERRIDES[key];
+      const urls = Array.isArray(cur) ? cur : (typeof cur === "string" && cur ? [cur] : []);
+      const thumbs = this.el("div", { class: "admin-pool-thumbs" });
+      if (!urls.length) {
+        const ph = this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) });
+        thumbs.append(ph);
+      } else {
+        urls.forEach((url, i) => {
+          const wrap = this.el("div", { class: "admin-pool-one" });
+          const img = this.el("img", { class: "admin-thumb", src: url, alt: `${item}-${i}` });
+          img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: "?" })); };
+          wrap.append(img);
+          wrap.append(this.el("button", {
+            class: "btn btn-mini admin-card-reset", text: "✕",
+            onclick: () => this.removeFromPool(slot.cat, item, i),
+          }));
+          thumbs.append(wrap);
+        });
+      }
+      const file = this.el("input", { type: "file", accept: "image/*", class: "hidden", multiple: true });
+      file.onchange = () => { if (file.files && file.files.length) this.uploadPool(slot.cat, item, file.files); };
+      const card = this.el("div", { class: "admin-card admin-pool-card" + (urls.length ? " custom" : "") }, [
+        thumbs,
+        this.el("div", { class: "admin-card-name", text: `${item} (${urls.length} in pool)` }),
+        this.el("button", { class: "btn btn-mini", text: "Add PNG", onclick: () => file.click() }),
+      ]);
+      if (urls.length) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Clear pool", onclick: () => this.resetSlot(slot.cat, item) }));
+      card.append(file);
+      grid.append(card);
+    }
+    return grid;
+  },
+
   // Shared upload used by both the gallery and the in-context uploaders (planet
   // popup, system background). Uploads to the Supabase 'sprites' bucket, records
   // the URL in ASSET_OVERRIDES (key `cat:item`) and persists it. Returns the URL.
@@ -381,10 +438,42 @@ const AdminUI = {
     await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
     return url;
   },
+  // Append one or more PNGs to a pool key (array in ASSET_OVERRIDES).
+  async uploadSpriteToPool(cat, item, file) {
+    if (!window.Cloud || !Cloud.isAdmin()) throw new Error("Admins only.");
+    if (!(Cloud.client && Cloud.client.storage)) throw new Error("Storage SDK unavailable.");
+    const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const path = `${cat}/${item}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+    const up = await Cloud.client.storage.from("sprites").upload(path, file, { upsert: true, contentType: file.type || "image/png" });
+    if (up.error) throw up.error;
+    const pub = Cloud.client.storage.from("sprites").getPublicUrl(path);
+    const url = pub.data.publicUrl + "?t=" + Date.now();
+    const key = `${cat}:${item}`;
+    const cur = ASSET_OVERRIDES[key];
+    const arr = Array.isArray(cur) ? cur.slice() : (typeof cur === "string" && cur ? [cur] : []);
+    arr.push(url);
+    ASSET_OVERRIDES[key] = arr;
+    await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+    return url;
+  },
   async resetSprite(cat, item) {
     if (!window.Cloud || !Cloud.isAdmin()) throw new Error("Admins only.");
     delete ASSET_OVERRIDES[`${cat}:${item}`];
     await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+  },
+  async removeFromPool(cat, item, index) {
+    if (!Cloud.isAdmin()) return;
+    const key = `${cat}:${item}`;
+    const cur = ASSET_OVERRIDES[key];
+    const arr = Array.isArray(cur) ? cur.slice() : (typeof cur === "string" && cur ? [cur] : []);
+    if (index < 0 || index >= arr.length) return;
+    arr.splice(index, 1);
+    if (arr.length) ASSET_OVERRIDES[key] = arr; else delete ASSET_OVERRIDES[key];
+    try {
+      await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+      UI.toast("Removed from pool.", "info");
+      this.buildGallery();
+    } catch (e) { UI.toast("Remove failed: " + ((e && e.message) || e), "warn"); }
   },
 
   async upload(cat, item, file) {
@@ -394,6 +483,19 @@ const AdminUI = {
     try {
       await this.uploadSprite(cat, item, file);
       UI.toast("Sprite updated. Reload to see it everywhere.", "good");
+      this.buildGallery();
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      UI.toast(/bucket|not found/i.test(msg) ? "Create a public 'sprites' bucket first (see ADMIN_SETUP)." : "Upload failed: " + msg, "warn", 5000);
+    }
+  },
+  async uploadPool(cat, item, files) {
+    if (!Cloud.isAdmin()) return;
+    if (!Cloud.client.storage) return UI.toast("Storage SDK unavailable.", "warn");
+    UI.toast(`Uploading ${files.length}…`, "info");
+    try {
+      for (const f of files) await this.uploadSpriteToPool(cat, item, f);
+      UI.toast("Added to pool.", "good");
       this.buildGallery();
     } catch (e) {
       const msg = (e && e.message) || String(e);

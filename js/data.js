@@ -588,11 +588,26 @@ const SYSTEMVIEW = {
   bubbleMs: 2900,                        // how long a speech bubble lingers
 };
 
-// Admin-uploaded sprite overrides ("category:name" -> custom URL), loaded from
-// Supabase by content.js. _asset() returns the override if present, else the
-// built-in /assets path — so swapping a sprite is just setting a key here.
+// Admin-uploaded sprite overrides ("category:name" -> custom URL or URL[]),
+// loaded from Supabase by content.js. A string replaces the default; an array
+// is a pool — _assetPool picks one deterministically from `salt` (item uid).
 const ASSET_OVERRIDES = {};
-const _asset = (key, path) => ASSET_OVERRIDES[key] || path;
+const _asset = (key, path) => {
+  const v = ASSET_OVERRIDES[key];
+  return (typeof v === "string" && v) ? v : path;
+};
+const _poolHash = salt => {
+  let h = 2166136261;
+  const s = String(salt || "");
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+};
+const _assetPool = (key, salt, path) => {
+  const v = ASSET_OVERRIDES[key];
+  if (Array.isArray(v) && v.length) return v[_poolHash(salt) % v.length];
+  if (typeof v === "string" && v) return v;
+  return path;
+};
 
 // asset path helpers — change these if you reorganize /assets
 const ASSET = {
@@ -608,6 +623,18 @@ const ASSET = {
   asteroids: () => _asset(`asteroids:_`, `assets/space/asteroids.png`),
   hub: id => _asset(`hub:${id}`, `assets/hub/${id}.png`),   // prop/NPC sprites for the station hub
   hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
+  // Bazaar / inventory art — admin can set a single PNG or a pool per key.
+  accessory: (kind, salt = "") => _assetPool(`accessory:${kind}`, salt, `assets/accessories/${kind}.png`),
+  extractor: (type, salt = "") => _assetPool(`extractor:${type}`, salt, `assets/extractors/${type}.png`),
+  component: (kind, salt = "") => _assetPool(`component:${kind}`, salt, `assets/components/${kind}.png`),
+  contract: type => _asset(`contract:${type}`, `assets/contracts/${type}.png`),
+  merc: (shipType, salt = "") => {
+    const pooled = _assetPool(`merc:${shipType}`, salt, "");
+    if (pooled) return pooled;
+    const def = (typeof ALL_SHIPS !== "undefined" ? ALL_SHIPS : []).find(x => x.id === shipType);
+    if (!def) return `assets/ships/shuttle.png`;
+    return def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
+  },
 };
 
 /* HUB_PROPS — the feature registry for the walkable hub. Each entry is a

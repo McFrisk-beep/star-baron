@@ -708,27 +708,43 @@ const UI = {
     this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader();
   },
 
+  // Tiny art tag for gear/extractor cards — tintbox letter if the PNG is missing.
+  _art(src, letter) {
+    const L = (letter || "?").toString().slice(0, 1).replace(/'/g, "");
+    return `<img class="item-art" src="${src}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox item-art',textContent:'${L}'}))"/>`;
+  },
+
   renderInventory() {
     const inv = Bazaar.inventoryItems(), listed = this.s().listings;
     this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
     let html = "";
     if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories in the Bazaar, or win them from contracts.</p>`;
-    html += inv.map(it => `<div class="item" style="border-left-color:${this.rarityColor(it.rarity)}">
-        <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
-        <div class="item-stat">${Items.label(it)}</div>
-        <div class="item-acts">
-          <span class="item-val">${Util.credits(it.value)}c</span>
-          <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
-          <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
-        </div></div>`).join("");
+    if (inv.length) {
+      html += `<div class="buy-grid">` + inv.map(it => {
+        const kind = ACCESSORY_KINDS[it.kind], letter = (kind && kind.label) || it.kind || "?";
+        return `<div class="buy-card inv-card" style="border-color:${this.rarityColor(it.rarity)}">
+          ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
+          <div class="bc-name">${it.name}</div>
+          <div class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</div>
+          <div class="bc-stats">${Items.label(it)}</div>
+          <div class="item-acts inv-acts">
+            <span class="item-val">${Util.credits(it.value)}c</span>
+            <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
+            <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
+          </div></div>`;
+      }).join("") + `</div>`;
+    }
     if (listed.length) {
-      html += `<div class="inv-sub">Listed on the market</div>` + listed.map(l => {
+      html += `<div class="inv-sub">Listed on the market</div><div class="buy-grid">` + listed.map(l => {
         const it = this.s().items[l.itemUid]; if (!it) return "";
-        return `<div class="item listed" style="border-left-color:${this.rarityColor(it.rarity)}">
-          <div class="item-top"><b>${it.name}</b><span class="rar">listed · ${Util.credits(l.listPrice)}c</span></div>
-          <div class="item-stat">${Items.label(it)} <span class="muted-note">— awaiting a buyer…</span></div>
-          <div class="item-acts"><button class="btn btn-mini" data-cancel="${l.itemUid}">Cancel listing</button></div></div>`;
-      }).join("");
+        const kind = ACCESSORY_KINDS[it.kind], letter = (kind && kind.label) || it.kind || "?";
+        return `<div class="buy-card inv-card listed" style="border-color:${this.rarityColor(it.rarity)}">
+          ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
+          <div class="bc-name">${it.name}</div>
+          <div class="rar">listed · ${Util.credits(l.listPrice)}c</div>
+          <div class="bc-stats">${Items.label(it)}</div>
+          <div class="item-acts inv-acts"><button class="btn btn-mini" data-cancel="${l.itemUid}">Cancel listing</button></div></div>`;
+      }).join("") + `</div>`;
     }
     this.refs.fleetInventory.innerHTML = html;
     this.refs.fleetInventory.onclick = e => {
@@ -923,12 +939,16 @@ const UI = {
     const mercTools = this.bzTools([["Sort", "sort.mercs", this.bzSort.mercs,
       [["power", "Firepower"], ["cost", "Cost"], ["expiry", "Offer ending"]]]]);
     const mercs = [...(b.mercs || [])].sort(mercSorters[this.bzSort.mercs] || mercSorters.power)
-      .map(m => `<div class="buy-card merc">
+      .map(m => {
+        const def = Fleet.shipDef(m.shipType) || { name: m.shipType };
+        return `<div class="buy-card merc">
+        ${this._art(ASSET.merc(m.shipType, m.id), (def.name || "M")[0])}
         <div class="bc-name">${m.name} <span class="cls-tag">merc</span></div>
-        <div class="bc-stats">${Fleet.shipDef(m.shipType).name}</div>
+        <div class="bc-stats">${def.name}</div>
         <div class="statline bc-statline">${this.statChips(m, ["firepower", "hull"])}</div>
         <div class="muted-note">serves ${Util.duration(m.serviceMs)} · offer ends ${Util.duration(m.availUntil - Date.now())}</div>
-        <button class="btn btn-go" data-hire="${m.id}" data-cost="${m.hireCost}">Hire ${Util.credits(m.hireCost)}c</button></div>`).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
+        <button class="btn btn-go" data-hire="${m.id}" data-cost="${m.hireCost}">Hire ${Util.credits(m.hireCost)}c</button></div>`;
+      }).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
 
     const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
     const sponChip = f => { const fac = FACTIONS[f]; if (!fac) return ""; const t = Rep.tierOf(f);
@@ -953,7 +973,8 @@ const UI = {
       ["Sort", "sort.contracts", this.bzSort.contracts,
         [["reward", "Reward"], ["danger", "Danger"], ["expiry", "Expiring soon"]]],
     ]);
-    const tipCard = c => `<div class="contract tip"><div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
+    const tipCard = c => `<div class="contract tip">${this._art(ASSET.contract("tip"), "T")}
+        <div class="c-head"><b>${c.title}</b><span class="ctype">insider tip</span></div>
         <div class="c-desc">${c.desc}</div>
         <div class="c-tags">${sponChip(c.faction)}</div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
@@ -962,7 +983,8 @@ const UI = {
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
-      return `<div class="contract"><div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
+      return `<div class="contract">${this._art(ASSET.contract(c.type), (c.type || "C")[0])}
+        <div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
         <div class="c-desc">${c.desc}</div>
         <div class="c-tags">${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
           ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
@@ -1015,7 +1037,9 @@ const UI = {
       .sort(accSorters[this.bzSort.gear] || accSorters.value)
       .map(a => {
         const it = a.item;
+        const letter = ((ACCESSORY_KINDS[it.kind] || {}).label || it.kind || "?")[0];
         return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
+        ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
         <div class="item-stat">${Items.label(it)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(a.price)}c</span>
@@ -1025,6 +1049,7 @@ const UI = {
     const exo = (b.extractors || []).map(o => {
       const t = EXTRACTORCFG.types[o.ex.type], price = Math.round(o.price * (1 - Rep.discount()));
       return `<div class="item buy ext-${o.ex.type}">
+        ${this._art(ASSET.extractor(o.ex.type, o.ex.uid), (t.label || "E")[0])}
         <div class="item-top"><b>${o.ex.name}</b><span class="rar">${t.label} ×${t.yieldMult}</span></div>
         <div class="item-stat">${Extractors.describe(o.ex)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
@@ -1033,7 +1058,9 @@ const UI = {
 
     const comp = (b.components || []).map(o => {
       const col = this.rarityColor(o.comp.rarity), price = Math.round(o.price * (1 - Rep.discount()));
+      const label = (COMPONENTCFG.kinds[o.comp.kind] || {}).label || o.comp.kind;
       return `<div class="item buy" style="border-left-color:${col}">
+        ${this._art(ASSET.component(o.comp.kind, o.comp.uid), (label || "C")[0])}
         <div class="item-top"><b>${o.comp.name}</b><span class="rar" style="color:${col}">${(Items.rarity(o.comp.rarity) || {}).label}</span></div>
         <div class="item-stat">${Components.describe(o.comp)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>

@@ -74,6 +74,8 @@ const Game = {
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
+    // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
+    if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
     return s;
   },
 

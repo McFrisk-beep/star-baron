@@ -76,6 +76,33 @@ const Items = {
     if (item.bonus) s += " · " + this.statLabel(item.bonus);
     return s;
   },
+
+  // Server Phase-2 stubs look like "Shield uncommon" (initcap(kind) + rarity).
+  isStubName(it) {
+    if (!it || !it.name) return true;
+    const kind = String(it.kind || "");
+    const stub = kind.charAt(0).toUpperCase() + kind.slice(1) + " " + it.rarity;
+    return it.name === stub;
+  },
+  // Rebuild a cosmetic name. Seeded bazaar uids reuse the board formula; others
+  // hash the uid so the same item keeps a stable name across reloads.
+  nameFromUid(it) {
+    if (!it) return "Gear";
+    const m = /^i(\d+)a(\d+)$/.exec(it.uid || "");
+    if (m && window.Bazaar && Bazaar.genSeededAccessory) {
+      try { return Bazaar.genSeededAccessory(+m[1], +m[2]).item.name; } catch (e) {}
+    }
+    const k = ACCESSORY_KINDS[it.kind] || { label: it.kind || "Gear" };
+    const rar = this.rarity(it.rarity) || RARITIES[0];
+    const brands = window.ITEM_BRANDS || ["Vex"], suf = window.ITEM_SUFFIXES || ["Howl"];
+    let h = 2166136261; const s = String(it.uid || it.kind);
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h >>>= 0;
+    const mk = ["I", "II", "III", "IV", "V"][h % 5];
+    let n = `${brands[(h >>> 5) % brands.length]} Mk.${mk} ${k.label}`;
+    if (rar.id === "epic" || rar.id === "legendary") n += ` "${suf[(h >>> 11) % suf.length]}"`;
+    return n;
+  },
 };
 
 window.Items = Items;
