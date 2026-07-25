@@ -20,6 +20,7 @@ const Hub = {
   _frame: 0, _frameT: 0, _ts: 32, _ox: 0, _oy: 0, _w: 0, _h: 0,
   _imgs: {}, _playerImg: null, _bgImgs: {}, _decoImgs: {},
   editing: false, _hoverTile: null,   // set by the admin map editor (js/hubedit.js)
+  _zoom: 1, _panx: 0, _pany: 0,       // edit-mode camera (1/0/0 = fit-to-screen; reset on exit)
 
   cfg() { return window.HUBCFG || { startRoom: "atrium", speed: 4.2, interact: 1.15, sheet: { cols: 4, rows: 4, order: ["down", "left", "right", "up"], fps: 8 } }; },
   rooms() { return window.HUB_ROOMS || {}; },
@@ -108,6 +109,23 @@ const Hub = {
     const r = this.canvas.getBoundingClientRect();
     return { x: (cx - r.left - this._ox) / this._ts, y: (cy - r.top - this._oy) / this._ts };
   },
+  // ---- edit-mode camera ----------------------------------------------------
+  resetCam() { this._zoom = 1; this._panx = 0; this._pany = 0; },
+  // Zoom by `factor` keeping the world point under (cx,cy) fixed on screen (zoom-to-cursor).
+  zoomAt(cx, cy, factor) {
+    const cw = this.scene.clientWidth, ch = this.scene.clientHeight; if (!cw || !ch) return;
+    const room = this.room(); if (!room) return;
+    const cols = room.grid[0].length, rows = room.grid.length;
+    const baseTs = Math.floor(Math.min(cw / (cols + 0.5), ch / (rows + 0.5)));
+    const tf = this.screenToTileF(cx, cy);                 // world tile under the cursor (pre-zoom)
+    this._zoom = Math.max(0.25, Math.min(8, this._zoom * factor));
+    const ts = Math.max(1, Math.round(baseTs * this._zoom));
+    const r = this.canvas.getBoundingClientRect();
+    // solve pan so tf stays under the cursor: ox = (cx-left) - tf.x*ts  and  ox = (cw-ts*cols)/2 + panx
+    this._panx = (cx - r.left) - tf.x * ts - (cw - ts * cols) / 2;
+    this._pany = (cy - r.top) - tf.y * ts - (ch - ts * rows) / 2;
+  },
+  panBy(dx, dy) { this._panx += dx; this._pany += dy; },
   setRoom(id) {
     if (!this.rooms()[id]) return;
     this.roomId = id;
@@ -209,8 +227,10 @@ const Hub = {
 
     const room = this.room(); if (!room) return;
     const cols = room.grid[0].length, rows = room.grid.length;
-    const ts = Math.floor(Math.min(cw / (cols + 0.5), ch / (rows + 0.5)));
-    const ox = Math.floor((cw - ts * cols) / 2), oy = Math.floor((ch - ts * rows) / 2);
+    // fit-to-screen tile size, then apply the edit-mode camera (zoom around centre + pan)
+    const baseTs = Math.floor(Math.min(cw / (cols + 0.5), ch / (rows + 0.5)));
+    const ts = Math.max(1, Math.round(baseTs * this._zoom));
+    const ox = Math.round((cw - ts * cols) / 2 + this._panx), oy = Math.round((ch - ts * rows) / 2 + this._pany);
     this._ts = ts; this._ox = ox; this._oy = oy;
 
     // per-room background (color like "#123" / "rgb(...)", or a sprite key/path), behind the tiles
