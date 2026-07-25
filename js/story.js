@@ -34,20 +34,77 @@ const Story = {
 
   // ---- trackable snapshot (baseline for "do N more X" delta objectives) ----
   snap(s) {
-    return {
-      trades: s.stats.trades || 0,
-      contracts: s.stats.contractsDone || 0,
-      ships: (s.ships || []).length,
-      extractors: Object.keys(s.extractors || {}).length,
-      components: Object.keys(s.components || {}).length,
-      industries: (s.industries || []).length,
-      systems: (s.unlockedSystems || []).length,
-      credits: s.credits || 0,
-      netWorth: window.Economy ? Math.round(Economy.netWorth()) : (s.credits || 0),
-    };
+    const out = {};
+    for (const m of this.METRICS) out[m.id] = this.metricVal(m.id, s);
+    return out;
   },
 
-  storyline(id) { return STORYLINES.find(x => x.id === id) || null; },
+  // ---- data-driven conditions -------------------------------------------
+  // Built-in storylines carry real trigger/goal functions; admin-authored
+  // ones (STORY_CUSTOM) can't — functions don't survive JSON round-trips to
+  // the cloud. So custom missions describe their gates declaratively as a
+  // { metric, op, value, delta? } condition, evaluated here. METRICS is the
+  // single source of truth: the admin editor builds its dropdowns from it,
+  // snap() baselines every metric, and metricVal() reads them live.
+  METRICS: [
+    { id: "netWorth",   label: "Net worth" },
+    { id: "credits",    label: "Credits (cash)" },
+    { id: "trades",     label: "Trades completed" },
+    { id: "contracts",  label: "Contracts completed" },
+    { id: "ships",      label: "Ships owned" },
+    { id: "escorts",    label: "Escort warships owned" },
+    { id: "extractors", label: "Extractors owned" },
+    { id: "components", label: "Components owned" },
+    { id: "industries", label: "Industries owned" },
+    { id: "systems",    label: "Systems unlocked" },
+  ],
+  metricVal(metric, s) {
+    switch (metric) {
+      case "netWorth":   return window.Economy ? Math.round(Economy.netWorth()) : (s.credits || 0);
+      case "credits":    return s.credits || 0;
+      case "trades":     return s.stats.trades || 0;
+      case "contracts":  return s.stats.contractsDone || 0;
+      case "ships":      return (s.ships || []).length;
+      case "escorts":    return (s.ships || []).filter(sh => sh.cls === "escort").length;
+      case "extractors": return Object.keys(s.extractors || {}).length;
+      case "components": return Object.keys(s.components || {}).length;
+      case "industries": return (s.industries || []).length;
+      case "systems":    return (s.unlockedSystems || []).length;
+      default:           return 0;
+    }
+  },
+  // Evaluate one declarative condition. `delta` compares against the step's
+  // baseline snapshot ("do N MORE"); absolute otherwise. A missing/blank
+  // condition means "no gate" → true (defensive: custom data is a trust
+  // boundary — never throw on a malformed row).
+  evalCond(cond, s, base) {
+    if (!cond || !cond.metric) return true;
+    let cur = this.metricVal(cond.metric, s);
+    if (cond.delta && base) cur -= (base[cond.metric] || 0);
+    const target = +cond.value || 0;
+    switch (cond.op) {
+      case ">":  return cur >  target;
+      case "<":  return cur <  target;
+      case "<=": return cur <= target;
+      case "==": return cur === target;
+      default:   return cur >= target;   // ">=" is the sensible default
+    }
+  },
+  // Trigger / goal / require may be a shipped function OR a custom condition.
+  _trigger(sl, st)      { return typeof sl.trigger === "function" ? sl.trigger(st) : this.evalCond(sl.triggerCond, st, null); },
+  _goalDone(step, st, base) { const g = step.goal; if (!g) return true; return typeof g.done === "function" ? g.done(st, base) : this.evalCond(g.cond, st, base); },
+  _reqOk(ch, st)        { return typeof ch.require === "function" ? ch.require(st) : this.evalCond(ch.cond, st, null); },
+
+  // Built-in + admin-authored storylines. Custom rows are validated here (this
+  // is a cloud trust boundary): only well-formed entries survive, and a custom
+  // id can never shadow a shipped one.
+  all() {
+    const ids = new Set(STORYLINES.map(s => s.id));
+    const custom = (window.STORY_CUSTOM || []).filter(sl =>
+      sl && sl.id && !ids.has(sl.id) && Array.isArray(sl.steps) && sl.steps.length);
+    return STORYLINES.concat(custom);
+  },
+  storyline(id) { return this.all().find(x => x.id === id) || null; },
 
   // ---- main pump (called from the game loop + key events) -----------------
   check(now = Date.now()) {
@@ -62,15 +119,15 @@ const Story = {
       const step = sl.steps[p.step]; if (!step) continue;
       if (step.choices || (step.options && !step.goal)) continue;   // choice steps wait for input
       if (step.accept && !p.accepted) continue;                     // job not accepted yet — don't track
-      if (step.goal && step.goal.done(st, p.base)) { this._complete(id, step.reward); changed = true; }
+      if (step.goal && this._goalDone(step, st, p.base)) { this._complete(id, step.reward); changed = true; }
     }
 
     // 2) start one eligible new storyline (throttled so they never dump at once)
     const active = Object.values(prog).filter(p => p.status === "active").length;
     if (active < this.MAX_ACTIVE && now - (story.lastArrivalAt || 0) >= this.ARRIVAL_GAP_MS) {
-      for (const sl of STORYLINES) {
+      for (const sl of this.all()) {
         if (prog[sl.id]) continue;                         // already started or done
-        if (typeof sl.trigger === "function" && !sl.trigger(st)) continue;
+        if (!this._trigger(sl, st)) continue;
         prog[sl.id] = { step: 0, base: this.snap(st), status: "active" };
         this._postIn(sl, sl.steps[0]);
         story.lastArrivalAt = now;
@@ -95,7 +152,7 @@ const Story = {
     if (!p || !sl || p.status !== "active") return { ok: false };
     const step = sl.steps[p.step]; const list = step && (step.choices || step.options); if (!list) return { ok: false };
     const ch = list[idx]; if (!ch) return { ok: false };
-    if (typeof ch.require === "function" && !ch.require(st)) return { ok: false, msg: ch.requireMsg || "You can't do that yet." };
+    if (!this._reqOk(ch, st)) return { ok: false, msg: ch.requireMsg || "You can't do that yet." };
     if (ch.cost && (st.credits || 0) < ch.cost) return { ok: false, msg: "Not enough credits." };
     if (ch.cost) st.credits -= ch.cost;
     this._postOut(sl, ch.reply || ch.label);
@@ -218,7 +275,7 @@ const Story = {
     if (choices) return {
       type: "choice", replies, from: sl.from, kind: sl.kind,
       buttons: choices.map((c, i) => ({ i, label: c.label, cost: c.cost || 0,
-        ok: (typeof c.require !== "function" || c.require(st)) && (!c.cost || (st.credits || 0) >= c.cost) })),
+        ok: this._reqOk(c, st) && (!c.cost || (st.credits || 0) >= c.cost) })),
     };
     if (step.goal) {
       if (step.accept && !p.accepted) return {
@@ -226,7 +283,7 @@ const Story = {
         accept: { label: (step.accept.label) || "Accept" },
         decline: step.decline ? { label: step.decline.label || "Decline" } : null,
       };
-      return { type: "objective", from: sl.from, kind: sl.kind, desc: step.goal.desc, done: !!step.goal.done(st, p.base), replies };
+      return { type: "objective", from: sl.from, kind: sl.kind, desc: step.goal.desc, done: !!this._goalDone(step, st, p.base), replies };
     }
     return { type: "info", from: sl.from, kind: sl.kind, replies };
   },
@@ -356,5 +413,12 @@ const STORYLINES = [
   },
 ];
 
+// Admin-authored missions (edited in the admin console → Missions tab, persisted
+// to the cloud via Content). Declarative-only: triggers/goals are { metric, op,
+// value } conditions, not functions, so they serialize. Merged with STORYLINES
+// by Story.all(). Empty by default; a stored override fills it at boot.
+const STORY_CUSTOM = [];
+
 window.Story = Story;
 window.STORYLINES = STORYLINES;
+window.STORY_CUSTOM = STORY_CUSTOM;

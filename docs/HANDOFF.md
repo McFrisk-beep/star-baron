@@ -239,6 +239,16 @@ table been created?" toast means `saves` is missing.
   brick the game. `Content.rederive()` rebuilds `ALL_SHIPS` after ship edits.
 - **Images:** `🖼 Images` → upload to the `sprites` bucket; `ASSET_OVERRIDES`
   redirects `ASSET.*` to the uploaded URL.
+- **Missions (`📨 Missions`):** a visual editor for Dispatches storylines
+  (`js/story.js`). Built-in storylines are read-only (their triggers/goals are
+  code functions); admin-authored ones are **pure data** — triggers/goals are
+  declarative `{ metric, op, value, delta? }` conditions (`Story.METRICS`), so
+  they serialize into the `STORY_CUSTOM` collection, save to the cloud, and run
+  for every player via `Story.all()`. The list view shows every mission; the
+  detail view edits one mission's flow (steps, accept/decline gate, branching
+  choices, flavour replies, rewards). `Story.all()` validates custom rows (drops
+  stepless entries; a custom id can't shadow a built-in) — a bad row can't brick
+  the engine.
 - **Edits live in Supabase, not Git** (that's what makes them server-wide).
 
 ---

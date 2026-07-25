@@ -473,8 +473,10 @@ body.reduced .tt-dot { animation: none; }
    .modal.admin-panel beats the .modal-wide cap this panel also carries. */
 .modal.admin-panel { max-width: min(1180px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
 .admin-panel > h3 { flex: none; }
-#admin-view-content, #admin-view-images { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#admin-view-content, #admin-view-images, #admin-view-missions { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .admin-row, .admin-status, .admin-panel .settings-actions, #admin-img-note, .admin-imgtabs { flex: none; }
+#admin-mission-list, #admin-mission-detail { flex: 1; min-height: 0; overflow-y: auto; padding-right: 3px; }
+#admin-mission-note, #admin-mission-status, #admin-mission-listactions { flex: none; }
 .admin-nav { display: flex; gap: 6px; margin-bottom: 12px; flex: none; }
 .admin-navbtn { background: #131826; border: 1px solid var(--line); color: var(--ink-dim);
   padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--sans); }
@@ -514,6 +516,47 @@ body.reduced .tt-dot { animation: none; }
 .admin-thumb { width: 56px; height: 56px; object-fit: contain; image-rendering: auto; display: block; margin: 0 auto 6px; background: #05070e; border-radius: 6px; }
 .admin-card-name { font-size: 10px; color: var(--ink-dim); margin-bottom: 6px; word-break: break-word; }
 .admin-card-reset { margin-top: 4px; color: var(--down); }
+
+/* ===== missions editor ===== */
+.admin-mhint { font-size: 11px; color: var(--ink-dim); margin: 6px 0; }
+.admin-mission-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; }
+.admin-mcard-head { display: flex; align-items: center; gap: 8px; }
+.admin-mcard-meta { font-size: 11px; color: var(--ink-dim); font-family: var(--mono); flex: 1; min-width: 120px; }
+.admin-mcard-actions { display: flex; gap: 6px; }
+.admin-mbadge { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 6px; border-radius: 4px;
+  background: #131826; border: 1px solid var(--line); color: var(--accent); }
+.admin-mtag { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; padding: 2px 6px; border-radius: 4px; }
+.admin-mtag.is-custom { background: rgba(90,169,255,.15); color: var(--accent2, #5aa9ff); border: 1px solid var(--accent2, #5aa9ff); }
+.admin-mtag.is-builtin { background: #131826; color: var(--ink-dim); border: 1px solid var(--line); }
+.admin-mission-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.admin-mtop { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.admin-mfield { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ink-dim); flex: 1; min-width: 150px; }
+.admin-mfield-sm { flex: 0 0 auto; min-width: 90px; max-width: 130px; }
+.admin-mfield-wide { flex-basis: 100%; }
+.admin-mfield input, .admin-mfield textarea, .admin-mfield select,
+.admin-cond input, .admin-cond select, .admin-reward input, .admin-reward select {
+  background: #0c1020; border: 1px solid var(--line); color: var(--ink); border-radius: 5px;
+  padding: 5px 7px; font-family: var(--mono); font-size: 12px; width: 100%; resize: vertical; }
+.admin-mlabel { font-size: 11px; color: var(--ink-dim); }
+.admin-steps { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.admin-step { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.admin-step-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.admin-step-num { font-weight: 700; color: var(--accent); font-size: 12px; }
+.admin-step-head select { flex: 1; max-width: 200px; }
+.admin-step .admin-mfield, .admin-choice .admin-mfield { margin-top: 6px; }
+.admin-cond { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.admin-cond select { width: auto; min-width: 100px; flex: 0 1 auto; }
+.admin-cond-val { width: 90px !important; }
+.admin-mchk { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-dim); margin-top: 8px; cursor: pointer; }
+.admin-mchk input { width: auto; }
+.admin-gate { border-left: 2px solid var(--line); padding-left: 10px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-reward { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end;
+  background: #0c1020; border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.admin-choices { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.admin-choice { border: 1px dashed var(--line); border-radius: 6px; padding: 8px; }
+.admin-choice-head { display: flex; align-items: center; justify-content: space-between; }
+.admin-mprev-text { font-size: 12px; color: var(--ink); margin: 4px 0; }
 
 /* ===== responsive ===== */
 /* On narrow screens the fixed app-shell is dropped: the page scrolls normally,

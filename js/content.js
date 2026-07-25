@@ -49,9 +49,10 @@ const Content = {
     { key: "HUB_PROPS",       label: "Hub stations",          group: "data" },
     { key: "HUBCFG",          label: "Hub settings",          group: "data" },
   ],
-  // Non-collection keys that are also persisted in the content table (managed by
-  // the image manager, not the JSON editor).
-  EXTRA_KEYS: ["ASSET_OVERRIDES"],
+  // Non-collection keys that are also persisted in the content table but have a
+  // dedicated editor, so they're kept out of the generic JSON dropdown:
+  //   ASSET_OVERRIDES → image manager;  STORY_CUSTOM → Missions editor.
+  EXTRA_KEYS: ["ASSET_OVERRIDES", "STORY_CUSTOM"],
   _defaults: {},
   _snapped: false,
   loaded: false,
