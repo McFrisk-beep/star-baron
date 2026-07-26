@@ -287,6 +287,10 @@ table been created?" toast means `saves` is missing.
 - **Trade-route toast spam / early banks:** authoritative route timing matches the
   server (catalog speed, no dev `timeScale` compression); heal missing `nextAt`;
   advance `nextAt` by `cycles × cycleMs` so a due tick can't fire every 2s.
+- **Cosmetic names after buy:** `_restoreCosmeticNames` must not clobber a real
+  server name with the optimistic client flavor — only overlay when the RPC
+  returned a stub. Otherwise a bought ship keeps "Onyx Wake" this session and
+  flips on the next reload/pull.
 
 ---
 

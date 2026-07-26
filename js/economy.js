@@ -204,13 +204,47 @@ const Economy = {
     if (window.Components) for (const c of Object.values(s.components || {})) if (!Components.isStubName(c)) out.components[c.uid] = c.name;
     return out;
   },
-  _restoreCosmeticNames(snap) {
-    if (!snap) return;
+  // Names as the RPC returned them (before repairCosmeticNames rewrites stubs).
+  _snapServerCosmeticNames(r) {
+    const out = { ships: {}, items: {}, extractors: {}, components: {} };
+    if (!r) return out;
+    if (r.ships) for (const sh of r.ships) out.ships[sh.uid] = sh.name;
+    if (r.items) for (const it of Object.values(r.items)) if (it && it.uid) out.items[it.uid] = it.name;
+    if (r.extractors) for (const ex of Object.values(r.extractors)) if (ex && ex.uid) out.extractors[ex.uid] = ex.name;
+    if (r.components) for (const c of Object.values(r.components)) if (c && c.uid) out.components[c.uid] = c.name;
+    return out;
+  },
+  // Re-apply client flavor ONLY when the server sent a stub (or omitted the
+  // name). A real server name wins — otherwise a bought ship keeps the
+  // optimistic makeShip name this session and flips on the next reload/pull.
+  _restoreCosmeticNames(clientSnap, serverSnap) {
+    if (!clientSnap) return;
     const s = this.s();
-    for (const sh of s.ships || []) if (snap.ships[sh.uid]) sh.name = snap.ships[sh.uid];
-    for (const it of Object.values(s.items || {})) if (snap.items[it.uid]) it.name = snap.items[it.uid];
-    for (const ex of Object.values(s.extractors || {})) if (snap.extractors[ex.uid]) ex.name = snap.extractors[ex.uid];
-    for (const c of Object.values(s.components || {})) if (snap.components[c.uid]) c.name = snap.components[c.uid];
+    const srv = serverSnap || {};
+    if (window.Fleet) for (const sh of s.ships || []) {
+      const kept = clientSnap.ships[sh.uid]; if (!kept) continue;
+      const serverName = srv.ships ? srv.ships[sh.uid] : undefined;
+      if (serverName != null && !Fleet.isStubName({ type: sh.type, name: serverName, mercenary: sh.mercenary })) continue;
+      sh.name = kept;
+    }
+    if (window.Items) for (const it of Object.values(s.items || {})) {
+      const kept = clientSnap.items[it.uid]; if (!kept) continue;
+      const serverName = srv.items ? srv.items[it.uid] : undefined;
+      if (serverName != null && !Items.isStubName({ kind: it.kind, rarity: it.rarity, name: serverName })) continue;
+      it.name = kept;
+    }
+    if (window.Extractors) for (const ex of Object.values(s.extractors || {})) {
+      const kept = clientSnap.extractors[ex.uid]; if (!kept) continue;
+      const serverName = srv.extractors ? srv.extractors[ex.uid] : undefined;
+      if (serverName != null && !Extractors.isStubName({ type: ex.type, scope: ex.scope, name: serverName })) continue;
+      ex.name = kept;
+    }
+    if (window.Components) for (const c of Object.values(s.components || {})) {
+      const kept = clientSnap.components[c.uid]; if (!kept) continue;
+      const serverName = srv.components ? srv.components[c.uid] : undefined;
+      if (serverName != null && !Components.isStubName({ kind: c.kind, name: serverName })) continue;
+      c.name = kept;
+    }
   },
 
   // Apply an app_pull result (same slice as RPCs + optional away recap).
@@ -281,10 +315,12 @@ const Economy = {
           this._restoreEconomy(snap);
           return { ok: false, msg: (r && (r.error || r.msg)) || failMsg };
         }
-        // Keep optimistic flavor names (board / makeShip) when the server returns stubs.
+        // Keep optimistic flavor names (board / makeShip) only when the server
+        // returned a stub — a real server name is authoritative across reloads.
         const names = this._snapCosmeticNames();
+        const serverNames = this._snapServerCosmeticNames(r);
         this._applyServerSlice(r);
-        this._restoreCosmeticNames(names);
+        this._restoreCosmeticNames(names, serverNames);
         if (r.fillPrice != null) local.price = r.fillPrice;
         if (r.cost != null) local.cost = r.cost;
         if (r.proceeds != null) local.proceeds = r.proceeds;
