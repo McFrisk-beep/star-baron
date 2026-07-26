@@ -321,7 +321,9 @@ const AdminUI = {
       { group: "Stations", cat: "station", items: races, url: r => ASSET.station(r) },
       { group: "Commodities", cat: "commodity", items: COMMODITIES.map(c => c.id), url: id => ASSET.commodity(id) },
       { group: "Nebulae", cat: "nebula", items: nebulae, url: n => ASSET.nebula(n) },
-      { group: "Broadcast screens", cat: "broadcast", items: ["news", "tv_drama", "tv_ads", "tv_weather"], url: n => ASSET.broadcast(n) },
+      { group: "Broadcast screens (pools)", cat: "broadcast", items: ["news", "tv_drama", "tv_ads", "tv_weather"],
+        url: n => ASSET.broadcast(n, "preview"), pool: true, flavored: true,
+        hint: "Add PNG/JPG/GIF frames per channel. Optional title/caption override Alien TV defaults; GIFs animate on the Broadcast screen." },
       { group: "Hub — character & stations", cat: "hub", items: ["player"].concat((window.HUB_PROPS || []).map(p => p.id)), url: id => ASSET.hub(id) },
       // Bazaar content — pools for randomized gear; single PNG for fixed types.
       { group: "Gear kinds (pools)", cat: "accessory", items: Object.keys(ACCESSORY_KINDS),
@@ -347,8 +349,10 @@ const AdminUI = {
     if (this.imgCat >= slots.length) this.imgCat = 0;
     const active = slots[this.imgCat];
     this.r.imgNote.textContent = active.pool
-      ? "Pool slots: add multiple PNGs — randomized items (reactors, etc.) pick one from the pool. Stored in Supabase 'sprites'."
-      : "Upload a PNG/JPG to replace any sprite (stored in your Supabase 'sprites' bucket — see docs/ADMIN_SETUP.md).";
+      ? (active.flavored
+        ? "Broadcast pools: add PNG/JPG/GIF frames. Leave flavor blank to use Alien TV Show defaults. Stored in Supabase 'sprites'."
+        : "Pool slots: add multiple images — randomized items (reactors, etc.) pick one from the pool. Stored in Supabase 'sprites'.")
+      : "Upload a PNG/JPG/GIF to replace any sprite (stored in your Supabase 'sprites' bucket — see docs/ADMIN_SETUP.md).";
     if (active.hint) this.r.imgNote.textContent += " " + active.hint;
     // category sub-tabs
     this.r.imgTabs.innerHTML = "";
@@ -384,20 +388,30 @@ const AdminUI = {
     return grid;
   },
 
-  // Pool slots: each kind (reactor, specialized, …) holds 0..N PNGs.
+  // Pool slots: each kind (reactor, specialized, …) holds 0..N images.
+  // Broadcast pools may store { url, title?, caption? }; gear pools stay URL strings.
+  _poolEntries(key) {
+    const cur = ASSET_OVERRIDES[key];
+    if (Array.isArray(cur)) return cur.slice();
+    if (typeof cur === "string" && cur) return [cur];
+    if (cur && typeof cur === "object" && cur.url) return [cur];
+    return [];
+  },
+  _poolUrl(entry) { return typeof entry === "string" ? entry : ((entry && entry.url) || ""); },
   renderPoolGrid(slot) {
-    const grid = this.el("div", { class: "admin-grid admin-pool-grid" });
+    const grid = this.el("div", { class: "admin-grid admin-pool-grid" + (slot.flavored ? " admin-pool-flavored" : "") });
     for (const item of slot.items) {
       const key = `${slot.cat}:${item}`;
-      const cur = ASSET_OVERRIDES[key];
-      const urls = Array.isArray(cur) ? cur : (typeof cur === "string" && cur ? [cur] : []);
+      const entries = this._poolEntries(key);
       const thumbs = this.el("div", { class: "admin-pool-thumbs" });
-      if (!urls.length) {
+      if (!entries.length) {
         const ph = this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) });
         thumbs.append(ph);
       } else {
-        urls.forEach((url, i) => {
-          const wrap = this.el("div", { class: "admin-pool-one" });
+        entries.forEach((entry, i) => {
+          const url = this._poolUrl(entry);
+          const meta = (typeof entry === "object" && entry) ? entry : { url };
+          const wrap = this.el("div", { class: "admin-pool-one" + (slot.flavored ? " flavored" : "") });
           const img = this.el("img", { class: "admin-thumb", src: url, alt: `${item}-${i}` });
           img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: "?" })); };
           wrap.append(img);
@@ -405,21 +419,50 @@ const AdminUI = {
             class: "btn btn-mini admin-card-reset", text: "✕",
             onclick: () => this.removeFromPool(slot.cat, item, i),
           }));
+          if (slot.flavored) {
+            const title = this.el("input", {
+              class: "admin-pool-flavor", type: "text", placeholder: "Title (optional)",
+              value: meta.title || "",
+            });
+            const caption = this.el("input", {
+              class: "admin-pool-flavor", type: "text", placeholder: "Caption (optional — Alien TV default if blank)",
+              value: meta.caption || "",
+            });
+            const save = () => this.savePoolFlavor(slot.cat, item, i, title.value, caption.value);
+            title.onchange = save; caption.onchange = save;
+            wrap.append(title, caption);
+          }
           thumbs.append(wrap);
         });
       }
-      const file = this.el("input", { type: "file", accept: "image/*", class: "hidden", multiple: true });
+      const file = this.el("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp,image/*", class: "hidden", multiple: true });
       file.onchange = () => { if (file.files && file.files.length) this.uploadPool(slot.cat, item, file.files); };
-      const card = this.el("div", { class: "admin-card admin-pool-card" + (urls.length ? " custom" : "") }, [
+      const card = this.el("div", { class: "admin-card admin-pool-card" + (entries.length ? " custom" : "") }, [
         thumbs,
-        this.el("div", { class: "admin-card-name", text: `${item} (${urls.length} in pool)` }),
-        this.el("button", { class: "btn btn-mini", text: "Add PNG", onclick: () => file.click() }),
+        this.el("div", { class: "admin-card-name", text: `${item} (${entries.length} in pool)` }),
+        this.el("button", { class: "btn btn-mini", text: slot.flavored ? "Add image" : "Add PNG", onclick: () => file.click() }),
       ]);
-      if (urls.length) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Clear pool", onclick: () => this.resetSlot(slot.cat, item) }));
+      if (entries.length) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Clear pool", onclick: () => this.resetSlot(slot.cat, item) }));
       card.append(file);
       grid.append(card);
     }
     return grid;
+  },
+
+  async savePoolFlavor(cat, item, index, title, caption) {
+    if (!Cloud.isAdmin()) return;
+    const key = `${cat}:${item}`;
+    const arr = this._poolEntries(key);
+    if (index < 0 || index >= arr.length) return;
+    const url = this._poolUrl(arr[index]); if (!url) return;
+    const t = String(title || "").trim(), c = String(caption || "").trim();
+    // Keep plain URL strings when there's no flavor (smaller save blob).
+    arr[index] = (t || c) ? { url, title: t, caption: c } : url;
+    ASSET_OVERRIDES[key] = arr;
+    try {
+      await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
+      UI.toast("Flavor saved.", "good");
+    } catch (e) { UI.toast("Save failed: " + ((e && e.message) || e), "warn"); }
   },
 
   // Shared upload used by both the gallery and the in-context uploaders (planet
@@ -438,7 +481,8 @@ const AdminUI = {
     await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
     return url;
   },
-  // Append one or more PNGs to a pool key (array in ASSET_OVERRIDES).
+  // Append one or more images to a pool key (array in ASSET_OVERRIDES).
+  // Entries are URL strings; broadcast flavor is edited after upload.
   async uploadSpriteToPool(cat, item, file) {
     if (!window.Cloud || !Cloud.isAdmin()) throw new Error("Admins only.");
     if (!(Cloud.client && Cloud.client.storage)) throw new Error("Storage SDK unavailable.");
@@ -449,8 +493,7 @@ const AdminUI = {
     const pub = Cloud.client.storage.from("sprites").getPublicUrl(path);
     const url = pub.data.publicUrl + "?t=" + Date.now();
     const key = `${cat}:${item}`;
-    const cur = ASSET_OVERRIDES[key];
-    const arr = Array.isArray(cur) ? cur.slice() : (typeof cur === "string" && cur ? [cur] : []);
+    const arr = this._poolEntries(key);
     arr.push(url);
     ASSET_OVERRIDES[key] = arr;
     await Content.save("ASSET_OVERRIDES", { ...ASSET_OVERRIDES });
@@ -464,8 +507,7 @@ const AdminUI = {
   async removeFromPool(cat, item, index) {
     if (!Cloud.isAdmin()) return;
     const key = `${cat}:${item}`;
-    const cur = ASSET_OVERRIDES[key];
-    const arr = Array.isArray(cur) ? cur.slice() : (typeof cur === "string" && cur ? [cur] : []);
+    const arr = this._poolEntries(key);
     if (index < 0 || index >= arr.length) return;
     arr.splice(index, 1);
     if (arr.length) ASSET_OVERRIDES[key] = arr; else delete ASSET_OVERRIDES[key];

@@ -31,13 +31,20 @@ const Broadcast = {
   newsLive() { return Date.now() < this.newsUntil; },
 
   // ---- TV ----------------------------------------------------------------
+  // Pick an Alien TV show, then a pool image for that channel. Per-image
+  // title/caption (admin) win; otherwise fall back to TV_SHOWS flavor.
   rotateTV() {
     if (!this.newsLive()) {
       const show = Util.pick(TV_SHOWS);
+      const salt = Date.now() + ":" + Math.random().toString(36).slice(2, 7);
+      const img = (window.ASSET && ASSET.broadcastEntry)
+        ? ASSET.broadcastEntry(show.channel, salt)
+        : { url: null, title: "", caption: "" };
       Bus.emit("tv", {
         channel: show.channel,
-        title: show.title,
-        caption: Util.pick(show.captions),
+        url: img.url || undefined,
+        title: (img.title && String(img.title).trim()) || show.title,
+        caption: (img.caption && String(img.caption).trim()) || Util.pick(show.captions),
       });
     }
     this.tvTimer = setTimeout(() => this.rotateTV(), CONFIG.tvRotateMs);

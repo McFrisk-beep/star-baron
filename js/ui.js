@@ -168,11 +168,20 @@ const UI = {
     const paneHtml = this._dispatchArc
       ? this._threadHtml(this._dispatchArc)
       : `<div class="disp-empty"><p data-i18n="comms.clickOpen">${window.I18n ? I18n.t("comms.clickOpen") : "Click a message to open the conversation"}</p></div>`;
+    el.classList.toggle("thread-open", !!this._dispatchArc);
     el.innerHTML = `<aside class="disp-sidebar">${listHtml}</aside><div class="disp-pane">${paneHtml}</div>`;
     if (this._dispatchArc) {
-      requestAnimationFrame(() => {
+      // Stick to latest; older messages stay reachable by scrolling up.
+      const pin = () => {
         const t = el.querySelector(".dispatch-thread");
         if (t) t.scrollTop = t.scrollHeight;
+      };
+      requestAnimationFrame(() => {
+        pin();
+        // Mobile: keep the open thread (and choice chips) above the floatnav.
+        if (window.matchMedia && matchMedia("(max-width: 720px)").matches)
+          el.scrollIntoView({ block: "start", behavior: "instant" in window ? "instant" : "auto" });
+        requestAnimationFrame(pin);
       });
     }
   },
@@ -1645,13 +1654,19 @@ const UI = {
   },
 
   // ===== broadcast / feed ==================================================
-  setBroadcast({ channel, title, caption }) {
+  // `url` optional — when set (pool pick / GIF), skip the default PNG path.
+  setBroadcast({ channel, title, caption, url }) {
     const img = this.refs.bcFrame; img.onerror = () => { img.style.visibility = "hidden"; };
-    img.style.visibility = "visible"; img.src = ASSET.broadcast(channel);
+    img.style.visibility = "visible";
+    img.src = url || ASSET.broadcast(channel, Date.now());
     this.refs.bcTitle.textContent = title; this.refs.bcCaption.textContent = caption;
   },
   showNews(entry) {
-    this.setBroadcast({ channel: "news", title: entry.headline, caption: entry.body });
+    const pick = ASSET.broadcastEntry("news", Date.now() + ":" + (entry.id || ""));
+    this.setBroadcast({
+      channel: "news", url: pick.url,
+      title: entry.headline, caption: entry.body,
+    });
     const scr = document.getElementById("broadcast-screen");
     scr.classList.remove("klaxon"); void scr.offsetWidth; scr.classList.add("klaxon");
     this.refs.tickerText.textContent = `${(FACTIONS[entry.faction]?.name || "GBN")}: ${entry.headline} — ${entry.body}`;
