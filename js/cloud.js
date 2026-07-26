@@ -17,6 +17,11 @@ const Cloud = {
   playersReady: false,
   // true once app_pull succeeds this session; false → local soft-income catch-up.
   pullReady: false,
+  // true when app_pull RPC is confirmed missing (Phase 3 SQL not installed).
+  // Distinct from "pull failed transiently" — only then may local soft income run
+  // for logged-in players (Phase 2 fallback). Otherwise local minting creates
+  // ghost positions/credits that Phase 3 app_commit / app_trade will reject.
+  pullMissing: false,
 
   // Build the client if (and only if) we're configured and the SDK is present.
   init() {
@@ -122,7 +127,10 @@ const Cloud = {
     // can't silently re-authenticate; we also null our cached user regardless.
     try { await this.client.auth.signOut({ scope: "local" }); }
     catch (e) { console.warn("[Cloud] signOut:", e); }
-    finally { this._user = null; this._pendingRecovery = false; this.playersReady = false; this.pullReady = false; }
+    finally {
+      this._user = null; this._pendingRecovery = false;
+      this.playersReady = false; this.pullReady = false; this.pullMissing = false;
+    }
   },
 
   // ---- RPC helpers (Phase 1 players table) --------------------------------
@@ -210,6 +218,7 @@ const Cloud = {
   async pull() {
     const r = await this.rpc("app_pull");
     this.pullReady = true;
+    this.pullMissing = false;
     return r;
   },
   async prestige() {

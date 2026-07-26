@@ -138,16 +138,21 @@ ctx.Extractors = ctx.Extractors || {
   const pr = await Economy.prestige();
   assert(pr.ok && (pr.tier === 1 || ctx.Game.state.prestige.tier === 1));
 
-  // 5) Without pullReady, local soft income still runs (Phase 2 fallback)
+  // 5) Without pullReady, local soft income is gated:
+  //    - pull not missing yet → no local mint (avoid ghost stock/credits)
+  //    - pullMissing → Phase 2 fallback allowed
   ctx.Cloud.pullReady = false;
+  ctx.Cloud.pullMissing = false;
   ctx.Game.state = fresh();
   ctx.Game.state.ships.push(Object.assign(Fleet.makeShip("drift"), { status: "trading" }));
   ctx.Game.state.routes.push({
     id: "rt3", comm: "iron_ore", from: "korrin", to: "navos",
     shipUids: [ctx.Game.state.ships[0].uid], nextAt: T - 3600_000,
   });
+  assert.strictEqual(Routes.resolve(T).total, 0, "auth without pullReady skips local mint");
+  ctx.Cloud.pullMissing = true;
   const local = Routes.resolve(T);
-  assert(local.runs || local.total >= 0, "fallback local resolve allowed");
+  assert(local.runs || local.total >= 0, "pullMissing Phase 2 fallback allowed");
 
   // 6) Route start/stop go through the server RPC when authoritative (ship
   //    'trading' status is server-owned — commit can't set it).

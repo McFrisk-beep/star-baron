@@ -316,8 +316,22 @@ begin
         else ev_mult := 1.2 + market.u01(seed, 2) * 0.35;                   -- windfall
         end if;
         delta := round(per * (ev_mult - 1.0));
+        -- Include msg so live toasts / WYWA don't render "undefined" (mirrors ROUTE_EVENTS).
         events := events || jsonb_build_array(jsonb_build_object(
-          'id', 'route_ev', 'delta', delta, 'comm', route->>'comm',
+          'id', case
+            when roll < 3 then 'bribe' when roll < 6 then 'pirates' when roll < 9 then 'reroute'
+            when roll < 11 then 'badtrade' when roll < 13 then 'damage' when roll < 15 then 'customs'
+            when roll < 18 then 'fastdeal' else 'windfall' end,
+          'msg', case
+            when roll < 3 then 'paid a bribe to slip cargo past a checkpoint'
+            when roll < 6 then 'pirates boarded and skimmed part of the haul'
+            when roll < 9 then 're-routed around a blockade and lost time'
+            when roll < 11 then 'misjudged demand and traded at a loss'
+            when roll < 13 then 'took hull damage shaking off a tail'
+            when roll < 15 then 'customs docked a cut in duties'
+            when roll < 18 then 'beat rivals to a hot buyer for a bonus'
+            else 'hit a supply crunch and sold dear' end,
+          'delta', delta, 'comm', route->>'comm',
           'from', route->>'from', 'to', route->>'to', 'good', delta >= 0
         ));
       end if;

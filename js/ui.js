@@ -1681,9 +1681,10 @@ const UI = {
     if (routeTotal > 0) html += `<p>Trade routes banked <b class="up">+${Util.credits(routeTotal)}c</b> across ${routed.runs.reduce((n, r) => n + r.cycles, 0)} deliveries.</p>`;
     if (routeEvents.length) html += `<ul class="wywa-runs">` + routeEvents.map(ev => {
       const cn = (COMMODITIES.find(c => c.id === ev.comm) || {}).name || ev.comm;
+      const msg = ev.msg || (ev.good ? "hit a favorable market swing" : "hit trouble on the lane");
       const amt = ev.delta ? ` <span class="${ev.delta > 0 ? "up" : "down"}">(${ev.delta > 0 ? "+" : "−"}${Util.credits(Math.abs(ev.delta))}c)</span>` : "";
       const wear = ev.ship ? ` · 🔧 ${ev.ship.name} −${ev.ship.pct}%` : "";
-      return `<li>${cn} run: ${ev.msg}${amt}${wear}</li>`;
+      return `<li>${cn} run: ${msg}${amt}${wear}</li>`;
     }).join("") + `</ul>`;
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
     if (made.length) {
@@ -1841,10 +1842,11 @@ const UI = {
     Bus.on("routeEvent", ev => {
       if (window.Game._booting) return;   // offline route events land in the "while you were away" recap
       const cn = (COMMODITIES.find(c => c.id === ev.comm) || {}).name || ev.comm;
+      const msg = ev.msg || (ev.good ? "hit a favorable market swing" : "hit trouble on the lane");
       const amt = ev.delta ? ` (${ev.delta > 0 ? "+" : "−"}${Util.credits(Math.abs(ev.delta))}c)` : "";
       const wear = ev.ship ? ` · 🔧 ${ev.ship.name} −${ev.ship.pct}%` : "";
-      this.toast(`${cn} run: ${ev.msg}${amt}${wear}`, ev.good ? "good" : "warn", 5500);
-      if (window.Feed) Feed.emit(`word is a baron's ${cn.toLowerCase()} convoy ${ev.msg}`, { kind: "reaction" });
+      this.toast(`${cn} run: ${msg}${amt}${wear}`, ev.good ? "good" : "warn", 5500);
+      if (window.Feed) Feed.emit(`word is a baron's ${cn.toLowerCase()} convoy ${msg}`, { kind: "reaction" });
       if (this.page === "fleet") this.renderFleet();
       this.updateHeader(); this.audioSafe(ev.good ? "good" : "news");
     });

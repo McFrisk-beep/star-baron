@@ -19,13 +19,25 @@ const Routes = {
   // Round-trip time: scales with distance and inversely with the SLOWEST ship's
   // speed (a group is only as fast as its slowest hull). Computed live so speed
   // upgrades and tuning apply immediately.
+  //
+  // Authoritative (logged-in) timing matches the server: catalog hull speed only
+  // (no accessories / damage), and NOT compressed by dev fast-time — otherwise
+  // the modal ETA lies and cycles bank every game tick with event-toast spam.
   cycleMsFor(route) {
     const a = SYSTEMS.find(s => s.id === route.from), b = SYSTEMS.find(s => s.id === route.to);
     const dist = Math.max(1, Math.abs((a?.distance ?? 0) - (b?.distance ?? 0)));
     const ships = this.shipsOf(route);
-    const speed = (ships.length ? Math.min(...ships.map(sh => Fleet.stats(sh).speed || 1)) : 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
-    const seconds = (2 * dist * ROUTECFG.legSecondsPerDist) / speed;
-    return Math.max(1000, seconds * 1000 / (window.Game.timeScale || 1));
+    const speedOf = sh => {
+      if (this.authoritative()) return Math.max(0.1, (Fleet.shipDef(sh.type).speed || 1));
+      return Fleet.stats(sh).speed || 1;
+    };
+    const speed = (ships.length ? Math.min(...ships.map(speedOf)) : 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
+    const seconds = (2 * dist * ROUTECFG.legSecondsPerDist) / Math.max(0.1, speed);
+    // Guests still honor fast-time for quick local tests; floor keeps one cycle
+    // from resolving more than once per market tick.
+    const scaled = this.authoritative() ? seconds * 1000
+      : seconds * 1000 / (window.Game.timeScale || 1);
+    return Math.max(CONFIG.marketTickMs, scaled);
   },
   cargoOf(route) { return this.shipsOf(route).reduce((n, sh) => n + Fleet.stats(sh).cargo, 0); },
 
@@ -100,9 +112,15 @@ const Routes = {
     return out;
   },
 
-  // Phase 3 soft income is server-side when app_pull is live.
+  // Phase 3 soft income is server-side when app_pull is live. While logged-in
+  // but pull hasn't succeeded yet, do NOT mint local credits/events — Phase 3
+  // app_commit rejects credit increases, and local banking desyncs the ledger.
+  // Only fall back to local soft income when app_pull is confirmed missing.
   softIncomeLocal() {
-    return !(window.Cloud && Cloud.authoritative && Cloud.authoritative() && Cloud.pullReady);
+    if (!(window.Cloud && Cloud.authoritative && Cloud.authoritative())) return true; // guest
+    if (Cloud.pullReady) return false;           // Phase 3 live
+    if (Cloud.pullMissing) return true;          // Phase 3 SQL not installed
+    return false;                               // retry pull; don't mint ghosts
   },
 
   // Bank completed round trips up to `now`. A route whose endpoints are no longer
@@ -114,15 +132,25 @@ const Routes = {
       route.shipUids = route.shipUids.filter(uid => { const sh = Fleet.ship(uid); return sh && sh.status === "trading"; });
       if (!route.shipUids.length) { route._dead = true; continue; }
       const cycleMs = this.cycleMsFor(route);
-      if (!u.includes(route.from) || !u.includes(route.to)) { if (now >= route.nextAt) route.nextAt = now + cycleMs; continue; }
+      // Heal missing/NaN nextAt — otherwise every market tick looks "due" and
+      // event toasts fire every couple of seconds while ETA still looks fine.
+      if (!(route.nextAt > 0)) route.nextAt = now + cycleMs;
+      if (!u.includes(route.from) || !u.includes(route.to)) {
+        if (now >= route.nextAt) route.nextAt = now + cycleMs;
+        continue;
+      }
       if (now < route.nextAt) continue;
-      const cycles = Math.min(Math.floor((now - route.nextAt) / cycleMs) + 1, ROUTECFG.maxCyclesPerResolve);
+      const dueAt = route.nextAt;
+      const cycles = Math.min(Math.floor((now - dueAt) / cycleMs) + 1, ROUTECFG.maxCyclesPerResolve);
       const per = this.estimate(route).profit;
       const ev = this.rollEvent(route, per);
       const gain = per * cycles + (ev ? ev.delta : 0);
       if (gain !== 0) { total += gain; runs.push({ comm: route.comm, gain, cycles }); }
       if (ev) events.push(ev);
-      route.nextAt = now + cycleMs;
+      // Keep the schedule aligned to the original due time (not "now + 1"), so a
+      // slightly-late tick can't stretch/compress the next ETA oddly.
+      route.nextAt = dueAt + cycles * cycleMs;
+      if (route.nextAt <= now) route.nextAt = now + cycleMs;
     }
     this.s().routes = this.list().filter(r => !r._dead);
     if (total) { total = Economy.afterTax(total); this.s().credits = Math.max(0, this.s().credits + total); Economy.refreshNetWorth(); }   // Baron Tier earnings tax (losses pass through untaxed; never drive credits below 0)
