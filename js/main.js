@@ -35,7 +35,7 @@ const Game = {
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
-      story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0 },
+      story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {} },
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
       lastSeenAt: Date.now(),
       market: null,
@@ -65,6 +65,9 @@ const Game = {
       delete s.avgCost; s.avgCost = loaded.avgCost || {};
     }
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    // story flags (cross-dispatch consequences) — old saves lack the key
+    s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {} };
+    s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {};
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
     // a "surveying" ship from a save whose expedition was pruned → free it

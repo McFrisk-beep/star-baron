@@ -188,6 +188,8 @@ const UI = {
       actions = `<div class="disp-choices">` + sv.buttons.map(b =>
         `<button class="btn btn-mini" data-act="${arc}:choice:${b.i}" ${b.ok ? "" : "disabled"}>${b.label}${b.cost ? ` (−${Util.credits(b.cost)})` : ""}</button>`
       ).join("") + `</div>`;
+    } else if (sv && sv.type === "info") {
+      actions = `<div class="disp-choices"><button class="btn btn-mini btn-go" data-act="${arc}:continue">${sv.continueLabel || "Continue"}</button></div>`;
     } else {
       actions = `<div class="muted-note">Conversation closed.</div>`;
     }
