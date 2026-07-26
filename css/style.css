@@ -271,12 +271,13 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ach span { font-size: 10.5px; color: var(--ink-dim); }
 
 /* ===== broadcast ===== */
-/* Frame hugs the image (any aspect / GIF) so the whole picture is visible.
-   Title + caption sit below — never over the pixels (desktop + mobile). */
+/* Desktop: 2fr | 1fr (4:2) — broadcast fills width (good for 3:2 frames);
+   newswire log sits on the right. Mobile keeps a simple stack (see ≤980px). */
+.bc-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: stretch; }
+.bc-main { min-width: 0; display: flex; flex-direction: column; }
 .screen { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--line);
-  width: 100%; min-height: 100px; background: #05070d; flex: none; line-height: 0; text-align: center; }
-.screen img { display: block; width: auto; height: auto; max-width: 100%;
-  max-height: min(360px, 42vh); margin: 0 auto; opacity: .92; }
+  width: 100%; min-height: 100px; background: #05070d; flex: none; line-height: 0; }
+.screen img { display: block; width: 100%; height: auto; opacity: .92; }
 .screen-meta { margin-top: 6px; padding: 0 2px 2px; }
 .screen-title { font-weight: 800; letter-spacing: .8px; font-size: 13px; line-height: 1.25; }
 .screen-caption { font-size: 11px; color: var(--ink-dim); margin-top: 2px; line-height: 1.35;
@@ -294,7 +295,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ticker-track span { display: inline-block; padding-left: 100%; font-family: var(--mono); font-size: 10.5px;
   color: var(--ink-dim); animation: ticker 28s linear infinite; }
 @keyframes ticker { to { transform: translateX(-100%); } }
-.newswire { margin-top: 6px; }
+.newswire { margin-top: 0; min-width: 0; min-height: 0; }
 .newswire summary { cursor: pointer; font-size: 10px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 1px; }
 #newswire-list { list-style: none; margin: 6px 0 0; padding: 0; max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .wire { font-size: 10.5px; border-left: 2px solid var(--line); padding-left: 7px; }
@@ -314,8 +315,9 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .panel-feed h2 small { color: var(--ink-faint); font-weight: 500; }
 .feed { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0;
   display: flex; flex-direction: column; gap: 7px; scroll-behavior: smooth; }
-.newswire[open] { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.newswire[open] #newswire-list { flex: 1; min-height: 0; max-height: none; }
+/* Desktop: log fills the right column beside the frame. */
+#panel-broadcast .newswire[open] { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+#panel-broadcast .newswire[open] #newswire-list { flex: 1; min-height: 0; max-height: none; }
 .msg { display: flex; gap: 8px; animation: msgin .25s ease; }
 @keyframes msgin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
 .pfp { width: 26px; height: 26px; border-radius: 6px; flex: none; }
@@ -590,13 +592,15 @@ body.reduced .tt-dot { animation: none; }
   #panel-dispatches { flex: none; min-height: 420px; }
   .disp-layout { min-height: 380px; }
   #panel-broadcast { flex: none; }
+  /* Mobile: stack frame + log; keep the image height-capped (no side dead space fight). */
+  .bc-layout { display: flex; flex-direction: column; flex: none; gap: 6px; }
+  .screen img { width: auto; max-width: 100%; height: auto; max-height: min(220px, 34vh); margin: 0 auto; }
   .panel-feed { flex: none; min-height: 0; }
   .feed { max-height: 50vh; }
-  .screen img { max-height: min(220px, 34vh); }
   .toast-stack { left: 12px; right: 12px; top: auto; bottom: 84px; max-width: none; }
-  /* on mobile the newswire log gets a fixed cap instead of filling the column */
-  .newswire[open] { flex: none; }
-  .newswire[open] #newswire-list { flex: none; max-height: 220px; }
+  #panel-broadcast .newswire { margin-top: 6px; }
+  #panel-broadcast .newswire[open] { flex: none; height: auto; }
+  #panel-broadcast .newswire[open] #newswire-list { flex: none; max-height: 220px; }
   .stats { gap: 10px 12px; }
   .stat-stealth { display: none; }
 }
