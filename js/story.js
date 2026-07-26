@@ -710,7 +710,9 @@ const STORYLINES = [
   // Archivist lore dump — mostly dialogue, light objective
   {
     id: "archivist_wren", kind: "arc", from: "Archivist Wren", portrait: 5,
-    trigger: s => (s.unlockedSystems || []).length >= 2 || (s.stats.trades || 0) >= 10,
+    // 3 systems start unlocked — wait for a 4th (or real trade mileage) so Wren
+    // doesn't eat an early MAX_ACTIVE slot and starve the onboarding threads.
+    trigger: s => (s.unlockedSystems || []).length >= 4 || (s.stats.trades || 0) >= 10,
     outro: "Wren: “History is just prices with better fonts.”",
     steps: [
       { key: "w0", text: "Archive ping. Wren. I hoard context the way you hoard margin. Want the short history of why every baron eventually hates the Senate — or shall I let you discover it via lien?",
