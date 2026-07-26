@@ -46,6 +46,7 @@ const Industries = {
     }
     if (window.Senate) r += Senate.industryTaxAdd(fac);   // senate levies / tax holidays
     if (window.Story) r -= Story.taxRelief();             // storyline reward: temporary tax break
+    if (window.Fleet) r -= Fleet.mainBonus("taxRelief");  // flagship tax-relief effect
     return Util.clamp(r, 0.02, 0.75);
   },
 
@@ -126,7 +127,8 @@ const Industries = {
   _yield(sys, planet, ex, commodity, mult = 1) {
     const bon = Extractors.bonuses(ex);
     const suit = this.suitabilityFor(planet.type, commodity);
-    const gross = Math.round(INDUSTRYCFG.baseYield * suit * Extractors.yieldMult(ex) * bon.rate * mult);
+    const flagInd = window.Fleet ? (1 + Fleet.mainBonus("industry")) : 1;
+    const gross = Math.round(INDUSTRYCFG.baseYield * suit * Extractors.yieldMult(ex) * bon.rate * mult * flagInd);
     const rate = this.taxRate(sys, planet);
     return { gross, rate, suit, net: gross > 0 ? Math.max(1, gross - Math.ceil(gross * rate)) : 0, cycleMs: INDUSTRYCFG.cycleMs * bon.cycle };
   },

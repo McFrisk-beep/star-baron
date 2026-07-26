@@ -10,6 +10,28 @@ const Fleet = {
   shipDef(typeId) { return ALL_SHIPS.find(x => x.id === typeId); },
   mainDef() { return SHIP_CATALOG.main.find(x => x.id === this.s().mainShip.type) || SHIP_CATALOG.main[0]; },
 
+  // Normalize flagship bonuses: prefer effects[]; fall back to legacy {stat,pct}.
+  mainEffects() {
+    const d = this.mainDef(); if (!d) return [];
+    if (Array.isArray(d.effects) && d.effects.length) return d.effects;
+    if (d.passive) return [{ type: d.passive.stat, pct: d.passive.pct }];
+    return [];
+  },
+  mainBonus(type) {
+    let n = 0;
+    for (const e of this.mainEffects()) {
+      if (e.type === type) n += e.pct || 0;
+      else if (e.type === "all" && ["firepower", "speed", "hull", "armor", "shields", "cargo"].includes(type)) n += e.pct || 0;
+    }
+    return n;
+  },
+  mainEffectsLabel() {
+    return this.mainEffects().map(e => {
+      const meta = (window.FLAGSHIP_EFFECTS && FLAGSHIP_EFFECTS[e.type]) || { label: e.type };
+      return `+${Math.round((e.pct || 0) * 100)}% ${meta.label}`;
+    }).join(" · ") || "—";
+  },
+
   // Server stubs: catalog name ("Battleship"), initcap(type), or "Battleship Merc 0".
   isStubName(sh) {
     if (!sh || !sh.name) return true;
@@ -46,11 +68,13 @@ const Fleet = {
   idle() { return this.s().ships.filter(sh => sh.status === "idle"); },
 
   // Effective stats = base × (1 + Σ pct buffs) + Σ flat buffs, incl. accessories
-  // and the main ship's passive.
+  // and the main ship's combat-relevant effects. scan/endure feed survey odds.
   stats(ship) {
-    const def = this.shipDef(ship.type);
+    const def = this.shipDef(ship.type) || {};
     const out = { cargo: def.cargo || 0, firepower: def.firepower || 0, hull: def.hull || 0,
-      armor: def.armor || 0, shields: def.shields || 0, speed: def.speed || 1, slots: def.slots || 2 };
+      armor: def.armor || 0, shields: def.shields || 0, speed: def.speed || 1, slots: def.slots || 2,
+      scan: def.scan || 0, endure: def.endure || 0 };
+    if (def.cls === "survey") out.scan += 1; // survey hulls always read a little clearer
     const flat = {}, pct = {};
     for (const uid of ship.accessories || []) {
       const it = this.s().items[uid]; if (!it) continue;
@@ -60,10 +84,11 @@ const Fleet = {
         else flat[st.stat] = (flat[st.stat] || 0) + st.amount;
       }
     }
-    const mp = this.mainDef().passive;
-    if (mp) {
-      const apply = mp.stat === "all" ? ["firepower", "speed", "hull", "armor", "shields"] : [mp.stat];
-      for (const k of apply) pct[k] = (pct[k] || 0) + mp.pct;
+    for (const e of this.mainEffects()) {
+      const apply = e.type === "all" ? ["firepower", "speed", "hull", "armor", "shields", "cargo"]
+        : ["firepower", "speed", "hull", "armor", "shields", "cargo"].includes(e.type) ? [e.type] : [];
+      for (const k of apply) pct[k] = (pct[k] || 0) + (e.pct || 0);
+      if (e.type === "survey") flat.scan = (flat.scan || 0) + (e.pct || 0) * 10;
     }
     for (const k of Object.keys(out)) {
       if (k === "slots") continue;
@@ -75,9 +100,12 @@ const Fleet = {
       out.hull *= 1 - dmg;
       out.firepower *= 1 - dmg * DMGCFG.statPenalty;
       out.speed *= 1 - dmg * DMGCFG.statPenalty;
+      out.scan *= 1 - dmg * DMGCFG.statPenalty * 0.5;
     }
     for (const k of ["firepower", "hull", "armor", "shields", "cargo"]) out[k] = Math.round(out[k]);
     out.speed = +out.speed.toFixed(2);
+    out.scan = +out.scan.toFixed(1);
+    out.endure = +out.endure.toFixed(1);
     return out;
   },
 

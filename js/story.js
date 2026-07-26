@@ -23,10 +23,11 @@ const Story = {
 
   s() {
     const st = window.Game && window.Game.state; if (!st) return null;
-    if (!st.story) st.story = { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {} };
+    if (!st.story) st.story = { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
     st.story.flags ||= {};
     st.story.prog ||= {};
     st.story.inbox ||= [];
+    st.story.ephemeral ||= {};
     return st.story;
   },
 
@@ -112,16 +113,53 @@ const Story = {
   _goalDone(step, st, base) { const g = step.goal; if (!g) return true; return typeof g.done === "function" ? g.done(st, base) : this.evalCond(g.cond, st, base); },
   _reqOk(ch, st)        { return typeof ch.require === "function" ? ch.require(st) : this.evalCond(ch.cond, st, null); },
 
-  // Built-in + admin-authored storylines. Custom rows are validated here (this
-  // is a cloud trust boundary): only well-formed entries survive, and a custom
-  // id can never shadow a shipped one.
+  // Built-in + admin-authored + ephemeral survey debriefs. Custom rows are
+  // validated here (cloud trust boundary): only well-formed entries survive,
+  // and a custom id can never shadow a shipped one.
   all() {
     const ids = new Set(STORYLINES.map(s => s.id));
     const custom = (window.STORY_CUSTOM || []).filter(sl =>
       sl && sl.id && !ids.has(sl.id) && Array.isArray(sl.steps) && sl.steps.length);
-    return STORYLINES.concat(custom);
+    const eph = Object.values(this.s().ephemeral || {}).filter(sl => sl && sl.id && Array.isArray(sl.steps));
+    return STORYLINES.concat(custom, eph);
   },
-  storyline(id) { return this.all().find(x => x.id === id) || null; },
+  storyline(id) {
+    const raw = this.all().find(x => x.id === id) || null;
+    return raw ? this._withOverrides(raw) : null;
+  },
+
+  // Admin text overlays (STORY_OVERRIDES) — keep built-in functions, swap copy.
+  _withOverrides(sl) {
+    const o = (window.STORY_OVERRIDES || {})[sl.id];
+    if (!o) return sl;
+    const out = Object.assign({}, sl);
+    if (o.from != null && o.from !== "") out.from = o.from;
+    if (o.outro != null) out.outro = o.outro;
+    out.steps = (sl.steps || []).map((step, i) => {
+      const key = step.key || String(i);
+      const os = (o.steps && (o.steps[key] || o.steps[String(i)])) || null;
+      if (!os) return step;
+      const merged = Object.assign({}, step);
+      if (os.text != null) merged.text = os.text;
+      if (os.replies) merged.replies = os.replies;
+      if (os.goal && step.goal) merged.goal = Object.assign({}, step.goal, { desc: os.goal.desc != null ? os.goal.desc : step.goal.desc });
+      if (os.accept && step.accept) merged.accept = Object.assign({}, step.accept, os.accept);
+      if (os.decline && step.decline) merged.decline = Object.assign({}, step.decline, os.decline);
+      if (os.choices && step.choices) {
+        merged.choices = step.choices.map((c, ci) => {
+          const oc = os.choices[ci]; if (!oc) return c;
+          return Object.assign({}, c, {
+            label: oc.label != null ? oc.label : c.label,
+            reply: oc.reply != null ? oc.reply : c.reply,
+            ack: oc.ack != null ? oc.ack : c.ack,
+          });
+        });
+      }
+      if (os.continue && step.continue) merged.continue = Object.assign({}, step.continue, os.continue);
+      return merged;
+    });
+    return out;
+  },
 
   // ---- main pump (called from the game loop + key events) -----------------
   check(now = Date.now()) {
@@ -139,10 +177,16 @@ const Story = {
       if (step.goal && this._goalDone(step, st, p.base)) { this._complete(id, step.reward); changed = true; }
     }
 
-    // 2) start one eligible new storyline (throttled so they never dump at once)
-    const active = Object.values(prog).filter(p => p.status === "active").length;
+    // 2) start one eligible new storyline (throttled so they never dump at once).
+    // Survey debriefs are force-opened and don't consume the MAX_ACTIVE budget.
+    const active = Object.keys(prog).filter(id => {
+      if (prog[id].status !== "active") return false;
+      const sl = this.storyline(id);
+      return !(sl && sl._survey);
+    }).length;
     if (active < this.MAX_ACTIVE && now - (story.lastArrivalAt || 0) >= this.ARRIVAL_GAP_MS) {
       for (const sl of this.all()) {
+        if (sl._survey) continue;                          // ephemeral surveys are opened by Expeditions
         if (prog[sl.id]) continue;                         // already started or done
         if (!this._trigger(sl, st)) continue;
         prog[sl.id] = { step: 0, base: this.snap(st), status: "active" };
@@ -177,6 +221,28 @@ const Story = {
     if (ch.cost && (st.credits || 0) < ch.cost) return { ok: false, msg: "Not enough credits." };
     if (ch.cost) st.credits -= ch.cost;
     this._postOut(sl, ch.reply || ch.label);
+
+    // Risky survey (etc.) choices: roll chance, then success/fail acks + rewards.
+    if (ch.chance != null) {
+      const okRoll = Math.random() < +ch.chance;
+      if (okRoll) {
+        if (ch.ack) this._postIn(sl, { text: ch.ack });
+        if (ch.set) this.setFlags(ch.set);
+        const sum = this.grant(ch.reward, st);
+        if (sum) this._postReward(sl, sum);
+        this._advance(sl, p, ch.success || ch);
+      } else {
+        if (ch.failAck) this._postIn(sl, { text: ch.failAck });
+        else if (ch.ack) this._postIn(sl, { text: ch.ack });
+        if (ch.failSet) this.setFlags(ch.failSet);
+        const sum = this.grant(ch.failReward || ch.reward, st);
+        if (sum) this._postReward(sl, sum);
+        this._advance(sl, p, ch.fail || { end: true });
+      }
+      window.Game.requestSave();
+      return { ok: true };
+    }
+
     if (ch.ack) this._postIn(sl, { text: ch.ack });
     if (ch.set) this.setFlags(ch.set);
     const sum = this.grant(ch.reward, st);
@@ -192,7 +258,12 @@ const Story = {
     let next = p.step + 1;
     if (choice) { if (choice.end) next = sl.steps.length; else if (choice.goto != null) next = sl.steps.findIndex(x => x.key === choice.goto); }
     if (next >= 0 && next < sl.steps.length) { p.step = next; p.base = this.snap(st); p.accepted = false; p.replied = false; this._postIn(sl, sl.steps[next]); }
-    else { p.status = "done"; if (sl.outro) this._postReward(sl, sl.outro); }
+    else {
+      p.status = "done";
+      if (sl.outro) this._postReward(sl, sl.outro);
+      // Drop ephemeral survey threads once finished (save bloat).
+      if (sl._survey && this.s().ephemeral) delete this.s().ephemeral[sl.id];
+    }
   },
 
   // ---- rewards ------------------------------------------------------------
@@ -219,7 +290,7 @@ const Story = {
       bits.push(`industry tax −${Math.round(reward.taxBreak.pct * 100)}%` + (reward.taxBreak.ms ? ` for ${Util.duration(reward.taxBreak.ms)}` : ""));
     }
     // Faction standing nudge (can be negative — smuggle now, League later).
-    if (reward.rep && window.Rep) {
+    if (reward.rep && window.Rep && typeof reward.rep === "object" && !Array.isArray(reward.rep)) {
       for (const f of Object.keys(reward.rep)) {
         const d = +reward.rep[f] || 0; if (!d) continue;
         Rep.change(f, d);
@@ -228,6 +299,12 @@ const Story = {
       }
     }
     if (reward.set) this.setFlags(reward.set);
+    // Survey debrief payout (Dispatches mini-story) — summary is the whole line.
+    if (reward._survey && window.SurveyStory) {
+      const summary = SurveyStory.applyOutcome(reward._survey);
+      if (window.Economy && Economy.refreshNetWorth) Economy.refreshNetWorth();
+      return summary || (bits.length ? "Reward: " + bits.join(" · ") : "");
+    }
     if (window.Economy && Economy.refreshNetWorth) Economy.refreshNetWorth();
     return bits.length ? "Reward: " + bits.join(" · ") : "";
   },
@@ -1075,6 +1152,136 @@ const STORYLINES = [
         replies: [{ label: "How did you get this channel?", reply: "How are you on my private band?", ack: "Nothing's private after the first profit." }] },
     ],
   },
+
+  // Survey pitch — points players at Star Map surveys + survey hulls
+  {
+    id: "survey_pitch", kind: "job", from: "Cartographer Nil", portrait: 1,
+    trigger: s => (s.stats.trades || 0) >= 7,
+    outro: "Nil: “Blank spots on the map are just unpaid invoices.”",
+    steps: [
+      { text: "Cartographer Nil. The Star Map is full of uncharted outposts the hubs pretend aren't there. Survey them. When your ship returns, you'll get a debrief in Dispatches — choices, odds, scars. Interested in learning the trade?",
+        continue: { label: "Tell me more" },
+        replies: [{ label: "Why not auto-loot?", reply: "Why a debrief instead of auto-pay?", ack: "Because barons who don't choose become cargo." }] },
+      { text: "Buy a Survey hull in the Shipyard if you can — Probe Skiff, Survey Cutter, Deep Mapper. Bolt on a Deep Scanner from Gear. Weak scan means pushing a wreck can fail. The % is on the button. Prove you've looked: unlock another system or finish a contract while you shop.",
+        goal: { desc: "Unlock a system OR complete 1 contract",
+          done: (s, b) => ((s.unlockedSystems || []).length - (b.systems || 0) >= 1) || ((s.stats.contractsDone || 0) - b.contracts >= 1) },
+        reward: { credits: 2500, item: true, set: { nil_student: true } },
+        replies: ["I'll chart something."] },
+    ],
+  },
+
+  {
+    id: "dock_rats", kind: "job", from: "Dockrat Pew", portrait: 2,
+    trigger: s => (s.stats.trades || 0) >= 3,
+    outro: "Pew: “Rats remember who shared the crumbs.”",
+    steps: [
+      { text: "Heard you're stacking paper. Dockrats keep the real weather — which inspector naps, which crane leaks. Buy us a round (800c) or ignore us and enjoy surprises.",
+        choices: [
+          { label: "Buy the round (800c)", reply: "Drinks on me.", cost: 800, ack: "Bless. Helix's third shift naps after cycle twenty. You're welcome.", set: { dockrat_friend: true }, end: true },
+          { label: "Ignore the rats", reply: "I don't tip vermin.", ack: "Vermin bite cables. Sleep light.", set: { dockrat_spurned: true }, end: true },
+        ] },
+    ],
+  },
+  {
+    id: "dock_rats_bite", kind: "job", from: "Dockrat Pew", portrait: 2,
+    trigger: s => Story.flag("dockrat_spurned") && (s.stats.trades || 0) >= 14,
+    outro: "Pew: “Told you. Cables.”",
+    steps: [
+      { text: "Remember ignoring us? A 'random' inspection wave is eyeing your next contract. Pay 5,000 for us to misfile the tip, or walk into it.",
+        choices: [
+          { label: "Pay 5,000c", reply: "Fine. Misfile it.", cost: 5000, set: { dockrat_paid: true }, end: true },
+          { label: "Walk into it", reply: "I'll take the heat.", set: { dockrat_feud: true }, reward: { rep: { free_trade: -3 } }, end: true },
+        ] },
+    ],
+  },
+
+  {
+    id: "combine_widow", kind: "arc", from: "Shaft-Boss Rhee", portrait: 5,
+    trigger: s => Story.flag("combine_helped") && (window.Economy ? Economy.netWorth() : s.credits) >= 55000,
+    outro: "Rhee: “Rock remembers. So do widows.”",
+    steps: [
+      { text: "Shaft-Boss Rhee. You moved Combine ore when the Collective screamed. There's a sealed gallery under Korrin the board won't chart. Want a look — or a quiet dividend?",
+        choices: [
+          { label: "Chart the gallery", reply: "Send coordinates.", ack: "One contract-shaped 'survey' of the political kind. Finish a job; I'll wire the rest.", goto: "r1" },
+          { label: "Take the dividend", reply: "Just pay me.", reward: { credits: 4000 }, set: { rhee_dividend: true }, end: true },
+        ] },
+      { key: "r1", text: "Job's live. Don't die photogenically.",
+        goal: { desc: "Complete 1 contract", done: (s, b) => (s.stats.contractsDone || 0) - b.contracts >= 1 },
+        reward: { credits: 7000, rep: { mining_combine: 6 }, set: { rhee_gallery: true } } },
+    ],
+  },
+
+  {
+    id: "league_sermon", kind: "job", from: "Inspector Helix", portrait: 8,
+    trigger: s => Story.flag("league_voucher") || Story.flag("helix_cleared"),
+    outro: "Helix: “Law is a product. Stay subscribed.”",
+    steps: [
+      { text: "Sermon, unpaid. The League isn't 'good' — it's predictable. Predictable lanes compound. If you've been flirting with Coil, wash your manifests. If you've been clean, stay boring. Reply with a creed.",
+        choices: [
+          { label: "I prefer predictable", reply: "Predictable pays.", ack: "Then keep your scanners dull and your paperwork loud.", set: { helix_creed_law: true }, end: true },
+          { label: "I prefer profitable", reply: "Predictable is a tax on imagination.", ack: "Imagination is what Customs budgets for.", set: { helix_creed_edge: true }, end: true },
+        ] },
+    ],
+  },
+
+  {
+    id: "void_lullaby", kind: "job", from: "The Ledger", portrait: 0,
+    trigger: s => Story.done("quiet_ladder") && (s.stats.trades || 0) >= 20,
+    outro: "The Ledger: “Lullabies are just compound interest in 3/4 time.”",
+    steps: [
+      { text: "Interlude. While you sleep, rivals compound, wars roll, surveys wait in your inbox. The vibe is not adventure — it is attrition with better lighting. Acknowledge, and take a breath of credits.",
+        choices: [
+          { label: "Acknowledge", reply: "Attrition with better lighting. Noted.", reward: { credits: 2000 }, set: { ledger_lullaby: true }, end: true },
+        ],
+        replies: [{ label: "Is this motivational?", reply: "Motivational?", ack: "No. Accounting." }] },
+    ],
+  },
+
+  {
+    id: "smuggler_hymn", kind: "arc", from: "Mother Coil", portrait: 3,
+    trigger: s => Story.flag("coil_friend") && (s.stats.contractsDone || 0) >= 4,
+    outro: "Coil: “Family hymns have no chorus — only verses that collect.”",
+    steps: [
+      { text: "Family dinner. We need a verse sung quietly — one contract that never happened. Sing, or send flowers to Customs instead.",
+        choices: [
+          { label: "Sing the verse", reply: "I'll take the quiet job.", goto: "h1", set: { coil_hymn: true } },
+          { label: "Send flowers to Customs", reply: "I'd rather tip Helix.",
+            ack: "Betrayal with stationery. Bold.",
+            set: { coil_hymn_betray: true, heat_syndicate: true },
+            reward: { rep: { syndicate: -8, free_trade: 6 } }, end: true },
+        ] },
+      { key: "h1", text: "The verse is live. One contract.",
+        goal: { desc: "Complete 1 contract", done: (s, b) => (s.stats.contractsDone || 0) - b.contracts >= 1 },
+        reward: { credits: 10000, item: "rare", rep: { syndicate: 8 }, set: { coil_inner: true } } },
+    ],
+  },
+
+  {
+    id: "flagship_envy", kind: "job", from: "Baron Kravern", portrait: 9,
+    trigger: s => (window.Economy ? Economy.netWorth() : s.credits) >= 120000,
+    outro: "Kravern: “Nice chair. Try not to die in it.”",
+    steps: [
+      { text: "Saw your flagship offers rotating in the Bazaar. Cute that the yard hides the good chairs. Each rarity stacks another empire effect — industry, safer routes, survey lenses, tax knives. Steal a better seat, or keep cosplaying in that starter throne.",
+        choices: [
+          { label: "I'll upgrade", reply: "Already shopping.", set: { kravern_flag_taunt: true }, end: true },
+          { label: "This throne is fine", reply: "I like my chair.", ack: "Stockholm syndrome is free.", set: { kravern_flag_loyal: true }, end: true },
+        ] },
+    ],
+  },
+
+  {
+    id: "agri_feast", kind: "job", from: "Lysa Greencrown", portrait: 10,
+    trigger: s => Story.flag("collective_helped") && !Story.flag("spice_ignored"),
+    outro: "Lysa: “Feasts end. Ledgers don't.”",
+    steps: [
+      { text: "Festival season. The Collective wants a baron who can move luxury without jitter. Three trades — or one clean contract — and you'll dine in the footnotes.",
+        accept: { label: "I'll feast", reply: "Set the table.", ack: "Three trades or a contract. Bring appetite." },
+        decline: { label: "Fasting", reply: "Not this season.", outro: "Lysa: “More spice for the jittering, then.”" },
+        goal: { desc: "Complete 3 more trades OR 1 contract",
+          done: (s, b) => ((s.stats.trades || 0) - b.trades >= 3) || ((s.stats.contractsDone || 0) - b.contracts >= 1) },
+        reward: { credits: 5500, rep: { agri_collective: 5 }, set: { agri_feast: true } } },
+    ],
+  },
 ];
 
 // Admin-authored missions (edited in the admin console → Missions tab, persisted
@@ -1082,7 +1289,10 @@ const STORYLINES = [
 // value } conditions, not functions, so they serialize. Merged with STORYLINES
 // by Story.all(). Empty by default; a stored override fills it at boot.
 const STORY_CUSTOM = [];
+// Admin text overlays for built-in missions (id → { from, outro, steps:{ key|index → fields } }).
+const STORY_OVERRIDES = {};
 
 window.Story = Story;
 window.STORYLINES = STORYLINES;
 window.STORY_CUSTOM = STORY_CUSTOM;
+window.STORY_OVERRIDES = STORY_OVERRIDES;

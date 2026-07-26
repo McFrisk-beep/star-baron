@@ -101,36 +101,81 @@ const SYSTEMS = [
 ];
 
 /* ---- SHIPS ----------------------------------------------------------------
-   Ships are persistent assets with combat stats. Transports carry cargo and
-   are cheap; escorts bring firepower and are pricey but permanent (until
-   destroyed). The "main" ship is your private flagship: it sets sector-transfer
-   speed and grants a passive bonus to the whole fleet. speed = relative.       */
+   Ships are persistent assets with combat stats. Transports carry cargo;
+   escorts bring firepower; survey hulls are built for anomaly scans (scan /
+   endure). The "main" ship is your private flagship: sector-transfer speed plus
+   one-or-more unique effects (rarity = effect count). speed = relative.       */
 const SHIP_CATALOG = {
   transport: [
     { id: "mule",      name: "Mule Shuttle",     cls: "transport", cargo: 12,  firepower: 1,  hull: 40,  armor: 5,   shields: 0,   speed: 1.5, slots: 2, price: 0,     sprite: "shuttle" },
+    { id: "clipper",   name: "Lane Clipper",     cls: "transport", cargo: 22,  firepower: 2,  hull: 55,  armor: 8,   shields: 4,   speed: 1.7, slots: 2, price: 2800,  sprite: "shuttle" },
     { id: "drift",     name: "Drift Hauler",     cls: "transport", cargo: 40,  firepower: 2,  hull: 80,  armor: 10,  shields: 0,   speed: 1.2, slots: 2, price: 4200,  sprite: "hauler" },
+    { id: "tanker",    name: "Cryo Tanker",      cls: "transport", cargo: 70,  firepower: 2,  hull: 110, armor: 14,  shields: 8,   speed: 1.05,slots: 3, price: 9000,  sprite: "hauler" },
     { id: "bulk",      name: "Bulk Freighter",   cls: "transport", cargo: 120, firepower: 3,  hull: 160, armor: 20,  shields: 5,   speed: 1.0, slots: 3, price: 16000, sprite: "freighter" },
+    { id: "ore_mule",  name: "Ore Mule",         cls: "transport", cargo: 180, firepower: 4,  hull: 200, armor: 28,  shields: 6,   speed: 0.9, slots: 3, price: 28000, sprite: "freighter" },
     { id: "leviathan", name: "Leviathan Barge",  cls: "transport", cargo: 400, firepower: 5,  hull: 320, armor: 40,  shields: 10,  speed: 0.8, slots: 3, price: 60000, sprite: "leviathan" },
   ],
   escort: [
+    { id: "gunboat",   name: "Gunboat",    cls: "escort", cargo: 2,  firepower: 18,  hull: 90,  armor: 22,  shields: 12,  speed: 2.0, slots: 2, price: 7000,   sprite: "voidkin" },
     { id: "corvette",  name: "Corvette",   cls: "escort", cargo: 4,  firepower: 25,  hull: 120, armor: 30,  shields: 20,  speed: 1.8, slots: 2, price: 11000,  sprite: "voidkin" },
+    { id: "destroyer", name: "Destroyer",  cls: "escort", cargo: 6,  firepower: 40,  hull: 180, armor: 45,  shields: 30,  speed: 1.65,slots: 3, price: 20000,  sprite: "glorthi" },
     { id: "frigate",   name: "Frigate",    cls: "escort", cargo: 8,  firepower: 55,  hull: 240, armor: 60,  shields: 45,  speed: 1.5, slots: 3, price: 32000,  sprite: "glorthi" },
     { id: "cruiser",   name: "Cruiser",    cls: "escort", cargo: 14, firepower: 120, hull: 480, armor: 120, shields: 90,  speed: 1.2, slots: 4, price: 95000,  sprite: "krell" },
+    { id: "carrier",   name: "Escort Carrier", cls: "escort", cargo: 18, firepower: 90, hull: 520, armor: 100, shields: 110, speed: 1.1, slots: 4, price: 120000, sprite: "krell" },
     { id: "battleship",name: "Battleship", cls: "escort", cargo: 20, firepower: 260, hull: 900, armor: 240, shields: 180, speed: 1.0, slots: 4, price: 270000, sprite: "aurelian" },
   ],
-  // Main/flagship: travelSpeed drives sector docking time; passive buffs fleet.
+  // Survey hulls: weak in a fight, strong on anomaly scans (scan / endure).
+  survey: [
+    { id: "probe_skiff",  name: "Probe Skiff",    cls: "survey", cargo: 2, firepower: 1, hull: 45,  armor: 6,  shields: 8,  speed: 2.2, slots: 3, price: 6500,  sprite: "shuttle", scan: 2, endure: 1 },
+    { id: "survey_cutter",name: "Survey Cutter",  cls: "survey", cargo: 4, firepower: 2, hull: 70,  armor: 10, shields: 14, speed: 1.9, slots: 3, price: 14000, sprite: "hauler",  scan: 3, endure: 2 },
+    { id: "deep_mapper",  name: "Deep Mapper",    cls: "survey", cargo: 6, firepower: 3, hull: 110, armor: 16, shields: 22, speed: 1.6, slots: 4, price: 32000, sprite: "freighter", scan: 5, endure: 3 },
+    { id: "void_cartograph", name: "Void Cartograph", cls: "survey", cargo: 8, firepower: 4, hull: 160, armor: 22, shields: 30, speed: 1.4, slots: 4, price: 72000, sprite: "leviathan", scan: 7, endure: 4 },
+  ],
+  // Main/flagship: travelSpeed + effects[]. rarity tier ⇒ effect count (common=1 … legendary=5).
   main: [
-    { id: "pinnace",     name: "Baron's Pinnace",    cls: "main", travelSpeed: 1.0, passive: { stat: "firepower", pct: 0.05 }, hull: 200,  price: 0,      sprite: "shuttle" },
-    { id: "yacht",       name: "Void Yacht",         cls: "main", travelSpeed: 1.6, passive: { stat: "speed",     pct: 0.10 }, hull: 320,  price: 24000,  sprite: "hauler" },
-    { id: "flagship",    name: "Command Flagship",   cls: "main", travelSpeed: 2.2, passive: { stat: "firepower", pct: 0.15 }, hull: 640,  price: 140000, sprite: "freighter" },
-    { id: "dreadnought", name: "Baron Dreadnought",  cls: "main", travelSpeed: 3.0, passive: { stat: "all",       pct: 0.12 }, hull: 1300, price: 650000, sprite: "leviathan" },
+    // common — 1 effect
+    { id: "pinnace",      name: "Baron's Pinnace",     cls: "main", rarity: "common",    travelSpeed: 1.0, effects: [{ type: "firepower", pct: 0.05 }], hull: 200,  price: 0,      sprite: "shuttle" },
+    { id: "lane_runner",  name: "Lane Runner",         cls: "main", rarity: "common",    travelSpeed: 1.4, effects: [{ type: "speed", pct: 0.08 }],      hull: 220,  price: 12000,  sprite: "shuttle" },
+    { id: "ore_throne",   name: "Ore Throne",          cls: "main", rarity: "common",    travelSpeed: 1.1, effects: [{ type: "industry", pct: 0.06 }],   hull: 260,  price: 18000,  sprite: "hauler" },
+    { id: "quiet_keel",   name: "Quiet Keel",          cls: "main", rarity: "common",    travelSpeed: 1.2, effects: [{ type: "routeSafe", pct: 0.10 }],  hull: 240,  price: 16000,  sprite: "hauler" },
+    // uncommon — 2 effects
+    { id: "yacht",        name: "Void Yacht",          cls: "main", rarity: "uncommon",  travelSpeed: 1.6, effects: [{ type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.06 }], hull: 320, price: 24000, sprite: "hauler" },
+    { id: "harvest_seat", name: "Harvest Seat",        cls: "main", rarity: "uncommon",  travelSpeed: 1.3, effects: [{ type: "industry", pct: 0.08 }, { type: "taxRelief", pct: 0.04 }], hull: 340, price: 38000, sprite: "freighter" },
+    { id: "chart_crown",  name: "Chart Crown",         cls: "main", rarity: "uncommon",  travelSpeed: 1.5, effects: [{ type: "survey", pct: 0.12 }, { type: "speed", pct: 0.05 }], hull: 300, price: 36000, sprite: "shuttle" },
+    { id: "escort_pulpit",name: "Escort Pulpit",       cls: "main", rarity: "uncommon",  travelSpeed: 1.4, effects: [{ type: "firepower", pct: 0.10 }, { type: "routeSafe", pct: 0.08 }], hull: 380, price: 42000, sprite: "freighter" },
+    // rare — 3 effects
+    { id: "flagship",     name: "Command Flagship",    cls: "main", rarity: "rare",      travelSpeed: 2.2, effects: [{ type: "firepower", pct: 0.12 }, { type: "speed", pct: 0.06 }, { type: "routeSafe", pct: 0.08 }], hull: 640, price: 140000, sprite: "freighter" },
+    { id: "foundry_ark",  name: "Foundry Ark",         cls: "main", rarity: "rare",      travelSpeed: 1.8, effects: [{ type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.06 }, { type: "cargo", pct: 0.08 }], hull: 700, price: 160000, sprite: "leviathan" },
+    { id: "lens_of_sable",name: "Lens of Sable",       cls: "main", rarity: "rare",      travelSpeed: 2.0, effects: [{ type: "survey", pct: 0.18 }, { type: "speed", pct: 0.08 }, { type: "firepower", pct: 0.05 }], hull: 560, price: 155000, sprite: "hauler" },
+    // epic — 4 effects
+    { id: "magnate_spire",name: "Magnate Spire",       cls: "main", rarity: "epic",      travelSpeed: 2.4, effects: [{ type: "firepower", pct: 0.10 }, { type: "industry", pct: 0.10 }, { type: "routeSafe", pct: 0.10 }, { type: "taxRelief", pct: 0.05 }], hull: 900, price: 320000, sprite: "leviathan" },
+    { id: "ghost_cathedral", name: "Ghost Cathedral",  cls: "main", rarity: "epic",      travelSpeed: 2.6, effects: [{ type: "survey", pct: 0.20 }, { type: "routeSafe", pct: 0.12 }, { type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.08 }], hull: 820, price: 340000, sprite: "freighter" },
+    // legendary — 5 effects
+    { id: "dreadnought",  name: "Baron Dreadnought",   cls: "main", rarity: "legendary", travelSpeed: 3.0, effects: [{ type: "all", pct: 0.10 }, { type: "industry", pct: 0.08 }, { type: "routeSafe", pct: 0.10 }, { type: "survey", pct: 0.10 }, { type: "taxRelief", pct: 0.06 }], hull: 1300, price: 650000, sprite: "leviathan" },
+    { id: "cosmocrat_seat", name: "Cosmocrat Seat",    cls: "main", rarity: "legendary", travelSpeed: 3.2, effects: [{ type: "all", pct: 0.08 }, { type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.08 }, { type: "routeSafe", pct: 0.12 }, { type: "survey", pct: 0.12 }], hull: 1400, price: 800000, sprite: "leviathan" },
   ],
 };
-const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...SHIP_CATALOG.main];
+const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...SHIP_CATALOG.main];
+
+// Labels for flagship effect types (UI + tooltips).
+const FLAGSHIP_EFFECTS = {
+  firepower: { label: "Fleet firepower" },
+  speed:     { label: "Fleet speed" },
+  hull:      { label: "Fleet hull" },
+  armor:     { label: "Fleet armor" },
+  shields:   { label: "Fleet shields" },
+  cargo:     { label: "Fleet cargo" },
+  all:       { label: "All fleet stats" },
+  industry:  { label: "Industry yield" },
+  routeSafe: { label: "Safer trade routes" },
+  survey:    { label: "Survey scan power" },
+  taxRelief: { label: "Industry tax relief" },
+};
 
 /* ---- SHIP ACCESSORIES -----------------------------------------------------
    Procedurally named/statted items (see items.js). Each kind buffs one stat;
-   pct stats scale the ship, flat stats add. Legendaries get a 2nd bonus stat. */
+   pct stats scale the ship, flat stats add. Legendaries get a 2nd bonus stat.
+   Survey gear (scanner / probe / survey_shield) tunes anomaly scan odds.      */
 const ACCESSORY_KINDS = {
   engine:  { label: "Engine",   stat: "speed",     pct: true,  base: 0.04,  sprite: "engine" },
   reactor: { label: "Reactor",  stat: "firepower", pct: true,  base: 0.06,  sprite: "reactor" },
@@ -138,6 +183,9 @@ const ACCESSORY_KINDS = {
   plating: { label: "Plating",  stat: "armor",     pct: false, base: 18,    sprite: "plating" },
   shield:  { label: "Shield",   stat: "shields",   pct: false, base: 16,    sprite: "shield" },
   hold:    { label: "Cargo Pod",stat: "cargo",     pct: false, base: 8,     sprite: "hold" },
+  scanner: { label: "Deep Scanner", stat: "scan",  pct: false, base: 1.5,   sprite: "reactor", survey: true },
+  probe:   { label: "Probe Rack",   stat: "scan",  pct: false, base: 1.0,   sprite: "engine",  survey: true },
+  survey_shield: { label: "Survey Shield", stat: "endure", pct: false, base: 1.2, sprite: "shield", survey: true },
 };
 // rarity → stat multiplier, price multiplier, drop weight, color, label.
 const RARITIES = [
@@ -158,6 +206,7 @@ const BAZAARCFG = {
   mercSlots: 8,            // how many mercs are on offer at once
   contractSlots: 14,       // how many contracts on the board
   accessorySlots: 18,      // how many accessories for sale
+  flagshipSlots: 4,        // rotating flagship offers (current flagship is always shown separately)
   mercTickMs: 90 * 1000,   // how often merc offers churn
   accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
   contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this
@@ -325,10 +374,11 @@ const EXPEDCFG = {
   destroyChance: 0.10,           // chance a hazard is catastrophic (ship lost) — scaled by danger
   creditsBy: { near: [300, 1200], far: [1500, 6000] },
   seamMult: { scarce: 1.5, glut: 0.62 },   // the price swing a discovered seam applies locally
-  // outcome weights by danger band; rolled once a survey matures
+  // Matured surveys open a Dispatches mini-story (SurveyStory) instead of
+  // auto-resolving. weights still bias which event template pool is favored.
   weights: {
-    near: { gear: 3, seam: 3, credits: 3, faction: 2, hazard: 1, dry: 4 },
-    far:  { gear: 4, seam: 3, credits: 3, faction: 2, hazard: 4, dry: 2 },
+    near: { gear: 3, seam: 3, credits: 3, faction: 2, hazard: 1, dry: 2, signal: 2, derelict: 2, ruin: 1 },
+    far:  { gear: 3, seam: 3, credits: 2, faction: 2, hazard: 3, dry: 1, signal: 3, derelict: 3, ruin: 2 },
   },
 };
 
@@ -776,6 +826,7 @@ window.COMMODITIES = COMMODITIES;
 window.SYSTEMS = SYSTEMS;
 window.SHIP_CATALOG = SHIP_CATALOG;
 window.ALL_SHIPS = ALL_SHIPS;
+window.FLAGSHIP_EFFECTS = FLAGSHIP_EFFECTS;
 window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;

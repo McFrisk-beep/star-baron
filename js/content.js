@@ -51,8 +51,8 @@ const Content = {
   ],
   // Non-collection keys that are also persisted in the content table but have a
   // dedicated editor, so they're kept out of the generic JSON dropdown:
-  //   ASSET_OVERRIDES → image manager;  STORY_CUSTOM → Missions editor.
-  EXTRA_KEYS: ["ASSET_OVERRIDES", "STORY_CUSTOM"],
+  //   ASSET_OVERRIDES → image manager; STORY_CUSTOM / STORY_OVERRIDES → Missions.
+  EXTRA_KEYS: ["ASSET_OVERRIDES", "STORY_CUSTOM", "STORY_OVERRIDES"],
   _defaults: {},
   _snapped: false,
   loaded: false,
@@ -77,7 +77,7 @@ const Content = {
   rederive() {
     if (window.SHIP_CATALOG && Array.isArray(window.ALL_SHIPS)) {
       const sc = window.SHIP_CATALOG;
-      const all = [...(sc.transport || []), ...(sc.escort || []), ...(sc.main || [])];
+      const all = [...(sc.transport || []), ...(sc.escort || []), ...(sc.survey || []), ...(sc.main || [])];
       window.ALL_SHIPS.length = 0; window.ALL_SHIPS.push(...all);
     }
   },
