@@ -64,6 +64,8 @@ procedurally-generated planet without porting galaxy generation to SQL.
 - Route events are seeded; hull damage from route events is skipped.
 - Industry war/strike overlays ignored (production mult = 1); tax ignores Senate.
 - Expedition gear/seam outcomes pay a **credit stub** (no item gen / local events).
+  Mission Reports name the find (`Derelict salvage sold…` / `Resource-tip charts
+  sold…`) and include the credit amount.
 
 ## Client behaviour
 

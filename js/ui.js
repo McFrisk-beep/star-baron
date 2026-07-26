@@ -678,8 +678,12 @@ const UI = {
       const surveyTag = def.cls === "survey" ? ` <span class="up">survey hull</span>` : "";
       return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span>${surveyTag} · 🔭 scan ${st.scan.toFixed(1)} · endure ${st.endure.toFixed(1)} · ETA ~${Util.duration(eta)}</label>`;
     }).join("");
+    const livePull = window.Routes && !Routes.softIncomeLocal();
+    const how = livePull
+      ? `When it returns, the find banks in <b>Mission Reports</b> (credits, standing, or a rough trip). Online, derelict gear and resource tips cash out as credits.`
+      : `When it returns, a <b>Dispatches</b> debrief opens — choices, scan odds, and loot. Survey hulls + Deep Scanners push success %.`;
     this.refs.svBody.innerHTML =
-      `<p class="muted-note">Dispatch a ship to chart this outpost. When it returns, a <b>Dispatches</b> debrief opens — choices, scan odds, and loot. Survey hulls + Deep Scanners push success %.</p>
+      `<p class="muted-note">Dispatch a ship to chart this outpost. ${how}</p>
        <p class="si-effects"><span class="local-effect ${far ? "down" : "up"}">${far ? "⚠ Far & rough — richer finds, steeper failure odds on risky pushes." : "Nearby — modest finds, kinder odds."}</span></p>
        <div class="rt-ships">${rows}</div>`;
     this.refs.svStart.disabled = false;
@@ -846,6 +850,8 @@ const UI = {
       let detail = "";
       if (r.type === "survey") {
         detail = `<span class="${r.success ? "up" : "down"}">🛰 ${r.summary}</span>`;
+        // Older cloud stubs said "Salvaged data…" with no amount — surface r.credits.
+        if (r.credits > 0 && !/\+\s*[\d.]+/.test(r.summary || "")) detail += ` · +${Util.credits(r.credits)}c`;
         if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
         return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
           <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;

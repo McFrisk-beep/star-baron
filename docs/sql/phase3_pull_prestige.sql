@@ -599,14 +599,30 @@ begin
         else kind := 'dry'; end if;
       end if;
 
-      if kind in ('gear', 'seam') then
-        -- Simplified: gear/seam → modest credit stub (no item gen / local events)
+      -- Gear/seam can't mint items or local market events in SQL — pay a credit
+      -- stub and say so plainly so Mission Reports read as real prizes.
+      if kind = 'gear' then
         amt := case when band = 'far' then 800 + floor(market.u01(seed, 1) * 1201)::int
                     else 200 + floor(market.u01(seed, 1) * 501)::int end;
         credits := credits + amt;
         report := jsonb_set(report, '{credits}', to_jsonb(amt));
         report := jsonb_set(report, '{summary}',
-          to_jsonb(('Salvaged data near ' || coalesce(exp->>'sysId', 'an outpost') || '.')::text));
+          to_jsonb(('Derelict salvage sold near ' || coalesce(exp->>'sysId', 'an outpost')
+            || ' — +' || amt::text || 'c.')::text));
+        ships := (
+          select coalesce(jsonb_agg(
+            case when x.value->>'uid' = exp->>'shipUid'
+              then jsonb_set(x.value, '{status}', '"idle"') else x.value end
+          ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
+        );
+      elsif kind = 'seam' then
+        amt := case when band = 'far' then 800 + floor(market.u01(seed, 1) * 1201)::int
+                    else 200 + floor(market.u01(seed, 1) * 501)::int end;
+        credits := credits + amt;
+        report := jsonb_set(report, '{credits}', to_jsonb(amt));
+        report := jsonb_set(report, '{summary}',
+          to_jsonb(('Resource-tip charts sold near ' || coalesce(exp->>'sysId', 'an outpost')
+            || ' — +' || amt::text || 'c.')::text));
         ships := (
           select coalesce(jsonb_agg(
             case when x.value->>'uid' = exp->>'shipUid'
@@ -622,7 +638,8 @@ begin
         credits := credits + amt;
         report := jsonb_set(report, '{credits}', to_jsonb(amt));
         report := jsonb_set(report, '{summary}',
-          to_jsonb(('Salvaged and sold data — +' || amt::text || 'c.')::text));
+          to_jsonb(('Sold recovered survey data near ' || coalesce(exp->>'sysId', 'an outpost')
+            || ' — +' || amt::text || 'c.')::text));
         ships := (
           select coalesce(jsonb_agg(
             case when x.value->>'uid' = exp->>'shipUid'
@@ -635,7 +652,8 @@ begin
         rep := app._rep_change(coalesce(st->'reputation', '{}'::jsonb), fac, amt);
         st := jsonb_set(st, '{reputation}', rep);
         report := jsonb_set(report, '{summary}',
-          to_jsonb(('Recovered a faction cache — standing +' || amt::text || '.')::text));
+          to_jsonb(('Recovered a faction cache near ' || coalesce(exp->>'sysId', 'an outpost')
+            || ' — standing +' || amt::text || '.')::text));
         ships := (
           select coalesce(jsonb_agg(
             case when x.value->>'uid' = exp->>'shipUid'
@@ -650,7 +668,8 @@ begin
             'uid', sh->>'uid', 'name', coalesce(sh->>'name', sh->>'uid')
           )));
           report := jsonb_set(report, '{summary}',
-            to_jsonb((coalesce(sh->>'name', 'Ship') || ' was lost to a hazard.')::text));
+            to_jsonb((coalesce(sh->>'name', 'Ship') || ' was lost to a hazard near '
+              || coalesce(exp->>'sysId', 'an outpost') || '.')::text));
           ships := (
             select coalesce(jsonb_agg(x.value), '[]'::jsonb)
             from jsonb_array_elements(ships) x(value)
@@ -673,11 +692,13 @@ begin
             'pct', round(dmg * 100)::int
           )));
           report := jsonb_set(report, '{summary}',
-            to_jsonb((coalesce(sh->>'name', 'Ship') || ' limped home shaken but intact.')::text));
+            to_jsonb((coalesce(sh->>'name', 'Ship') || ' limped home from '
+              || coalesce(exp->>'sysId', 'an outpost') || ' — shaken, no salvage.')::text));
         end if;
       else  -- dry
         report := jsonb_set(report, '{summary}',
-          to_jsonb(('Charted ' || coalesce(exp->>'sysId', 'the system') || '. Nothing of value.')::text));
+          to_jsonb(('Charted ' || coalesce(exp->>'sysId', 'the system')
+            || ' — dry hole, no payout.')::text));
         ships := (
           select coalesce(jsonb_agg(
             case when x.value->>'uid' = exp->>'shipUid'

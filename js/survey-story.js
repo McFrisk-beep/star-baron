@@ -300,9 +300,9 @@ const SurveyStory = {
       report.summary = `${sh.name} limped home from ${report.sysName} — shaken.`;
     }
     if (!report.summary) {
-      if (report.credits) report.summary = `Salvage from ${report.sysName}: +${Util.credits(report.credits)}c.`;
+      if (report.credits) report.summary = `Cashed out salvage near ${report.sysName}: +${Util.credits(report.credits)}c.`;
       else if (report.items.length) report.summary = `Recovered ${report.items[0].name} near ${report.sysName}.`;
-      else report.summary = `Survey of ${report.sysName} filed.`;
+      else report.summary = `Survey of ${report.sysName} filed — no payout.`;
     }
   },
 };
