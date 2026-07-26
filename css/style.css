@@ -271,13 +271,17 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ach span { font-size: 10.5px; color: var(--ink-dim); }
 
 /* ===== broadcast ===== */
-/* Desktop: 2fr | 1fr (4:2) — broadcast fills width (good for 3:2 frames);
-   newswire log sits on the right. Mobile keeps a simple stack (see ≤980px). */
+/* Desktop: 2fr | 1fr (4:2) — frame + caption left, newswire right.
+   Frame shrinks to the leftover column height so title/caption/ticker stay
+   on-screen (esp. shorter desktops). Mobile stack: see ≤980px. */
 .bc-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 2fr 1fr; gap: 12px; align-items: stretch; }
-.bc-main { min-width: 0; display: flex; flex-direction: column; }
+.bc-main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .screen { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--line);
-  width: 100%; min-height: 100px; background: #05070d; flex: none; line-height: 0; }
-.screen img { display: block; width: 100%; height: auto; opacity: .92; }
+  width: 100%; min-height: 0; flex: 1 1 auto; background: #05070d;
+  display: flex; align-items: center; justify-content: center; }
+.screen img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%;
+  object-fit: contain; opacity: .92; }
+.screen-meta, .ticker { flex: none; }
 .screen-meta { margin-top: 6px; padding: 0 2px 2px; }
 .screen-title { font-weight: 800; letter-spacing: .8px; font-size: 13px; line-height: 1.25; }
 .screen-caption { font-size: 11px; color: var(--ink-dim); margin-top: 2px; line-height: 1.35;
@@ -594,6 +598,7 @@ body.reduced .tt-dot { animation: none; }
   #panel-broadcast { flex: none; }
   /* Mobile: stack frame + log; keep the image height-capped (no side dead space fight). */
   .bc-layout { display: flex; flex-direction: column; flex: none; gap: 6px; }
+  .screen { flex: none; min-height: 100px; display: block; line-height: 0; text-align: center; }
   .screen img { width: auto; max-width: 100%; height: auto; max-height: min(220px, 34vh); margin: 0 auto; }
   .panel-feed { flex: none; min-height: 0; }
   .feed { max-height: 50vh; }
