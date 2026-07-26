@@ -390,7 +390,7 @@ declare
   avg_cost jsonb;
   fac text;
   rep_v double precision;
-  cat text;
+  ind_cat text;  -- renamed: bare `cat` collided with market.commodity.cat (42702)
   next_at bigint;
   comp_n int;
   prod_n int := 0;
@@ -446,7 +446,7 @@ begin
     can_prod := case ex->>'type'
       when 'jack' then true
       when 'specialized' then (ind->>'commodity') = (ex->>'scope')
-      when 'semi' then (select cat from market.commodity(ind->>'commodity')) is not distinct from (ex->>'scope')
+      when 'semi' then (select c.cat from market.commodity(ind->>'commodity') c) is not distinct from (ex->>'scope')
       else false end;
 
     -- Component bonuses — recompute effect from kind+rarity (ignore client
@@ -467,9 +467,9 @@ begin
     end loop;
     cycle_bon := greatest(0.4, 1.0 - speed_bon);
 
-    cat := coalesce(ind->>'cat', 'mineral');
+    ind_cat := coalesce(ind->>'cat', 'mineral');
     suit := case
-      when ind->>'planetType' is not null then app._planet_suit(ind->>'planetType', cat)
+      when ind->>'planetType' is not null then app._planet_suit(ind->>'planetType', ind_cat)
       when ind->>'suit' is not null then least(2.0, greatest(0.1, (ind->>'suit')::float8))
       else 1.0
     end;
