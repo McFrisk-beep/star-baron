@@ -141,7 +141,9 @@ const Industries = {
 
   resolve(now = Date.now()) {
     // Phase 3: logged-in production is app_pull — skip local position mutation.
-    if (window.Cloud && Cloud.authoritative() && Cloud.pullReady) return [];
+    // Also skip while pull hasn't succeeded yet (unless app_pull is confirmed
+    // missing): otherwise we mint ghost stock the exchange ledger won't sell.
+    if (window.Routes && !Routes.softIncomeLocal()) return [];
     const s = this.s(); const made = [], lost = [];
     for (const ind of this.list()) {
       const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];

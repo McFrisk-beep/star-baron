@@ -78,9 +78,10 @@ const Expeditions = {
 
   // Mature every finished survey up to `now`. Returns the reports (also pushed
   // to state.reports so the Fleet panel + "While You Were Away" recap show them).
-  // Phase 3: logged-in surveys resolve in app_pull.
+  // Phase 3: logged-in surveys resolve in app_pull (same softIncomeLocal gate
+  // as routes/industries — don't mint local rewards the server ledger rejects).
   resolve(now = Date.now()) {
-    if (window.Cloud && Cloud.authoritative() && Cloud.pullReady) return [];
+    if (window.Routes && !Routes.softIncomeLocal()) return [];
     const s = this.s(); const out = [];
     for (const exp of this.list()) {
       if (exp.resolved || now < exp.startedAt + exp.etaMs) continue;

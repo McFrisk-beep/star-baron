@@ -483,13 +483,36 @@ const Economy = {
     );
   },
 
-  sell(commId, qty) {
+  async sell(commId, qty) {
     if (!this.authoritative()) return this._sellLocal(commId, qty);
-    return this._withRpc(
-      () => this._sellLocal(commId, qty),
-      () => Cloud.trade("sell", commId, Math.floor(qty)),
+    const want = Math.floor(qty);
+    const r = await this._withRpc(
+      () => this._sellLocal(commId, want),
+      () => Cloud.trade("sell", commId, want),
       "Couldn't reach the exchange — try again."
     );
+    // Ghost stock: client shows industry/mission units that never landed on the
+    // server ledger (local soft income while app_commit protects positions).
+    // Resync from app_pull, then retry once — or clear the unsellable ghost.
+    if (r && !r.ok && /nothing to sell/i.test(r.msg || "") && (this.s().positions[commId] || 0) > 0) {
+      if (window.Game && Cloud.pullReady) {
+        try { await Game.pullCatchUp(); } catch (e) { /* keep going */ }
+        const held = this.s().positions[commId] || 0;
+        if (held > 0) {
+          return this._withRpc(
+            () => this._sellLocal(commId, Math.min(want, held)),
+            () => Cloud.trade("sell", commId, Math.min(want, held)),
+            "Couldn't reach the exchange — try again."
+          );
+        }
+      }
+      // Drop the ghost so Held matches what the exchange will actually sell.
+      this.s().positions[commId] = 0;
+      this.s().avgCost[commId] = 0;
+      this.refreshNetWorth();
+      return { ok: false, msg: "Nothing to sell — that stock wasn't on the exchange ledger (cleared). New industry batches sync automatically." };
+    }
+    return r;
   },
 
   // ----- Baron Tier (prestige "ascension") -----

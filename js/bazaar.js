@@ -316,8 +316,9 @@ const Bazaar = {
   },
 
   tick(now = Date.now()) {
-    if (this.authoritative() && window.Cloud && Cloud.pullReady) {
-      // Seeded board refresh only — listing payouts are app_pull (Phase 3).
+    // Phase 3: listing payouts are app_pull. Same softIncomeLocal gate as routes
+    // — don't mint local credits while the server ledger owns them.
+    if (this.authoritative() && window.Routes && !Routes.softIncomeLocal()) {
       this.fillSeededBoard(now);
       return [];
     }

@@ -279,6 +279,14 @@ table been created?" toast means `saves` is missing.
 - **Removed a dead `UI.refreshDispatch()`** call in the star-map unlock handler
   (it threw and broke the post-unlock save+refresh).
 - **`PLANET_PAL.barren`** palette was malformed (`.slice(0,7)` map) — fixed.
+- **Industry "Nothing to sell" ghosts:** logged-in soft income must not mint
+  `positions` locally while Phase 3 `app_commit` protects them — that made the
+  Exchange show Held stock `app_trade` rejected. Gate on `Routes.softIncomeLocal()`
+  (pull live / pull-missing fallback only); sell resyncs via `app_pull` then clears
+  any leftover ghost.
+- **Trade-route toast spam / early banks:** authoritative route timing matches the
+  server (catalog speed, no dev `timeScale` compression); heal missing `nextAt`;
+  advance `nextAt` by `cycles × cycleMs` so a due tick can't fire every 2s.
 
 ---
 

@@ -169,6 +169,9 @@ const Game = {
       }
     }
     if (!usedPull) {
+      // softIncomeLocal() is false for logged-in players until app_pull succeeds
+      // (or is confirmed missing). That prevents ghost industry stock / route
+      // credits that Phase 3 app_commit and app_trade will reject.
       offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));
       offlineMercs = Fleet.pruneMercs(now);
       offlineSold = Bazaar.tick(now);
@@ -272,16 +275,27 @@ const Game = {
     Economy.checkArrival(now);
     if (window.Economy && Economy.authoritative()) {
       // Phase 3: soft income banks via app_pull (throttled when something is due).
-      if (Cloud.pullReady && this._softIncomeDue(now) && !this._pullInflight) {
+      // Phase 3 soft income via app_pull when due. Also retry while pull hasn't
+      // succeeded yet (unless the RPC is confirmed missing) so we don't sit in
+      // a ghost-minting local fallback after a transient pull failure.
+      const retryPull = !Cloud.pullReady && !Cloud.pullMissing
+        && (now - (this._lastPullTry || 0) > 15000);
+      if (!Cloud.pullMissing && !this._pullInflight && (this._softIncomeDue(now) || retryPull)) {
         this._pullInflight = true;
-        void this.pullCatchUp().then(() => { this._pullInflight = false; this.requestSave(); })
-          .catch(() => { this._pullInflight = false; });
+        this._lastPullTry = now;
+        void this.pullCatchUp().then(away => {
+          this._pullInflight = false;
+          if (away && away.routed && away.routed.events) {
+            for (const ev of away.routed.events) Bus.emit("routeEvent", ev);
+          }
+          this.requestSave();
+        }).catch(() => { this._pullInflight = false; });
       }
       // Missions still have a dedicated RPC; pull also resolves them — either is fine.
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
       }).catch(e => console.warn("[Missions] resolve failed:", e));
-      if (!Cloud.pullReady) {
+      if (Routes.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
         const routed = Routes.resolve(now);
         for (const ev of routed.events) Bus.emit("routeEvent", ev);
@@ -375,8 +389,11 @@ const Game = {
         if (window.Senate) Senate.resume();
       };
       if (window.Economy && Economy.authoritative()) {
-        void this.pullCatchUp().then(() => {
-          if (Cloud.pullReady) {
+        void this.pullCatchUp().then(away => {
+          if (away && away.routed && away.routed.events) {
+            for (const ev of away.routed.events) Bus.emit("routeEvent", ev);
+          }
+          if (Cloud.pullReady || !Routes.softIncomeLocal()) {
             Fleet.pruneMercs(now);
             void Orders.process();
           } else {
@@ -427,6 +444,7 @@ const Game = {
       return Economy.applyPull(r) || {};
     } catch (e) {
       if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+        Cloud.pullMissing = true;
         console.warn("[Game] app_pull missing — local catch-up (docs/PHASE3_SETUP.md)");
         return null;
       }
