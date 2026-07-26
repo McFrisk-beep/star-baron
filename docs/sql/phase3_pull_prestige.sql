@@ -123,7 +123,7 @@ begin
   end loop;
 
   for it in select value from jsonb_each(coalesce(p_state->'items', '{}'::jsonb)) loop
-    nw := nw + app.item_value(it.value);
+    nw := nw + app.item_value(it);   -- it already holds the value column; it.value → 42P01
   end loop;
 
   return nw;
