@@ -172,21 +172,25 @@
 
         <section class="panel comms-pane hidden" id="panel-broadcast" data-comms-pane="broadcast">
           <div class="bc-head"><h2 data-i18n="comms.broadcast">Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
-          <div class="screen" id="broadcast-screen">
-            <img id="bc-frame" alt="broadcast" />
-            <div class="screen-scanlines"></div>
+          <div class="bc-layout">
+            <div class="bc-main">
+              <div class="screen" id="broadcast-screen">
+                <img id="bc-frame" alt="broadcast" />
+                <div class="screen-scanlines"></div>
+              </div>
+              <div class="screen-meta">
+                <div class="screen-title" id="bc-title" data-i18n="comms.signal">SIGNAL ACQUIRING…</div>
+                <div class="screen-caption" id="bc-caption"></div>
+              </div>
+              <div class="ticker"><span class="ticker-tag" data-i18n="comms.newswire">NEWSWIRE</span>
+                <div class="ticker-track"><span id="ticker-text" data-i18n="comms.ticker">Standby for galactic bulletins…</span></div>
+              </div>
+            </div>
+            <details class="newswire" id="newswire-details" open>
+              <summary data-i18n="comms.newswireLog">Newswire log</summary>
+              <ul id="newswire-list"></ul>
+            </details>
           </div>
-          <div class="screen-meta">
-            <div class="screen-title" id="bc-title" data-i18n="comms.signal">SIGNAL ACQUIRING…</div>
-            <div class="screen-caption" id="bc-caption"></div>
-          </div>
-          <div class="ticker"><span class="ticker-tag" data-i18n="comms.newswire">NEWSWIRE</span>
-            <div class="ticker-track"><span id="ticker-text" data-i18n="comms.ticker">Standby for galactic bulletins…</span></div>
-          </div>
-          <details class="newswire" id="newswire-details" open>
-            <summary data-i18n="comms.newswireLog">Newswire log</summary>
-            <ul id="newswire-list"></ul>
-          </details>
         </section>
 
         <section class="panel panel-feed comms-pane hidden" id="panel-feed" data-comms-pane="chat">
