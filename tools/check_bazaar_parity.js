@@ -39,16 +39,21 @@ const u01 = (s, n) => Market._u01(s, n);
 const round = x => Math.round(x);
 
 // ---- SQL mirror (docs/sql/phase2_missions_bazaar.sql) ----------------------
+// Escorts must match SHIP_CATALOG.escort order/length (js/data.js) and SQL escorts[].
 const SHIP = {
+  gunboat:    { price: 7000,   firepower: 18 },
   corvette:   { price: 11000,  firepower: 25 },
+  destroyer:  { price: 20000,  firepower: 40 },
   frigate:    { price: 32000,  firepower: 55 },
   cruiser:    { price: 95000,  firepower: 120 },
+  carrier:    { price: 120000, firepower: 90 },
   battleship: { price: 270000, firepower: 260 },
 };
 function sqlMerc(epoch, slot) {
   const s = seed(["merc", String(epoch), String(slot)]);
-  const escorts = ["corvette", "frigate", "cruiser", "battleship"];
-  const type = escorts[Math.floor(u01(s, 0) * 4) % 4];
+  const escorts = ["gunboat", "corvette", "destroyer", "frigate", "cruiser", "carrier", "battleship"];
+  const n = escorts.length;
+  const type = escorts[Math.floor(u01(s, 0) * n) % n];
   const def = SHIP[type];
   return {
     shipType: type,
@@ -65,10 +70,12 @@ function sqlItemValue(item) {
 }
 function sqlAccessory(epoch, slot) {
   const s = seed(["acc", String(epoch), String(slot)]);
-  const kinds = ["engine", "reactor", "cannon", "plating", "shield", "hold"];
-  const bases = [0.04, 0.06, 12, 18, 16, 8];
-  const pcts = [true, true, false, false, false, false];
-  const ki = Math.floor(u01(s, 0) * 6) % 6;
+  // Must match Object.keys(ACCESSORY_KINDS) insertion order and SQL kinds[].
+  const kinds = ["engine", "reactor", "cannon", "plating", "shield", "hold", "scanner", "probe", "survey_shield"];
+  const bases = [0.04, 0.06, 12, 18, 16, 8, 1.5, 1.0, 1.2];
+  const pcts = [true, true, false, false, false, false, false, false, false];
+  const n = kinds.length;
+  const ki = Math.floor(u01(s, 0) * n) % n;
   const roll = u01(s, 1);
   let rarity = "common", mult = 1.0;
   if (roll >= 0.50 && roll < 0.78) { rarity = "uncommon"; mult = 1.5; }

@@ -251,11 +251,15 @@ const SurveyStory = {
 
   _pay(spec, exp, sh, report, sys) {
     if (!spec) { report.summary = `Charted ${report.sysName}.`; return; }
-    if (spec.credits) {
+    // Guest/offline: mint credits/items locally. Phase 3 live (!softIncomeLocal):
+    // skip — same accepted follow-up as Story.grant (server ledger / app_pull would
+    // overwrite soft mints). Ship release + report still proceed in applyOutcome.
+    const payLocal = !(window.Routes && !Routes.softIncomeLocal());
+    if (spec.credits && payLocal) {
       const amt = Array.isArray(spec.credits) ? Util.randInt(spec.credits[0], spec.credits[1]) : spec.credits;
       this.s().credits += amt; report.credits = amt;
     }
-    if (spec.item && window.Items) {
+    if (spec.item && payLocal && window.Items) {
       const prefer = spec.preferSurvey ? Util.pick(["scanner", "probe", "survey_shield"]) : null;
       const bias = EXPEDCFG.rarityBiasMax * ((exp && exp.danger) || 0);
       const it = Items.gen({ bias, kind: prefer || undefined, rarity: spec.item === true ? undefined : spec.item });
