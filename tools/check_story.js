@@ -74,10 +74,17 @@ assert.ok(ctx.Game.state.credits >= 6000 + 1500, "credits reward applied (+1500)
 assert.ok(Story.inbox().some(m => m.type === "reward"), "reward message posted");
 
 // --- 3) delta objective measures from the step baseline -------------------
-ctx.Game.state.stats.trades = 4;         // triggers the broker arc (>=4 trades)
-bump(Story.ARRIVAL_GAP_MS);              // respect the arrival throttle
+// Broker still *triggers* at ≥4 trades; earlier arcs (dock_philosopher,
+// quiet_ladder) arrive first under MAX_ACTIVE pacing, so mark them done here
+// so the broker can land and we can exercise its objective/choice path.
+ctx.Game.state.stats.trades = 4;
+assert.ok(Story.storyline("broker").trigger(ctx.Game.state), "broker trigger true at ≥4 trades");
+const snapEarly = Story.snap(ctx.Game.state);
+Story.s().prog.dock_philosopher = { step: 0, base: snapEarly, status: "done" };
+Story.s().prog.quiet_ladder = { step: 0, base: snapEarly, status: "done" };
+bump(Story.ARRIVAL_GAP_MS);
 Story.check(NOW);
-assert.ok(Story.s().prog.broker, "broker arc arrives at >=4 trades");
+assert.ok(Story.s().prog.broker, "broker arc arrives when earlier arcs aren't filling MAX_ACTIVE");
 const base = Story.s().prog.broker.base.trades;
 assert.strictEqual(base, 4, "baseline snapshot taken at step start");
 

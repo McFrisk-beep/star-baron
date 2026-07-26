@@ -10,7 +10,8 @@ returns jsonb
 language plpgsql immutable as $$
 declare
   s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'merc', p_epoch::text, p_slot::text);
-  escorts text[] := array['corvette','frigate','cruiser','battleship'];
+  -- Order/length must match SHIP_CATALOG.escort in js/data.js (genSeededMerc).
+  escorts text[] := array['gunboat','corvette','destroyer','frigate','cruiser','carrier','battleship'];
   prefixes text[] := array['Red','Iron','Ash','Storm','Void','Grim','Gilt','Razor','Black','Free'];
   units text[] := array['Talons','Lances','Wolves','Reavers','Hounds','Vultures','Sabres','Corsairs','Jackals','Ravens'];
   ship_type text;
@@ -18,8 +19,10 @@ declare
   hire double precision;
   service_ms bigint;
   nm text;
+  n int;
 begin
-  ship_type := escorts[1 + (floor(market.u01(s, 0) * 4)::int % 4)];
+  n := array_length(escorts, 1);
+  ship_type := escorts[1 + (floor(market.u01(s, 0) * n)::int % n)];
   select * into def from app.ship_def(ship_type);
   hire := round((def.price * 0.2 + def.firepower * 55)::numeric);
   service_ms := (15 + floor(market.u01(s, 1) * 26)::int) * 60 * 1000;
@@ -44,17 +47,19 @@ returns jsonb
 language plpgsql immutable as $$
 declare
   s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'acc', p_epoch::text, p_slot::text);
-  kinds text[] := array['engine','reactor','cannon','plating','shield','hold'];
-  labels text[] := array['Engine','Reactor','Cannon','Plating','Shield','Cargo Pod'];
+  -- Order/length must match Object.keys(ACCESSORY_KINDS) insertion order in js/data.js.
+  kinds text[] := array['engine','reactor','cannon','plating','shield','hold','scanner','probe','survey_shield'];
+  labels text[] := array['Engine','Reactor','Cannon','Plating','Shield','Cargo Pod','Deep Scanner','Probe Rack','Survey Shield'];
   brands text[] := array['Vex','Korr','Aether','Nyx','Helion','Dragoon','Orbital','Mechan',
                          'Solar','Pulse','Grav','Volt','Hadron','Quark','Tachy','Umbra'];
   suffixes text[] := array['Howl','Vanguard','Reaver','Whisper','Tempest','Wraith','Sovereign',
                            'Verdict','Eclipse','Onslaught','Paragon','Nemesis','Requiem','Zenith'];
   mks text[] := array['I','II','III','IV','V'];
   kind text;
-  bases double precision[] := array[0.04, 0.06, 12, 18, 16, 8];
-  pcts boolean[] := array[true, true, false, false, false, false];
+  bases double precision[] := array[0.04, 0.06, 12, 18, 16, 8, 1.5, 1.0, 1.2];
+  pcts boolean[] := array[true, true, false, false, false, false, false, false, false];
   ki int;
+  n int;
   roll double precision;
   rarity text;
   mult double precision;
@@ -65,7 +70,8 @@ declare
   price double precision;
   nm text;
 begin
-  ki := 1 + (floor(market.u01(s, 0) * 6)::int % 6);
+  n := array_length(kinds, 1);
+  ki := 1 + (floor(market.u01(s, 0) * n)::int % n);
   kind := kinds[ki];
   roll := market.u01(s, 1);
   if roll < 0.50 then rarity := 'common'; mult := 1.0; price_mult := 1.0;
@@ -91,7 +97,9 @@ begin
       'stat', case kind
         when 'engine' then 'speed' when 'reactor' then 'firepower'
         when 'cannon' then 'firepower' when 'plating' then 'armor'
-        when 'shield' then 'shields' else 'cargo' end,
+        when 'shield' then 'shields' when 'hold' then 'cargo'
+        when 'scanner' then 'scan' when 'probe' then 'scan'
+        when 'survey_shield' then 'endure' else 'cargo' end,
       'amount', amount,
       'pct', pcts[ki],
       'kind', kind

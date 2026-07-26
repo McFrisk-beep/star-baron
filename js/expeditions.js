@@ -1,19 +1,11 @@
 /* expeditions.js — anomaly surveys on the Star Map. Dispatch ONE idle ship to a
-   non-tradeable backdrop system; after a distance-scaled round trip it resolves
-   (live in the loop OR once during offline catch-up) into a weighted outcome:
-   derelict gear, a fresh commodity seam (a real local price event = tradeable
-   insight), a credit windfall, a faction cache, a hull-damaging hazard (rarely
-   fatal), or a dry hole. Farther = richer loot and rougher hazards.
+   non-tradeable backdrop system; after a distance-scaled round trip the survey
+   MATURES into a Dispatches mini-story (SurveyStory) — choices, scan/endure
+   odds, rewards — instead of auto-resolving. Farther = richer / rougher.
 
-   Mirrors routes.js: an array in state.expeditions, ships flagged with a
-   non-idle status ("surveying") so missions/routes/repair auto-skip them, and a
-   resolve(now) that matures completed surveys. Reuses Incidents.apply for
-   credit/rep/item effects, Items.gen for gear, Fleet.addDamage for hazards,
-   and Galaxy.fireLocalEvent for the seam. A per-system cooldown (state.surveyed)
-   stops back-to-back farming.
-
-   ponytail: one ship per survey (run several concurrently for fleet use) — add
-   a group/pooled-scan bonus here if solo surveys feel thin.                    */
+   Mirrors routes.js: state.expeditions, ships status "surveying" → "debrief"
+   while the player finishes the thread. Cooldown (state.surveyed) applies when
+   the dispatch closes.                                                        */
 
 const Expeditions = {
   s() { return window.Game.state; },
@@ -51,6 +43,19 @@ const Expeditions = {
     return { ok: true };
   },
 
+  // Scan success odds for a risky survey choice. Survey hulls + scanners help;
+  // danger and hazard-kind events hurt. Endure softens hazard failure.
+  choiceChance(base, scan, endure, danger, hazardish) {
+    let c = base + scan * 0.06 - danger * 0.28;
+    if (hazardish) c += endure * 0.04;
+    if (window.Fleet) c += Fleet.mainBonus("survey") * 0.5;
+    return Util.clamp(c, 0.05, 0.95);
+  },
+  scanPower(shipUid) {
+    const sh = Fleet.ship(shipUid); if (!sh) return 0;
+    return Fleet.stats(sh).scan || 0;
+  },
+
   // Dispatch one idle ship. Returns { ok, expedition } or { ok:false, msg }.
   start(sysId, shipUid, now = Date.now()) {
     const can = this.canSurvey(sysId, now); if (!can.ok) return can;
@@ -76,99 +81,35 @@ const Expeditions = {
   progress(exp, now = Date.now()) { return Util.clamp((now - exp.startedAt) / exp.etaMs, 0, 1); },
   remaining(exp, now = Date.now()) { return Math.max(0, exp.startedAt + exp.etaMs - now); },
 
-  // Mature every finished survey up to `now`. Returns the reports (also pushed
-  // to state.reports so the Fleet panel + "While You Were Away" recap show them).
-  // Phase 3: logged-in surveys resolve in app_pull (same softIncomeLocal gate
-  // as routes/industries — don't mint local rewards the server ledger rejects).
+  // Mature finished survey trips into Dispatches debriefs (not auto-loot).
+  // Returns stub reports for the "while you were away" recap ("awaiting debrief").
+  // Phase 3: logged-in surveys still resolve in app_pull when softIncomeLocal is false.
   resolve(now = Date.now()) {
     if (window.Routes && !Routes.softIncomeLocal()) return [];
     const s = this.s(); const out = [];
     for (const exp of this.list()) {
-      if (exp.resolved || now < exp.startedAt + exp.etaMs) continue;
-      exp.resolved = true;
-      const report = this._resolveOne(exp, now);
-      s.reports.unshift(report);
-      if (s.reports.length > 20) s.reports.length = 20;
-      this.surveyed()[exp.sysId] = now;
-      out.push(report);
+      if (exp.resolved || exp.debrief || now < exp.startedAt + exp.etaMs) continue;
+      exp.debrief = true;
+      if (window.SurveyStory) {
+        SurveyStory.begin(exp, now);
+        const sys = Galaxy.get(exp.sysId);
+        out.push({ uid: exp.id, type: "survey", title: `Survey — ${sys ? sys.name : "outpost"}`,
+          success: true, ts: now, credits: 0, items: [], lost: [], damaged: [],
+          summary: `Survey team returned from ${sys ? sys.name : "an outpost"} — debrief waiting in Dispatches.`,
+          awaitingDebrief: true });
+      } else {
+        // Fallback if survey-story.js didn't load — quiet return home.
+        const sh = Fleet.ship(exp.shipUid); if (sh) sh.status = "idle";
+        exp.resolved = true;
+        this.surveyed()[exp.sysId] = now;
+      }
     }
     if (out.length) {
+      // Keep debriefing expeditions in the list until SurveyStory.applyOutcome removes them.
       s.expeditions = this.list().filter(e => !e.resolved);
-      Economy.refreshNetWorth();
-      Economy.checkAchievements();
       for (const r of out) Bus.emit("surveyDone", r);
     }
     return out;
-  },
-
-  _resolveOne(exp, now) {
-    const sys = Galaxy.get(exp.sysId);
-    const sysName = sys ? sys.name : "an outpost";
-    const sh = Fleet.ship(exp.shipUid);
-    const report = { uid: exp.id, type: "survey", title: `Survey — ${sysName}`, sysName,
-      success: true, ts: now, credits: 0, items: [], lost: [], damaged: [], summary: "" };
-    // ship vanished mid-survey (sold?/prestige) — nothing to bring home
-    if (!sh) { report.success = false; report.summary = `Lost contact with the survey ship near ${sysName}.`; return report; }
-
-    const band = exp.far ? "far" : "near";
-    const kind = this._roll(EXPEDCFG.weights[band]);
-
-    if (kind === "gear") {
-      const bias = EXPEDCFG.rarityBiasMax * exp.danger;
-      const it = Items.gen({ bias });
-      if (Bazaar.inventoryUsed() < Bazaar.capacity()) { this.s().items[it.uid] = it; report.items.push(it); report.summary = `Boarded a derelict off ${sysName} — recovered ${it.name}.`; }
-      else report.summary = `Found salvage off ${sysName}, but your hold was full.`;
-      sh.status = "idle";
-    } else if (kind === "seam") {
-      const scarce = Math.random() < 0.5;
-      const comm = Galaxy.signatureCommodity(sys);
-      const ev = { id: "survey_seam", scope: "comm", dir: scarce ? "up" : "down",
-        mult: scarce ? EXPEDCFG.seamMult.scarce : EXPEDCFG.seamMult.glut,
-        headline: scarce ? "SURVEY FLAGS {COMM} SHORTFALL NEAR {PLANET}" : "SURVEY STRIKES RICH {COMM} SEAM NEAR {PLANET}",
-        body: scarce ? "A baron's survey team maps a failing {COMM} field at {SYS} — it'll grow scarce and dear here."
-                     : "A baron's survey team cracks a fresh {COMM} seam at {SYS} — prices soften locally." };
-      Galaxy.fireLocalEvent(now, sys.id, ev);
-      report.summary = `Survey mapped a ${comm.name} ${scarce ? "shortfall" : "seam"} at ${sysName} — ${scarce ? "prices climbing" : "prices dropping"} there. Trade the tip.`;
-      sh.status = "idle";
-    } else if (kind === "credits") {
-      const range = EXPEDCFG.creditsBy[band];
-      const amt = Util.randInt(range[0], range[1]);
-      this.s().credits += amt; report.credits = amt;         // salvage windfall (untaxed, like an incident payout)
-      report.summary = `Salvaged and sold data from ${sysName} — +${Util.credits(amt)}c.`;
-      sh.status = "idle";
-    } else if (kind === "faction") {
-      const fac = Rep.factionForCategory(Galaxy.signatureCommodity(sys).cat);
-      const amt = 3 + Math.round(exp.danger * 4);
-      Incidents.apply({ rep: [[fac, amt]] });
-      report.summary = `Recovered a ${(FACTIONS[fac] || {}).name || fac} cache at ${sysName} — standing +${amt}.`;
-      sh.status = "idle";
-    } else if (kind === "hazard") {
-      const fatal = Math.random() < EXPEDCFG.destroyChance * (0.5 + exp.danger);
-      if (fatal) {
-        report.success = false; report.lost.push({ uid: sh.uid, name: sh.name });
-        this.s().ships = this.s().ships.filter(x => x.uid !== sh.uid);
-        report.summary = `${sh.name} was lost to a hazard while surveying ${sysName}.`;
-      } else {
-        const before = sh.dmg || 0;
-        Fleet.addDamage(sh, Util.randFloat(EXPEDCFG.hazardDmg[0], EXPEDCFG.hazardDmg[1]) * (0.6 + exp.danger));
-        report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
-        report.summary = `${sh.name} limped home from ${sysName} shaken but intact — a rough scan.`;
-        sh.status = "idle";
-      }
-    } else { // dry
-      report.summary = `Charted ${sysName}. Nothing of value out there — this time.`;
-      sh.status = "idle";
-    }
-    return report;
-  },
-
-  // Weighted pick over an outcome-weights object.
-  _roll(weights) {
-    const entries = Object.entries(weights);
-    const total = entries.reduce((n, [, w]) => n + w, 0);
-    let x = Math.random() * total;
-    for (const [k, w] of entries) { x -= w; if (x <= 0) return k; }
-    return entries[0][0];
   },
 };
 

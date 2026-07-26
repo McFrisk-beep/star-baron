@@ -3,6 +3,7 @@
    split-proof slippage, tier trade caps, mod compression, spot-valued net worth,
    decaying impact, and the death of the dump-arbitrage exploit.
    Run:  node tools/check_market_depth.js                                        */
+"use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 const approx = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol * Math.max(1, Math.abs(a), Math.abs(b));
 
@@ -29,6 +30,7 @@ const reset = (tier = 0, sysId = "korrin", credits = 1e12) => {
   Market.tradeImpact = {}; ctx.Game = { state: freshState(tier, sysId, credits) };
 };
 
+(async () => {
 // 1) mod compression: korrin mineral raw 0.65 → 1+(0.65-1)*K, K = modCompression
 reset();
 const K = MARKETCFG.modCompression;
@@ -65,12 +67,12 @@ reset(0);
 const TIER0_CAP = BARON_TIERS[0].cap;
 const big = Economy.buy(IRON, 1_000_000);
 assert(big.ok && big.capped && big.cost <= TIER0_CAP, `buy spend clamped to tier-0 cap (${big.cost | 0}c ≤ ${TIER0_CAP})`);
-// sell-all is capped by proceeds too
+// sell-all is capped by proceeds too (Economy.sell is async — always a Promise)
 reset(0); ctx.Game.state.positions[IRON] = 50000;
 const sellAllN = Economy.maxSell(IRON);
 assert(sellAllN > 0 && sellAllN < 50000, "Sell All clamped below the whole stack");
-const sa = Economy.sell(IRON, sellAllN);
-assert(sa.proceeds + sa.tax <= TIER0_CAP + spot, `Sell All gross ≤ cap (${(sa.proceeds + sa.tax) | 0}c)`);
+const sa = await Economy.sell(IRON, sellAllN);
+assert(sa.ok && sa.proceeds + sa.tax <= TIER0_CAP + spot, `Sell All gross ≤ cap (${(sa.proceeds + sa.tax) | 0}c)`);
 
 // 5) tier scaling: Cosmocrat (tier 6, cap 500k) moves far more per trade than tier 0
 assert(BARON_TIERS[6].cap === 500000, "top tier cap = 500k");
@@ -97,20 +99,20 @@ assert(approx(Market.impactAt(IRON, "korrin"), p0 / 2, 1e-9), "pressure halves a
 // 8) the exploit is dead, but honest trading still pays. A rational MATCHED
 //    round trip (buy Q at cheap korrin → hop → sell the same Q at dear sable)
 //    yields a small, bounded profit that scales with tier — not a printer.
-function bestRoundTrip(tier) {
+async function bestRoundTrip(tier) {
   let best = -Infinity, bestQ = 0;
   for (let q = 5; q <= 100000; q += 5) {
     reset(tier);
     const b = Economy.buy(IRON, q); if (!b.ok || b.capped) break;   // stop at the tier cap
     ctx.Game.state.currentSystem = "sable";
     const sMax = Economy.maxSell(IRON); if (sMax < q) break;         // must be able to sell the whole lot at once
-    const sll = Economy.sell(IRON, q);
+    const sll = await Economy.sell(IRON, q);
     const p = sll.proceeds - b.cost;
     if (p > best) { best = p; bestQ = q; }
   }
   return { best, bestQ };
 }
-const t0 = bestRoundTrip(0), t6 = bestRoundTrip(6);
+const t0 = await bestRoundTrip(0), t6 = await bestRoundTrip(6);
 assert(t0.best > 0 && t0.best < 3000, `tier-0 best round trip is small & positive (+${t0.best | 0}c @ ${t0.bestQ}u)`);
 assert(t6.best > t0.best * 10, "profit scales with tier (deeper markets)");
 // and a 20,000-unit dump is impossible — clamped, and the spend stays ≤ cap
@@ -130,3 +132,4 @@ assert(r9.ok && r9.price > Market.spot(AM, "navos") * 2, "…trade really is far
 assert(r9.cost <= TIER0_CAP + 1, `Buy Max still spends ≤ cap when pumped (spent ${r9.cost | 0}c, cap ${TIER0_CAP}) — the reported bug`);
 
 console.log("check_market_depth: all assertions passed ✔");
+})().catch(err => { console.error(err); process.exit(1); });

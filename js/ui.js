@@ -188,6 +188,8 @@ const UI = {
       actions = `<div class="disp-choices">` + sv.buttons.map(b =>
         `<button class="btn btn-mini" data-act="${arc}:choice:${b.i}" ${b.ok ? "" : "disabled"}>${b.label}${b.cost ? ` (−${Util.credits(b.cost)})` : ""}</button>`
       ).join("") + `</div>`;
+    } else if (sv && sv.type === "info") {
+      actions = `<div class="disp-choices"><button class="btn btn-mini btn-go" data-act="${arc}:continue">${sv.continueLabel || "Continue"}</button></div>`;
     } else {
       actions = `<div class="muted-note">Conversation closed.</div>`;
     }
@@ -510,9 +512,11 @@ const UI = {
     shields:   { sym: "✦", label: "Shields",   cls: "sc-sh" },
     cargo:     { sym: "▣", label: "Cargo",     cls: "sc-cg" },
     speed:     { sym: "»", label: "Speed",     cls: "sc-sp" },
+    scan:      { sym: "🔭", label: "Scan",      cls: "sc-sp" },
+    endure:    { sym: "⚙", label: "Endure",    cls: "sc-ar" },
   },
   statChips(obj, keys = ["firepower", "hull", "armor", "shields", "cargo", "speed"]) {
-    return keys.map(k => { const m = this.STAT_META[k];
+    return keys.map(k => { const m = this.STAT_META[k]; if (!m || obj[k] == null) return "";
       return `<span class="sc ${m.cls}" title="${m.label}">${m.sym} ${m.label} ${obj[k]}</span>`;
     }).join("");
   },
@@ -521,14 +525,14 @@ const UI = {
     const s = this.s();
     // main ship
     const md = Fleet.mainDef();
-    const pas = md.passive ? `+${(md.passive.pct * 100).toFixed(0)}% ${md.passive.stat} to fleet` : "—";
+    const pas = Fleet.mainEffectsLabel();
     this.refs.fleetMain.innerHTML =
       `<h2>Flagship</h2>
        <div class="mainship">
          <img src="${ASSET.ship(md.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
-         <div><div class="ship-name">${md.name}</div>
-         <div class="ship-route">transfer speed ${md.travelSpeed} · passive: <b>${pas}</b></div>
-         <div class="muted-note">your private ship — sets sector travel time. Upgrade in the Bazaar.</div></div>
+         <div><div class="ship-name">${md.name}${md.rarity ? ` <span class="cls-tag">${md.rarity}</span>` : ""}</div>
+         <div class="ship-route">transfer speed ${md.travelSpeed} · <b>${pas}</b></div>
+         <div class="muted-note">your private ship — sets sector travel time + empire bonuses. Upgrade in the Bazaar.</div></div>
        </div>`;
     // ships
     this.refs.fleetCount.textContent = `${s.ships.length}`;
@@ -626,19 +630,21 @@ const UI = {
     this._surveySys = sysId;
     const sys = Galaxy.get(sysId);
     this.refs.svTitle.textContent = `Survey ${sys ? sys.name : "system"}`;
-    const idle = Fleet.idle().filter(sh => !sh.mercenary);
+    const idle = Fleet.idle().filter(sh => !sh.mercenary)
+      .sort((a, b) => (Fleet.stats(b).scan || 0) - (Fleet.stats(a).scan || 0));
     if (!idle.length) {
       this.refs.svBody.innerHTML = `<p class="down">No idle ships — recall one from a mission, route, or repair it first.</p>`;
       this.refs.svStart.disabled = true; this.refs.survey.classList.remove("hidden"); return;
     }
     const far = Expeditions.isFar(sysId);
     const rows = idle.map((sh, i) => {
-      const st = Fleet.stats(sh), eta = Expeditions.durationFor(sysId, sh.uid);
-      return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> » ${st.speed} · ETA ~${Util.duration(eta)}</label>`;
+      const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh), eta = Expeditions.durationFor(sysId, sh.uid);
+      const surveyTag = def.cls === "survey" ? ` <span class="up">survey hull</span>` : "";
+      return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span>${surveyTag} · 🔭 scan ${st.scan.toFixed(1)} · endure ${st.endure.toFixed(1)} · ETA ~${Util.duration(eta)}</label>`;
     }).join("");
     this.refs.svBody.innerHTML =
-      `<p class="muted-note">Dispatch one ship to survey this uncharted outpost. It resolves on its own — even while you're away — into salvage, gear, a tradeable price tip, or trouble.</p>
-       <p class="si-effects"><span class="local-effect ${far ? "down" : "up"}">${far ? "⚠ Far & rough — better finds, but real hazard to the hull (rarely fatal)." : "Nearby — modest finds, low hazard."}</span></p>
+      `<p class="muted-note">Dispatch a ship to chart this outpost. When it returns, a <b>Dispatches</b> debrief opens — choices, scan odds, and loot. Survey hulls + Deep Scanners push success %.</p>
+       <p class="si-effects"><span class="local-effect ${far ? "down" : "up"}">${far ? "⚠ Far & rough — richer finds, steeper failure odds on risky pushes." : "Nearby — modest finds, kinder odds."}</span></p>
        <div class="rt-ships">${rows}</div>`;
     this.refs.svStart.disabled = false;
     this.refs.survey.classList.remove("hidden");
@@ -657,6 +663,7 @@ const UI = {
     else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
     else if (sh.status === "trading") status = `<span class="badge trade">trading</span>`;
     else if (sh.status === "surveying") status = `<span class="badge">surveying</span>`;
+    else if (sh.status === "debrief") status = `<span class="badge">debrief</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
     const hullPct = Math.round((1 - dmg) * 100);
@@ -678,7 +685,7 @@ const UI = {
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
-        <div class="statline">${this.statChips(st)}</div>
+        <div class="statline">${this.statChips(st, def.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo", "firepower"] : undefined)}</div>
         <div class="acc-row">${acc}${equipBtn}${repairBtn}${routeBtn}${sellBtn}</div>
       </div></div>`;
   },
@@ -917,19 +924,41 @@ const UI = {
     // The free starter ship only shows when the player has no ships at all
     // (the flagship doesn't count).
     const noShips = this.s().ships.length === 0;
-    const yard = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort]
+    const yardDefs = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || [])];
+    const yard = yardDefs
       .filter(d => d.price > 0 || noShips)
-      .map(d => shipCardBuy(d, d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite))).join("");
+      .map(d => {
+        const sprite = d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite);
+        const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"] : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
+        return `<div class="buy-card">
+      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${d.name[0]}'}))"/>
+      <div class="bc-name">${d.name} <span class="cls-tag">${d.cls}</span></div>
+      <div class="statline bc-statline">${this.statChips(d, keys)}</div>
+      <button class="btn btn-go" data-buyship="${d.id}" data-cost="${Math.round((d.price || 0) * (1 - Rep.discount()))}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button></div>`;
+      }).join("");
 
-    const mains = SHIP_CATALOG.main.map(d => {
-      const owned = this.s().mainShip.type === d.id;
-      const pas = d.passive ? `+${(d.passive.pct * 100).toFixed(0)}% ${d.passive.stat}` : "";
+    // Flagships: CURRENT always first (compare), then rotating bazaar offers.
+    const curMain = Fleet.mainDef();
+    const curCard = `<div class="buy-card current-flag">
+        <img src="${ASSET.ship(curMain.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
+        <div class="bc-name">${curMain.name} <span class="cls-tag">${curMain.rarity || "flagship"}</span></div>
+        <div class="bc-stats">» Transfer ${curMain.travelSpeed} · ${Fleet.mainEffectsLabel()}</div>
+        <span class="badge">current flagship</span></div>`;
+    const flagOffers = (b.flagships || []).map(o => {
+      const d = SHIP_CATALOG.main.find(x => x.id === o.shipType); if (!d) return "";
+      const effects = (d.effects || []).map(e => {
+        const meta = (FLAGSHIP_EFFECTS && FLAGSHIP_EFFECTS[e.type]) || { label: e.type };
+        return `+${Math.round(e.pct * 100)}% ${meta.label}`;
+      }).join(" · ");
+      const cost = Math.round(o.price * (1 - Rep.discount()));
       return `<div class="buy-card">
         <img src="${ASSET.ship(d.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'★'}))"/>
-        <div class="bc-name">${d.name}</div>
-        <div class="bc-stats" title="sector transfer speed — sets how fast you dock between systems">» Transfer speed ${d.travelSpeed} · ${pas}</div>
-        ${owned ? `<span class="badge">current flagship</span>` : `<button class="btn btn-go" data-buymain="${d.id}" data-cost="${Math.round((d.price || 0) * (1 - Rep.discount()))}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button>`}</div>`;
-    }).join("");
+        <div class="bc-name">${d.name} <span class="cls-tag">${d.rarity || o.rarity}</span></div>
+        <div class="bc-stats">» Transfer ${d.travelSpeed} · ${effects}</div>
+        <div class="muted-note">${(d.effects || []).length} effect${(d.effects || []).length === 1 ? "" : "s"} · compare with current ↑</div>
+        <button class="btn btn-go" data-buymain="${d.id}" data-offer="${o.id}" data-cost="${cost}">${Util.credits(cost)}c</button></div>`;
+    }).join("") || `<p class="muted-note">No flagship offers right now — the yard rotates.</p>`;
+    const mains = curCard + flagOffers;
 
     const mercSorters = {
       power: (a, z) => z.firepower - a.firepower,
@@ -1080,8 +1109,8 @@ const UI = {
 
     // Each Bazaar area is its own sub-tab so the page never grows past one screen.
     const sections = {
-      shipyard: `<div class="panel"><h2>Shipyard <small>transports & escort warships</small></h2><div class="buy-grid">${yard}</div></div>`,
-      flagships: `<div class="panel"><h2>Flagships <small>your private main ship</small></h2><div class="buy-grid">${mains}</div></div>`,
+      shipyard: `<div class="panel"><h2>Shipyard <small>transports, escorts & survey hulls</small></h2><div class="buy-grid">${yard}</div></div>`,
+      flagships: `<div class="panel"><h2>Flagships <small>current ship pinned · offers rotate</small></h2><div class="buy-grid">${mains}</div></div>`,
       mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2>${mercTools}<div class="buy-grid">${mercs}</div></div>`,
       contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`
         + `<div class="panel"><h2>Senator Dossiers <small>unlock hidden stances &amp; voting records</small></h2><div class="contract-list">${dossiers}</div></div>`,
@@ -1128,8 +1157,14 @@ const UI = {
       return;
     }
     if (Economy.busy()) return;
+    const mainBtn = t.closest("[data-buymain]");
+    if (mainBtn) {
+      const r = await Bazaar.buyMain(mainBtn.dataset.buymain, mainBtn.dataset.offer);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Flagship acquired.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.renderFleet(); this.updateHeader();
+      return;
+    }
     const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
-      ["buymain", id => Bazaar.buyMain(id), "Flagship acquired."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
       ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — see Industries → storage (then install on a planet)."],
@@ -1832,10 +1867,19 @@ const UI = {
       this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`, r.success ? "good" : "bad", 5000);
       if (this.page === "fleet") this.renderFleet(); this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });
+    Bus.on("surveyDebrief", () => {
+      if (window.Game._booting) return;
+      this.toast("Survey debrief waiting in Dispatches ▸", "good");
+      this.bumpComms();
+      if (this.page === "fleet") this.renderFleet();
+      if (this.page === "comms") this.renderDispatches();
+    });
     Bus.on("surveyDone", r => {
       if (window.Game._booting) return;   // offline surveys land in the "while you were away" recap
+      if (r.awaitingDebrief) return;     // surveyDebrief already toasted the inbox ping
       this.toast(`🛰 ${r.summary}`, r.success ? "good" : "bad", 6000);
       if (this.page === "fleet") this.renderFleet();
+      if (this.page === "comms") this.renderDispatches();
       if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });

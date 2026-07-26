@@ -511,16 +511,15 @@ const AdminUI = {
   },
 
   // ===== missions editor ===================================================
-  // Authors "Dispatches" storylines (see js/story.js). Built-in ones are shown
-  // read-only (their triggers/goals are code functions); custom ones are pure
-  // data — triggers/goals are declarative { metric, op, value } conditions — so
-  // they save to the cloud (STORY_CUSTOM) and run for every player.
+  // Custom missions are full declarative data (STORY_CUSTOM). Built-ins keep
+  // their JS triggers/flags but admins can overlay copy via STORY_OVERRIDES.
   setMStatus(msg, kind) { const e = this.r.mStatus; if (!e) return; e.textContent = msg; e.className = "admin-status" + (kind ? " " + kind : ""); },
   _customList() { if (!Array.isArray(window.STORY_CUSTOM)) window.STORY_CUSTOM = []; return window.STORY_CUSTOM; },
+  _overrides() { if (!window.STORY_OVERRIDES || typeof window.STORY_OVERRIDES !== "object") window.STORY_OVERRIDES = {}; return window.STORY_OVERRIDES; },
 
   buildMissions() { this._showMissionList(); },
   _showMissionList() {
-    this.mDraft = null; this.mIndex = -1;
+    this.mDraft = null; this.mIndex = -1; this.mBuiltinId = null;
     this.r.mDetail.classList.add("hidden"); this.r.mDetail.innerHTML = "";
     this.r.mList.classList.remove("hidden");
     if (this.r.mListActions) this.r.mListActions.classList.remove("hidden");
@@ -530,15 +529,17 @@ const AdminUI = {
     list.append(this.el("h4", { class: "admin-subhead", text: "Your missions" }));
     if (!custom.length) list.append(this.el("p", { class: "admin-mhint", text: "None yet — click “+ New mission” below." }));
     custom.forEach((sl, i) => list.append(this._missionCard(sl, true, i)));
-    list.append(this.el("h4", { class: "admin-subhead", text: "Built-in missions (read-only)" }));
+    list.append(this.el("h4", { class: "admin-subhead", text: "Built-in missions (edit text)" }));
+    list.append(this.el("p", { class: "admin-mhint", text: "Triggers & branching stay in code — edit the dialogue copy here. Saves as STORY_OVERRIDES for every player." }));
     (window.STORYLINES || []).forEach(sl => list.append(this._missionCard(sl, false)));
   },
   _missionCard(sl, custom, i) {
     const steps = (sl.steps || []).length;
+    const ov = !custom && this._overrides()[sl.id];
     const head = this.el("div", { class: "admin-mcard-head" }, [
       this.el("span", { class: "admin-mbadge", text: sl.kind === "arc" ? "ARC" : "JOB" }),
-      this.el("strong", { text: sl.from || "(no sender)" }),
-      this.el("span", { class: "admin-mtag " + (custom ? "is-custom" : "is-builtin"), text: custom ? "custom" : "built-in" }),
+      this.el("strong", { text: (ov && ov.from) || sl.from || "(no sender)" }),
+      this.el("span", { class: "admin-mtag " + (custom ? "is-custom" : "is-builtin"), text: custom ? "custom" : (ov ? "built-in · edited" : "built-in") }),
     ]);
     const meta = this.el("div", { class: "admin-mcard-meta", text: `id: ${sl.id} · ${steps} step${steps === 1 ? "" : "s"}` });
     const actions = this.el("div", { class: "admin-mcard-actions" });
@@ -546,7 +547,9 @@ const AdminUI = {
       actions.append(this.el("button", { class: "btn btn-mini", text: "Edit", onclick: () => this.editMission(i) }));
       actions.append(this.el("button", { class: "btn btn-mini btn-danger", text: "Delete", onclick: () => this.deleteMission(i) }));
     } else {
-      actions.append(this.el("button", { class: "btn btn-mini", text: "Preview", onclick: () => this.previewMission(sl) }));
+      actions.append(this.el("button", { class: "btn btn-mini btn-go", text: "Edit text", onclick: () => this.editBuiltinText(sl.id) }));
+      actions.append(this.el("button", { class: "btn btn-mini", text: "Preview", onclick: () => this.previewMission(Story.storyline(sl.id) || sl) }));
+      if (ov) actions.append(this.el("button", { class: "btn btn-mini btn-danger", text: "Reset text", onclick: () => this.resetBuiltinText(sl.id) }));
     }
     return this.el("div", { class: "admin-mission-card" }, [head, meta, actions]);
   },
@@ -559,6 +562,107 @@ const AdminUI = {
     this.r.mDetail.classList.remove("hidden");
     this.setMStatus("", "");
     this.renderMissionEditor();
+  },
+
+  // ---- built-in text overlays (STORY_OVERRIDES) ---------------------------
+  editBuiltinText(id) {
+    const base = (window.STORYLINES || []).find(s => s.id === id); if (!base) return;
+    const live = Story.storyline(id) || base;
+    this.mBuiltinId = id;
+    this.r.mList.classList.add("hidden");
+    if (this.r.mListActions) this.r.mListActions.classList.add("hidden");
+    const d = this.r.mDetail; d.classList.remove("hidden"); d.innerHTML = "";
+    d.append(this.el("div", { class: "admin-mission-toolbar" }, [
+      this.el("button", { class: "btn btn-mini", text: "← Back", onclick: () => this._showMissionList() }),
+      this.el("strong", { text: `Edit text — ${id}` }),
+    ]));
+    d.append(this.el("p", { class: "admin-mhint", text: "Triggers, flags, and rewards stay in code. Change the words players read." }));
+
+    const fromInp = this.el("input", { class: "admin-input", value: live.from || "" });
+    const outroInp = this.el("textarea", { class: "admin-textarea", rows: 2 }); outroInp.value = live.outro || "";
+    d.append(this.el("label", { class: "admin-field", text: "Sender name" })); d.append(fromInp);
+    d.append(this.el("label", { class: "admin-field", text: "Outro" })); d.append(outroInp);
+
+    const stepEditors = (live.steps || []).map((step, i) => {
+      const box = this.el("div", { class: "admin-step" });
+      box.append(this.el("div", { class: "admin-step-head" }, [
+        this.el("span", { class: "admin-step-num", text: `Step ${i + 1}${step.key ? " · " + step.key : ""}${step.choices ? " · choice" : step.goal ? " · objective" : " · info"}` }),
+      ]));
+      const textA = this.el("textarea", { class: "admin-textarea", rows: 3 }); textA.value = step.text || "";
+      box.append(this.el("label", { class: "admin-field", text: "Inbound message" })); box.append(textA);
+      let goalInp = null;
+      if (step.goal) {
+        goalInp = this.el("input", { class: "admin-input", value: step.goal.desc || "" });
+        box.append(this.el("label", { class: "admin-field", text: "Objective description" })); box.append(goalInp);
+      }
+      const choiceInps = [];
+      if (step.choices) {
+        step.choices.forEach((c, ci) => {
+          const lab = this.el("input", { class: "admin-input", value: c.label || "" });
+          const rep = this.el("input", { class: "admin-input", value: c.reply || "" });
+          const ack = this.el("input", { class: "admin-input", value: c.ack || "" });
+          box.append(this.el("label", { class: "admin-field", text: `Choice ${ci + 1} label` })); box.append(lab);
+          box.append(this.el("label", { class: "admin-field", text: `Choice ${ci + 1} player reply` })); box.append(rep);
+          box.append(this.el("label", { class: "admin-field", text: `Choice ${ci + 1} NPC ack` })); box.append(ack);
+          choiceInps.push({ lab, rep, ack });
+        });
+      }
+      const replyInps = [];
+      (step.replies || []).forEach((r, ri) => {
+        const label = typeof r === "string" ? r : (r.label || "");
+        const ack = typeof r === "object" ? (r.ack || "") : "";
+        const lab = this.el("input", { class: "admin-input", value: label });
+        const ackI = this.el("input", { class: "admin-input", value: ack });
+        box.append(this.el("label", { class: "admin-field", text: `Flavour reply ${ri + 1}` })); box.append(lab);
+        if (ack || typeof r === "object") { box.append(this.el("label", { class: "admin-field", text: `Flavour ack ${ri + 1}` })); box.append(ackI); }
+        replyInps.push({ lab, ackI, wasObj: typeof r === "object" });
+      });
+      d.append(box);
+      return { i, key: step.key || String(i), textA, goalInp, choiceInps, replyInps, step };
+    });
+
+    const saveBtn = this.el("button", { class: "btn btn-go", text: "Save text overlay", onclick: async () => {
+      const ov = { from: fromInp.value.trim(), outro: outroInp.value.trim(), steps: {} };
+      for (const ed of stepEditors) {
+        const sOv = { text: ed.textA.value };
+        if (ed.goalInp) sOv.goal = { desc: ed.goalInp.value };
+        if (ed.choiceInps.length) {
+          sOv.choices = ed.choiceInps.map(c => ({ label: c.lab.value, reply: c.rep.value, ack: c.ack.value }));
+        }
+        if (ed.replyInps.length) {
+          sOv.replies = ed.replyInps.map((r, ri) => {
+            const base = ed.step.replies[ri];
+            if (r.wasObj || (base && typeof base === "object")) {
+              return { label: r.lab.value, reply: (base && base.reply) || r.lab.value, ack: r.ackI.value };
+            }
+            return r.lab.value;
+          });
+        }
+        ov.steps[ed.key] = sOv;
+      }
+      const next = Object.assign({}, this._overrides(), { [id]: ov });
+      this.setMStatus("Saving…", "");
+      try {
+        await Content.save("STORY_OVERRIDES", next);
+        if (window.UI) UI.toast(`Text for “${ov.from || id}” saved.`, "good");
+        this._showMissionList();
+        this.setMStatus("✓ Text overlay live for every player.", "good");
+      } catch (e) { this.setMStatus("✗ " + ((e && e.message) || e), "bad"); }
+    }});
+    d.append(this.el("div", { class: "settings-actions" }, [
+      saveBtn,
+      this.el("button", { class: "btn", text: "Cancel", onclick: () => this._showMissionList() }),
+    ]));
+  },
+  async resetBuiltinText(id) {
+    if (!confirm(`Reset text overrides for “${id}”? Built-in copy returns.`)) return;
+    const next = Object.assign({}, this._overrides());
+    delete next[id];
+    try {
+      await Content.save("STORY_OVERRIDES", next);
+      if (window.UI) UI.toast("Built-in text restored.", "good");
+      this._showMissionList();
+    } catch (e) { this.setMStatus("✗ " + ((e && e.message) || e), "bad"); }
   },
 
   // read-only flow view for a built-in mission

@@ -83,6 +83,33 @@ const Bazaar = {
     const name = `${mfr} ${core} ${suf}`;
     return { id: `ex-${epoch}-${slot}`, ex: { uid: `ex${epoch}x${slot}`, type, scope, name, components: [] }, price };
   },
+  // Rotating flagship offers (excludes free starter + currently owned).
+  genSeededFlagship(epoch, slot) {
+    const s = this._seed(["flag", String(epoch), String(slot)]);
+    const owned = this.s().mainShip && this.s().mainShip.type;
+    const pool = SHIP_CATALOG.main.filter(d => d.price > 0 && d.id !== owned);
+    if (!pool.length) return null;
+    // Weight toward mid tiers; legendaries are rare on the board.
+    const roll = this._u01(s, 0);
+    let rarity = "common";
+    if (roll >= 0.45 && roll < 0.75) rarity = "uncommon";
+    else if (roll >= 0.75 && roll < 0.92) rarity = "rare";
+    else if (roll >= 0.92 && roll < 0.98) rarity = "epic";
+    else if (roll >= 0.98) rarity = "legendary";
+    let band = pool.filter(d => (d.rarity || "common") === rarity);
+    if (!band.length) band = pool;
+    const def = band[Math.floor(this._u01(s, 1) * band.length) % band.length];
+    const price = Math.round(def.price * (0.95 + this._u01(s, 2) * 0.15));
+    return { id: `fg-${epoch}-${slot}`, shipType: def.id, price, rarity: def.rarity || "common" };
+  },
+  genFlagship() {
+    const owned = this.s().mainShip && this.s().mainShip.type;
+    const pool = SHIP_CATALOG.main.filter(d => d.price > 0 && d.id !== owned);
+    if (!pool.length) return null;
+    const def = Util.pick(pool);
+    return { id: "fg" + (++this.s().seq), shipType: def.id, price: Math.round(def.price * Util.randFloat(0.95, 1.1)), rarity: def.rarity || "common" };
+  },
+
   // Seeded component offer — mirrors app.gen_component in phase3 SQL.
   genSeededComponent(epoch, slot) {
     const s = this._seed(["cp", String(epoch), String(slot)]);
@@ -193,6 +220,11 @@ const Bazaar = {
       const o = this.genSeededComponent(epoch, i);
       if (!bought.has(o.id)) b.components.push(o);
     }
+    b.flagships = [];
+    for (let i = 0; i < (BAZAARCFG.flagshipSlots || 4); i++) {
+      const o = this.genSeededFlagship(epoch, i);
+      if (o && !bought.has(o.id)) b.flagships.push(o);
+    }
     b.dossiers ||= [];
     // Dossiers remain local soft content (Senate flavor, no credit impact).
     while (window.Senate && b.dossiers.length < SENATECFG.dossierSlots) {
@@ -300,11 +332,14 @@ const Bazaar = {
   ensure(now = Date.now()) {
     if (this.authoritative()) { this.fillSeededBoard(now); return; }
     const b = this.bz();
-    b.mercs ||= []; b.contracts ||= []; b.accessories ||= []; b.extractors ||= []; b.components ||= [];
+    b.mercs ||= []; b.contracts ||= []; b.accessories ||= []; b.extractors ||= []; b.components ||= []; b.flagships ||= [];
     while (b.mercs.length < BAZAARCFG.mercSlots) b.mercs.push(this.genMerc(now));
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
     while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
     while (b.components.length < COMPONENTCFG.bazaarSlots) b.components.push(this.genComponent());
+    while (b.flagships.length < (BAZAARCFG.flagshipSlots || 4)) {
+      const o = this.genFlagship(); if (!o) break; b.flagships.push(o);
+    }
     b.dossiers ||= [];
     while (window.Senate && b.dossiers.length < SENATECFG.dossierSlots) { const d = this.genDossier(now); if (!d) break; b.dossiers.push(d); }
     const openCount = () => b.contracts.filter(c => c.status === "open").length;
@@ -344,6 +379,7 @@ const Bazaar = {
     b.accessories = b.accessories.filter(a => Math.random() > 0.06);
     b.extractors = (b.extractors || []).filter(a => Math.random() > 0.04);
     b.components = (b.components || []).filter(a => Math.random() > 0.05);
+    b.flagships = (b.flagships || []).filter(a => Math.random() > 0.08);
     b.dossiers = (b.dossiers || []).filter(d => d.expiresAt > now && !(window.Senate && Senate.revealed(d.senatorId)));
     // contracts: expire, get taken by NPCs, and clear after lingering
     for (const c of b.contracts) {
@@ -430,21 +466,24 @@ const Bazaar = {
     );
   },
 
-  _buyMainLocal(catalogId) {
+  _buyMainLocal(catalogId, offerId) {
     const def = SHIP_CATALOG.main.find(x => x.id === catalogId); const s = this.s();
     if (!def) return { ok: false, msg: "Unknown flagship." };
     if (def.id === s.mainShip.type) return { ok: false, msg: "Already your flagship." };
-    const price = Math.round(def.price * (1 - Rep.discount()));
+    const offer = offerId && (s.bazaar.flagships || []).find(o => o.id === offerId);
+    const sticker = offer ? offer.price : def.price;
+    const price = Math.round(sticker * (1 - Rep.discount()));
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
     s.mainShip = { type: def.id };
+    if (offer) s.bazaar.flagships = (s.bazaar.flagships || []).filter(o => o.id !== offerId);
     Economy.refreshNetWorth();
     return { ok: true };
   },
-  buyMain(catalogId) {
-    if (!this.authoritative()) return this._buyMainLocal(catalogId);
+  buyMain(catalogId, offerId) {
+    if (!this.authoritative()) return this._buyMainLocal(catalogId, offerId);
     return Economy._withRpc(
-      () => this._buyMainLocal(catalogId),
+      () => this._buyMainLocal(catalogId, offerId),
       () => Cloud.buyMain(catalogId),
       "Couldn't reach the bazaar — try again."
     );

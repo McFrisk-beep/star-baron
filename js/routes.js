@@ -103,6 +103,9 @@ const Routes = {
     const total = ROUTE_EVENTS.reduce((n, e) => n + e.w, 0);
     let r = Math.random() * total, ev = ROUTE_EVENTS[0];
     for (const e of ROUTE_EVENTS) { if ((r -= e.w) < 0) { ev = e; break; } }
+    // Flagship routeSafe can shrug off a bad roll (safer lanes).
+    const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
+    if (!ev.good && safe > 0 && Math.random() < safe) return null;
     const delta = Math.round(per * (Util.randFloat(ev.mult[0], ev.mult[1]) - 1));   // change vs a normal shipment
     const out = { id: ev.id, msg: ev.msg, good: !!ev.good, delta, comm: route.comm, from: route.from, to: route.to };
     if (ev.dmg) {                                                                    // wear a random ship on the route

@@ -21,7 +21,7 @@ const Game = {
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
       missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
       inventory: { capacity: 6, upgrades: 0 },
-      bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [] },
+      bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [], flagships: [] },
       pendingContracts: [],
       bazaarBought: [],
       travel: null,
@@ -35,7 +35,7 @@ const Game = {
       rivals: null,          // seeded lazily by Rivals.ensure()
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
-      story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0 },
+      story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
       settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
       lastSeenAt: Date.now(),
       market: null,
@@ -65,14 +65,21 @@ const Game = {
       delete s.avgCost; s.avgCost = loaded.avgCost || {};
     }
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    // story flags / ephemeral survey threads — old saves lack the keys
+    s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
+    s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {}; s.story.ephemeral ||= {};
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
-    // a "surveying" ship from a save whose expedition was pruned → free it
-    for (const sh of s.ships) if (sh.status === "surveying" && !s.expeditions.some(e => e.shipUid === sh.uid)) sh.status = "idle";
+    // surveying/debrief ship whose expedition vanished → free it
+    for (const sh of s.ships) {
+      if ((sh.status === "surveying" || sh.status === "debrief") &&
+          !(s.expeditions || []).some(e => e.shipUid === sh.uid && !e.resolved))
+        sh.status = "idle";
+    }
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
-    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= [];
+    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);

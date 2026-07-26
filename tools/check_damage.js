@@ -11,7 +11,7 @@ for (const f of ["store.js", "data.js", "fleet.js", "missions.js"])
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
 
 // neighbours the fleet/mission code calls at runtime
-ctx.Economy = { afterTax: x => x, refreshNetWorth() {}, checkAchievements() {} };
+ctx.Economy = { authoritative: () => false, afterTax: x => x, refreshNetWorth() {}, checkAchievements() {} };
 ctx.Rep = { rewardMult: () => 1, successBonus: () => 0, onContract() {} };
 ctx.Items = { gen: () => ({ uid: "it" + Math.random() }) };
 ctx.SHIP_NAME_A = ["Test"]; ctx.SHIP_NAME_B = ["Ship"];   // live in flavor.js
