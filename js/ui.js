@@ -176,7 +176,13 @@ const UI = {
         const t = el.querySelector(".dispatch-thread");
         if (t) t.scrollTop = t.scrollHeight;
       };
-      requestAnimationFrame(() => { pin(); requestAnimationFrame(pin); });
+      requestAnimationFrame(() => {
+        pin();
+        // Mobile: keep the open thread (and choice chips) above the floatnav.
+        if (window.matchMedia && matchMedia("(max-width: 720px)").matches)
+          el.scrollIntoView({ block: "start", behavior: "instant" in window ? "instant" : "auto" });
+        requestAnimationFrame(pin);
+      });
     }
   },
 

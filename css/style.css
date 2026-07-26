@@ -1447,11 +1447,12 @@ body.reduced .hub-prompt { animation: none; }
 @media (max-width: 720px) {
   .disp-layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 38%) minmax(0, 1fr); }
   .disp-sidebar { border-right: 0; border-bottom: 1px solid rgba(130, 170, 255, .18); max-height: none; }
-  /* Open thread: hide contacts; fixed pane height so .dispatch-thread scrolls. */
+  /* Open thread: hide contacts; fit above the floating dock so actions stay on screen. */
   .disp-layout.thread-open {
     grid-template-rows: 1fr;
-    height: min(72vh, 640px);
-    min-height: 0;
+    height: calc(100dvh - 210px);
+    max-height: calc(100dvh - 210px);
+    min-height: 280px;
   }
   .disp-layout.thread-open .disp-sidebar { display: none; }
   .disp-layout.thread-open .disp-pane { min-height: 0; overflow: hidden; }
