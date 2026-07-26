@@ -319,14 +319,17 @@ const Story = {
     m.ts = m.ts || Date.now();
     // your own lines read themselves; an inbound is read only if you're already
     // looking at that conversation, otherwise it lights the mailbox.
-    m.read = (m.type === "out") || (window.UI && UI.page === "comms" && UI._dispatchArc === m.arc);
+    m.read = (m.type === "out") || (window.UI && UI.page === "comms" && UI.commsTab === "dispatches" && UI._dispatchArc === m.arc);
     st.inbox.push(m);
     this._pruneContacts();
     if (st.inbox.length > this.INBOX_MAX) st.inbox = st.inbox.slice(-this.INBOX_MAX);
-    if (!m.read && window.UI && UI.bumpComms) UI.bumpComms();
+    if (!m.read && window.UI) {
+      if (UI.page !== "comms" && UI.bumpComms) UI.bumpComms();
+      else if (UI.page === "comms" && UI.commsTab !== "dispatches" && UI.pingCommsTab) UI.pingCommsTab("dispatches");
+    }
     this._recountUnread();
     if (window.Bus) Bus.emit("story", m);
-    if (window.UI && UI.page === "comms" && UI.renderDispatches) UI.renderDispatches();
+    if (window.UI && UI.page === "comms" && UI.commsTab === "dispatches" && UI.renderDispatches) UI.renderDispatches();
   },
   _postIn(sl, step) { this._push({ arc: sl.id, from: sl.from, portrait: sl.portrait, text: step.text, type: "in" }); },
   _postOut(sl, text) { this._push({ arc: sl.id, from: "You", portrait: null, text, type: "out" }); },

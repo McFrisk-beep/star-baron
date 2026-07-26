@@ -157,37 +157,42 @@
         </div>
       </section>
 
-      <!-- COMMS (Broadcast + Chat) -->
+      <!-- COMMS: Dispatches / Broadcast / Chat -->
       <section class="page hidden" id="page-comms">
-        <section class="panel" id="panel-dispatches">
-          <h2><span data-i18n="comms.dispatches">Dispatches</span> <small data-i18n="comms.dispatchesSub">private channel</small></h2>
-          <div id="dispatch-body"></div>
-        </section>
-        <div class="comms-grid">
-          <section class="panel" id="panel-broadcast">
-            <div class="bc-head"><h2 data-i18n="comms.broadcast">Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
-            <div class="screen" id="broadcast-screen">
-              <img id="bc-frame" alt="broadcast" />
-              <div class="screen-overlay">
-                <div class="screen-title" id="bc-title" data-i18n="comms.signal">SIGNAL ACQUIRING…</div>
-                <div class="screen-caption" id="bc-caption"></div>
-              </div>
-              <div class="screen-scanlines"></div>
-            </div>
-            <div class="ticker"><span class="ticker-tag" data-i18n="comms.newswire">NEWSWIRE</span>
-              <div class="ticker-track"><span id="ticker-text" data-i18n="comms.ticker">Standby for galactic bulletins…</span></div>
-            </div>
-            <details class="newswire" id="newswire-details" open>
-              <summary data-i18n="comms.newswireLog">Newswire log</summary>
-              <ul id="newswire-list"></ul>
-            </details>
-          </section>
+        <nav class="subtabs comms-subtabs" id="comms-tabs" aria-label="Comms sections">
+          <button type="button" class="subtab active" data-comms="dispatches"><span data-i18n="comms.dispatches">Dispatches</span></button>
+          <button type="button" class="subtab" data-comms="broadcast"><span data-i18n="comms.broadcast">Broadcast</span></button>
+          <button type="button" class="subtab" data-comms="chat"><span data-i18n="comms.chat">Chat</span></button>
+        </nav>
 
-          <section class="panel panel-feed" id="panel-feed">
-            <h2><span data-i18n="comms.chat">Chat</span> <small data-i18n="comms.chatSub">galactic trader channel</small></h2>
-            <ul class="feed" id="feed-list"></ul>
-          </section>
-        </div>
+        <section class="panel comms-pane" id="panel-dispatches" data-comms-pane="dispatches">
+          <h2><span data-i18n="comms.dispatches">Dispatches</span> <small data-i18n="comms.dispatchesSub">private channel</small></h2>
+          <div class="disp-layout" id="dispatch-body"></div>
+        </section>
+
+        <section class="panel comms-pane hidden" id="panel-broadcast" data-comms-pane="broadcast">
+          <div class="bc-head"><h2 data-i18n="comms.broadcast">Broadcast</h2><div id="kofi-slot" class="kofi-slot"></div></div>
+          <div class="screen" id="broadcast-screen">
+            <img id="bc-frame" alt="broadcast" />
+            <div class="screen-overlay">
+              <div class="screen-title" id="bc-title" data-i18n="comms.signal">SIGNAL ACQUIRING…</div>
+              <div class="screen-caption" id="bc-caption"></div>
+            </div>
+            <div class="screen-scanlines"></div>
+          </div>
+          <div class="ticker"><span class="ticker-tag" data-i18n="comms.newswire">NEWSWIRE</span>
+            <div class="ticker-track"><span id="ticker-text" data-i18n="comms.ticker">Standby for galactic bulletins…</span></div>
+          </div>
+          <details class="newswire" id="newswire-details" open>
+            <summary data-i18n="comms.newswireLog">Newswire log</summary>
+            <ul id="newswire-list"></ul>
+          </details>
+        </section>
+
+        <section class="panel panel-feed comms-pane hidden" id="panel-feed" data-comms-pane="chat">
+          <h2><span data-i18n="comms.chat">Chat</span> <small data-i18n="comms.chatSub">galactic trader channel</small></h2>
+          <ul class="feed" id="feed-list"></ul>
+        </section>
       </section>
     </div>
   </main>

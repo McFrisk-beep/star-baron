@@ -117,7 +117,10 @@ const UI = {
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "comms") { this._dispatchArc = null; this.clearCommsBadge(); this.renderDispatches(); this.scrollFeedBottom(); }
+    else if (name === "comms") {
+      this.clearCommsBadge();
+      this.showCommsTab(this.commsTab || "dispatches");
+    }
     else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
   },
 
@@ -133,15 +136,45 @@ const UI = {
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   },
 
-  // ---- Dispatches (story/quest mailbox in Comms) --------------------------
-  // Two views in one panel: a conversation LIST (up to 30 contacts) and, when a
-  // contact is opened, their THREAD with the current accept/objective/choice
-  // dialog and flavour replies. UI._dispatchArc null = list, else = open thread.
+  // ---- Comms subtabs (Dispatches / Broadcast / Chat) ----------------------
+  showCommsTab(name) {
+    const tab = (name === "broadcast" || name === "chat") ? name : "dispatches";
+    this.commsTab = tab;
+    const nav = document.getElementById("comms-tabs");
+    if (nav) for (const b of nav.querySelectorAll("[data-comms]")) {
+      b.classList.toggle("active", b.dataset.comms === tab);
+      if (b.dataset.comms === tab) b.classList.remove("ping");
+    }
+    for (const pane of document.querySelectorAll("#page-comms [data-comms-pane]"))
+      pane.classList.toggle("hidden", pane.dataset.commsPane !== tab);
+    if (tab === "dispatches") this.renderDispatches();
+    else if (tab === "chat") this.scrollFeedBottom();
+  },
+  // Soft ping on a Comms subtab when something arrives while you're on another.
+  pingCommsTab(name) {
+    const nav = document.getElementById("comms-tabs"); if (!nav) return;
+    const b = nav.querySelector(`[data-comms="${name}"]`);
+    if (b && !b.classList.contains("active")) b.classList.add("ping");
+  },
+
+  // ---- Dispatches: chat-style (preview list + open thread) ----------------
+  // Left: conversation previews. Right: open thread (or empty prompt).
+  // UI._dispatchArc null = nothing open; else = that contact's thread.
   renderDispatches() {
     const el = this.refs.dispatchBody; if (!window.Story || !el) return;
     el.onclick = e => this.onDispatchClick(e);
-    if (this._dispatchArc && Story.thread(this._dispatchArc).length) this._renderThread(el, this._dispatchArc);
-    else { this._dispatchArc = null; this._renderMailbox(el); }
+    if (this._dispatchArc && !Story.thread(this._dispatchArc).length) this._dispatchArc = null;
+    const listHtml = this._dispatchListHtml();
+    const paneHtml = this._dispatchArc
+      ? this._threadHtml(this._dispatchArc)
+      : `<div class="disp-empty"><p data-i18n="comms.clickOpen">${window.I18n ? I18n.t("comms.clickOpen") : "Click a message to open the conversation"}</p></div>`;
+    el.innerHTML = `<aside class="disp-sidebar">${listHtml}</aside><div class="disp-pane">${paneHtml}</div>`;
+    if (this._dispatchArc) {
+      requestAnimationFrame(() => {
+        const t = el.querySelector(".dispatch-thread");
+        if (t) t.scrollTop = t.scrollHeight;
+      });
+    }
   },
 
   _avatar(portrait) {
@@ -150,22 +183,22 @@ const UI = {
       : `<span class="disp-av disp-av-blank"></span>`;
   },
 
-  _renderMailbox(el) {
+  _dispatchListHtml() {
     const rows = Story.conversations();
     if (!rows.length) {
-      el.innerHTML = `<p class="muted-note">No dispatches yet. Keep trading and building — someone always wants a word with a rising baron.</p>`;
-      return;
+      return `<p class="muted-note disp-list-empty">No dispatches yet. Keep trading and building — someone always wants a word with a rising baron.</p>`;
     }
-    el.innerHTML = `<ul class="disp-list">` + rows.map(c => {
+    return `<ul class="disp-list">` + rows.map(c => {
+      const open = c.arc === this._dispatchArc;
       const dot = c.unread ? `<span class="disp-dot">${c.unread}</span>` : (c.action ? `<span class="disp-dot act">●</span>` : "");
       const tag = c.status === "active" ? (c.kind === "arc" ? "story" : "job") : c.status;
-      return `<li class="disp-row${c.unread ? " unread" : ""}" data-open="${c.arc}">${this._avatar(c.portrait)}` +
+      return `<li class="disp-row${c.unread ? " unread" : ""}${open ? " open" : ""}" data-open="${c.arc}">${this._avatar(c.portrait)}` +
              `<div class="disp-row-main"><div class="disp-row-top"><b>${c.from}</b> <span class="disp-kind">${tag}</span>` +
              `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}</li>`;
     }).join("") + `</ul>`;
   },
 
-  _renderThread(el, arc) {
+  _threadHtml(arc) {
     const sv = Story.stepView(arc);
     const msgs = Story.thread(arc).map(m => {
       const side = m.type === "out" ? "out" : "in";
@@ -176,7 +209,6 @@ const UI = {
              `<div class="disp-text">${m.text}</div></div></li>`;
     }).join("");
 
-    // action bar: gate (accept/decline) · objective progress · branching choice · flavour replies
     let actions = "";
     if (sv && sv.type === "gate") {
       actions = `<div class="disp-obj">▸ ${sv.desc}</div><div class="disp-choices">` +
@@ -198,19 +230,23 @@ const UI = {
         `<button class="chip" data-act="${arc}:reply:${r.i}">${r.label}</button>`).join("") + `</div>`;
     }
 
-    el.innerHTML =
-      `<div class="disp-thread-head"><button class="btn btn-mini" data-back="1">‹ Inbox</button>` +
-      `<b>${sv ? sv.from : arc}</b></div>` +
+    return `<div class="disp-thread-head"><b>${sv ? sv.from : arc}</b>` +
+      `<button class="btn btn-mini" data-back="1" title="Close conversation">✕</button></div>` +
       `<ul class="dispatch-thread">${msgs}</ul>` +
       `<div class="disp-actions">${actions}</div>`;
-    requestAnimationFrame(() => { const t = el.querySelector(".dispatch-thread"); if (t) t.scrollTop = t.scrollHeight; });
   },
 
   onDispatchClick(e) {
     const back = e.target.closest("[data-back]");
     if (back) { this._dispatchArc = null; this.renderDispatches(); return; }
     const row = e.target.closest("[data-open]");
-    if (row) { this._dispatchArc = row.dataset.open; Story.openConversation(this._dispatchArc); this.clearCommsBadge(); this.renderDispatches(); return; }
+    if (row) {
+      this._dispatchArc = row.dataset.open;
+      Story.openConversation(this._dispatchArc);
+      this.clearCommsBadge();
+      this.renderDispatches();
+      return;
+    }
     const b = e.target.closest("[data-act]"); if (!b || b.disabled) return;
     const [arc, ...rest] = b.dataset.act.split(":");
     const r = Story.act(arc, rest.join(":"));
@@ -1803,6 +1839,11 @@ const UI = {
       if (t.dataset.page === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // overlay, not a page — leaves the underlying page active
       this.showPage(t.dataset.page);
     };
+    const commsTabs = document.getElementById("comms-tabs");
+    if (commsTabs) commsTabs.onclick = e => {
+      const b = e.target.closest("[data-comms]"); if (!b) return;
+      this.showCommsTab(b.dataset.comms);
+    };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
@@ -1872,14 +1913,14 @@ const UI = {
       this.toast("Survey debrief waiting in Dispatches ▸", "good");
       this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
-      if (this.page === "comms") this.renderDispatches();
+      if (this.page === "comms") this.showCommsTab("dispatches");
     });
     Bus.on("surveyDone", r => {
       if (window.Game._booting) return;   // offline surveys land in the "while you were away" recap
       if (r.awaitingDebrief) return;     // surveyDebrief already toasted the inbox ping
       this.toast(`🛰 ${r.summary}`, r.success ? "good" : "bad", 6000);
       if (this.page === "fleet") this.renderFleet();
-      if (this.page === "comms") this.renderDispatches();
+      if (this.page === "comms" && this.commsTab === "dispatches") this.renderDispatches();
       if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });
