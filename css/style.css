@@ -271,9 +271,10 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .ach span { font-size: 10.5px; color: var(--ink-dim); }
 
 /* ===== broadcast ===== */
+/* Desktop: roomy 16:9 frame + contain so the full frame (incl. GIFs) is visible. */
 .screen { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--line);
-  aspect-ratio: 16/9; max-height: 132px; background: #05070d; flex: none; }
-.screen img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .88; }
+  aspect-ratio: 16/9; width: 100%; max-height: min(320px, 36vh); background: #05070d; flex: none; }
+.screen img { width: 100%; height: 100%; object-fit: contain; display: block; opacity: .92; }
 .screen-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end;
   padding: 8px 10px; background: linear-gradient(180deg, transparent 50%, rgba(0,0,0,.85)); }
 .screen-title { font-weight: 800; letter-spacing: .8px; font-size: 13px; text-shadow: 0 2px 8px #000; line-height: 1.2; }
@@ -515,11 +516,21 @@ body.reduced .tt-dot { animation: none; }
 .admin-card-name { font-size: 10px; color: var(--ink-dim); margin-bottom: 6px; word-break: break-word; }
 .admin-card-reset { margin-top: 4px; color: var(--down); }
 .admin-pool-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.admin-pool-grid.admin-pool-flavored { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .admin-pool-card { min-width: 0; }
 .admin-pool-thumbs { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-bottom: 4px; min-height: 56px; }
 .admin-pool-one { position: relative; }
 .admin-pool-one .admin-thumb { margin: 0; width: 48px; height: 48px; }
 .admin-pool-one .admin-card-reset { position: absolute; top: -2px; right: -2px; margin: 0; padding: 0 4px; font-size: 10px; line-height: 1.4; }
+.admin-pool-one.flavored {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px;
+  width: 100%; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,.18);
+}
+.admin-pool-one.flavored .admin-thumb { width: 72px; height: 40px; object-fit: contain; align-self: center; background: #05070d; }
+.admin-pool-flavor {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; padding: 3px 6px;
+  background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px;
+}
 
 /* ===== missions editor ===== */
 .admin-mhint { font-size: 11px; color: var(--ink-dim); margin: 6px 0; }
@@ -580,7 +591,8 @@ body.reduced .tt-dot { animation: none; }
   #panel-broadcast { flex: none; }
   .panel-feed { flex: none; min-height: 0; }
   .feed { max-height: 50vh; }
-  .screen { max-height: 160px; }
+  .screen { max-height: 200px; }
+  .screen img { object-fit: contain; }
   .toast-stack { left: 12px; right: 12px; top: auto; bottom: 84px; max-width: none; }
   /* on mobile the newswire log gets a fixed cap instead of filling the column */
   .newswire[open] { flex: none; }
@@ -1435,4 +1447,12 @@ body.reduced .hub-prompt { animation: none; }
 @media (max-width: 720px) {
   .disp-layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 38%) minmax(0, 1fr); }
   .disp-sidebar { border-right: 0; border-bottom: 1px solid rgba(130, 170, 255, .18); max-height: none; }
+  /* Open thread: hide contacts; fixed pane height so .dispatch-thread scrolls. */
+  .disp-layout.thread-open {
+    grid-template-rows: 1fr;
+    height: min(72vh, 640px);
+    min-height: 0;
+  }
+  .disp-layout.thread-open .disp-sidebar { display: none; }
+  .disp-layout.thread-open .disp-pane { min-height: 0; overflow: hidden; }
 }

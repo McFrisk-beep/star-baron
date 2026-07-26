@@ -39,15 +39,22 @@ const StarMap = {
       btnOpen: $("btn-starmap"), btnClose: $("sm-close"), toGalaxy: $("sm-to-galaxy"),
     };
     if (this.refs.btnOpen) this.refs.btnOpen.onclick = () => this.openGalaxy();   // legacy header button (now the nav "Star Map" tab)
-    this.refs.btnClose.onclick = () => this.close();
+    // Close / Escape: system → galaxy first; only leave the overlay from the chart.
+    this.refs.btnClose.onclick = () => this.backOrClose();
     this.refs.toGalaxy.onclick = () => this.showGalaxy();
     document.addEventListener("keydown", e => {
       if (e.key !== "Escape" || !this.open) return;
       const pm = window.PlanetView && PlanetView.refs().modal;
       if (pm && !pm.classList.contains("hidden")) return;   // let the planet popup take Escape first
-      this.close();
+      this.backOrClose();
     });
     if (window.PlanetView) PlanetView.init();
+  },
+
+  backOrClose() {
+    if (this.current || (this.refs.systemView && !this.refs.systemView.classList.contains("hidden")))
+      this.showGalaxy();
+    else this.close();
   },
 
   // Re-render the currently open system's info panel (after build/close in the popup).

@@ -641,6 +641,7 @@ const SYSTEMVIEW = {
 // Admin-uploaded sprite overrides ("category:name" -> custom URL or URL[]),
 // loaded from Supabase by content.js. A string replaces the default; an array
 // is a pool — _assetPool picks one deterministically from `salt` (item uid).
+// Broadcast pools may store { url, title?, caption? } entries (flavor per frame).
 const ASSET_OVERRIDES = {};
 const _asset = (key, path) => {
   const v = ASSET_OVERRIDES[key];
@@ -652,19 +653,31 @@ const _poolHash = salt => {
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
   return h >>> 0;
 };
-const _assetPool = (key, salt, path) => {
+const _entryUrl = e => (typeof e === "string" ? e : (e && e.url)) || "";
+const _assetPoolEntry = (key, salt, path) => {
   const v = ASSET_OVERRIDES[key];
-  if (Array.isArray(v) && v.length) return v[_poolHash(salt) % v.length];
-  if (typeof v === "string" && v) return v;
-  return path;
+  let entry = null;
+  if (Array.isArray(v) && v.length) entry = v[_poolHash(salt) % v.length];
+  else if (typeof v === "string" && v) entry = v;
+  else if (v && typeof v === "object" && v.url) entry = v;
+  if (!entry) return { url: path, title: "", caption: "" };
+  if (typeof entry === "string") return { url: entry, title: "", caption: "" };
+  return {
+    url: entry.url || path,
+    title: entry.title ? String(entry.title) : "",
+    caption: entry.caption ? String(entry.caption) : "",
+  };
 };
+const _assetPool = (key, salt, path) => _assetPoolEntry(key, salt, path).url;
 
 // asset path helpers — change these if you reorganize /assets
 const ASSET = {
   portrait: i => _asset(`portrait:${i}`, `assets/portraits/alien_${String(i).padStart(2, "0")}.png`),
   commodity: id => _asset(`commodity:${id}`, `assets/commodities/${id}.png`),
   ship: sprite => _asset(`ship:${sprite}`, `assets/ships/${sprite}.png`),
-  broadcast: name => _asset(`broadcast:${name}`, `assets/broadcast/${name}.png`),
+  // Broadcast: pool of frames (PNG/GIF). Salt varies the pick; Entry includes optional flavor.
+  broadcast: (name, salt = "0") => _assetPool(`broadcast:${name}`, salt, `assets/broadcast/${name}.png`),
+  broadcastEntry: (name, salt = "0") => _assetPoolEntry(`broadcast:${name}`, salt, `assets/broadcast/${name}.png`),
   star: type => _asset(`star:${type}`, `assets/stars/${type}.png`),
   planet: type => _asset(`planet:${type}`, `assets/planets/${type}.png`),
   station: race => _asset(`station:${race}`, `assets/stations/${race}.png`),
