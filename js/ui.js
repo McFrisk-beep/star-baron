@@ -167,7 +167,7 @@ const UI = {
     const list = this.s().pendingContracts || [];
     el.onclick = e => this.onPendingClick(e);
     if (!list.length) {
-      el.innerHTML = `<p class="muted-note">${this.t("comms.noPending", "No pending contracts. Take a job on the Bazaar board, then launch it from here.")}</p>`
+      el.innerHTML = `<p class="muted-note">${this.t("comms.noPending", "No held contracts. View a job on the Bazaar board and Launch to take it.")}</p>`
         + `<p class="muted-note">${this.t("comms.cancelFeeNote", "Cancellation fee scales with your Baron title.")}</p>`;
       return;
     }
@@ -1174,7 +1174,7 @@ const UI = {
           <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
           <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
-          <button class="btn btn-go" data-take="${c.id}">Take contract</button></div></div>`;
+          <button class="btn btn-go" data-view="${c.id}">${this.t("comms.viewContract", "View Contract")}</button></div></div>`;
     };
     const contracts = (shownC.map(c => c.kind === "tip" ? tipCard(c) : jobCard(c)).join("")
       + takenC.map(c => `<div class="contract taken"><div class="c-head"><b>${c.title}</b><span class="badge bad">Contract taken</span></div></div>`).join(""))
@@ -1333,17 +1333,22 @@ const UI = {
         return;
       }
     }
+    const view = t.closest("[data-view]");
+    if (view) {
+      const id = view.dataset.view;
+      const c = (this.s().bazaar.contracts || []).find(x => x.id === id && x.status === "open");
+      if (!c || c.kind === "tip") return this.toast("Contract no longer available.", "warn");
+      this.openMission(c);
+      return;
+    }
     const take = t.closest("[data-take]");
     if (take) {
+      // Tips only — jobs use View Contract → Launch (claim at launch).
       const r = await Bazaar.takeContract(take.dataset.take);
       if (!r.ok) return this.toast(r.msg, "warn");
       if (r.tip) { this.toast("Insider tip secured 👀", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); return; }
-      if (r.contract) {
-        this.renderBazaar();
-        this.pingCommsTab("pending");
-        if (this.commsTab === "pending") this.renderPendingContracts();
-        this.openMission(r.contract);
-      }
+      if (r.preview && r.contract) { this.openMission(r.contract); return; }
+      if (r.contract) this.openMission(r.contract);
       return;
     }
     if (t.closest("#buy-inv")) {

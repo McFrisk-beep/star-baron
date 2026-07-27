@@ -623,28 +623,41 @@ const Bazaar = {
   },
 
   // ---- contracts ----------------------------------------------------------
+  // Claim a job at Launch time only (View Contract does not reserve it).
+  // Accepts a board-open job or a legacy pendingContracts entry.
+  claimForLaunch(contract) {
+    const s = this.s();
+    const id = contract && contract.id;
+    if (!id) return { ok: false, msg: "Invalid contract." };
+    const pending = s.pendingContracts || [];
+    const held = pending.find(c => c.id === id);
+    if (held) return { ok: true, contract: held, fromPending: true };
+    const b = this.bz();
+    const onBoard = (b.contracts || []).find(x => x.id === id && x.status === "open" && x.kind !== "tip");
+    if (!onBoard) return { ok: false, msg: "Contract no longer available." };
+    b.contracts = b.contracts.filter(x => x.id !== id);
+    this._markBought(id);
+    return { ok: true, contract: onBoard, fromPending: false };
+  },
+
+  // Tips only from the board button. Jobs are claimed at Launch (claimForLaunch).
   _takeContractLocal(id, now = Date.now()) {
     const b = this.bz();
     const c = b.contracts.find(x => x.id === id && x.status === "open");
     if (!c) return { ok: false, msg: "Contract no longer available." };
-    if (c.kind === "tip") {
-      if (c.cost > this.s().credits) return { ok: false, msg: "Not enough credits." };
-      this.s().credits -= c.cost;
-      const lead = Util.randInt(CONFIG.omenLeadMinMs, CONFIG.omenLeadMaxMs) / (window.Game.timeScale || 1);
-      if (window.Broadcast) Broadcast.scheduleNews(c.cat, lead);
-      Feed.emit(`insider tip secured — a ${c.cat} story is brewing out of ${c.sysName} 👀`, { kind: "omen" });
-      b.contracts = b.contracts.filter(x => x.id !== id);
-      this._markBought(id);
-      Economy.refreshNetWorth();
-      return { ok: true, tip: true, cat: c.cat };
+    if (c.kind !== "tip") {
+      // Jobs stay on the board until Launch — View Contract is preview-only.
+      return { ok: true, contract: c, preview: true };
     }
-    // job: remove from board; auth path also parks it in pendingContracts
+    if (c.cost > this.s().credits) return { ok: false, msg: "Not enough credits." };
+    this.s().credits -= c.cost;
+    const lead = Util.randInt(CONFIG.omenLeadMinMs, CONFIG.omenLeadMaxMs) / (window.Game.timeScale || 1);
+    if (window.Broadcast) Broadcast.scheduleNews(c.cat, lead);
+    Feed.emit(`insider tip secured — a ${c.cat} story is brewing out of ${c.sysName} 👀`, { kind: "omen" });
     b.contracts = b.contracts.filter(x => x.id !== id);
     this._markBought(id);
-    const s = this.s();
-    s.pendingContracts = s.pendingContracts || [];
-    if (!s.pendingContracts.some(x => x.id === id)) s.pendingContracts.push(c);
-    return { ok: true, contract: c };
+    Economy.refreshNetWorth();
+    return { ok: true, tip: true, cat: c.cat };
   },
   takeContract(id, now = Date.now()) {
     if (!this.authoritative()) return this._takeContractLocal(id, now);
