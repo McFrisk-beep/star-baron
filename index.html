@@ -161,6 +161,7 @@
       <section class="page hidden" id="page-comms">
         <nav class="subtabs comms-subtabs" id="comms-tabs" aria-label="Comms sections">
           <button type="button" class="subtab active" data-comms="dispatches"><span data-i18n="comms.dispatches">Dispatches</span></button>
+          <button type="button" class="subtab" data-comms="pending"><span data-i18n="comms.pending">Pending Contracts</span></button>
           <button type="button" class="subtab" data-comms="broadcast"><span data-i18n="comms.broadcast">Broadcast</span></button>
           <button type="button" class="subtab" data-comms="chat"><span data-i18n="comms.chat">Chat</span></button>
         </nav>
@@ -168,6 +169,11 @@
         <section class="panel comms-pane" id="panel-dispatches" data-comms-pane="dispatches">
           <h2><span data-i18n="comms.dispatches">Dispatches</span> <small data-i18n="comms.dispatchesSub">private channel</small></h2>
           <div class="disp-layout" id="dispatch-body"></div>
+        </section>
+
+        <section class="panel comms-pane hidden" id="panel-pending" data-comms-pane="pending">
+          <h2><span data-i18n="comms.pending">Pending Contracts</span> <small data-i18n="comms.pendingSub">taken, not yet launched</small></h2>
+          <div id="pending-body" class="pending-body"></div>
         </section>
 
         <section class="panel comms-pane hidden" id="panel-broadcast" data-comms-pane="broadcast">

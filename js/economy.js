@@ -332,6 +332,8 @@ const Economy = {
         if (r.tip != null) local.tip = r.tip;
         if (r.item != null) local.item = r.item;
         if (r.mission != null) local.mission = r.mission;
+        if (r.fee != null) local.fee = r.fee;
+        if (r.repHit != null) local.repHit = r.repHit;
         if (r.cat != null) local.cat = r.cat;
         if (r.resolved != null) local.resolved = r.resolved;
         return local;

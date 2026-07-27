@@ -51,6 +51,14 @@ const Rep = {
     if (type === "smuggle" || type === "assassinate") this.change("free_trade", -2);
   },
 
+  // Abort an in-flight mission: sponsor standing drops; no fee. No-op if no faction.
+  onContractCancel(faction, danger) {
+    if (!faction || !FACTIONS[faction]) return 0;
+    const hit = { safe: 2, low: 3, moderate: 4, high: 6, extreme: 8 }[danger] || 3;
+    this.change(faction, -hit);
+    return hit;
+  },
+
   // light standing nudge from large trades in a faction's domain
   onTrade(cat, value, side) {
     if (value < 4000) return;

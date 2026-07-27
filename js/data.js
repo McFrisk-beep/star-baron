@@ -216,6 +216,10 @@ const BAZAARCFG = {
   inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
   itemResaleMult: 0.55,              // instant "Sell now" payout = this × an item's value
   shipResaleMult: 0.5,               // sell a ship for this × its catalog price (40–60% band); gear adds its resale value
+  // Cancel a taken-but-not-launched job: fee = max(min, reward × rate × (1 + tier × tierMult)).
+  cancelFeeRate: 0.10,               // 10% of contract reward at Baron
+  cancelFeeTierMult: 0.35,           // +35% of that base per Baron Tier (Magnate ≈13.5% … Cosmocrat ≈31%)
+  cancelFeeMin: 250,                 // floor so tiny tips/jobs still sting
 };
 
 /* ---- TRADE ROUTES ---------------------------------------------------------
