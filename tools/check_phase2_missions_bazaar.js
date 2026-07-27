@@ -56,17 +56,20 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
   assert(r0 && r0.ok && !(r0 instanceof Promise), "guest buyShip is sync");
   assert.strictEqual(ctx.Game.state.ships.length, 1);
 
-  // 2) Guest mission launch + resolve
+  // 2) Guest mission launch + resolve (claim happens at launch from the board)
   ctx.Game.state = fresh();
   ctx.Game.state.ships.push(Fleet.makeShip("corvette"));
   const contract = {
     id: "ct-local", kind: "job", type: "escort", title: "Test run", sysName: "Alpha",
     danger: "safe", minFirepower: 0, cargoRequired: 0, durationMs: 1000,
     reward: { credits: 5000, itemChance: 0, stockChance: 0 },
-    impound: false, stakeTier: 0, faction: null,
+    impound: false, stakeTier: 0, faction: null, status: "open",
   };
+  ctx.Game.state.bazaar.contracts = [contract];
   const uid = ctx.Game.state.ships[0].uid;
   assert(Missions.launch(contract, [uid]).ok);
+  assert.strictEqual(ctx.Game.state.bazaar.contracts.length, 0, "launch claims off the board");
+  assert(ctx.Game.state.bazaarBought.includes("ct-local"));
   T += 5000;
   const reps = Missions.resolveMatured(T);
   assert(Array.isArray(reps) && reps.length === 1);
@@ -113,49 +116,63 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
         status: "idle", accessories: [], mercenary: false, dmg: 0,
       }]);
       return {
-        ok: true, credits: server.credits, ships: server.ships, seq: server.seq,
+        ok: true, credits: server.credits, ships: JSON.parse(JSON.stringify(server.ships)), seq: server.seq,
         positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
         missions: [], items: {}, inventory: server.inventory,
-        pendingContracts: server.pendingContracts || [], bazaarBought: server.bazaarBought || [],
+        pendingContracts: (server.pendingContracts || []).slice(),
+        bazaarBought: (server.bazaarBought || []).slice(),
       };
     },
     async takeContract(id) {
       calls.push(["takeContract", id]);
-      // Server recomputes offer — reject forged ids outside seed pattern
       assert(/^ct-\d+-\d+$/.test(id), "only seeded contract ids");
       const offer = Bazaar.genSeededContract(Bazaar.boardEpoch(T), Number(id.split("-")[2]), 0);
       assert.strictEqual(offer.id, id);
-      server.bazaarBought = (server.bazaarBought || []).concat([id]);
-      server.pendingContracts = (server.pendingContracts || []).concat([offer]);
-      return {
-        ok: true, contract: offer, credits: server.credits, ships: server.ships,
-        pendingContracts: server.pendingContracts, bazaarBought: server.bazaarBought,
-        positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
-        missions: [], items: {}, inventory: server.inventory,
-      };
+      if (offer.kind === "tip") {
+        server.bazaarBought = (server.bazaarBought || []).concat([id]);
+        return {
+          ok: true, tip: true, cat: offer.cat, credits: server.credits, ships: server.ships,
+          pendingContracts: (server.pendingContracts || []).slice(),
+          bazaarBought: (server.bazaarBought || []).slice(),
+          positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
+          missions: [], items: {}, inventory: server.inventory,
+        };
+      }
+      // Jobs are claimed at missionLaunch — take is preview-only client-side.
+      return { ok: false, error: "Open the contract and Launch to take it." };
     },
     async missionLaunch(contractId, shipUids) {
       calls.push(["missionLaunch", contractId, shipUids]);
-      // Must NOT accept a client reward blob — only an id already in pending
-      const pending = (server.pendingContracts || []).find(c => c.id === contractId);
-      assert(pending, "launch requires server pending contract");
-      assert(pending.reward.credits < 100000, "reward is server-authored");
+      assert(/^ct-\d+-\d+$/.test(contractId), "only seeded contract ids");
+      let offer = (server.pendingContracts || []).find(c => c.id === contractId);
+      if (!offer) {
+        offer = Bazaar.genSeededContract(Bazaar.boardEpoch(T), Number(contractId.split("-")[2]), 0);
+        assert.strictEqual(offer.id, contractId);
+        assert.strictEqual(offer.kind, "job");
+        assert(!(server.bazaarBought || []).includes(contractId), "not already claimed");
+        server.bazaarBought = (server.bazaarBought || []).concat([contractId]);
+      } else {
+        server.pendingContracts = server.pendingContracts.filter(c => c.id !== contractId);
+      }
+      assert(offer.reward.credits < 100000, "reward is server-authored");
       const sh = server.ships.find(s => s.uid === shipUids[0]);
       sh.status = "mission";
       server.seq = (server.seq || 1) + 1;
       const mission = {
-        uid: "m" + server.seq, contractId, type: pending.type, title: pending.title,
-        shipUids, totalMs: pending.durationMs, startedAt: T, rngSeed: 42,
-        successChance: 0.99, reward: pending.reward, resolved: false,
-        phases: [{ label: "x", dir: "out", ms: pending.durationMs }],
+        uid: "m" + server.seq, contractId, type: offer.type, title: offer.title,
+        shipUids, totalMs: offer.durationMs, startedAt: T, rngSeed: 42,
+        successChance: 0.99, reward: offer.reward, resolved: false,
+        phases: [{ label: "x", dir: "out", ms: offer.durationMs }],
       };
       server.missions = (server.missions || []).concat([mission]);
-      server.pendingContracts = server.pendingContracts.filter(c => c.id !== contractId);
       return {
-        ok: true, credits: server.credits, ships: server.ships, missions: server.missions,
-        pendingContracts: server.pendingContracts, mission, seq: server.seq,
+        ok: true, credits: server.credits,
+        ships: JSON.parse(JSON.stringify(server.ships)),
+        missions: JSON.parse(JSON.stringify(server.missions)),
+        pendingContracts: (server.pendingContracts || []).slice(), mission, seq: server.seq,
         positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
-        items: {}, inventory: server.inventory, bazaarBought: server.bazaarBought,
+        items: {}, inventory: server.inventory,
+        bazaarBought: (server.bazaarBought || []).slice(),
       };
     },
     async missionResolve() {
@@ -187,17 +204,15 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
   assert(buyR.ok);
   assert.strictEqual(ctx.Game.state.ships[0].name, "Server Drift");
 
-  // Seed board + take a real seeded contract id
+  // Seed board + launch a real seeded contract id (claim at launch; no take step)
   Bazaar.fillSeededBoard(T);
   const job = ctx.Game.state.bazaar.contracts.find(c => c.kind === "job");
   assert(job, "seeded board has a job");
-  const takeR = await Bazaar.takeContract(job.id);
-  assert(takeR.ok && takeR.contract && takeR.contract.id === job.id);
-  assert(calls.some(c => c[0] === "takeContract" && c[1] === job.id));
-
-  const launchR = await Missions.launch(takeR.contract, [ctx.Game.state.ships[0].uid]);
+  const launchR = await Missions.launch(job, [ctx.Game.state.ships[0].uid]);
   assert(launchR.ok);
   assert(calls.some(c => c[0] === "missionLaunch" && c[1] === job.id));
+  assert(!(ctx.Game.state.bazaar.contracts || []).some(c => c.id === job.id), "claimed off board");
+  assert((ctx.Game.state.bazaarBought || []).includes(job.id));
 
   T += 10_000_000;
   const authReps = await Missions.resolveMatured(T);

@@ -16,6 +16,8 @@ Requires Phase 0 + Phase 1 already applied.
    older Phase 2 functions)
 4. **`docs/sql/phase2b_cancel.sql`** — cancel pending contracts + abandon missions
    (safe to re-run)
+5. **`docs/sql/phase2c_launch_claim.sql`** — Launch claims board jobs (View Contract
+   does not reserve); tips still use `app_take_contract`
 
 ## Trust model (important)
 
@@ -29,7 +31,7 @@ client-supplied prices, rewards, ship types, or item values.
 | `app_bazaar_board` | Returns current seeded board (optional; client can mirror) |
 | `app_buy_ship` / `app_buy_main` / `app_upgrade_inventory` | Catalog / formula prices |
 | `app_buy_merc` / `app_buy_accessory` / `app_take_contract` | Recompute offer by id |
-| `app_mission_launch(contract_id, ships)` | Contract must be in server `pendingContracts` |
+| `app_mission_launch(contract_id, ships)` | Claims board job (or legacy pending) and launches |
 | `app_cancel_pending_contract(contract_id)` | Drop pending job for title-scaled fee (`phase2b_cancel.sql`) |
 | `app_mission_abandon(mission_uid)` | Abort in-flight mission; faction standing hit, no fee |
 | `app_mission_resolve` | Launch-time `rngSeed`; server reward + full `onContract` reputation |

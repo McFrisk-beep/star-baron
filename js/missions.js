@@ -47,6 +47,10 @@ const Missions = {
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
     if (window.Senate && uids.some(u => Senate.shipClassBanned(Fleet.ship(u).cls)))
       return { ok: false, msg: "A senate edict bars one of those ship classes from contract work." };
+    // Claim at launch (board job or legacy pending) — View Contract does not reserve.
+    const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
+    if (!claim.ok) return claim;
+    contract = claim.contract;
     const phases = this.buildPhases(contract, uids);
     const totalMs = phases.reduce((a, p) => a + p.ms, 0);
     const mission = {
@@ -57,6 +61,7 @@ const Missions = {
       reward: contract.reward, impound: !!contract.impound, danger: contract.danger,
       stakeTier: contract.stakeTier || 0,
       faction: contract.faction, resolved: false,
+      contractId: contract.id || null,
     };
     for (const u of uids) Fleet.ship(u).status = "mission";
     s.missions.push(mission);
