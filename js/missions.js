@@ -80,6 +80,31 @@ const Missions = {
     );
   },
 
+  // Abort an in-flight mission: ships return idle. Faction jobs cost standing
+  // (no credits). Independent / unfactioned jobs are a free walk-away.
+  _abandonLocal(uid) {
+    const s = this.s();
+    const m = (s.missions || []).find(x => x.uid === uid);
+    if (!m || m.resolved) return { ok: false, msg: "Mission not found." };
+    for (const u of m.shipUids || []) {
+      const sh = Fleet.ship(u);
+      if (sh && sh.status === "mission") sh.status = "idle";
+    }
+    const repHit = m.faction ? Rep.onContractCancel(m.faction, m.danger) : 0;
+    s.missions = s.missions.filter(x => x.uid !== uid);
+    Economy.refreshNetWorth();
+    Bus.emit("missionAbandoned", m);
+    return { ok: true, mission: m, repHit: repHit || 0 };
+  },
+  abandon(uid) {
+    if (!this.authoritative()) return this._abandonLocal(uid);
+    return Economy._withRpc(
+      () => this._abandonLocal(uid),
+      () => Cloud.missionAbandon(uid),
+      "Couldn't abort mission — try again."
+    );
+  },
+
   phaseAt(m, now = Date.now()) {
     let elapsed = Util.clamp(now - m.startedAt, 0, m.totalMs);
     const overall = elapsed / m.totalMs;

@@ -14,6 +14,8 @@ Requires Phase 0 + Phase 1 already applied.
    (`create or replace`).
 3. **`docs/sql/phase2_missions_bazaar.sql`** ← this phase (safe to re-run; replaces
    older Phase 2 functions)
+4. **`docs/sql/phase2b_cancel.sql`** — cancel pending contracts + abandon missions
+   (safe to re-run)
 
 ## Trust model (important)
 
@@ -28,6 +30,8 @@ client-supplied prices, rewards, ship types, or item values.
 | `app_buy_ship` / `app_buy_main` / `app_upgrade_inventory` | Catalog / formula prices |
 | `app_buy_merc` / `app_buy_accessory` / `app_take_contract` | Recompute offer by id |
 | `app_mission_launch(contract_id, ships)` | Contract must be in server `pendingContracts` |
+| `app_cancel_pending_contract(contract_id)` | Drop pending job for title-scaled fee (`phase2b_cancel.sql`) |
+| `app_mission_abandon(mission_uid)` | Abort in-flight mission; faction standing hit, no fee |
 | `app_mission_resolve` | Launch-time `rngSeed`; server reward + full `onContract` reputation |
 | `app_sell_ship` / `app_sell_item` | Catalog / recomputed `app.item_value` |
 | `app_commit` | Protects ships/missions/items/inventory/rep/claims; **ignores** client bazaar |

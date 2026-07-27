@@ -204,6 +204,12 @@ const Cloud = {
   async takeContract(offerId) {
     return this.rpc("app_take_contract", { p_offer_id: offerId });
   },
+  async cancelPendingContract(contractId) {
+    return this.rpc("app_cancel_pending_contract", { p_contract_id: contractId });
+  },
+  async missionAbandon(missionUid) {
+    return this.rpc("app_mission_abandon", { p_mission_uid: missionUid });
+  },
   async upgradeInventory() {
     return this.rpc("app_upgrade_inventory");
   },

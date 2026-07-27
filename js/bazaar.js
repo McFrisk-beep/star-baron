@@ -655,6 +655,37 @@ const Bazaar = {
     );
   },
 
+  // Fee to drop a taken-but-not-launched bazaar job (scales with Baron Tier).
+  cancelFee(contract) {
+    const reward = (contract && contract.reward && contract.reward.credits) || 0;
+    const tier = window.Economy ? Economy.tier() : 0;
+    const rate = BAZAARCFG.cancelFeeRate || 0.1;
+    const tierM = BAZAARCFG.cancelFeeTierMult || 0.35;
+    const min = BAZAARCFG.cancelFeeMin || 250;
+    return Math.max(min, Math.round(reward * rate * (1 + tier * tierM)));
+  },
+
+  _cancelPendingLocal(id) {
+    const s = this.s();
+    const list = s.pendingContracts || [];
+    const c = list.find(x => x.id === id);
+    if (!c) return { ok: false, msg: "Contract not in hand." };
+    const fee = this.cancelFee(c);
+    if (fee > s.credits) return { ok: false, msg: `Need ${Util.credits(fee)}c to cancel.` };
+    s.credits -= fee;
+    s.pendingContracts = list.filter(x => x.id !== id);
+    Economy.refreshNetWorth();
+    return { ok: true, fee, contract: c };
+  },
+  cancelPending(id) {
+    if (!this.authoritative()) return this._cancelPendingLocal(id);
+    return Economy._withRpc(
+      () => this._cancelPendingLocal(id),
+      () => Cloud.cancelPendingContract(id),
+      "Couldn't cancel contract — try again."
+    );
+  },
+
   // ---- player item sales -------------------------------------------------
   // Listing items for sale was retired; you sell instantly via sellNow. The
   // tick() resolver + cancelListing remain so any listings already saved before

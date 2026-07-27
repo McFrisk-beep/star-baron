@@ -55,6 +55,7 @@ const UI = {
       feedList: $("feed-list"), toast: $("toast-stack"),
       commsBadge: $("tab-comms-badge"),
       dispatchBody: $("dispatch-body"),
+      pendingBody: $("pending-body"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -136,9 +137,9 @@ const UI = {
     requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   },
 
-  // ---- Comms subtabs (Dispatches / Broadcast / Chat) ----------------------
+  // ---- Comms subtabs (Dispatches / Pending / Broadcast / Chat) ------------
   showCommsTab(name) {
-    const tab = (name === "broadcast" || name === "chat") ? name : "dispatches";
+    const tab = (name === "broadcast" || name === "chat" || name === "pending") ? name : "dispatches";
     this.commsTab = tab;
     const nav = document.getElementById("comms-tabs");
     if (nav) for (const b of nav.querySelectorAll("[data-comms]")) {
@@ -148,6 +149,7 @@ const UI = {
     for (const pane of document.querySelectorAll("#page-comms [data-comms-pane]"))
       pane.classList.toggle("hidden", pane.dataset.commsPane !== tab);
     if (tab === "dispatches") this.renderDispatches();
+    else if (tab === "pending") this.renderPendingContracts();
     else if (tab === "chat") this.scrollFeedBottom();
   },
   // Soft ping on a Comms subtab when something arrives while you're on another.
@@ -155,6 +157,102 @@ const UI = {
     const nav = document.getElementById("comms-tabs"); if (!nav) return;
     const b = nav.querySelector(`[data-comms="${name}"]`);
     if (b && !b.classList.contains("active")) b.classList.add("ping");
+  },
+
+  t(key, fallback) { return window.I18n ? I18n.t(key) : fallback; },
+
+  // Pending (taken, not launched) + helpers shared with Dispatches / Fleet.
+  renderPendingContracts() {
+    const el = this.refs.pendingBody; if (!el) return;
+    const list = this.s().pendingContracts || [];
+    el.onclick = e => this.onPendingClick(e);
+    if (!list.length) {
+      el.innerHTML = `<p class="muted-note">${this.t("comms.noPending", "No pending contracts. Take a job on the Bazaar board, then launch it from here.")}</p>`
+        + `<p class="muted-note">${this.t("comms.cancelFeeNote", "Cancellation fee scales with your Baron title.")}</p>`;
+      return;
+    }
+    el.innerHTML = `<div class="contract-list">` + list.map(c => this._pendingCardHtml(c)).join("") + `</div>`
+      + `<p class="muted-note" style="margin-top:8px">${this.t("comms.cancelFeeNote", "Cancellation fee scales with your Baron title.")}</p>`;
+  },
+  _pendingCardHtml(c) {
+    const fee = Bazaar.cancelFee(c);
+    const danger = (DANGER.find(d => d.id === c.danger) || {}).label || c.danger;
+    const fac = c.faction && FACTIONS[c.faction];
+    const reward = Util.credits((c.reward && c.reward.credits) || 0);
+    return `<div class="contract pending-card">
+      <div class="c-head"><b>${c.title}</b><span class="ctype">${c.type || "job"}</span></div>
+      <div class="c-meta">${c.sysName || "—"} · ${danger}${fac ? ` · ${fac.name}` : ""}</div>
+      <div class="c-reward">Reward <b>${reward}c</b> · Cancel fee <b class="down">${Util.credits(fee)}c</b></div>
+      <div class="c-actions">
+        <button class="btn btn-go btn-mini" data-pend-launch="${c.id}">${this.t("comms.launch", "Launch")}</button>
+        <button class="btn btn-mini" data-pend-cancel="${c.id}">${this.t("comms.cancelContract", "Cancel")}</button>
+      </div>
+    </div>`;
+  },
+  async onPendingClick(e) {
+    const launch = e.target.closest("[data-pend-launch]");
+    if (launch) {
+      const c = (this.s().pendingContracts || []).find(x => x.id === launch.dataset.pendLaunch);
+      if (!c) return this.toast("Contract not in hand.", "warn");
+      this.openMission(c);
+      return;
+    }
+    const cancel = e.target.closest("[data-pend-cancel]");
+    if (cancel) {
+      if (Economy.busy()) return;
+      const id = cancel.dataset.pendCancel;
+      const c = (this.s().pendingContracts || []).find(x => x.id === id);
+      if (!c) return this.toast("Contract not in hand.", "warn");
+      const fee = Bazaar.cancelFee(c);
+      if (!confirm(`Cancel "${c.title}"?\nFee: ${Util.credits(fee)}c`)) return;
+      const r = await Bazaar.cancelPending(id);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Contract cancelled (−${Util.credits(r.fee)}c)`, "warn");
+      this.flashCredits(); window.Game.requestSave();
+      this.renderPendingContracts(); this.renderBazaar(); this.updateHeader();
+      return;
+    }
+  },
+
+  // Active mission cards (Dispatches strip + Fleet) — standing hit if faction, no fee.
+  _missionCancelHtml(m) {
+    const fac = m.faction && FACTIONS[m.faction];
+    const note = fac ? ` · −standing w/ ${fac.name}` : "";
+    return `<button class="btn btn-mini" data-mission-cancel="${m.uid}">${this.t("comms.cancelMission", "Cancel mission")}</button>`
+      + (note ? `<span class="muted-note mission-cancel-note">${note}</span>` : "");
+  },
+  _activeMissionsStripHtml() {
+    const ms = this.s().missions || [];
+    if (!ms.length) return "";
+    return `<div class="disp-missions"><div class="disp-missions-h">${this.t("comms.activeMissions", "Active missions")}</div>`
+      + ms.map(m => {
+        const fac = m.faction && FACTIONS[m.faction];
+        return `<div class="disp-mission" data-m="${m.uid}">
+          <div class="disp-mission-main"><b>${m.title}</b>
+            <span class="muted-note">${m.sysName || ""}${fac ? ` · ${fac.name}` : ""} · ${(m.successChance * 100).toFixed(0)}%</span>
+          </div>
+          <div class="disp-mission-act">${this._missionCancelHtml(m)}</div>
+        </div>`;
+      }).join("") + `</div>`;
+  },
+  async cancelMission(uid) {
+    if (Economy.busy()) return;
+    const m = (this.s().missions || []).find(x => x.uid === uid);
+    if (!m) return this.toast("Mission not found.", "warn");
+    const fac = m.faction && FACTIONS[m.faction];
+    const msg = fac
+      ? `Abort "${m.title}"?\n${fac.name} standing will drop. No credit fee.`
+      : `Abort "${m.title}"?\nShips return idle. No fee.`;
+    if (!confirm(msg)) return;
+    const r = await Missions.abandon(uid);
+    if (!r.ok) return this.toast(r.msg, "warn");
+    const hit = r.repHit || 0;
+    this.toast(hit ? `Mission aborted (−${hit} ${fac ? fac.name : "standing"})` : "Mission aborted", "warn");
+    this._missionSig = "";
+    window.Game.requestSave();
+    this.renderMissions(); this.renderFleet(); this.renderDispatches();
+    if (this.commsTab === "pending") this.renderPendingContracts();
+    this.updateHeader();
   },
 
   // ---- Dispatches: chat-style (preview list + open thread) ----------------
@@ -169,7 +267,7 @@ const UI = {
       ? this._threadHtml(this._dispatchArc)
       : `<div class="disp-empty"><p data-i18n="comms.clickOpen">${window.I18n ? I18n.t("comms.clickOpen") : "Click a message to open the conversation"}</p></div>`;
     el.classList.toggle("thread-open", !!this._dispatchArc);
-    el.innerHTML = `<aside class="disp-sidebar">${listHtml}</aside><div class="disp-pane">${paneHtml}</div>`;
+    el.innerHTML = `<aside class="disp-sidebar">${this._activeMissionsStripHtml()}${listHtml}</aside><div class="disp-pane">${paneHtml}</div>`;
     if (this._dispatchArc) {
       // Stick to latest; older messages stay reachable by scrolling up.
       const pin = () => {
@@ -246,6 +344,8 @@ const UI = {
   },
 
   onDispatchClick(e) {
+    const abort = e.target.closest("[data-mission-cancel]");
+    if (abort) { this.cancelMission(abort.dataset.missionCancel); return; }
     const back = e.target.closest("[data-back]");
     if (back) { this._dispatchArc = null; this.renderDispatches(); return; }
     const row = e.target.closest("[data-open]");
@@ -828,8 +928,13 @@ const UI = {
         <div class="m-ships">${icons}</div>
         <div class="mbar"><span class="mbar-fill"></span></div>
         <div class="m-foot"><span class="m-phase"></span><span class="m-eta"></span></div>
+        <div class="m-cancel">${this._missionCancelHtml(m)}</div>
       </div>`;
     }).join("");
+    this.refs.fleetMissions.onclick = e => {
+      const b = e.target.closest("[data-mission-cancel]");
+      if (b) this.cancelMission(b.dataset.missionCancel);
+    };
     this.updateMissions();
   },
 
@@ -920,7 +1025,10 @@ const UI = {
     if (!r.ok) return this.toast(r.msg, "warn");
     this.toast("Mission launched ▸", "good");
     this._pending = null; this.refs.mission.classList.add("hidden");
-    window.Game.requestSave(); this.renderFleet(); this.renderBazaar(); this.updateHeader();
+    this._missionSig = "";
+    window.Game.requestSave(); this.renderFleet(); this.renderBazaar(); this.renderDispatches();
+    if (this.commsTab === "pending") this.renderPendingContracts();
+    this.updateHeader();
   },
 
   openEquipForItem(itemUid) {
@@ -1230,7 +1338,12 @@ const UI = {
       const r = await Bazaar.takeContract(take.dataset.take);
       if (!r.ok) return this.toast(r.msg, "warn");
       if (r.tip) { this.toast("Insider tip secured 👀", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); return; }
-      if (r.contract) { this.renderBazaar(); this.openMission(r.contract); }
+      if (r.contract) {
+        this.renderBazaar();
+        this.pingCommsTab("pending");
+        if (this.commsTab === "pending") this.renderPendingContracts();
+        this.openMission(r.contract);
+      }
       return;
     }
     if (t.closest("#buy-inv")) {
