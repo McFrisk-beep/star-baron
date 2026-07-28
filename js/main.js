@@ -47,6 +47,18 @@ const Game = {
   migrate(loaded) {
     const def = this.defaultState();
     const s = Object.assign({}, def, loaded);
+    // Validate untrusted save shape (localStorage / cloud sync) BEFORE anything
+    // iterates these fields: a corrupted or tampered save with a wrong-typed
+    // field (e.g. ships:null) used to throw here and brick boot forever, since
+    // every reload re-loaded the same bad save. Wrong-typed collections fall back
+    // to the default; credits is coerced to a finite, non-negative number.
+    if (!Array.isArray(s.ships)) s.ships = def.ships;
+    if (!Array.isArray(s.unlockedSystems)) s.unlockedSystems = def.unlockedSystems;
+    if (!Array.isArray(s.achievements)) s.achievements = def.achievements;
+    if (!s.positions || typeof s.positions !== "object") s.positions = {};
+    if (!s.avgCost || typeof s.avgCost !== "object") s.avgCost = {};
+    if (typeof s.currentSystem !== "string") s.currentSystem = def.currentSystem;
+    s.credits = Number.isFinite(+s.credits) ? Math.max(0, +s.credits) : def.credits;
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
@@ -62,7 +74,7 @@ const Game = {
       s.mainShip = def.mainShip; s.ships = def.ships; s.missions = []; s.reports = [];
       s.listings = []; s.items = {}; s.inventory = def.inventory; s.bazaar = def.bazaar;
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
-      delete s.avgCost; s.avgCost = loaded.avgCost || {};
+      delete s.avgCost; s.avgCost = (loaded.avgCost && typeof loaded.avgCost === "object") ? loaded.avgCost : {};
     }
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
     // story flags / ephemeral survey threads — old saves lack the keys
@@ -130,7 +142,17 @@ const Game = {
       if (window.Cloud && Cloud.signedIn()) { try { await Cloud.saveRemote(this.state); } catch (e) { console.warn("[reset] cloud persist failed:", e); } }
       console.log("[Game] admin global reset applied (epoch " + sharedReset + ")");
     } else {
-      this.state = loaded ? this.migrate(loaded) : this.defaultState();
+      // migrate() validates the loaded shape, but a save corrupted in a way it
+      // can't repair must never brick boot (it would re-throw on every reload).
+      // Fall back to a fresh game, stashing the unusable save so it's recoverable.
+      try {
+        this.state = loaded ? this.migrate(loaded) : this.defaultState();
+      } catch (e) {
+        console.error("[Game] save migration failed — starting fresh:", e);
+        try { if (loaded) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
+        this.state = this.defaultState();
+        this._corruptSaveReset = true;
+      }
       if (sharedReset != null) this.state.appliedResetEpoch = Math.max(this.state.appliedResetEpoch || 0, sharedReset);  // new/up-to-date players adopt the current epoch (no reset)
     }
     this.timeScale = 1;
@@ -194,6 +216,7 @@ const Game = {
 
     // ---- UI + flavor wiring ----
     UI.init();
+    if (this._corruptSaveReset && UI.toast) UI.toast("Your save couldn't be read and was reset. The old data is kept under localStorage 'starbaron.corrupt'.", "warn", 9000);
     if (window.AuthUI) AuthUI.init();
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
