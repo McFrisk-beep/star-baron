@@ -846,17 +846,23 @@ const SENATE_ISSUES = [
 // concrete target at vote time, and substitutes {TARGET} / {PCT}.
 const SENATE_EDICTS = [
   // — mild, common market measures —
-  { id: "price_control", issue: "trade",       type: "priceCap",    scope: "cat",     mag: 0.8,   weight: 1.0,  title: "{TARGET} Price Control Act", blurb: "Caps {TARGET} prices across the exchange — about {PCT} below their drift." },
-  { id: "tariff",        issue: "tax",         type: "tariff",      scope: "cat",     mag: 0.1,   weight: 1.2,  title: "{TARGET} Tariff", blurb: "Levies a {PCT} duty on every {TARGET} trade, both ways." },
+  { id: "price_control", issue: "trade",       type: "priceCap",    scope: "cat",     mag: 0.8,   weight: 1.0,  ballot: true, title: "{TARGET} Price Control Act", blurb: "Caps {TARGET} prices across the exchange — about {PCT} below their drift." },
+  { id: "tariff",        issue: "tax",         type: "tariff",      scope: "cat",     mag: 0.1,   weight: 1.2,  ballot: true, title: "{TARGET} Tariff", blurb: "Levies a {PCT} duty on every {TARGET} trade, both ways." },
   { id: "ind_levy",      issue: "tax",         type: "industryTax", scope: "faction", mag: 0.12,  weight: 1.0,  title: "Industrial Levy: {TARGET}", blurb: "Raises offworld industry tax {PCT} on {TARGET} holdings." },
   { id: "border_act",    issue: "borders",     type: "border",      scope: "none",    mag: 0.18,  weight: 0.8,  title: "Border Security Act", blurb: "Tightens the lanes — smuggling runs are about {PCT} likelier to fail." },
   // — positive / player-friendly —
-  { id: "warp_gate",     issue: "subsidy",     type: "warpGate",    scope: "none",    mag: 0.015, weight: 1.1,  title: "Warp-Lane Standardization", blurb: "Standardised warp gates speed every ship about {PCT} faster between systems." },
-  { id: "subsidy",       issue: "subsidy",     type: "subsidy",     scope: "cat",     mag: 1.18,  weight: 1.1,  title: "{TARGET} Subsidy", blurb: "Props {TARGET} prices up about {PCT} above their drift." },
-  { id: "tax_holiday",   issue: "subsidy",     type: "taxHoliday",  scope: "faction", mag: -0.07, weight: 1.0,  title: "{TARGET} Tax Holiday", blurb: "Cuts offworld industry tax {PCT} on {TARGET} holdings." },
-  { id: "trade_relief",  issue: "trade",       type: "tariff",      scope: "cat",     mag: -0.08, weight: 0.9,  title: "{TARGET} Free-Trade Act", blurb: "Waives duties on {TARGET} — about {PCT} better on every trade, both ways." },
+  { id: "warp_gate",     issue: "subsidy",     type: "warpGate",    scope: "none",    mag: 0.015, weight: 1.1,  ballot: true, title: "Warp-Lane Standardization", blurb: "Standardised warp gates speed every ship about {PCT} faster between systems." },
+  { id: "subsidy",       issue: "subsidy",     type: "subsidy",     scope: "cat",     mag: 1.18,  weight: 1.1,  ballot: true, title: "{TARGET} Subsidy", blurb: "Props {TARGET} prices up about {PCT} above their drift." },
+  { id: "tax_holiday",   issue: "subsidy",     type: "taxHoliday",  scope: "faction", mag: -0.07, weight: 1.0,  ballot: true, title: "{TARGET} Tax Holiday", blurb: "Cuts offworld industry tax {PCT} on {TARGET} holdings." },
+  { id: "trade_relief",  issue: "trade",       type: "tariff",      scope: "cat",     mag: -0.08, weight: 0.9,  ballot: true, title: "{TARGET} Free-Trade Act", blurb: "Waives duties on {TARGET} — about {PCT} better on every trade, both ways." },
+  // — cross-system stakes / new mechanics —
+  { id: "windfall_tax",  issue: "tax",         type: "windfall",    scope: "none",    mag: 0.06,  weight: 0.7,  ballot: true, title: "Windfall Levy", blurb: "An antitrust surtax skims about {PCT} off the top barons' trade and route profits." },
+  { id: "convoy_act",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: 0.4,   weight: 0.9,  ballot: true, title: "Convoy Escort Mandate", blurb: "Naval escorts ride the trade lanes — automated routes run about {PCT} safer from raids." },
+  { id: "lane_dereg",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: -0.4,  weight: 0.3,  title: "Lane Patrol Cuts", blurb: "Slashed patrols leave the lanes to the corsairs — route raids bite about {PCT} harder." },
+  { id: "rationing",     issue: "trade",       type: "ration",      scope: "comm",    mag: 1.3,   weight: 0.8,  ballot: true, title: "{TARGET} Emergency Rationing", blurb: "Mandatory stockpiling of {TARGET} spikes demand — prices sit about {PCT} above their drift until repeal." },
+  { id: "salvage_act",   issue: "subsidy",     type: "salvage",     scope: "none",    mag: 0.3,   weight: 0.9,  ballot: true, title: "Salvage Rights Act", blurb: "Opened salvage claims enrich survey debriefs — expedition payouts run about {PCT} higher." },
   // — heavy-handed, deliberately RARE (kept, but uncommon) —
-  { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,     weight: 0.32, title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
+  { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,     weight: 0.32, ballot: true, title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
   { id: "cat_embargo",   issue: "prohibition", type: "ban",         scope: "cat",     mag: 0,     weight: 0.16, title: "{TARGET} Embargo", blurb: "Suspends all trade in {TARGET}-class goods until repeal." },
   { id: "ship_restrict", issue: "arms",        type: "shipBan",     scope: "shipcls", mag: 0,     weight: 0.12, title: "{TARGET} Restriction Act", blurb: "Bars {TARGET}-class ships from contract work in senate space." },
 ];

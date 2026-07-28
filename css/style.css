@@ -1125,6 +1125,10 @@ body.reduced .node-ring.pulse { animation: none; }
 .bill-eta { font-size: 11px; color: var(--ink-dim); font-family: var(--mono); white-space: nowrap; }
 .bill-blurb { font-size: 12.5px; color: var(--ink-dim); margin-top: 3px; }
 .bill-issue { margin-top: 4px; font-size: 11px; }
+.bill-tabled { font-size: 10.5px; font-family: var(--mono); color: var(--accent); border: 1px solid rgba(123,140,255,.4); border-radius: 999px; padding: 1px 7px; white-space: nowrap; margin-right: auto; }
+.vh-item-head .bill-tabled { margin-right: 8px; }
+.ballot-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.ballot-row select { flex: 1 1 220px; min-width: 180px; }
 .influence { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 7px; }
 .want-row, .lobby-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
 .btn.sel { outline: 2px solid var(--accent); outline-offset: 1px; }

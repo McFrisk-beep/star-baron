@@ -23,7 +23,7 @@ const Senate = {
   _seats: null,
   _seatEls: {},
   _rev: 0,            // module-local revision; bumped on any change → invalidates the effects cache
-  BILLGEN: 2,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
+  BILLGEN: 3,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
   shared: false,      // true when the galaxy-wide agenda (world_senate, via SenateWorld) is the source of bills
   _pool: {},          // billId -> aggregated pooled influence (shared mode)
   _poolReady: {},     // billId -> true once the final (post-deadline) pool has been fetched
@@ -135,7 +135,7 @@ const Senate = {
     if (cat) {
       const high = (Market.categoryDrift(cat, now) - 1) / amp;     // −1..1 structural price level (shared)
       if (e.type === "priceCap") ctx += k * high;                  // capping a high market is popular
-      else if (e.type === "subsidy") ctx -= k * high;              // propping an already-high market isn't
+      else if (e.type === "subsidy" || e.type === "ration") ctx -= k * high;  // propping an already-high market isn't
       else if (e.type === "tariff" && e.tax > 0) ctx -= k * high;  // taxing a high market isn't
     }
     if (bill.lean > 0 && this.activeEdicts(now).some(b => b.id !== bill.id && b.issue === bill.issue)) ctx -= SENATECFG.satFatigue;
@@ -152,30 +152,38 @@ const Senate = {
     for (const t of pool) { r -= (t.weight || 1); if (r <= 0) return t; }
     return pool[pool.length - 1];
   },
-  _instantiate(tpl, sev) {
+  // `chosen` (optional) forces the target instead of a random pick — used by the
+  // player's ballot initiative so a proposed bill hits the target they picked.
+  _instantiate(tpl, sev, chosen) {
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
     const cap = w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w;
     const f = sev ? sev.factor : 1, rnd = x => Math.round(x);
+    chosen = chosen || {};
     let target = "", effect = { type: tpl.type }, pct = "";
     if (tpl.scope === "cat") {
-      const c = Util.pick(cats); target = cap(c);
+      const c = cats.includes(chosen.cat) ? chosen.cat : Util.pick(cats); target = cap(c);
       if (tpl.type === "priceCap") { const m = 1 - (1 - tpl.mag) * f; effect.cat = c; effect.mult = m; pct = rnd((1 - m) * 100) + "%"; }
       else if (tpl.type === "subsidy") { const m = 1 + (tpl.mag - 1) * f; effect.cat = c; effect.mult = m; pct = rnd((m - 1) * 100) + "%"; }
       else if (tpl.type === "tariff") { const tax = tpl.mag * f; effect.cat = c; effect.tax = tax; pct = rnd(Math.abs(tax) * 100) + "%"; }
       else if (tpl.type === "ban") { effect.cat = c; }
     } else if (tpl.scope === "comm") {
-      const comm = Util.pick(COMMODITIES); target = comm.name; effect.commId = comm.id;
+      const comm = (chosen.comm && COMMODITIES.find(x => x.id === chosen.comm)) || Util.pick(COMMODITIES);
+      target = comm.name; effect.commId = comm.id;
+      if (tpl.type === "ration") { const m = 1 + (tpl.mag - 1) * f; effect.mult = m; pct = rnd((m - 1) * 100) + "%"; }
     } else if (tpl.scope === "faction") {
-      const all = Math.random() < 0.4;
-      const fac = all ? "all" : Util.pick(Object.keys(FACTIONS));
+      const all = chosen.faction ? chosen.faction === "all" : Math.random() < 0.4;
+      const fac = all ? "all" : (FACTIONS[chosen.faction] ? chosen.faction : Util.pick(Object.keys(FACTIONS)));
       effect.faction = fac; effect.add = tpl.mag * f;
       target = all ? "all sectors" : FACTIONS[fac].name;
       pct = rnd(Math.abs(tpl.mag * f) * 100) + "%";
     } else if (tpl.scope === "shipcls") {
-      const cls = Util.pick(["escort", "transport"]); effect.cls = cls; target = cap(cls);
+      const cls = ["escort", "transport"].includes(chosen.cls) ? chosen.cls : Util.pick(["escort", "transport"]);
+      effect.cls = cls; target = cap(cls);
+    } else if (tpl.scope === "safety") {
+      effect.add = tpl.mag * f; pct = rnd(Math.abs(tpl.mag * f) * 100) + "%";
     } else if (tpl.scope === "none") {
-      if (tpl.type === "border") { effect.add = tpl.mag * f; pct = rnd(tpl.mag * f * 100) + "%"; }
-      else if (tpl.type === "warpGate") { effect.add = tpl.mag * f; pct = (tpl.mag * f * 100).toFixed(1) + "%"; }
+      effect.add = tpl.mag * f;
+      pct = (tpl.type === "warpGate") ? (tpl.mag * f * 100).toFixed(1) + "%" : rnd(Math.abs(tpl.mag * f) * 100) + "%";
     }
     const fill = t => t.replace(/\{TARGET\}/g, target).replace(/\{PCT\}/g, pct);
     const prefix = (sev && sev.label) ? sev.label + " " : "";
@@ -229,6 +237,7 @@ const Senate = {
     const taken = new Set(active.map(b => this._billSig(b)));
     for (const b of (senate.bills || [])) {
       if (b.status !== "upcoming") continue;
+      if (b.proposedBy) { taken.add(this._billSig(b)); continue; }   // keep player-tabled bills as authored
       delete b.endsAt; delete b.result; delete b.votes;
       Object.assign(b, this._billContent(active, taken));
       taken.add(this._billSig(b));                            // later bills avoid the ones we just minted
@@ -459,11 +468,11 @@ const Senate = {
     const bucket = Math.floor(now / 2000);
     if (this._fx && this._fxSig === this._rev && this._fxBucket === bucket) return this._fx;
     const fx = { banComm: {}, banCat: {}, catMult: {}, commMult: {}, buyTax: {}, sellTax: {},
-      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {}, warp: 0 };
+      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {}, warp: 0, windfall: 0, route: 0, salvage: 0 };
     for (const b of this.activeEdicts(now)) {
       const e = b.effect; if (!e) continue;
       switch (e.type) {
-        case "priceCap": case "subsidy":
+        case "priceCap": case "subsidy": case "ration":   // ration props a single commodity (commMult)
           if (e.cat) fx.catMult[e.cat] = (fx.catMult[e.cat] || 1) * e.mult;
           if (e.commId) fx.commMult[e.commId] = (fx.commMult[e.commId] || 1) * e.mult; break;
         case "ban":
@@ -475,6 +484,9 @@ const Senate = {
         case "border": fx.border += e.add; break;
         case "shipBan": if (e.cls) fx.shipBan[e.cls] = 1; break;
         case "warpGate": fx.warp += e.add; break;
+        case "windfall": fx.windfall += e.add; break;      // antitrust surtax on the top barons' earnings
+        case "routeSafety": fx.route += e.add; break;       // +safer / −riskier automated routes
+        case "salvage": fx.salvage += e.add; break;         // richer expedition/survey payouts
       }
     }
     this._fx = fx; this._fxSig = this._rev; this._fxBucket = bucket;
@@ -488,6 +500,9 @@ const Senate = {
   smuggleFailAdd() { return this._effects().border; },
   shipClassBanned(cls) { return !!this._effects().shipBan[cls]; },
   travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
+  windfallSurtax() { return this._effects().windfall || 0; },      // extra earnings tax (economy.js gates it to the top barons)
+  routeSafetyAdd() { return this._effects().route || 0; },         // +safer / −riskier route events (routes.js)
+  salvageBonusAdd() { return this._effects().salvage || 0; },      // richer survey debrief payouts (survey-story.js)
 
   // ===== player influence =================================================
   _emptyPending() { return { billId: null, want: null, pushFac: {}, pushSen: {}, coerce: {}, lobCount: {} }; },
@@ -605,6 +620,52 @@ const Senate = {
     rep.scandal = (rep.scandal || 0) + 1;
     this._submitPool(b.id, "coerce", senatorId, dir, 0);
     Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
+  },
+
+  // ===== ballot initiative (table your own bill) ==========================
+  // A high-tier baron can put a bill of their choosing onto the docket for a fee.
+  // It still faces a real vote — you've set the agenda, not bought the outcome —
+  // and it's stamped proposedBy:"you" so the docket shows who tabled it.
+  ballotCost() { return SENATECFG.ballotCost || 250000; },
+  canBallot() { return !this.shared && this.tier() >= (SENATECFG.ballotMinTier || 3); },
+  // Concrete bills the player may table: {value, label}. `value` is edictId or
+  // edictId|target (cat / commId / faction). Labels reuse _instantiate so they
+  // read exactly like the real bill.
+  ballotOptions() {
+    const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
+    const sev = { factor: 1, label: "" }, out = [];
+    for (const tpl of SENATE_EDICTS) {
+      if (!tpl.ballot) continue;
+      const add = (chosen, key) => out.push({ value: tpl.id + (key != null ? "|" + key : ""), label: this._instantiate(tpl, sev, chosen).title });
+      if (tpl.scope === "cat") cats.forEach(c => add({ cat: c }, c));
+      else if (tpl.scope === "comm") COMMODITIES.forEach(c => add({ comm: c.id }, c.id));
+      else if (tpl.scope === "faction") Object.keys(FACTIONS).forEach(fc => add({ faction: fc }, fc));
+      else add({}, null);
+    }
+    return out;
+  },
+  proposeBill(value) {
+    if (this.shared) return { ok: false, msg: "The galaxy-wide agenda is authored by the Senate clerks — you can't table bills in shared play." };
+    if (!this.canBallot()) return { ok: false, msg: `Tabling a bill unlocks at Baron Tier ${SENATECFG.ballotMinTier}.` };
+    const [edictId, target] = String(value || "").split("|");
+    const tpl = SENATE_EDICTS.find(t => t.id === edictId && t.ballot);
+    if (!tpl) return { ok: false, msg: "Pick a measure to table." };
+    const chosen = tpl.scope === "cat" ? { cat: target } : tpl.scope === "comm" ? { comm: target } : tpl.scope === "faction" ? { faction: target } : {};
+    const now = Date.now();
+    const inst = this._instantiate(tpl, { factor: 1, label: "" }, chosen);
+    if (this._takenSet(now).has(this._effectSig(inst.effect))) return { ok: false, msg: "That measure is already on the books or docketed." };
+    const up = this.upcomingBills(now);
+    if (!up.length) return { ok: false, msg: "The docket is in recess — try again shortly." };
+    const cost = this.ballotCost();
+    const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to table this bill." };
+    s.credits -= cost;
+    const senate = this.sen();
+    const bill = { id: "bill_" + (++senate.billSeq), status: "upcoming", votesAt: up[0].votesAt + this.interval(),
+      proposedBy: "you", repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
+    for (let i = 1; i < up.length; i++) up[i].votesAt += this.interval();   // slot it in at #2; push the rest of the docket back
+    senate.bills.push(bill);
+    Economy.refreshNetWorth(); this._bumpRev();
+    return { ok: true, cost, bill };
   },
 
   // ===== welcome-back recap helper ========================================

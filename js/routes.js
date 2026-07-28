@@ -106,7 +106,13 @@ const Routes = {
     // Flagship routeSafe can shrug off a bad roll (safer lanes).
     const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
     if (!ev.good && safe > 0 && Math.random() < safe) return null;
-    const delta = Math.round(per * (Util.randFloat(ev.mult[0], ev.mult[1]) - 1));   // change vs a normal shipment
+    let delta = Math.round(per * (Util.randFloat(ev.mult[0], ev.mult[1]) - 1));   // change vs a normal shipment
+    // Senate route-safety edict softens (+) or sharpens (−) a raid's bite.
+    const safety = window.Senate ? Senate.routeSafetyAdd() : 0;
+    if (!ev.good && safety) {
+      const cl = (window.SENATECFG && SENATECFG.routeSafetyClamp) || [0.1, 2.5];
+      delta = Math.round(delta * Util.clamp(1 - safety, cl[0], cl[1]));
+    }
     const out = { id: ev.id, msg: ev.msg, good: !!ev.good, delta, comm: route.comm, from: route.from, to: route.to };
     if (ev.dmg) {                                                                    // wear a random ship on the route
       const sh = Util.pick(this.shipsOf(route));
