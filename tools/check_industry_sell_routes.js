@@ -43,7 +43,7 @@ ctx.Rep = {
 };
 ctx.Bus = { emit() {} };
 ctx.Wars = { active: () => null };
-ctx.Senate = { travelSpeedMult: () => 1, industryTaxAdd: () => 0, tradeTax: () => 0, isBanned: () => false, spreadAdd: () => 0 };
+ctx.Senate = { travelSpeedMult: () => 1, industryTaxAdd: () => 0, tradeTax: () => 0, isBanned: () => false, spreadAdd: () => 0, windfallSurtax: () => 0, routeSafetyAdd: () => 0, salvageBonusAdd: () => 0 };
 ctx.Galaxy = {
   get: (id) => ({ id, name: id, sectorId: "core", planets: [{ type: "rocky", cat: "mineral", name: "P" }], pos: { x: 0, y: 0 } }),
 };

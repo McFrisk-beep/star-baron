@@ -581,6 +581,13 @@ const SENATECFG = {
   lobbyFacCost: 100000, bribeCostBase: 50000, scandalCostBase: 20000,
   lobbyCostRelK: 0.4, bribeCostRelK: 0.4, scandalCostRelK: 0.4,  // ±40% cost swing from relationship
   dossierMinPrice: 1500, dossierMaxPrice: 9000, dossierSlots: 3,
+  // windfall levy: the surtax only bites barons ranked in the top N of the board
+  windfallTopN: 3,
+  // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing a
+  // bad route-event's loss (0 = fully shrugged, 2.5 = 2.5× harsher)
+  routeSafetyClamp: [0.1, 2.5],
+  // ballot initiative: table your own bill onto the docket (high tier + a fee)
+  ballotMinTier: 3, ballotCost: 250000,
   // stance scale −3..+3 → label[v+3]; hidden stances read as the "unknown" string.
   stanceLabels: ["vehemently opposed", "strongly disagree", "slightly disagree", "either way", "slightly agree", "strongly agree", "solid support"],
   stanceUnknown: "information lacking",

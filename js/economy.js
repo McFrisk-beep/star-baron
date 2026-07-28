@@ -557,7 +557,14 @@ const Economy = {
   tier() { return (this.s().prestige || {}).tier || 0; },
   tierInfo(t = this.tier()) { return BARON_TIERS[Util.clamp(t, 0, BARON_TIERS.length - 1)]; },
   tierTitle() { return this.tierInfo().title; },
-  baronTax() { return this.tierInfo().tax; },
+  // Baron Tier earnings tax, plus a Senate "windfall levy" surtax that only bites
+  // barons ranked in the top N of the leaderboard — being #1 paints a target.
+  baronTax() {
+    let tax = this.tierInfo().tax;
+    if (window.Senate && Senate.windfallSurtax() > 0 && window.Rivals
+        && Rivals.rank() <= (SENATECFG.windfallTopN || 3)) tax += Senate.windfallSurtax();
+    return Util.clamp(tax, 0, 0.95);
+  },
   afterTax(amount) { return amount > 0 ? Math.round(amount * (1 - this.baronTax())) : amount; },  // tax positive earnings only
   permitCap() { return this.tierInfo().permits; },
   fleetCap() { return this.tierInfo().fleet; },

@@ -256,7 +256,8 @@ const SurveyStory = {
     // overwrite soft mints). Ship release + report still proceed in applyOutcome.
     const payLocal = !(window.Routes && !Routes.softIncomeLocal());
     if (spec.credits && payLocal) {
-      const amt = Array.isArray(spec.credits) ? Util.randInt(spec.credits[0], spec.credits[1]) : spec.credits;
+      let amt = Array.isArray(spec.credits) ? Util.randInt(spec.credits[0], spec.credits[1]) : spec.credits;
+      if (window.Senate && Senate.salvageBonusAdd() > 0) amt = Math.round(amt * (1 + Senate.salvageBonusAdd()));   // Salvage Rights Act
       this.s().credits += amt; report.credits = amt;
     }
     if (spec.item && payLocal && window.Items) {

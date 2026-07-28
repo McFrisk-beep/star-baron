@@ -1539,6 +1539,7 @@ const UI = {
     const roster = Senate.roster(), active = Senate.activeEdicts(now), upcoming = Senate.upcomingBills(now);
     const next = upcoming[0] || null, p = Senate.pending(), tier = Senate.tier();
     const senate = Senate.sen();
+    const propBadge = b => b && b.proposedBy === "you" ? `<span class="bill-tabled" title="you tabled this bill">✎ Your ballot initiative</span>` : "";
 
     // ---- floor / influence ----
     const lobbyGated = !Senate.can("lobby");
@@ -1552,7 +1553,7 @@ const UI = {
       if (Object.keys(p.pushSen).length) queued.push(`bribed ${Object.keys(p.pushSen).length}`);
       if (Object.keys(p.coerce).length) queued.push(`coerced ${Object.keys(p.coerce).length}`);
       floor += `<div class="bill on-floor">
-        <div class="bill-head"><b>${next.title}</b><span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
+        <div class="bill-head"><b>${next.title}</b>${propBadge(next)}<span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
         <div class="bill-blurb">${next.blurb}</div>
         <div class="bill-issue muted-note">issue: ${this.issueLabel(next.issue)}</div>
         <div class="influence">
@@ -1574,12 +1575,28 @@ const UI = {
 
     // ---- active edicts ----
     const edictPanel = `<div class="panel"><h2>Active Edicts <small>${active.length} in force</small></h2>` +
-      (active.length ? active.map(b => `<div class="edict"><div class="edict-head"><b>${b.title}</b>${b.endsAt ? `<span class="edict-eta">expires ${Util.duration(b.endsAt - now)}</span>` : ""}</div><div class="edict-blurb">${b.blurb}</div></div>`).join("")
+      (active.length ? active.map(b => `<div class="edict"><div class="edict-head"><b>${b.title}</b>${propBadge(b)}${b.endsAt ? `<span class="edict-eta">expires ${Util.duration(b.endsAt - now)}</span>` : ""}</div><div class="edict-blurb">${b.blurb}</div></div>`).join("")
         : `<p class="muted-note">No edicts in force — the markets are free… for now.</p>`) + `</div>`;
 
     // ---- upcoming legislation ----
     const upPanel = `<div class="panel"><h2>Upcoming Legislation <small>preview the docket</small></h2>` +
-      upcoming.map((b, i) => `<div class="bill upcoming"><div class="bill-head"><b>${b.title}</b><span class="bill-eta">${i === 0 ? "on the floor · " : ""}votes in ${Util.duration(Math.max(0, b.votesAt - now))}</span></div><div class="bill-blurb">${b.blurb}</div></div>`).join("") + `</div>`;
+      upcoming.map((b, i) => `<div class="bill upcoming"><div class="bill-head"><b>${b.title}</b>${propBadge(b)}<span class="bill-eta">${i === 0 ? "on the floor · " : ""}votes in ${Util.duration(Math.max(0, b.votesAt - now))}</span></div><div class="bill-blurb">${b.blurb}</div></div>`).join("") + `</div>`;
+
+    // ---- ballot initiative (table your own bill) ----
+    let ballotPanel;
+    if (Senate.shared) {
+      ballotPanel = `<div class="panel"><h2>Ballot Initiative</h2><p class="muted-note">The galaxy-wide agenda is authored by the Senate clerks — bills can't be tabled in shared play.</p></div>`;
+    } else if (!Senate.canBallot()) {
+      ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2><p class="muted-note">Table your own legislation onto the docket at Baron Tier <b>${SENATECFG.ballotMinTier}</b> — you're Tier <b>${tier}</b>. Ascend to earn a seat at the rostrum.</p></div>`;
+    } else {
+      const opts = Senate.ballotOptions().map(o => `<option value="${o.value}">${o.label}</option>`).join("");
+      ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2>
+        <p class="muted-note">Put a bill of your choosing onto the floor for <b>${Util.credits(Senate.ballotCost())}c</b>. It still faces a full vote — table it, then lobby to carry it.</p>
+        <div class="ballot-row">
+          <select data-ballot="pick" aria-label="Bill to table">${opts}</select>
+          <button class="btn btn-go" data-sn="ballot">Table it · ${Util.credits(Senate.ballotCost())}c</button>
+        </div></div>`;
+    }
 
     // ---- roster ----
     const f = this.senateFilt, q = (f.q || "").toLowerCase();
@@ -1622,7 +1639,7 @@ const UI = {
       const inForce = b.status === "passed" && b.effect && (!b.endsAt || b.endsAt > now);
       const when = b.votesAt ? `${Util.duration(Math.max(0, now - b.votesAt))} ago` : "";
       return `<div class="vh-item ${cls}">
-        <div class="vh-item-head"><b>${b.title}</b><span class="vh-badge ${cls}">${label}</span></div>
+        <div class="vh-item-head"><b>${b.title}</b>${propBadge(b)}<span class="vh-badge ${cls}">${label}</span></div>
         <div class="vh-effect muted-note">${b.blurb}</div>
         <div class="vh-tally"><span class="up">Aye ${r.aye || 0}</span> · <span class="down">Nay ${r.nay || 0}</span> · <span class="tip-dim">Abstain ${r.abstain || 0}</span>${when ? ` · <span class="muted-note">${when}</span>` : ""}${inForce ? ` · <span class="vh-active">in force${b.endsAt ? `, ${Util.duration(b.endsAt - now)} left` : ""}</span>` : ""}</div>
         <div class="vh-actions">
@@ -1642,7 +1659,7 @@ const UI = {
     const body = this.senateTab === "edicts" ? edictPanel
       : this.senateTab === "reps" ? rosterPanel
       : this.senateTab === "history" ? historyPanel
-      : floorPanel + upPanel;
+      : floorPanel + upPanel + ballotPanel;
 
     this.refs.senateBody.innerHTML = headPanel + nav + body;
     this.refs.senateBody.onclick = e => this.onSenateClick(e);
@@ -1659,6 +1676,13 @@ const UI = {
     if (act === "watchvote") { Senate.openVote(b.dataset.id, true); return; }
     if (act === "card") { this.openSenatorCard(b.dataset.id); return; }
     if (act === "want") { Senate.setWant(b.dataset.v); window.Game.requestSave(); this.renderSenate(); return; }
+    if (act === "ballot") {
+      const sel = this.refs.senateBody.querySelector('[data-ballot="pick"]');
+      const r = Senate.proposeBill(sel ? sel.value : "");
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Tabled: ${r.bill.title}`, "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      return;
+    }
     if (act === "lobby") {
       const r = Senate.lobby(b.dataset.v);
       if (!r.ok) return this.toast(r.msg, "warn");
