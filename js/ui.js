@@ -118,17 +118,16 @@ const UI = {
     }
   },
 
-  // Per-tab 1920×1080 background (admin Images → Page backgrounds). Sits behind
-  // page UI (.page-bg z-index 0; panels/content are above). No URL → hide layer.
+  // Per-tab background (admin Images → Page backgrounds). Fixed full-viewport
+  // <img id="page-bg-img"> stretched behind page UI. No URL → hide.
   applyPageBg(name) {
-    const wrap = document.getElementById("page-bg");
     const img = document.getElementById("page-bg-img");
-    if (!wrap || !img) return;
+    if (!img) return;
     const page = name || this.page;
     const url = (window.ASSET && typeof ASSET.pageBg === "function") ? ASSET.pageBg(page) : "";
-    if (!url) { wrap.classList.add("hidden"); img.removeAttribute("src"); return; }
+    if (!url) { img.classList.add("hidden"); img.removeAttribute("src"); return; }
     if (img.getAttribute("src") !== url) img.src = url;
-    wrap.classList.remove("hidden");
+    img.classList.remove("hidden");
   },
 
   // Pin the chat to the newest message (the feed lives in a hidden tab until
