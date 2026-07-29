@@ -26,9 +26,13 @@ create unique index if not exists profiles_username_lower_uidx
   where username is not null;
 
 create sequence if not exists public.profiles_join_n_seq;
+-- is_called:=false so nextval() returns exactly this seed value (max(join_n)+1,
+-- or 1 on an empty table) instead of skipping one — setval's default
+-- is_called=true would waste join_n=1 and hand the first-ever signup "Baron #2".
 select setval(
   'public.profiles_join_n_seq',
-  greatest(coalesce((select max(join_n) from public.profiles), 0), 1)
+  coalesce((select max(join_n) from public.profiles), 0) + 1,
+  false
 );
 
 -- New signups: assign next join_n (keep role insert).

@@ -62,7 +62,7 @@ declare
   facs text[] := array['syndicate','mining_combine','free_trade','agri_collective'];
   fac_names jsonb := '{"syndicate":"The Syndicate","mining_combine":"Mining Combine","free_trade":"Free-Trade League","agri_collective":"Agri-Collective"}'::jsonb;
   tpl jsonb; i int; found boolean := false;
-  scope text; typ text; mag numeric; issue text; binary boolean;
+  scope text; typ text; mag numeric; issue text; is_binary boolean;
   target text := ''; pct text := ''; effect jsonb := '{}'::jsonb;
   c text; cm jsonb; f text; ttl text; blb text;
   next_vote timestamptz; ends timestamptz;
@@ -130,17 +130,17 @@ begin
   typ := tpl->>'type'; scope := tpl->>'scope';
   mag := coalesce((tpl->>'mag')::numeric, 0);   -- template base; factor applied per-type below
   issue := tpl->>'issue';
-  binary := typ in ('ban', 'shipBan');
-  if binary then factor := 1; end if;
+  is_binary := typ in ('ban', 'shipBan');
+  if is_binary then factor := 1; end if;
 
   -- Cost: base × severity × (days/3). Binary bans only scale with duration.
-  sev_mult := case when binary then 1.0 else (0.5 + factor) end;
+  sev_mult := case when is_binary then 1.0 else (0.5 + factor) end;
   cost := greatest(1, round(base_cost * sev_mult * (days::numeric / 3.0)))::bigint;
 
   -- Stronger / longer ballots: hostility = 0.55·sev + 0.45·dur + 0.30·sev·dur;
   -- lean = 1 − hostility (mirrors Senate.ballotLean). Client _vote then treats
   -- lean < 1 on proposedBy bills as a nay-bias, so sentiment scales down.
-  if binary then host_sev := 0.45; else host_sev := greatest(0, least(1, (factor - 0.5) / 1.5)); end if;
+  if is_binary then host_sev := 0.45; else host_sev := greatest(0, least(1, (factor - 0.5) / 1.5)); end if;
   host_dur := greatest(0, least(1, (days - 1)::numeric / 9.0));
   host_hard := least(1.0, 0.55 * host_sev + 0.45 * host_dur + 0.30 * host_sev * host_dur);
   lean_v := greatest(0.12, least(1.0, 1.0 - host_hard));
