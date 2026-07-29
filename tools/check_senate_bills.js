@@ -70,51 +70,82 @@ assert(Senate.windfallSurtax() === 0, "expired windfall no longer surtaxes");
 sen.bills = []; Senate._bumpRev();
 Senate.shared = false;
 ctx.Game.state.prestige.tier = 0;
+sen.ballotWeek = null;
 let r = Senate.proposeBill("subsidy|tech");
 assert(!r.ok, "ballot gated below Baron Tier " + SENATECFG.ballotMinTier);
 
 ctx.Game.state.prestige.tier = SENATECFG.ballotMinTier;   // now eligible
 assert(Senate.canBallot(), "canBallot() true at/above the min tier");
+assert(Senate.ballotWeekQuota() === 1, "tier 3 weekly quota is 1");
 const opts = Senate.ballotOptions();
 assert(opts.length > 0 && opts.every(o => o.value && o.label), "ballotOptions() returns labelled choices");
 assert(opts.some(o => o.value.startsWith("salvage_act")), "salvage act is proposable");
+assert(!Senate.ballotHasStrength(edict("prohibition")), "prohibition has no strength dial");
+assert(Senate.ballotHasStrength(edict("subsidy")), "subsidy has strength dial");
+assert(Senate.ballotCostFor(2, 6, false) > Senate.ballotCostFor(1, 3, false), "stronger/longer costs more");
+assert(Senate.ballotLean(2, 10, false) < Senate.ballotLean(1, 3, false), "stronger/longer leans harder");
 
 const floorBefore = Senate.nextBill(now);
 const creditsBefore = ctx.Game.state.credits;
-r = Senate.proposeBill("subsidy|tech");
+const feeStd = Senate.ballotCostFor(1, 3, false);
+r = Senate.proposeBill("subsidy|tech", 1, 3);
 assert(r.ok, "ballot: tech subsidy tabled");
 assert(r.bill.proposedBy === "you", "tabled bill is stamped proposedBy:'you'");
-assert(ctx.Game.state.credits === creditsBefore - Senate.ballotCost(), "ballot fee was charged");
+assert(r.bill.edictMs === 3 * Senate.ballotDayMs(), "ballot stores 3-day edict length");
+assert(ctx.Game.state.credits === creditsBefore - feeStd, "ballot fee was charged");
 assert(sen.bills.some(b => b.id === r.bill.id && b.proposedBy === "you"), "tabled bill is on the docket");
 assert(r.bill.votesAt > floorBefore.votesAt, "tabled bill is slotted after the bill on the floor");
+assert(Senate.ballotWeekUsed() === 1, "weekly counter increments");
 
 // duplicate measure is refused
-r = Senate.proposeBill("subsidy|tech");
+r = Senate.proposeBill("subsidy|tech", 1, 3);
 assert(!r.ok && /already/i.test(r.msg), "duplicate measure refused");
+
+// weekly limit (tier 3 → 1/week) blocks a second distinct table
+sen.ballotWeek.n = 1;
+r = Senate.proposeBill("salvage_act", 1, 3);
+assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
+
+// bump: need a second slot — mint another upcoming bill then bump ours
+sen.ballotWeek.n = 0;
+ctx.Game.state.prestige.tier = 5;   // quota 3
+const mineId = sen.bills.find(b => b.proposedBy === "you").id;
+const up = Senate.upcomingBills(now);
+assert(up.length >= 2, "docket has room to bump");
+// ensure ours is not first
+const mine = sen.bills.find(b => b.id === mineId);
+const first = up[0];
+if (mine.id === first.id) { mine.votesAt = first.votesAt + Senate.interval(); Senate._bumpRev(); }
+const bumpBefore = ctx.Game.state.credits;
+r = Senate.bumpBill(mineId);
+assert(r.ok, "bump moves bill up");
+assert(ctx.Game.state.credits === bumpBefore - Senate.ballotBumpCost(), "bump fee charged");
 
 // shared play: guests can't table; signed-in barons go through SenateWorld
 Senate.shared = true;
+sen.ballotWeek.n = 0;
 r = Senate.proposeBill("salvage_act");
 assert(!r.ok && /sign in/i.test(r.msg), "shared ballot requires sign-in");
 ctx.Cloud = {
   signedIn: () => true, user: () => ({ id: "user-1" }), email: () => "raphael@example.com",
-  authoritative: () => false, _isMissingRpc: () => false,
+  authoritative: () => false, _isMissingRpc: () => false, isAdmin: () => false,
 };
 assert(Senate.canBallot(), "signed-in shared play canBallot at tier");
 let sharedBill = null;
 ctx.SenateWorld = {
-  proposeBallot: async (edictId, target) => {
+  proposeBallot: async (edictId, target, factor, days) => {
     sharedBill = {
       id: "wb42", status: "upcoming", proposedBy: "user-1", proposedLabel: "raphael",
       issue: "subsidy", type: "salvage", title: "Salvage Rights Act", blurb: "…",
       effect: { type: "salvage", add: 0.3 }, votesAt: Date.now() + 1e8,
+      lean: Senate.ballotLean(factor || 1, days || 3, false),
+      edictMs: (days || 3) * Senate.ballotDayMs(),
     };
     Senate.ingestSharedBill(sharedBill);
-    return { ok: true, bill: sharedBill, charged: false, cost: Senate.ballotCost() };
+    return { ok: true, bill: sharedBill, charged: false, cost: Senate.ballotCostFor(factor || 1, days || 3, false) };
   },
+  bumpBallot: async () => ({ ok: true, charged: false, cost: Senate.ballotBumpCost() }),
 };
-// Pick a proposable measure not already on the local docket (ensureSchedule may
-// have randomly queued one of the ballot templates during the solo tests above).
 const taken = Senate._takenSet(Date.now());
 const pick = opts.find(o => {
   const [id, key] = o.value.split("|");
@@ -125,9 +156,10 @@ const pick = opts.find(o => {
 });
 assert(pick, "a free ballot option remains for the shared-path test");
 const creditsSharedBefore = ctx.Game.state.credits;
-r = await Senate.proposeBill(pick.value);
+const feeShared = Senate.ballotCostFor(1, 3, !Senate.ballotHasStrength(edict(pick.value.split("|")[0])));
+r = await Senate.proposeBill(pick.value, 1, 3);
 assert(r.ok && r.bill.id === "wb42", "shared ballot tables via SenateWorld: " + (r.msg || ""));
-assert(ctx.Game.state.credits === creditsSharedBefore - Senate.ballotCost(), "shared ballot fee charged locally when server did not");
+assert(ctx.Game.state.credits === creditsSharedBefore - feeShared, "shared ballot fee charged locally when server did not");
 assert(sen.bills.some(b => b.id === "wb42" && b.proposedBy === "user-1"), "shared tabled bill is on the docket");
 Senate.shared = false;
 delete ctx.Cloud; delete ctx.SenateWorld;

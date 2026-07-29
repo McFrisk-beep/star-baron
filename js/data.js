@@ -586,8 +586,12 @@ const SENATECFG = {
   // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing a
   // bad route-event's loss (0 = fully shrugged, 2.5 = 2.5× harsher)
   routeSafetyClamp: [0.1, 2.5],
-  // ballot initiative: table your own bill onto the docket (high tier + a fee)
-  ballotMinTier: 3, ballotCost: 250000,
+  // ballot initiative: table your own bill onto the docket (high tier + a fee).
+  // Weekly quota = tier − ballotMinTier + 1 (tier 3 → 1/week, tier 4 → 2, …).
+  // Strength (factor) and duration (days) scale the fee; stronger/longer bills lean harder.
+  ballotMinTier: 3, ballotCost: 250000, ballotBumpCost: 100000,
+  ballotFactors: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2],
+  ballotDaysMin: 1, ballotDaysMax: 10, ballotDaysDefault: 3,
   // stance scale −3..+3 → label[v+3]; hidden stances read as the "unknown" string.
   stanceLabels: ["vehemently opposed", "strongly disagree", "slightly disagree", "either way", "slightly agree", "strongly agree", "solid support"],
   stanceUnknown: "information lacking",

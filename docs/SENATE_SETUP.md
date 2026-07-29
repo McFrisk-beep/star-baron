@@ -255,17 +255,21 @@ create policy "admin writes world_senate_result" on public.world_senate_result
 ## 1d. Shared Ballot Initiative (optional)
 
 Lets signed-in barons at Baron Tier ≥ 3 **table their own bill** onto the
-galaxy-wide agenda for a fee (same Ballot Initiative UI as solo play). Run
-**`docs/sql/senate_ballot.sql`** in the SQL Editor after §1.
+galaxy-wide agenda (Senate → **Ballot** tab). Run **`docs/sql/senate_ballot.sql`**
+in the SQL Editor after §1 (re-run to pick up fixes / new args).
 
-- Adds `proposed_by` / `proposed_label` on `world_senate`
-- Creates `app_senate_ballot(edict_id, target)` (authenticated only): validates
-  the measure, rate-limits (1 open ballot / baron, 1 per 24h, max 3 player bills
-  on the docket), deducts credits when a Phase 1 `players` row exists, and
-  inserts the bill one day after the current floor vote
-- Until this SQL is applied, the Ballot Initiative form still appears for
-  eligible signed-in barons, but tabling toasts that the clerks aren't accepting
-  ballots yet
+- Adds `proposed_by` / `proposed_label` on `world_senate`; `lean` becomes numeric
+- `app_senate_ballot(edict_id, target, factor, days)` — validates the measure,
+  scales effect + fee by strength (`factor` 0.5–2) and duration (`days` 1–10),
+  weekly quota = tier−2 (tier 3 → 1/week; admins unlimited), deducts credits when
+  a Phase 1 `players` row exists (credits cast via `floor(...::numeric)` so float
+  balances no longer error), inserts the bill one day after the floor vote
+- `app_senate_ballot_bump(bill_id)` — pay to swap your ballot one slot earlier
+- Until this SQL is applied, the Ballot tab still appears for eligible barons,
+  but tabling/bumping toasts that the clerks aren't accepting ballots yet
+
+**If you already ran an older copy of this file**, re-run it — it drops the
+old 2-arg overload and installs the 4-arg function + bump RPC.
 
 ## 2. That's it
 
@@ -289,6 +293,8 @@ generator switches off. Two browsers will show the same upcoming legislation.
 ### Remove it
 ```sql
 select cron.unschedule('senate-tick');
+drop function if exists public.app_senate_ballot_bump(text);
+drop function if exists public.app_senate_ballot(text, text, numeric, int);
 drop function if exists public.app_senate_ballot(text, text);
 drop function if exists public.senate_tick();
 drop table if exists public.world_senate;
