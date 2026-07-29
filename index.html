@@ -475,6 +475,14 @@
           <button class="btn" id="dev-credits-10k">+10K</button>
           <button class="btn" id="dev-credits-1m">+1M</button>
         </div>
+        <div class="admin-row">
+          <label class="auth-field admin-collection-field">Baron Tier (0–6)
+            <input type="number" id="dev-tier" min="0" max="6" placeholder="e.g. 3 → unlocks the Ballot Initiative" /></label>
+        </div>
+        <div class="settings-actions">
+          <button class="btn btn-go" id="dev-tier-set">Set Tier</button>
+        </div>
+        <p class="admin-hint">When signed in as an admin with cloud sync on, Credits/Tier persist server-side (needs <code>docs/sql/admin_grant.sql</code>). Otherwise they apply locally.</p>
         <hr class="admin-rule" />
         <p class="admin-hint">Senate — resolve the next bill on the floor immediately and watch it in the chamber.</p>
         <div class="admin-row"><div class="dev-senate-next" id="dev-senate-next">—</div></div>

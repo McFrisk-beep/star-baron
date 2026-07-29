@@ -42,6 +42,7 @@ const AdminUI = {
       mStatus: $("admin-mission-status"), mNew: $("admin-mission-new"), mListActions: $("admin-mission-listactions"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
+      devTier: $("dev-tier"), devTierSet: $("dev-tier-set"),
       devLocalMode: $("dev-local-mode"),
       devSenateVote: $("dev-senate-vote"), devSenateNext: $("dev-senate-next"),
       devGlobalReset: $("dev-global-reset"), devResetStatus: $("dev-reset-status"),
@@ -56,15 +57,40 @@ const AdminUI = {
     if (this.r.save) this.r.save.onclick = () => this.doSave();
     if (this.r.reset) this.r.reset.onclick = () => this.doReset();
 
-    // dev tools: credit cheats (admin-gated by the whole panel)
-    const adjust = fn => { const s = window.Game && Game.state; if (!s) return; fn(s); if (window.Economy) Economy.refreshNetWorth(); if (window.UI) { UI.updateHeader(); UI.flashCredits(); } window.Game.requestSave();
-      // Authoritative economy → the server owns credits; a local set is overwritten
-      // on the next app_pull unless "Pause cloud sync" is on. Nudge the admin.
-      if (window.Cloud && Cloud.authoritative() && window.UI) UI.toast("Cloud sync is authoritative — tick “Pause cloud sync (local test)” above or this resets on the next server sync.", "warn", 6000);
+    // dev tools: credit / Baron-Tier cheats. When the economy is server-
+    // authoritative AND you're an admin, these PERSIST via the app_admin_grant
+    // RPC (see docs/sql/admin_grant.sql); otherwise they apply locally.
+    const after = () => { if (window.Economy) Economy.refreshNetWorth(); if (window.UI) { UI.updateHeader(); UI.flashCredits(); } window.Game.requestSave(); };
+    const localGrant = ({ credits, tier }) => {
+      const s = window.Game && Game.state; if (!s) return;
+      if (credits != null) s.credits = Math.max(0, Math.round(credits));
+      if (tier != null) { s.prestige = s.prestige || { tier: 0, multiplier: 1 }; s.prestige.tier = Util.clamp(Math.round(tier), 0, 6); }
     };
-    if (this.r.devSet) this.r.devSet.onclick = () => adjust(s => { s.credits = Math.max(0, Math.round(+this.r.devCredits.value || 0)); UI.toast(`Credits set to ${Util.creditsFull(s.credits)}.`, "good"); });
-    if (this.r.dev10k) this.r.dev10k.onclick = () => adjust(s => { s.credits += 10000; UI.toast("+10,000c (dev)", "good"); });
-    if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
+    const grant = async ({ credits, tier, label }) => {
+      const s = window.Game && Game.state; if (!s) return;
+      const serverMode = !!(window.Cloud && Cloud.authoritative && Cloud.authoritative() && Cloud.isAdmin());
+      if (serverMode) {
+        try {
+          const r = await Cloud.adminGrant(credits == null ? null : Math.round(credits), tier == null ? null : Math.round(tier));
+          if (r && r.ok && r.state && window.Economy) { Economy.applyCommitState(r.state); if (window.UI) UI.toast(`${label} on the server ✓`, "good"); }
+          else { if (window.UI) UI.toast("Server grant failed: " + ((r && r.error) || "unknown"), "warn", 6000); return; }
+        } catch (e) {
+          if (window.Cloud && Cloud._isMissingRpc && Cloud._isMissingRpc(e)) {
+            localGrant({ credits, tier });
+            if (window.UI) UI.toast("Server RPC not installed — applied locally only. Run docs/sql/admin_grant.sql in Supabase.", "warn", 8000);
+          } else { if (window.UI) UI.toast("Server grant error: " + (e.message || e), "warn", 6000); return; }
+        }
+      } else {
+        localGrant({ credits, tier });
+        if (window.UI) UI.toast(`${label} (local${window.Cloud && Cloud.signedIn() ? " — enable Pause cloud sync to keep it, or apply the admin RPC" : ""})`, "good", 5000);
+      }
+      after();
+    };
+    const curCredits = () => (window.Game && Game.state ? Game.state.credits || 0 : 0);
+    if (this.r.devSet) this.r.devSet.onclick = () => grant({ credits: +this.r.devCredits.value || 0, label: "Credits set" });
+    if (this.r.dev10k) this.r.dev10k.onclick = () => grant({ credits: curCredits() + 10000, label: "+10,000c" });
+    if (this.r.dev1m) this.r.dev1m.onclick = () => grant({ credits: curCredits() + 1000000, label: "+1,000,000c" });
+    if (this.r.devTierSet) this.r.devTierSet.onclick = () => grant({ tier: +this.r.devTier.value || 0, label: "Baron Tier set" });
     // pause cloud authority so admin-set credits (and other local edits) stick
     // for testing instead of being overwritten by the next app_pull.
     if (this.r.devLocalMode) {
