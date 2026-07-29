@@ -225,7 +225,8 @@ begin
   next_vote := greatest(next_vote, now()) + interval '1 day';
   ends := next_vote + (days || ' days')::interval;
 
-  -- Prefer custom username; else Baron #<join_n>; else email local-part.
+  -- Prefer custom username; else Baron #<join_n>; else "Baron"
+  -- (same rules as baron_board / the public leaderboard — never email).
   begin
     select nullif(btrim(p.username), ''), p.join_n
       into label, join_num
@@ -236,12 +237,10 @@ begin
     label := null; join_num := null;
   end;
   if label is null or length(label) = 0 then
-    if join_num is not null then
+    if join_num is not null and join_num > 0 then
       label := 'Baron #' || join_num;
     else
-      select split_part(coalesce(u.email, 'baron'), '@', 1) into label
-        from auth.users u where u.id = uid;
-      if label is null or length(label) = 0 then label := 'baron'; end if;
+      label := 'Baron';
     end if;
   end if;
   if length(label) > 24 then label := left(label, 22) || '…'; end if;

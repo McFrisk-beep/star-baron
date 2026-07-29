@@ -836,8 +836,7 @@ const Senate = {
     const uid = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
     const bill = { status: "upcoming", votesAt: up[0].votesAt + this.interval(),
       proposedBy: uid, proposedLabel: uid === "you" ? null
-        : ((window.Cloud && Cloud.displayName && Cloud.displayName())
-          || (Cloud.email() || "").split("@")[0] || "baron"),
+        : ((window.Cloud && Cloud.displayName && Cloud.displayName()) || "Baron"),
       repealOf: null, issue: tpl.issue, lean, type: tpl.type, title: inst.title, blurb: inst.blurb,
       effect: inst.effect, edictMs, ballotFactor: f, ballotDays: d };
     return { ok: true, cost, bill, tpl, target: target || null, up, factor: f, days: d, binary };

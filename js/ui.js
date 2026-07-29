@@ -84,7 +84,7 @@ const UI = {
     this.renderSystems();
     this.renderAchievements();
     this.applySettings();
-    this.showPage("exchange");
+    this.showPage("hub");
   },
 
   // ===== tabs ==============================================================
@@ -1623,11 +1623,30 @@ const UI = {
     const senate = Senate.sen();
     const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : null;
     const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    // Public handle for ballot badges — same rules as the Barons leaderboard
+    // (username → Baron #N → "Baron"). Never show an email local-part.
+    const ballotWho = b => {
+      if (!b) return "Baron";
+      const mine = b.proposedBy === "you" || (me && String(b.proposedBy) === String(me));
+      if (mine && window.Cloud && Cloud.displayName) return Cloud.displayName() || "Baron";
+      const label = (b.proposedLabel && String(b.proposedLabel).trim()) || "";
+      // Stale rows may still hold an email local-part from an older SQL; if it
+      // matches the signed-in account, substitute the live display name.
+      const emailLocal = (window.Cloud && Cloud.email && (Cloud.email() || "").split("@")[0]) || "";
+      if (label && emailLocal && label === emailLocal && Cloud.displayName)
+        return Cloud.displayName() || "Baron";
+      if (label && label.includes("@")) return "Baron";
+      return label || "Baron";
+    };
     const propBadge = b => {
-      if (!b || !b.proposedBy) return "";
-      if (b.proposedBy === "you" || (me && b.proposedBy === me))
+      if (!b || !(b.proposedBy || b.proposedLabel)) return "";
+      if (b.proposedBy === "you" || (me && String(b.proposedBy) === String(me)))
         return `<span class="bill-tabled" title="you tabled this bill">✎ Your ballot initiative</span>`;
-      const who = esc(b.proposedLabel || "Baron");
+      // Own bill with mismatched proposedBy (legacy): still prefer "Your …" when label is our email.
+      const emailLocal = (window.Cloud && Cloud.email && (Cloud.email() || "").split("@")[0]) || "";
+      if (me && emailLocal && b.proposedLabel === emailLocal)
+        return `<span class="bill-tabled" title="you tabled this bill">✎ Your ballot initiative</span>`;
+      const who = esc(ballotWho(b));
       return `<span class="bill-tabled" title="tabled by ${who}">✎ ${who}'s ballot</span>`;
     };
 
