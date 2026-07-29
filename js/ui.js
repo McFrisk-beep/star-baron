@@ -1665,25 +1665,87 @@ const UI = {
     const upPanel = `<div class="panel"><h2>Upcoming Legislation <small>preview the docket</small></h2>` +
       upcoming.map((b, i) => `<div class="bill upcoming"><div class="bill-head"><b>${b.title}</b>${propBadge(b)}<span class="bill-eta">${i === 0 ? "on the floor · " : ""}votes in ${Util.duration(Math.max(0, b.votesAt - now))}</span></div><div class="bill-blurb">${b.blurb}</div></div>`).join("") + `</div>`;
 
-    // ---- ballot initiative (table your own bill) ----
+    // ---- ballot initiative (own tab) ----
+    this.ballotForm ||= { pick: "", factor: 1, days: SENATECFG.ballotDaysDefault || 3 };
+    const optsList = Senate.ballotOptions();
+    if (!this.ballotForm.pick && optsList.length) this.ballotForm.pick = optsList[0].value;
+    const pick = this.ballotForm.pick || (optsList[0] && optsList[0].value) || "";
+    const [pickId] = String(pick).split("|");
+    const pickTpl = SENATE_EDICTS.find(t => t.id === pickId && t.ballot);
+    const hasStr = Senate.ballotHasStrength(pickTpl);
+    const factor = hasStr ? (Number(this.ballotForm.factor) || 1) : 1;
+    const days = Util.clamp(Math.round(Number(this.ballotForm.days) || 3), SENATECFG.ballotDaysMin || 1, SENATECFG.ballotDaysMax || 10);
+    const binary = !hasStr;
+    const costNow = Senate.canBallot() ? Senate.ballotCostFor(factor, days, binary) : Senate.ballotCost();
+    const leanNow = Senate.ballotLean(factor, days, binary);
+    const odds = pickTpl ? Senate.ballotOddsLabel(Senate.ballotPassChance(pickTpl.issue, leanNow)) : null;
+    const strOpts = Senate.ballotStrengthOptions(pick);
+    const dayOpts = Array.from({ length: (SENATECFG.ballotDaysMax || 10) - (SENATECFG.ballotDaysMin || 1) + 1 }, (_, i) => {
+      const d = (SENATECFG.ballotDaysMin || 1) + i;
+      return `<option value="${d}"${d === days ? " selected" : ""}>${d} day${d === 1 ? "" : "s"}</option>`;
+    }).join("");
+    const quota = Senate.ballotWeekQuota(), used = Senate.ballotWeekUsed();
+    const quotaNote = Senate.isBallotAdmin()
+      ? `Admin — unlimited ballots this week.`
+      : `This week: <b>${used}/${isFinite(quota) ? quota : "—"}</b> used (Tier ${tier} → ${isFinite(quota) ? quota : 0}/week).`;
     let ballotPanel;
     if (!Senate.canBallot()) {
       const why = Senate.shared && !(window.Cloud && Cloud.signedIn())
         ? `Sign in to table legislation onto the galaxy-wide agenda (Baron Tier <b>${SENATECFG.ballotMinTier}</b>+).`
-        : `Table your own legislation onto the docket at Baron Tier <b>${SENATECFG.ballotMinTier}</b> — you're Tier <b>${tier}</b>. Ascend to earn a seat at the rostrum.`;
+        : `Table your own legislation at Baron Tier <b>${SENATECFG.ballotMinTier}</b> — you're Tier <b>${tier}</b>. Ascend to earn a seat at the rostrum.`;
       ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2><p class="muted-note">${why}</p></div>`;
     } else {
-      const opts = Senate.ballotOptions().map(o => `<option value="${o.value}">${o.label}</option>`).join("");
-      const sharedNote = Senate.shared
-        ? ` Put a bill of your choosing onto the <b>galaxy-wide</b> docket for <b>${Util.credits(Senate.ballotCost())}c</b> — every baron faces it. It still faces a full vote.`
-        : ` Put a bill of your choosing onto the floor for <b>${Util.credits(Senate.ballotCost())}c</b>. It still faces a full vote — table it, then lobby to carry it.`;
+      const strengthRow = hasStr
+        ? `<label class="ballot-field">Effect strength
+            <select data-ballot="factor" aria-label="Effect strength">${strOpts.map(o =>
+              `<option value="${o.factor}"${Number(o.factor) === Number(factor) ? " selected" : ""}>${o.label}</option>`).join("")}</select></label>`
+        : `<p class="muted-note">Prohibitions are all-or-nothing — no percentage dial. Duration still scales the fee and the chamber's resistance.</p>`;
+      const preview = strOpts.find(o => Number(o.factor) === Number(factor));
+      const blurb = preview ? preview.blurb
+        : (pickTpl ? Senate._instantiate(pickTpl, { factor: 1, label: "" },
+            pickTpl.scope === "cat" ? { cat: pick.split("|")[1] }
+              : pickTpl.scope === "comm" ? { comm: pick.split("|")[1] }
+              : pickTpl.scope === "faction" ? { faction: pick.split("|")[1] } : {}).blurb : "");
       ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2>
-        <p class="muted-note">${sharedNote}</p>
+        <p class="muted-note">${Senate.shared ? "Galaxy-wide docket — every baron faces your bill." : "Table onto your local docket."}
+          Fee scales with strength and duration. Stronger / longer bills are harder to pass. ${quotaNote}</p>
+        <div class="ballot-form">
+          <label class="ballot-field">Measure
+            <select data-ballot="pick" aria-label="Bill to table">${optsList.map(o =>
+              `<option value="${o.value}"${o.value === pick ? " selected" : ""}>${o.label}</option>`).join("")}</select></label>
+          ${strengthRow}
+          <label class="ballot-field">Duration in force
+            <select data-ballot="days" aria-label="Edict duration">${dayOpts}</select></label>
+        </div>
+        <p class="ballot-preview muted-note">${blurb || ""}</p>
+        <div class="ballot-meta">
+          <span class="ballot-odds ${odds ? odds.cls : ""}">Chamber sentiment: <b>${odds ? odds.text : "—"}</b>
+            ${odds ? `(~${Math.round(odds.pct * 100)}% lean to pass)` : ""}</span>
+          <span class="muted-note">Fee <b>${Util.credits(costNow)}c</b></span>
+        </div>
         <div class="ballot-row">
-          <select data-ballot="pick" aria-label="Bill to table">${opts}</select>
-          <button class="btn btn-go" data-sn="ballot">Table it · ${Util.credits(Senate.ballotCost())}c</button>
+          <button class="btn btn-go" data-sn="ballot">Table it · ${Util.credits(costNow)}c</button>
         </div></div>`;
     }
+    const mine = Senate.myUpcomingBallots(now);
+    const upAll = upcoming;
+    const minePanel = `<div class="panel"><h2>Your Ballots <small>on the docket</small></h2>` +
+      (mine.length ? `<div class="ballot-mine">${mine.map(b => {
+        const idx = upAll.findIndex(x => x.id === b.id);
+        const canBump = idx > 0;
+        return `<div class="bill upcoming">
+          <div class="bill-head"><b>${b.title}</b>${propBadge(b)}
+            <span class="bill-eta">${idx === 0 ? "on the floor · " : `#${idx + 1} · `}votes in ${Util.duration(Math.max(0, b.votesAt - now))}</span></div>
+          <div class="bill-blurb">${b.blurb}</div>
+          <div class="ballot-bump-row">
+            ${canBump
+              ? `<button class="btn btn-mini" data-sn="bump" data-id="${b.id}">Move up · ${Util.credits(Senate.ballotBumpCost())}c</button>`
+              : `<span class="muted-note">Already first on the docket</span>`}
+            ${b.ballotDays ? `<span class="muted-note">${b.ballotDays}d edict</span>` : (b.edictMs ? `<span class="muted-note">${Math.round(b.edictMs / Senate.ballotDayMs())}d edict</span>` : "")}
+          </div></div>`;
+      }).join("")}</div>`
+        : `<p class="muted-note">No ballot initiatives of yours on the docket yet.</p>`) + `</div>`;
+    if (Senate.canBallot()) ballotPanel = (ballotPanel || "") + minePanel;
 
     // ---- roster ----
     const f = this.senateFilt, q = (f.q || "").toLowerCase();
@@ -1740,13 +1802,14 @@ const UI = {
 
     // ---- sub-tabs ----
     this.senateTab ||= "overview";
-    const tabs = [["overview", "Overview"], ["edicts", "Active Edicts"], ["reps", "Representatives"], ["history", "Voting History"]];
+    const tabs = [["overview", "Overview"], ["ballot", "Ballot"], ["edicts", "Active Edicts"], ["reps", "Representatives"], ["history", "Voting History"]];
     const nav = `<nav class="subtabs senate-subtabs">${tabs.map(([k, l]) =>
       `<button class="subtab${this.senateTab === k ? " active" : ""}" data-sntab="${k}">${l}</button>`).join("")}</nav>`;
-    const body = this.senateTab === "edicts" ? edictPanel
+    const body = this.senateTab === "ballot" ? ballotPanel
+      : this.senateTab === "edicts" ? edictPanel
       : this.senateTab === "reps" ? rosterPanel
       : this.senateTab === "history" ? historyPanel
-      : floorPanel + upPanel + ballotPanel;
+      : floorPanel + upPanel;
 
     this.refs.senateBody.innerHTML = headPanel + nav + body;
     this.refs.senateBody.onclick = e => this.onSenateClick(e);
@@ -1764,15 +1827,32 @@ const UI = {
     if (act === "card") { this.openSenatorCard(b.dataset.id); return; }
     if (act === "want") { Senate.setWant(b.dataset.v); window.Game.requestSave(); this.renderSenate(); return; }
     if (act === "ballot") {
-      const sel = this.refs.senateBody.querySelector('[data-ballot="pick"]');
+      const root = this.refs.senateBody;
+      const pick = (root.querySelector('[data-ballot="pick"]') || {}).value || "";
+      const factorEl = root.querySelector('[data-ballot="factor"]');
+      const daysEl = root.querySelector('[data-ballot="days"]');
+      const factor = factorEl ? factorEl.value : 1;
+      const days = daysEl ? daysEl.value : (SENATECFG.ballotDaysDefault || 3);
       const btn = b; btn.disabled = true;
       const finish = r => {
         btn.disabled = false;
         if (!r || !r.ok) return this.toast((r && r.msg) || "Could not table that bill.", "warn");
         this.toast(`Tabled: ${r.bill.title}`, "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
       };
-      const r = Senate.proposeBill(sel ? sel.value : "");
+      const r = Senate.proposeBill(pick, factor, days);
       if (r && typeof r.then === "function") { r.then(finish).catch(e => finish({ ok: false, msg: e.message || "Could not table that bill." })); return; }
+      finish(r);
+      return;
+    }
+    if (act === "bump") {
+      const btn = b; btn.disabled = true;
+      const finish = r => {
+        btn.disabled = false;
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Could not move that bill up.", "warn");
+        this.toast("Ballot moved up the docket.", "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      };
+      const r = Senate.bumpBill(b.dataset.id);
+      if (r && typeof r.then === "function") { r.then(finish).catch(e => finish({ ok: false, msg: e.message || "Could not move that bill up." })); return; }
       finish(r);
       return;
     }
@@ -1783,6 +1863,17 @@ const UI = {
     }
   },
   onSenateFilter(e) {
+    const ball = e.target.closest("[data-ballot]");
+    if (ball) {
+      this.ballotForm ||= { pick: "", factor: 1, days: SENATECFG.ballotDaysDefault || 3 };
+      const key = ball.dataset.ballot;
+      if (key === "pick" || key === "factor" || key === "days") {
+        this.ballotForm[key] = ball.value;
+        if (key === "pick") this.ballotForm.factor = 1;   // reset strength when measure changes
+        this.renderSenate();
+      }
+      return;
+    }
     const sel = e.target.closest("[data-snf]"); if (!sel) return;
     this.senateFilt ||= { sector: "all", bloc: "all", q: "" };
     this.senateFilt[sel.dataset.snf] = sel.value;

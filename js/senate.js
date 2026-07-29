@@ -267,15 +267,19 @@ const Senate = {
   // but one that already resolved locally is left to its published outcome.
   ingestSharedBill(b) {
     const senate = this.sen(); senate.bills ||= [];
+    // Preserve chosen edict length across re-syncs (endsAt − votesAt on first sight).
+    if (b.edictMs == null && b.endsAt && b.votesAt && b.endsAt > b.votesAt)
+      b.edictMs = b.endsAt - b.votesAt;
     const cur = senate.bills.find(x => x.id === b.id);
     if (cur) {
       if (cur.status !== "upcoming") return false;     // resolved → the outcome owns it
       if (cur.votesAt === b.votesAt && cur.endsAt === b.endsAt && cur.title === b.title && cur.blurb === b.blurb
-          && cur.proposedBy === b.proposedBy) return false;
+          && cur.proposedBy === b.proposedBy && cur.lean === b.lean) return false;
       Object.assign(cur, { issue: b.issue, type: b.type, lean: b.lean, effect: b.effect,
         title: b.title, blurb: b.blurb, votesAt: b.votesAt, endsAt: b.endsAt,
         proposedBy: b.proposedBy || cur.proposedBy || null,
-        proposedLabel: b.proposedLabel || cur.proposedLabel || null });
+        proposedLabel: b.proposedLabel || cur.proposedLabel || null,
+        edictMs: b.edictMs != null ? b.edictMs : cur.edictMs });
       this._bumpRev(); return true;
     }
     senate.bills.push(b); this._bumpRev(); return true;
@@ -387,7 +391,13 @@ const Senate = {
       bill.status = passed ? "passed" : "failed";
     } else {
       bill.status = passed ? "passed" : "failed";
-      if (passed) bill.endsAt = atTime + SENATECFG.edictDurationMs;
+      if (passed) {
+        // Honor player-chosen ballot length when set; else the default edict span.
+        const dur = (bill.edictMs != null) ? bill.edictMs
+          : (bill.endsAt && bill.votesAt ? Math.max(60_000, bill.endsAt - bill.votesAt) : null)
+          || SENATECFG.edictDurationMs;
+        bill.endsAt = atTime + dur;
+      }
     }
     Bus.emit("senateVote", bill);
     // galaxy-wide: the admin client publishes this one canonical result so every
@@ -675,25 +685,97 @@ const Senate = {
   },
 
   // ===== ballot initiative (table your own bill) ==========================
-  // A high-tier baron can put a bill of their choosing onto the docket for a fee.
-  // It still faces a real vote — you've set the agenda, not bought the outcome —
-  // and it's stamped proposedBy so the docket shows who tabled it. In shared play
-  // the bill is inserted via SenateWorld → app_senate_ballot (galaxy-wide).
+  // High-tier barons table a bill for a fee. Strength (factor) + duration (days)
+  // scale cost and lean the chamber against passage. Shared play goes through
+  // SenateWorld → app_senate_ballot. Weekly quota = tier − minTier + 1 (admins free).
   ballotCost() { return SENATECFG.ballotCost || 250000; },
+  ballotBumpCost() { return SENATECFG.ballotBumpCost || 100000; },
+  ballotDayMs() { return 24 * 60 * 60 * 1000; },
   canBallot() {
     if (this.tier() < (SENATECFG.ballotMinTier || 3)) return false;
     if (!this.shared) return true;
-    return !!(window.Cloud && Cloud.signedIn());   // shared agenda needs an account to attribute + rate-limit
+    return !!(window.Cloud && Cloud.signedIn());
   },
-  // Concrete bills the player may table: {value, label}. `value` is edictId or
-  // edictId|target (cat / commId / faction). Labels reuse _instantiate so they
-  // read exactly like the real bill.
+  isBallotAdmin() { return !!(window.Cloud && Cloud.isAdmin && Cloud.isAdmin()); },
+  // Weekly quota by Baron Tier pairs: 3–4 → 1, 5–6 → 2, … ; final Cosmocrat tier gets +1.
+  // Admins unlimited. (ponytail: docket still capped galaxy-wide at ballotDocketCap.)
+  ballotWeekQuota() {
+    if (this.isBallotAdmin()) return Infinity;
+    const min = SENATECFG.ballotMinTier || 3;
+    const tier = this.tier();
+    if (tier < min) return 0;
+    const last = (typeof BARON_TIERS !== "undefined" ? BARON_TIERS.length : 7) - 1;
+    let q = Math.floor((tier - min) / 2) + 1;
+    if (tier >= last) q += 1;
+    return q;
+  },
+  _ballotWeekState() {
+    const sen = this.sen();
+    const key = Math.floor(Date.now() / (7 * this.ballotDayMs()));
+    if (!sen.ballotWeek || sen.ballotWeek.key !== key) sen.ballotWeek = { key, n: 0 };
+    return sen.ballotWeek;
+  },
+  ballotWeekUsed() { return this._ballotWeekState().n || 0; },
+  ballotWeekLeft() {
+    const q = this.ballotWeekQuota();
+    if (!isFinite(q)) return Infinity;
+    return Math.max(0, q - this.ballotWeekUsed());
+  },
+  // Binary measures (prohibitions) have no strength dial.
+  ballotHasStrength(tpl) { return !!(tpl && tpl.type !== "ban" && tpl.type !== "shipBan"); },
+  ballotFactors() { return SENATECFG.ballotFactors || [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]; },
+  ballotLean(factor, days, binary) {
+    const sev = binary ? 0.12 : (Math.max(0.5, factor) - 0.5) * 0.25;
+    const dur = (Math.max(1, days) - 3) * 0.05;
+    return Util.clamp(1 - sev - dur, 0.15, 1);
+  },
+  ballotCostFor(factor, days, binary) {
+    const base = this.ballotCost();
+    const sev = binary ? 1 : (0.5 + Math.max(0.5, factor));
+    const dur = Math.max(1, days) / 3;
+    return Math.max(1, Math.round(base * sev * dur));
+  },
+  // Strength options with a live percentage preview for the chosen target.
+  ballotStrengthOptions(value) {
+    const [edictId, target] = String(value || "").split("|");
+    const tpl = SENATE_EDICTS.find(t => t.id === edictId && t.ballot);
+    if (!tpl || !this.ballotHasStrength(tpl)) return [];
+    const chosen = tpl.scope === "cat" ? { cat: target } : tpl.scope === "comm" ? { comm: target }
+      : tpl.scope === "faction" ? { faction: target } : {};
+    return this.ballotFactors().map(f => {
+      const inst = this._instantiate(tpl, { factor: f, label: "" }, chosen);
+      const pct = (inst.blurb.match(/(\d+(?:\.\d+)?)%/) || [])[1];
+      return { factor: f, label: pct ? `${pct}% effect` : `${(f * 100).toFixed(0)}% strength`, title: inst.title, blurb: inst.blurb };
+    });
+  },
+  // Chamber sentiment estimate (no player influence) for the draft parameters.
+  ballotPassChance(issue, lean) {
+    const roster = this.roster(), now = Date.now();
+    const bill = { id: "odds_" + issue, issue, lean: lean == null ? 1 : lean };
+    const ctx = this._context(bill, now);
+    let wAye = 0, wNay = 0;
+    for (const sn of roster) {
+      const v = this._vote(sn, bill, null, ctx, now);
+      if (v === "a") wAye += sn.weight;
+      else if (v === "n") wNay += sn.weight;
+    }
+    const tot = wAye + wNay;
+    if (tot <= 0) return 0.5;
+    return Util.clamp(wAye / tot, 0.02, 0.98);
+  },
+  ballotOddsLabel(p) {
+    if (p >= 0.65) return { cls: "up", text: "Likely to pass", pct: p };
+    if (p >= 0.45) return { cls: "", text: "Toss-up", pct: p };
+    if (p >= 0.28) return { cls: "down", text: "Uphill", pct: p };
+    return { cls: "down", text: "Long shot", pct: p };
+  },
+  // Concrete bills the player may table: {value, label}.
   ballotOptions() {
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
     const sev = { factor: 1, label: "" }, out = [];
     for (const tpl of SENATE_EDICTS) {
       if (!tpl.ballot) continue;
-      const add = (chosen, key) => out.push({ value: tpl.id + (key != null ? "|" + key : ""), label: this._instantiate(tpl, sev, chosen).title });
+      const add = (chosen, key) => out.push({ value: tpl.id + (key != null ? "|" + key : ""), label: this._instantiate(tpl, sev, chosen).title, tpl });
       if (tpl.scope === "cat") cats.forEach(c => add({ cat: c }, c));
       else if (tpl.scope === "comm") COMMODITIES.forEach(c => add({ comm: c.id }, c.id));
       else if (tpl.scope === "faction") Object.keys(FACTIONS).forEach(fc => add({ faction: fc }, fc));
@@ -701,8 +783,12 @@ const Senate = {
     }
     return out;
   },
-  // Build the bill payload without charging / inserting — shared for local + RPC paths.
-  _ballotDraft(value) {
+  myUpcomingBallots(now = Date.now()) {
+    const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
+    return this.upcomingBills(now).filter(b => b.proposedBy === "you" || (me && b.proposedBy === me));
+  },
+  // Build the bill payload without charging / inserting.
+  _ballotDraft(value, factor, days) {
     if (!this.canBallot()) {
       if (this.shared && !(window.Cloud && Cloud.signedIn()))
         return { ok: false, msg: "Sign in to table a bill onto the galaxy-wide agenda." };
@@ -711,41 +797,50 @@ const Senate = {
     const [edictId, target] = String(value || "").split("|");
     const tpl = SENATE_EDICTS.find(t => t.id === edictId && t.ballot);
     if (!tpl) return { ok: false, msg: "Pick a measure to table." };
-    const chosen = tpl.scope === "cat" ? { cat: target } : tpl.scope === "comm" ? { comm: target } : tpl.scope === "faction" ? { faction: target } : {};
+    const binary = !this.ballotHasStrength(tpl);
+    const f = binary ? 1 : Util.clamp(Number(factor) || 1, 0.5, 2);
+    const d = Util.clamp(Math.round(Number(days) || SENATECFG.ballotDaysDefault || 3),
+      SENATECFG.ballotDaysMin || 1, SENATECFG.ballotDaysMax || 10);
+    const chosen = tpl.scope === "cat" ? { cat: target } : tpl.scope === "comm" ? { comm: target }
+      : tpl.scope === "faction" ? { faction: target } : {};
     const now = Date.now();
-    const inst = this._instantiate(tpl, { factor: 1, label: "" }, chosen);
+    const inst = this._instantiate(tpl, { factor: f, label: "" }, chosen);
     if (this._takenSet(now).has(this._effectSig(inst.effect))) return { ok: false, msg: "That measure is already on the books or docketed." };
+    const left = this.ballotWeekLeft();
+    if (isFinite(left) && left <= 0)
+      return { ok: false, msg: `Weekly ballot limit reached (${this.ballotWeekUsed()}/${this.ballotWeekQuota()}).` };
     const up = this.upcomingBills(now);
     if (!up.length) return { ok: false, msg: "The docket is in recess — try again shortly." };
-    const cost = this.ballotCost();
+    const cost = this.ballotCostFor(f, d, binary);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to table this bill." };
+    const lean = this.ballotLean(f, d, binary);
+    const edictMs = d * this.ballotDayMs();
     const uid = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
     const bill = { status: "upcoming", votesAt: up[0].votesAt + this.interval(),
       proposedBy: uid, proposedLabel: uid === "you" ? null : (Cloud.email() || "").split("@")[0] || "baron",
-      repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
-    return { ok: true, cost, bill, tpl, target: target || null, up };
+      repealOf: null, issue: tpl.issue, lean, type: tpl.type, title: inst.title, blurb: inst.blurb,
+      effect: inst.effect, edictMs, ballotFactor: f, ballotDays: d };
+    return { ok: true, cost, bill, tpl, target: target || null, up, factor: f, days: d, binary };
   },
-  proposeBill(value) {
-    const draft = this._ballotDraft(value);
+  proposeBill(value, factor, days) {
+    const draft = this._ballotDraft(value, factor, days);
     if (!draft.ok) return draft;
     if (this.shared) return this._proposeShared(draft);
     const s = this.s(), senate = this.sen();
     s.credits -= draft.cost;
     const bill = Object.assign({}, draft.bill, { id: "bill_" + (++senate.billSeq), proposedBy: "you" });
     delete bill.proposedLabel;
-    for (let i = 1; i < draft.up.length; i++) draft.up[i].votesAt += this.interval();   // slot #2; push the rest back
+    for (let i = 1; i < draft.up.length; i++) draft.up[i].votesAt += this.interval();
     senate.bills.push(bill);
+    this._ballotWeekState().n += 1;
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost: draft.cost, bill };
   },
-  // Shared play: server authors the row (everyone sees it). Returns a Promise.
   async _proposeShared(draft) {
     if (!(window.SenateWorld && SenateWorld.proposeBallot))
       return { ok: false, msg: "Shared ballot isn't available yet — run docs/sql/senate_ballot.sql." };
-    const [edictId, target] = [draft.tpl.id, draft.target];
-    const r = await SenateWorld.proposeBallot(edictId, target);
+    const r = await SenateWorld.proposeBallot(draft.tpl.id, draft.target, draft.factor, draft.days);
     if (!r || !r.ok) return { ok: false, msg: (r && r.msg) || "Could not table that bill." };
-    // Server charged when authoritative; otherwise deduct locally (same as lobby fees).
     if (!r.charged) {
       const s = this.s(); if (s.credits < draft.cost) return { ok: false, msg: "Not enough credits to table this bill." };
       s.credits -= draft.cost;
@@ -754,8 +849,47 @@ const Senate = {
     } else {
       this.s().credits = Math.max(0, this.s().credits - draft.cost);
     }
+    this._ballotWeekState().n += 1;
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost: draft.cost, bill: r.bill };
+  },
+  // Pay to swap this upcoming ballot one slot earlier on the docket.
+  bumpBill(billId) {
+    const up = this.upcomingBills();
+    const i = up.findIndex(b => b.id === billId);
+    if (i < 0) return { ok: false, msg: "Bill not on the docket." };
+    if (i === 0) return { ok: false, msg: "Already first on the docket." };
+    const mine = up[i];
+    const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
+    if (mine.proposedBy !== "you" && mine.proposedBy !== me && !this.isBallotAdmin())
+      return { ok: false, msg: "You can only move your own ballot initiatives." };
+    const cost = this.ballotBumpCost();
+    const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to move this bill up." };
+    if (this.shared) return this._bumpShared(mine, cost);
+    const prev = up[i - 1];
+    const a = mine.votesAt, b = prev.votesAt;
+    mine.votesAt = b; prev.votesAt = a;
+    s.credits -= cost;
+    Economy.refreshNetWorth(); this._bumpRev();
+    return { ok: true, cost, bill: mine };
+  },
+  async _bumpShared(bill, cost) {
+    if (!(window.SenateWorld && SenateWorld.bumpBallot))
+      return { ok: false, msg: "Shared ballot bump isn't available yet — re-run docs/sql/senate_ballot.sql." };
+    const r = await SenateWorld.bumpBallot(bill.id);
+    if (!r || !r.ok) return { ok: false, msg: (r && r.msg) || "Could not move that bill up." };
+    if (!r.charged) {
+      const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to move this bill up." };
+      s.credits -= cost;
+    } else if (typeof r.credits === "number") {
+      this.s().credits = r.credits;
+    } else {
+      this.s().credits = Math.max(0, this.s().credits - cost);
+    }
+    // Refresh agenda so swapped votes_at land for everyone.
+    if (SenateWorld.poll) await SenateWorld.poll();
+    Economy.refreshNetWorth(); this._bumpRev();
+    return { ok: true, cost, bill };
   },
 
   // ===== welcome-back recap helper ========================================

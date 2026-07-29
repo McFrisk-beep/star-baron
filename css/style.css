@@ -1135,6 +1135,15 @@ body.reduced .node-ring.pulse { animation: none; }
 .vh-item-head .bill-tabled { margin-right: 8px; }
 .ballot-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .ballot-row select { flex: 1 1 220px; min-width: 180px; }
+.ballot-form { display: grid; gap: 10px; margin-top: 10px; }
+@media (min-width: 720px) { .ballot-form { grid-template-columns: 1.4fr 1fr 0.8fr; } }
+.ballot-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-dim); }
+.ballot-field select { width: 100%; }
+.ballot-preview { margin: 10px 0 0; }
+.ballot-meta { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: baseline; margin-top: 10px; font-size: 13px; }
+.ballot-odds b { font-weight: 700; }
+.ballot-mine { display: flex; flex-direction: column; gap: 8px; }
+.ballot-bump-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; }
 .influence { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 7px; }
 .want-row, .lobby-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
 .btn.sel { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -185,13 +185,14 @@ const SenateWorld = {
   },
 
   // Table a player ballot onto the shared agenda (docs/sql/senate_ballot.sql).
-  // Returns { ok, bill?, msg?, charged?, credits? }.
-  async proposeBallot(edictId, target) {
+  async proposeBallot(edictId, target, factor, days) {
     if (!this.enabled() || !Cloud.signedIn())
       return { ok: false, msg: "Sign in to table a bill onto the galaxy-wide agenda." };
     try {
       const { data, error } = await Cloud.client.rpc("app_senate_ballot", {
         p_edict_id: edictId, p_target: target || null,
+        p_factor: factor == null ? 1 : Number(factor),
+        p_days: days == null ? 3 : Math.round(Number(days)),
       });
       if (error) {
         if (Cloud._isMissingRpc && Cloud._isMissingRpc(error))
@@ -208,6 +209,8 @@ const SenateWorld = {
         status: "upcoming",
         proposedBy: row.proposed_by || (Cloud.user() && Cloud.user().id) || null,
         proposedLabel: row.proposed_label || null,
+        edictMs: row.edict_days ? row.edict_days * 24 * 60 * 60 * 1000 : null,
+        ballotFactor: row.factor, ballotDays: row.edict_days,
       };
       this.ingest({
         id: row.id, issue: bill.issue, type: bill.type, lean: bill.lean, effect: bill.effect,
@@ -220,6 +223,26 @@ const SenateWorld = {
     } catch (e) {
       console.warn("[SenateWorld] ballot failed:", e.message || e);
       return { ok: false, msg: e.message || "Could not table that bill." };
+    }
+  },
+
+  async bumpBallot(billId) {
+    if (!this.enabled() || !Cloud.signedIn())
+      return { ok: false, msg: "Sign in to move a bill on the galaxy-wide agenda." };
+    try {
+      const { data, error } = await Cloud.client.rpc("app_senate_ballot_bump", { p_bill_id: String(billId) });
+      if (error) {
+        if (Cloud._isMissingRpc && Cloud._isMissingRpc(error))
+          return { ok: false, msg: "Ballot bump isn't available yet — re-run docs/sql/senate_ballot.sql." };
+        throw error;
+      }
+      if (!data || !data.ok) return { ok: false, msg: (data && data.error) || "Could not move that bill up." };
+      await this.poll();
+      if (window.UI && UI.page === "senate") UI.renderSenate();
+      return { ok: true, charged: !!data.charged, credits: data.credits, cost: data.cost };
+    } catch (e) {
+      console.warn("[SenateWorld] ballot bump failed:", e.message || e);
+      return { ok: false, msg: e.message || "Could not move that bill up." };
     }
   },
   // resolve any now-due shared bills and refresh the open views/save
