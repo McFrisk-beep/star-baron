@@ -234,6 +234,14 @@ const Cloud = {
   async prestige() {
     return this.rpc("app_prestige");
   },
+  // Admin dev helper: set the caller's OWN credits/tier server-side (see
+  // docs/sql/admin_grant.sql). Pass null to leave a field unchanged.
+  async adminGrant(credits, tier) {
+    return this.rpc("app_admin_grant", {
+      p_credits: credits == null ? null : credits,
+      p_tier: tier == null ? null : tier,
+    });
+  },
   async routeStart(comm, from, to, shipUids) {
     return this.rpc("app_route_start", { p_comm: comm, p_from: from, p_to: to, p_ship_uids: shipUids });
   },
