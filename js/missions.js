@@ -45,8 +45,11 @@ const Missions = {
     const s = this.s();
     uids = uids.filter(u => { const sh = Fleet.ship(u); return sh && sh.status === "idle"; });
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
-    if (window.Senate && uids.some(u => Senate.shipClassBanned(Fleet.ship(u).cls)))
-      return { ok: false, msg: "A senate edict bars one of those ship classes from contract work." };
+    if (window.Senate && uids.some(u => Senate.shipClassBanned(Fleet.ship(u).cls))) {
+      const sh = Fleet.ship(uids.find(u => Senate.shipClassBanned(Fleet.ship(u).cls)));
+      const info = Senate.shipBanInfo(sh && sh.cls);
+      return { ok: false, msg: info ? `${info.cls}-class ships banned due to ${info.title}.` : "That ship class is restricted by a senate edict." };
+    }
     // Claim at launch (board job or legacy pending) — View Contract does not reserve.
     const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
     if (!claim.ok) return claim;
