@@ -398,6 +398,7 @@ declare
   out jsonb;
 begin
   -- slot 0..2 tips-ish mix: ~1/6 tips
+  -- expiresAt = start of epoch+2 (matches merc availUntil / offer_epoch_ok).
   if market.u01(s, 0) < 0.16 then
     tip_lo := 1500; tip_hi := 9000;
     return jsonb_build_object(
@@ -409,7 +410,9 @@ begin
       'sysName', 'Sector ' || (1 + (floor(market.u01(s, 2) * 20)::int % 20)),
       'faction', factions[1 + (floor(market.u01(s, 3) * 4)::int % 4)],
       'cost', tip_lo + floor(market.u01(s, 4) * (tip_hi - tip_lo + 1))::int,
-      'stakeTier', stake
+      'stakeTier', stake,
+      'createdAt', p_epoch * 60000,
+      'expiresAt', (p_epoch + 2) * 60000
     );
   end if;
 
@@ -462,7 +465,9 @@ begin
       'itemChance', case typ when 'transport' then 0.1 when 'escort' then 0.3
         when 'combat' then 0.5 when 'smuggle' then 0.45 else 0.7 end,
       'stockChance', case typ when 'transport' then 0.28 else 0.1 end
-    )
+    ),
+    'createdAt', p_epoch * 60000,
+    'expiresAt', (p_epoch + 2) * 60000
   );
   return out;
 end;

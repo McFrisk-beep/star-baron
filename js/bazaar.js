@@ -144,6 +144,9 @@ const Bazaar = {
     const flavor = type => (window.CONTRACT_TEMPLATES || []).find(t => t.type === type) || null;
     const fill = (t, cat) => t.replace(/\{SYS\}/g, sysName).replace(/\{COMM\}/g, comm.name)
       .replace(/\{CAT\}/g, cat || comm.cat).replace(/\{NAME\}/g, broker);
+    // Offer window matches mercs / app.offer_epoch_ok (current + previous epoch).
+    const createdAt = epoch * this.boardEpochMs;
+    const expiresAt = (epoch + 2) * this.boardEpochMs;
     if (this._u01(s, 0) < 0.16) {
       const cat = ["mineral", "gas", "agri", "tech", "luxury", "illicit"][Math.floor(this._u01(s, 1) * 6) % 6];
       const ft = flavor("insider");
@@ -156,6 +159,7 @@ const Bazaar = {
         faction: factions[Math.floor(this._u01(s, 3) * factions.length) % factions.length],
         cost: 1500 + Math.floor(this._u01(s, 4) * 7501),
         stakeTier: stake,
+        createdAt, expiresAt,
       };
     }
     const tpls = [
@@ -186,6 +190,7 @@ const Bazaar = {
         credits: Math.round(ri(tpl.reward[0], tpl.reward[1], 8) * pay * stakeMult / 10) * 10,
         itemChance: tpl.itemChance, stockChance: tpl.stockChance,
       },
+      createdAt, expiresAt,
     };
   },
 

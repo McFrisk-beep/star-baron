@@ -172,7 +172,7 @@ const Util = {
 
   // ms → "3m 12s" / "1h 04m".
   duration(ms) {
-    if (ms <= 0) return "now";
+    if (!Number.isFinite(ms) || ms <= 0) return "now";
     const s = Math.ceil(ms / 1000);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
