@@ -257,6 +257,10 @@ const Cloud = {
   },
   async saveRemote(state) {
     if (!this.signedIn()) return;
+    // Cloud sync paused (dev/admin local-test): don't run app_commit — it echoes
+    // the server-owned slices (credits, ships, …) back over local state, which is
+    // exactly what "keep my local edits" must avoid. Local save already happened.
+    if (this._devLocal) return;
     // Prefer authoritative commit when Phase 1 is live.
     if (this.playersReady) {
       const r = await this.commit(state);
