@@ -17,6 +17,7 @@ const UI = {
   _pending: null,        // pending contract awaiting ship selection
   _equipItem: null,
   _routeShip: null,      // ship uid awaiting trade-route configuration
+  lbOffset: null,        // Barons page start index; null = center on you
 
   s() { return window.Game.state; },
   el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; },
@@ -46,6 +47,7 @@ const UI = {
       fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
       systemList: $("system-list"), bazaarBody: $("bazaar-body"),
       rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"), baronTrack: $("baron-track"),
+      lbPrev: $("lb-prev"), lbNext: $("lb-next"), lbPageLabel: $("lb-page-label"),
       achList: $("ach-list"), achCount: $("ach-count"),
       indList: $("industry-list"), indCount: $("ind-count"),
       senateBody: $("senate-body"),
@@ -113,7 +115,7 @@ const UI = {
     if (name === "fleet") this.renderFleet();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
-    else if (name === "barons") this.renderLeaderboard();
+    else if (name === "barons") { this.lbOffset = null; this.renderLeaderboard(); }
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
@@ -1923,27 +1925,45 @@ const UI = {
   renderLeaderboard() {
     if (this.page !== "barons") return;
     this.renderBaronTrack();
-    const board = Rivals.board();
+    const page = Rivals.pageWindow(this.lbOffset);
+    this.lbOffset = page.start;
     const snap = (this.s().rivalsMeta || {}).snap;
-    const rank = board.findIndex(r => r.you) + 1;
-    this.refs.lbSub.textContent = `you sit #${rank} of ${board.length} — net worth is the only score that counts`;
-    this.refs.lbList.innerHTML = board.map(r => {
+    const nextDay = ((this.s().rivalsMeta || {}).lastAt || Date.now()) + (RIVALCFG.driftMs || 86400000);
+    const hrs = Math.max(0, Math.ceil((nextDay - Date.now()) / 3600000));
+    this.refs.lbSub.textContent = `you sit #${page.youRank} of ${page.total} — rival wealth updates daily`
+      + (hrs ? ` (next tick ~${hrs}h)` : "");
+    if (this.refs.lbPageLabel) {
+      this.refs.lbPageLabel.textContent = page.total
+        ? `Ranks #${page.start + 1}–#${page.end}`
+        : "No barons yet";
+    }
+    if (this.refs.lbPrev) this.refs.lbPrev.disabled = !page.hasPrev;
+    if (this.refs.lbNext) this.refs.lbNext.disabled = !page.hasNext;
+    this.refs.lbList.innerHTML = page.rows.map(r => {
       const fac = r.faction ? FACTIONS[r.faction] : null;
       const was = snap && snap.ranks ? snap.ranks[r.id] : null;
       const d = was == null ? 0 : was - r.rank;
       const arrow = d > 0 ? `<span class="lb-delta up">▲${d}</span>`
         : d < 0 ? `<span class="lb-delta down">▼${-d}</span>`
         : `<span class="lb-delta">·</span>`;
+      const title = r.title ? `<span class="lb-title">${r.title}</span>` : "";
       const who = r.you
-        ? `<b class="lb-name">You</b>`
-        : `<b class="lb-name">${r.name}</b> <span class="lb-ep">${r.epithet}</span>`;
-      const chip = fac ? `<span class="lb-fac" style="color:${fac.color}">◆ ${fac.name}</span>` : `<span class="lb-fac you">◆ your empire</span>`;
+        ? `<b class="lb-name">${r.name || "You"}</b> ${title}`
+        : `<b class="lb-name">${r.name}</b> ${title} <span class="lb-ep">${r.epithet || ""}</span>`;
+      const chip = fac
+        ? `<span class="lb-fac" style="color:${fac.color}">◆ ${fac.name}</span>`
+        : `<span class="lb-fac you">◆ your empire</span>`;
       return `<li class="lb-row ${r.you ? "lb-you" : ""}">
         <span class="lb-rank">#${r.rank}</span>
         <span class="lb-who">${who}${chip}</span>
         ${arrow}
         <span class="lb-nw">${Util.credits(r.netWorth)}c</span></li>`;
-    }).join("");
+    }).join("") || `<li class="muted-note">No barons on the board yet.</li>`;
+  },
+  lbPage(dir) {
+    const cur = Rivals.pageWindow(this.lbOffset);
+    this.lbOffset = dir < 0 ? cur.prevStart : cur.nextStart;
+    this.renderLeaderboard();
   },
 
   // the Baron Tier "ascension" track: current title + perks, and the next tier
@@ -2243,6 +2263,8 @@ const UI = {
     r.setReset.onclick = () => { if (confirm("Wipe your Cosmocrat save and start over?")) window.Game.reset(); };
 
     r.btnPrestige.onclick = () => this.doAscend();
+    if (r.lbPrev) r.lbPrev.onclick = () => this.lbPage(-1);
+    if (r.lbNext) r.lbNext.onclick = () => this.lbPage(1);
 
     this.refs.feedList.addEventListener("scroll", () => {
       const el = this.refs.feedList; this.feedPaused = el.scrollHeight - el.scrollTop - el.clientHeight > 40;
