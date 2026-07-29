@@ -368,6 +368,11 @@ const AdminUI = {
       { group: "Broadcast screens (pools)", cat: "broadcast", items: ["news", "tv_drama", "tv_ads", "tv_weather"],
         url: n => ASSET.broadcast(n, "preview"), pool: true, flavored: true,
         hint: "Add PNG/JPG/GIF frames per channel. Optional title/caption override Alien TV defaults; GIFs animate on the Broadcast screen." },
+      { group: "Page backgrounds (1920×1080)", cat: "pagebg",
+        items: (window.PAGE_BG_PAGES || []).map(p => p.id),
+        url: id => ASSET.pageBg(id) || "",
+        label: id => ((window.PAGE_BG_PAGES || []).find(p => p.id === id) || {}).label || id,
+        hint: "One image per nav tab. Stretched into a 1920×1080 frame behind that page's UI. Hub is background-only." },
       { group: "Hub — character & stations", cat: "hub", items: ["player"].concat((window.HUB_PROPS || []).map(p => p.id)), url: id => ASSET.hub(id) },
       // Bazaar content — pools for randomized gear; single PNG for fixed types.
       { group: "Gear kinds (pools)", cat: "accessory", items: Object.keys(ACCESSORY_KINDS),
@@ -416,13 +421,17 @@ const AdminUI = {
     for (const item of slot.items) {
       const key = `${slot.cat}:${item}`;
       const overridden = !!ASSET_OVERRIDES[key];
-      const img = this.el("img", { class: "admin-thumb", src: slot.url(item), alt: item });
-      img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) })); };
+      const name = slot.label ? slot.label(item) : String(item);
+      const src = slot.url(item);
+      const img = src
+        ? this.el("img", { class: "admin-thumb", src, alt: name })
+        : this.el("div", { class: "admin-thumb tintbox", text: "—" });
+      if (src) img.onerror = () => { img.replaceWith(this.el("div", { class: "admin-thumb tintbox", text: String(name).slice(0, 2) })); };
       const file = this.el("input", { type: "file", accept: "image/*", class: "hidden" });
       file.onchange = () => { if (file.files[0]) this.upload(slot.cat, item, file.files[0]); };
       const card = this.el("div", { class: "admin-card" + (overridden ? " custom" : "") }, [
         img,
-        this.el("div", { class: "admin-card-name", text: String(item) }),
+        this.el("div", { class: "admin-card-name", text: name }),
         this.el("button", { class: "btn btn-mini", text: overridden ? "Replace" : "Upload", onclick: () => file.click() }),
       ]);
       if (overridden) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Reset", onclick: () => this.resetSlot(slot.cat, item) }));
@@ -568,8 +577,9 @@ const AdminUI = {
     UI.toast("Uploading…", "info");
     try {
       await this.uploadSprite(cat, item, file);
-      UI.toast("Sprite updated. Reload to see it everywhere.", "good");
+      UI.toast(cat === "pagebg" ? "Page background updated." : "Sprite updated. Reload to see it everywhere.", "good");
       this.buildGallery();
+      if (cat === "pagebg" && window.UI && typeof UI.applyPageBg === "function") UI.applyPageBg();
     } catch (e) {
       const msg = (e && e.message) || String(e);
       UI.toast(/bucket|not found/i.test(msg) ? "Create a public 'sprites' bucket first (see ADMIN_SETUP)." : "Upload failed: " + msg, "warn", 5000);
@@ -591,8 +601,9 @@ const AdminUI = {
   async resetSlot(cat, item) {
     try {
       await this.resetSprite(cat, item);
-      UI.toast("Reverted to default sprite. Reload to apply.", "good");
+      UI.toast(cat === "pagebg" ? "Page background cleared." : "Reverted to default sprite. Reload to apply.", "good");
       this.buildGallery();
+      if (cat === "pagebg" && window.UI && typeof UI.applyPageBg === "function") UI.applyPageBg();
     } catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }
   },
 
