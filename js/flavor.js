@@ -797,7 +797,7 @@ const TUTORIAL_STEPS = [
       <li><b>Broadcast</b> news events actually <b>move the market</b> — buy ahead of the crowd.</li>
       <li>On the Star Map, <b>local events</b> (riots, strikes, fresh strikes) shift a single system's prices — real, actionable insight.</li></ul>` },
   { icon: "👑", title: "Rivals & the long game",
-    body: `Check the <b>Barons</b> tab for the leaderboard. Named AI rivals and a field of other barons grow richer <b>once a day</b> — <b>climb past them</b>, and don't go idle or you'll slip. The board centers on you (±10 ranks) with Previous / Next to page through.
+    body: `Check the <b>Barons</b> tab for the <b>human</b> leaderboard — signed-in players only, wealth posted once a day. The board centers on you (±10 ranks) with Previous / Next to page through.
       <p>When your net worth is vast enough, <b>ascend a Baron Tier</b> for a bigger empire (and a steeper tax).</p>` },
   { icon: "✦", title: "You're ready",
     body: `That's the loop: <b>trade → grow → expand → outgrow your rivals → retire → repeat</b>.

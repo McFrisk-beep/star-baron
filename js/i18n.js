@@ -84,6 +84,7 @@ const I18n = {
       "barons.leaderboard": "Baron Leaderboard",
       "barons.prev": "◂ Previous",
       "barons.next": "Next ▸",
+      "barons.signIn": "Sign in to join the Baron Leaderboard",
       "milestones.title": "Milestones",
       "comms.broadcast": "Broadcast", "comms.chat": "Chat", "comms.chatSub": "galactic trader channel",
       "comms.dispatches": "Dispatches", "comms.dispatchesSub": "private channel",
