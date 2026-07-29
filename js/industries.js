@@ -49,6 +49,11 @@ const Industries = {
     if (window.Fleet) r -= Fleet.mainBonus("taxRelief");  // flagship tax-relief effect
     return Util.clamp(r, 0.02, 0.75);
   },
+  // Named senate levy / holiday lines for the industry UI + WYWA recap.
+  edictTaxLines(sys, planet) {
+    if (!window.Senate) return [];
+    return Senate.industryTaxLines(this.planetFaction(sys, planet));
+  },
 
   canBuild(sys, idx) {
     const planet = sys && sys.planets[idx];
@@ -136,9 +141,9 @@ const Industries = {
   batch(ind) {
     const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
     const ex = Extractors.get(ind.extractorUid);
-    if (!planet || !ex || !ind.commodity) return { gross: 0, rate: 0, tax: 0, net: 0, suit: 1, cycleMs: INDUSTRYCFG.cycleMs };
+    if (!planet || !ex || !ind.commodity) return { gross: 0, rate: 0, tax: 0, net: 0, suit: 1, cycleMs: INDUSTRYCFG.cycleMs, edicts: [] };
     const y = this._yield(sys, planet, ex, ind.commodity);
-    return { ...y, tax: Math.ceil(y.gross * y.rate) };
+    return { ...y, tax: Math.ceil(y.gross * y.rate), edicts: this.edictTaxLines(sys, planet) };
   },
 
   resolve(now = Date.now()) {
@@ -162,7 +167,8 @@ const Industries = {
         const held = s.positions[ind.commodity] || 0, prev = s.avgCost[ind.commodity] || 0;
         s.positions[ind.commodity] = held + qty;
         s.avgCost[ind.commodity] = (held + qty) > 0 ? (held * prev) / (held + qty) : 0;
-        made.push({ commodity: ind.commodity, qty });
+        const tax = Math.ceil(y.gross * y.rate) * cycles;
+        made.push({ commodity: ind.commodity, qty, gross: y.gross * cycles, tax, rate: y.rate, edicts: this.edictTaxLines(sys, planet) });
       }
       ind.nextAt = now + y.cycleMs;
     }

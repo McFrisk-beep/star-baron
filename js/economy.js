@@ -484,9 +484,37 @@ const Economy = {
     return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
   },
   maxSell(commId) {
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const held = this.s().positions[commId] || 0;
     if (held <= 0 || this.spotHere(commId) <= 0) return 0;
     return Math.min(held, this.sellCapQty(commId));
+  },
+  // Named ban toast / trade failure: "Foodstuffs has been banned due to Foodstuffs Prohibition."
+  banMsg(commId) {
+    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    if (window.Senate) {
+      const info = Senate.banInfo(commId, cat);
+      if (info) return `${info.name} has been banned due to ${info.title}.`;
+    }
+    return "Prohibited by a senate edict.";
+  },
+  // Clean list of earnings-tax components (tier + any Windfall Levy that applies).
+  baronTaxLines() {
+    const lines = [];
+    const info = this.tierInfo();
+    if (info.tax > 0) lines.push({ title: `${info.title} tier tax`, rate: info.tax, kind: "tier" });
+    if (window.Senate && Senate.windfallSurtax() > 0 && window.Rivals
+        && Rivals.rank() <= (SENATECFG.windfallTopN || 3)) {
+      for (const w of Senate.windfallLines()) lines.push({ title: w.title, rate: w.rate, kind: "windfall" });
+    }
+    return lines;
+  },
+  // Attach named edict lines so the trade terminal can list them (rates only —
+  // tariff/price are already baked into the fill; sell tax credits stay on `tax`).
+  _edictReceipt(commId, cat) {
+    if (!window.Senate) return { duties: [], marketEdicts: [] };
+    return { duties: Senate.tariffLines(cat), marketEdicts: Senate.priceEdictLines(commId, cat) };
   },
 
   // Local (guest) fill — also used as the optimistic preview when authoritative.
@@ -496,7 +524,7 @@ const Economy = {
     qty = Math.floor(qty);
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
+    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
     const capQ = this.buyCapQty(commId);                              // per-trade notional cap (credits paid ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
     const capped = qty > capQ; if (capped) qty = capQ;
@@ -512,7 +540,7 @@ const Economy = {
     s.avgCost[commId] = (held * prevCost + cost) / (held + qty);
     Market.addImpact(commId, sys, dP, now);                           // price stays elevated, then decays
     this._afterTrade(commId, "buy", qty, cost, avg);
-    return { ok: true, qty, cost, price: avg, capped };
+    return Object.assign({ ok: true, qty, cost, price: avg, capped }, this._edictReceipt(commId, cat));
   },
 
   _sellLocal(commId, qty) {
@@ -522,7 +550,7 @@ const Economy = {
     qty = Math.min(Math.floor(qty), held);
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: "Prohibited by a senate edict." };
+    if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
     const capQ = this.sellCapQty(commId);                            // per-trade notional cap (credits taken ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
     const capped = qty > capQ; if (capped) qty = capQ;
@@ -531,6 +559,7 @@ const Economy = {
     const dP = spot0 * qty / this.impactDepth();                      // pressure this order removes (gentler than the cap)
     const price = base * Math.max(MARKETCFG.sellFloorFactor, 1 + p0 - dP / 2);   // average fill over the falling price
     const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
+    const taxLines = this.baronTaxLines();
     const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;   // Baron Tier earnings tax (on profit)
     const proceeds = price * qty - tax;                                                // keep principal + after-tax profit
     const realized = grossRealized - tax;
@@ -539,7 +568,7 @@ const Economy = {
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
     Market.addImpact(commId, sys, -dP, now);                          // your selling depresses the local price
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
-    return { ok: true, qty, proceeds, price, realized, tax, capped };
+    return Object.assign({ ok: true, qty, proceeds, price, realized, tax, taxLines, capped }, this._edictReceipt(commId, cat));
   },
 
   buy(commId, qty) {

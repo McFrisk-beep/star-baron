@@ -113,9 +113,20 @@ ctx.SenateWorld = {
     return { ok: true, bill: sharedBill, charged: false, cost: Senate.ballotCost() };
   },
 };
+// Pick a proposable measure not already on the local docket (ensureSchedule may
+// have randomly queued one of the ballot templates during the solo tests above).
+const taken = Senate._takenSet(Date.now());
+const pick = opts.find(o => {
+  const [id, key] = o.value.split("|");
+  const tpl = edict(id);
+  const chosen = tpl.scope === "cat" ? { cat: key } : tpl.scope === "comm" ? { comm: key } : tpl.scope === "faction" ? { faction: key } : {};
+  const inst = Senate._instantiate(tpl, { factor: 1, label: "" }, chosen);
+  return !taken.has(Senate._effectSig(inst.effect));
+});
+assert(pick, "a free ballot option remains for the shared-path test");
 const creditsSharedBefore = ctx.Game.state.credits;
-r = await Senate.proposeBill("salvage_act");
-assert(r.ok && r.bill.id === "wb42", "shared ballot tables via SenateWorld");
+r = await Senate.proposeBill(pick.value);
+assert(r.ok && r.bill.id === "wb42", "shared ballot tables via SenateWorld: " + (r.msg || ""));
 assert(ctx.Game.state.credits === creditsSharedBefore - Senate.ballotCost(), "shared ballot fee charged locally when server did not");
 assert(sen.bills.some(b => b.id === "wb42" && b.proposedBy === "user-1"), "shared tabled bill is on the docket");
 Senate.shared = false;

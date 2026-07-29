@@ -414,13 +414,16 @@ const UI = {
         <button class="btn btn-buy" data-act="buy">${T("btn.buy")}</button>
         <button class="btn btn-sell" data-act="sell">${T("btn.sell")}</button>
         <button class="btn btn-mini" data-act="max">${T("btn.buyMax")}</button>
-        <button class="btn btn-mini" data-act="all">${T("btn.sellAll")}</button></div>`;
+        <button class="btn btn-mini" data-act="all">${T("btn.sellAll")}</button></div>
+        <div class="ban-edict muted-note hidden" data-ban></div>`;
       tr.append(icon, name, price, chg, trend, held, pnl, act);
       body.appendChild(tr);
       const qin = act.querySelector(".qin");
       qin.addEventListener("input", () => this.updateAfford(c.id));
-      this.rows[c.id] = { tr, price, chg, trend, held, pnl, qin,
-        buyBtn: act.querySelector('[data-act="buy"]'), maxBtn: act.querySelector('[data-act="max"]') };
+      this.rows[c.id] = { tr, name, price, chg, trend, held, pnl, qin,
+        buyBtn: act.querySelector('[data-act="buy"]'), maxBtn: act.querySelector('[data-act="max"]'),
+        sellBtn: act.querySelector('[data-act="sell"]'), allBtn: act.querySelector('[data-act="all"]'),
+        banNote: act.querySelector("[data-ban]") };
     }
     // assignment (not addEventListener) so re-building on prestige can't stack handlers
     body.onclick = e => {
@@ -447,7 +450,12 @@ const UI = {
     const qty = Math.min(want, maxN);
     const row = this.rows[id];
     if (row && row.qin) row.qin.value = qty > 0 ? qty : 1;             // show the true amount that will trade
-    if (qty <= 0) { this.toast(side === "buy" ? "Can't afford any here." : "Nothing to sell here.", "warn"); return; }
+    if (qty <= 0) {
+      const cat = (COMMODITIES.find(c => c.id === id) || {}).cat;
+      const ban = window.Senate && Senate.banInfo(id, cat);
+      if (ban) return this.toast(`${ban.name} has been banned due to ${ban.title}.`, "warn");
+      this.toast(side === "buy" ? "Can't afford any here." : "Nothing to sell here.", "warn"); return;
+    }
     const r = await (side === "buy" ? Economy.buy(id, qty) : Economy.sell(id, qty));
     if (!r.ok) { this.toast(r.msg, "warn"); this.updateHeader(); this.updateExchange(); return; }
     r.capped = want > maxN && capN <= maxN;   // the CAP (not funds/holdings) was the binding limit
@@ -479,19 +487,22 @@ const UI = {
     let t = 0;
     for (const ln of lines) { const at = t; this._tradeTimers.push(setTimeout(() => this._tradeLine(log, ln), at)); t += step; }
     this._tradeTimers.push(setTimeout(() => {
+      // Named edict lines before the money moves — duties / price props / earnings taxes.
+      for (const ln of this._tradeEdictLines(isBuy, r)) this._tradeLine(log, ln);
       this._tradeLine(log, isBuy ? `▸ Transferring ${Util.credits(total)}c…` : `▸ Settling ${Util.credits(total)}c in proceeds…`);
       barWrap.classList.remove("hidden");
       requestAnimationFrame(() => { bar.style.width = "100%"; });
     }, t));
     t += reduced ? 320 : 900;
     this._tradeTimers.push(setTimeout(() => {
-      if (!isBuy && r.tax) this._tradeLine(log, `▸ Baron tax withheld: ${Util.credits(r.tax)}c (${(Economy.baronTax() * 100).toFixed(0)}%)…`);
       this._tradeLine(log, `✓ ${isBuy ? "Purchase" : "Sale"} complete.`);
       const pnl = (!isBuy && typeof r.realized === "number")
         ? ` · <span class="${r.realized >= 0 ? "up" : "down"}">${r.realized >= 0 ? "+" : ""}${Util.credits(r.realized)}c</span>` : "";
       const taxNote = (!isBuy && r.tax) ? ` · <span class="down">−${Util.credits(r.tax)}c tax</span>` : "";
       const capNote = r.capped ? ` · <span class="down">tier trade cap hit — ${Util.credits(Economy.depth())}c/trade</span>` : "";
+      const list = this._tradeEdictSummaryHtml(isBuy, r);
       result.innerHTML = `<b>${isBuy ? "Bought" : "Sold"} ${r.qty} ${comm.name}</b> @ avg ${Util.price(r.price)}c = <b>${Util.credits(total)}c</b>${pnl}${taxNote}${capNote}` +
+        (list ? `<div class="trade-edicts">${list}</div>` : "") +
         `<br><span class="muted-note">New balance: ${Util.creditsFull(this.s().credits)}c</span>`;
       result.classList.remove("hidden"); close.classList.remove("hidden");
       refresh();                                       // reveal the new balance at the "complete" beat
@@ -501,6 +512,41 @@ const UI = {
   _tradeLine(log, text) {
     const div = document.createElement("div"); div.className = "tt-line"; div.textContent = text;
     log.appendChild(div); log.scrollTop = log.scrollHeight;
+  },
+  // Clean named list of senate / tier taxes affecting this fill (log lines).
+  _tradeEdictLines(isBuy, r) {
+    const out = [];
+    for (const d of (r.duties || [])) {
+      const pct = `${d.rate >= 0 ? "+" : ""}${(d.rate * 100).toFixed(0)}%`;
+      out.push(`▸ Duty — ${d.title} (${pct} on ${isBuy ? "ask" : "bid"})`);
+    }
+    for (const m of (r.marketEdicts || [])) {
+      const pct = `${((m.mult - 1) * 100).toFixed(0)}%`;
+      const how = m.type === "priceCap" ? "capped" : m.type === "ration" ? "propped (rationing)" : "propped";
+      out.push(`▸ Market — ${m.title} (${how} ${pct.startsWith("-") ? pct : "+" + pct})`);
+    }
+    if (!isBuy && r.tax) {
+      const lines = (r.taxLines && r.taxLines.length) ? r.taxLines : Economy.baronTaxLines();
+      if (lines.length) {
+        out.push(`▸ Taxes withheld (${Util.credits(r.tax)}c):`);
+        for (const l of lines) out.push(`  · ${l.title} — ${(l.rate * 100).toFixed(0)}%`);
+      } else {
+        out.push(`▸ Baron tax withheld: ${Util.credits(r.tax)}c (${(Economy.baronTax() * 100).toFixed(0)}%)`);
+      }
+    }
+    return out;
+  },
+  _tradeEdictSummaryHtml(isBuy, r) {
+    const items = [];
+    for (const d of (r.duties || []))
+      items.push(`<li><b>${d.title}</b> — ${d.rate >= 0 ? "+" : ""}${(d.rate * 100).toFixed(0)}% duty</li>`);
+    for (const m of (r.marketEdicts || []))
+      items.push(`<li><b>${m.title}</b> — market ×${Number(m.mult).toFixed(2)}</li>`);
+    if (!isBuy && r.tax) {
+      const lines = (r.taxLines && r.taxLines.length) ? r.taxLines : Economy.baronTaxLines();
+      for (const l of lines) items.push(`<li><b>${l.title}</b> — ${(l.rate * 100).toFixed(0)}% of profit</li>`);
+    }
+    return items.length ? `<ul class="edict-tax-list">${items.join("")}</ul>` : "";
   },
 
   updateExchange() {
@@ -551,12 +597,27 @@ const UI = {
   // Disable Buy when you can't afford the requested quantity, and Buy Max when
   // you can't afford a single share (also covers negative credits and bans —
   // maxBuy returns 0 in those cases). maxBuy>=qty is exactly Economy.buy's guard.
+  // Senate bans also lock Sell and show "[resource] has been banned due to [bill]".
   updateAfford(id) {
     const r = this.rows[id]; if (!r || !r.buyBtn) return;
+    const c = COMMODITIES.find(x => x.id === id);
+    const ban = window.Senate && c ? Senate.banInfo(id, c.cat) : null;
+    if (r.banNote) {
+      if (ban) { r.banNote.textContent = `${ban.name} has been banned due to ${ban.title}.`; r.banNote.classList.remove("hidden"); }
+      else { r.banNote.textContent = ""; r.banNote.classList.add("hidden"); }
+    }
+    if (ban) {
+      r.buyBtn.disabled = true; r.maxBtn.disabled = true;
+      if (r.sellBtn) r.sellBtn.disabled = true;
+      if (r.allBtn) r.allBtn.disabled = true;
+      return;
+    }
     const affordN = Economy.maxBuy(id);
     const qty = Math.floor(parseInt(r.qin.value, 10) || 0);
     r.buyBtn.disabled = !(qty > 0 && affordN >= qty);
     r.maxBtn.disabled = affordN < 1;
+    if (r.sellBtn) r.sellBtn.disabled = Economy.maxSell(id) < 1;
+    if (r.allBtn) r.allBtn.disabled = Economy.maxSell(id) < 1;
   },
 
   // Disable any purchase button (marked with data-cost) the player can't afford.
@@ -709,7 +770,7 @@ const UI = {
           <button class="btn btn-mini" data-stoproute="${route.id}">Stop</button></div>
         <div class="route-ships">${ships.map(s => s.name).join(", ")}</div>
         <div class="route-foot"><b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip ·
-          ~${Util.credits(Math.round(e.perHour))}c/hr · cargo ${e.cargo} · <span class="muted-note">next ${Util.duration(eta)}</span></div></div>`;
+          ~${Util.credits(Math.round(e.perHour))}c/hr · cargo ${e.cargo} · <span class="muted-note">next ${Util.duration(eta)}${window.Senate ? Senate.travelEdictNote(e.cycleMs) : ""}</span></div></div>`;
     }).join("");
     this.refs.fleetRoutes.onclick = async ev => {
       const st = ev.target.closest("[data-stoproute]"); if (!st) return;
@@ -764,9 +825,10 @@ const UI = {
     if (!ships.length) { calc.innerHTML = `<span class="down">Select at least one ship.</span>`; this.refs.rtStart.disabled = true; return; }
     const e = Routes.preview(ships, comm, from, to);
     const cn = (COMMODITIES.find(c => c.id === comm) || {}).name || comm;
+    const warp = window.Senate ? Senate.travelEdictNote(e.cycleMs) : "";
     calc.innerHTML =
       `Pooled cargo <b>${e.cargo}</b> · buy ${cn} @ <b>${Util.price(e.buy)}</b> · sell @ <b>${Util.price(e.sell)}</b> · spread <b class="${e.spread > 0 ? "up" : "down"}">${Util.price(e.spread)}</b><br>` +
-      `round trip ~${Util.duration(e.cycleMs)} · <b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip · ~<b>${Util.credits(Math.round(e.perHour))}c/hr</b>`;
+      `round trip ~${Util.duration(e.cycleMs)}${warp} · <b class="${e.profit > 0 ? "up" : "down"}">${Util.credits(e.profit)}c</b>/trip · ~<b>${Util.credits(Math.round(e.perHour))}c/hr</b>`;
     this.refs.rtStart.disabled = e.profit <= 0;
   },
 
@@ -785,7 +847,8 @@ const UI = {
     const rows = idle.map((sh, i) => {
       const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh), eta = Expeditions.durationFor(sysId, sh.uid);
       const surveyTag = def.cls === "survey" ? ` <span class="up">survey hull</span>` : "";
-      return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span>${surveyTag} · 🔭 scan ${st.scan.toFixed(1)} · endure ${st.endure.toFixed(1)} · ETA ~${Util.duration(eta)}</label>`;
+      const warp = window.Senate ? Senate.travelEdictNote(eta) : "";
+      return `<label class="rt-ship"><input type="radio" name="sv-ship" data-svship="${sh.uid}"${i === 0 ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span>${surveyTag} · 🔭 scan ${st.scan.toFixed(1)} · endure ${st.endure.toFixed(1)} · ETA ~${Util.duration(eta)}${warp}</label>`;
     }).join("");
     this.refs.svBody.innerHTML =
       `<p class="muted-note">Dispatch a ship to chart this outpost. When it returns, a <b>Dispatches</b> debrief opens — choices, scan odds, and loot. Survey hulls + Deep Scanners push success %.</p>
@@ -998,7 +1061,12 @@ const UI = {
     head += `<span>Reward: <b>${Util.credits(contract.reward.credits)}c</b></span></div>`;
     head += `<p class="muted-note">${contract.desc}${contract.impound ? " Failure risks impound." : ""}</p>`;
     if (!idle.length) head += `<p class="down">No idle ships available.</p>`;
-    const list = idle.map(sh => { const st = Fleet.stats(sh); const def = Fleet.shipDef(sh.type);
+    const list = idle.map(sh => {
+      const st = Fleet.stats(sh), def = Fleet.shipDef(sh.type);
+      const ban = window.Senate ? Senate.shipBanInfo(def.cls) : null;
+      if (ban) {
+        return `<label class="mm-ship locked"><input type="checkbox" data-ship="${sh.uid}" disabled/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span> <span class="down">${def.cls}-class ships banned due to ${ban.title}</span></label>`;
+      }
       return `<label class="mm-ship"><input type="checkbox" data-ship="${sh.uid}"/> <b>${sh.name}</b> <span class="cls-tag">${def.cls}</span> ${this.statChips(st, ["firepower", "cargo"])}</label>`;
     }).join("");
     this.refs.mmBody.innerHTML = head + `<div class="mm-list">${list}</div><div class="mm-calc" id="mm-calc"></div>`;
@@ -1386,7 +1454,11 @@ const UI = {
       if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}" data-cost="${sys.unlock}">Unlock ${Util.credits(sys.unlock)}c</button>`;
       else if (here) action = `<span class="badge">docked</span>`;
       else if (s.travel && s.travel.to === sys.id) action = `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
-      else action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(Fleet.dockTravelMs(s.currentSystem, sys.id))})</button>`;
+      else {
+        const eta = Fleet.dockTravelMs(s.currentSystem, sys.id);
+        const warp = window.Senate ? Senate.travelEdictNote(eta) : "";
+        action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(eta)}${warp})</button>`;
+      }
       li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist" title="distance from Navos Junction — sets docking travel time">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
       ul.appendChild(li);
     }
@@ -1403,7 +1475,8 @@ const UI = {
         if (Economy.busy()) return;
         const r = await Economy.dockAt(d.dataset.dock);
         if (!r.ok) return this.toast(r.msg, "warn");
-        this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}`, "good");
+        const warp = window.Senate ? Senate.travelEdictNote(r.etaMs) : "";
+        this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}${warp}`, "good");
         window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange();
       }
     };
@@ -1466,7 +1539,9 @@ const UI = {
         const halted = st === "struck" || st === "disrupted";
         const next = halted ? `<span class="down">halted</span>` : Util.duration(Math.max(0, ind.nextAt - Date.now()));
         const warn = st === "at risk" ? `<div class="ind-warn">⚠ standing collapsing — works seized at ${INDUSTRYCFG.destroyRep}</div>` : "";
-        return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next} · ${owner}</div>${warn}${this._exCompRow(ex)}</div>`;
+        const edictNote = (b.edicts && b.edicts.length)
+          ? ` <span class="muted-note">· ${b.edicts.map(e => `${e.title} (${e.rate >= 0 ? "+" : ""}${(e.rate * 100).toFixed(0)}%)`).join("; ")}</span>` : "";
+        return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span>${edictNote} · next ${next} · ${owner}</div>${warn}${this._exCompRow(ex)}</div>`;
       }).join("");
     }
 
@@ -1934,9 +2009,19 @@ const UI = {
     }).join("") + `</ul>`;
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
     if (made.length) {
-      const agg = {};
-      for (const m of made) agg[m.commodity] = (agg[m.commodity] || 0) + m.qty;
-      html += `<p>Industries produced: ${Object.entries(agg).map(([id, q]) => `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`).join(", ")} (now in your stock).</p>`;
+      const agg = {}, taxAgg = {}, edictTitles = new Set();
+      for (const m of made) {
+        agg[m.commodity] = (agg[m.commodity] || 0) + m.qty;
+        if (m.tax) taxAgg[m.commodity] = (taxAgg[m.commodity] || 0) + m.tax;
+        for (const e of (m.edicts || [])) edictTitles.add(`${e.title} (${e.rate >= 0 ? "+" : ""}${(e.rate * 100).toFixed(0)}%)`);
+      }
+      const bits = Object.entries(agg).map(([id, q]) => {
+        const nm = (COMMODITIES.find(c => c.id === id) || {}).name || id;
+        const t = taxAgg[id];
+        return t ? `${q} ${nm} <span class="muted-note">(−${t} tax)</span>` : `${q} ${nm}`;
+      });
+      html += `<p>Industries produced: ${bits.join(", ")} (now in your stock).</p>`;
+      if (edictTitles.size) html += `<ul class="edict-tax-list wywa-edicts">${[...edictTitles].map(t => `<li><b>Senate</b> — ${t}</li>`).join("")}</ul>`;
     }
     if (rc.senate) {
       const sp = rc.senate;

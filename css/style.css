@@ -390,6 +390,12 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .tt-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--up)); transition: width .8s linear; }
 .tt-result { margin-top: 12px; font-size: 13px; background: #11192c; border-radius: 8px; padding: 10px 12px; }
 .tt-result .muted-note { margin: 6px 0 0; }
+.trade-edicts { margin-top: 8px; }
+.edict-tax-list { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--ink-dim); line-height: 1.55; }
+.edict-tax-list li { margin: 2px 0; }
+.edict-tax-list.wywa-edicts { margin: 0 0 10px; }
+.ban-edict { margin: 4px 0 0; font-size: 11px; color: var(--down); max-width: 22em; }
+.mm-ship.locked { opacity: 0.55; cursor: not-allowed; }
 @keyframes tt-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @keyframes tt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 body.reduced .tt-bar { transition: none; }

@@ -38,7 +38,10 @@ ctx.Economy = { netWorth: () => ctx.Game.state.credits, refreshNetWorth() {}, ch
 ctx.Rep = { factionForCategory: () => "mining_combine", change() {} };
 ctx.FACTIONS = { mining_combine: { name: "Mining Combine" } };
 ctx.Bus = { on() {}, emit() {} };
-ctx.Senate = { travelSpeedMult: () => 1, salvageBonusAdd: () => 0, windfallSurtax: () => 0, routeSafetyAdd: () => 0 };
+ctx.Senate = {
+  travelSpeedMult: () => 1, salvageBonusAdd: () => 0, windfallSurtax: () => 0, routeSafetyAdd: () => 0,
+  travelEdictNote: () => "", industryTaxLines: () => [],
+};
 ctx.Routes = { softIncomeLocal: () => true };
 ctx.Game = { timeScale: 1, state: null, requestSave() {} };
 

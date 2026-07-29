@@ -507,6 +507,55 @@ const Senate = {
   routeSafetyAdd() { return this._effects().route || 0; },         // +safer / −riskier route events (routes.js)
   salvageBonusAdd() { return this._effects().salvage || 0; },      // richer survey debrief payouts (survey-story.js)
 
+  // ===== edict attribution (player-facing "which bill did this?") ==========
+  // _effects() collapses bills into numbers; these helpers keep the bill titles
+  // so trade/industry/travel UI can name the edict that bit the player.
+  edictsWhere(pred, now = Date.now()) {
+    return this.activeEdicts(now).filter(b => b.effect && pred(b.effect, b));
+  },
+  banInfo(commId, cat) {
+    const bill = this.edictsWhere(e => e.type === "ban" && ((e.commId && e.commId === commId) || (e.cat && e.cat === cat)))[0];
+    if (!bill) return null;
+    const c = COMMODITIES.find(x => x.id === commId);
+    return { name: (c && c.name) || cat || "This good", title: bill.title, bill };
+  },
+  shipBanInfo(cls) {
+    const bill = this.edictsWhere(e => e.type === "shipBan" && e.cls === cls)[0];
+    return bill ? { title: bill.title, cls, bill } : null;
+  },
+  tariffLines(cat) {
+    return this.edictsWhere(e => e.type === "tariff" && e.cat === cat && e.tax)
+      .map(b => ({ title: b.title, rate: b.effect.tax }));
+  },
+  industryTaxLines(fac) {
+    return this.edictsWhere(e => (e.type === "industryTax" || e.type === "taxHoliday")
+        && (e.faction === "all" || (fac && e.faction === fac)))
+      .map(b => ({ title: b.title, rate: b.effect.add }));
+  },
+  windfallLines() {
+    return this.edictsWhere(e => e.type === "windfall" && e.add)
+      .map(b => ({ title: b.title, rate: b.effect.add }));
+  },
+  priceEdictLines(commId, cat) {
+    return this.edictsWhere(e => (e.type === "priceCap" || e.type === "subsidy" || e.type === "ration")
+        && ((e.cat && e.cat === cat) || (e.commId && e.commId === commId)))
+      .map(b => ({ title: b.title, mult: b.effect.mult, type: b.effect.type }));
+  },
+  warpLines() {
+    return this.edictsWhere(e => e.type === "warpGate" && e.add)
+      .map(b => ({ title: b.title, add: b.effect.add }));
+  },
+  // actualMs is the already-shortened travel time; returns e.g. " (−3m due to Warp-Lane Standardization)"
+  travelEdictNote(actualMs) {
+    const lines = this.warpLines();
+    if (!lines.length) return "";
+    const mult = this.travelSpeedMult();
+    const titles = lines.map(l => l.title).join(", ");
+    if (!(mult > 1) || !(actualMs > 0)) return ` (${titles})`;
+    const saved = actualMs * (mult - 1);            // base = actual × mult; saved = base − actual
+    return ` (−${Util.duration(saved)} due to ${titles})`;
+  },
+
   // ===== player influence =================================================
   _emptyPending() { return { billId: null, want: null, pushFac: {}, pushSen: {}, coerce: {}, lobCount: {} }; },
   _pendingFor(bill) {

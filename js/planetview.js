@@ -230,8 +230,11 @@ const PlanetView = {
       let compUI = `<div class="ind-foot">Components ${fitted.length}/${slots}</div><div class="acc-row">${chips || `<span class="muted-note">none fitted</span>`}</div>`;
       if (fitted.length < slots && avail.length) compUI += `<div class="rt-form"><label>Fit <select id="pm-comp">${avail.map(c => `<option value="${c.uid}">${c.name} — ${Components.describe(c)}</option>`).join("")}</select></label></div><div class="settings-actions"><button class="btn" id="pm-attach">Fit component</button></div>`;
       else if (fitted.length < slots) compUI += `<p class="muted-note">Buy components in the <b>Bazaar → Extractors</b> to boost this extractor.</p>`;
+      const edictNote = (b.edicts && b.edicts.length)
+        ? `<div class="ind-foot muted-note">Senate: ${b.edicts.map(e => `${e.title} (${e.rate >= 0 ? "+" : ""}${(e.rate * 100).toFixed(0)}%)`).join("; ")}</div>` : "";
       body = `<div class="industry"><div class="ind-head"><b>${name} works</b><span class="ind-stat ind-${st.replace(/ /g, "-")}">${st}</span></div>
         <div class="ind-foot">${ex ? ex.name : "extractor"} · ≈ <b>${b.net}</b> ${name} every ${Util.duration(b.cycleMs)} <span class="muted-note">(gross ${b.gross} − ${(b.rate * 100).toFixed(0)}% tax)</span> · next ${next}</div>
+        ${edictNote}
         <div class="ind-foot">suitability <b>${b.suit.toFixed(2)}×</b> · owner <span style="color:${facColor}">${facName}</span></div></div>
         ${warn}${compUI}
         <div class="settings-actions"><button class="btn" data-pm-remove="${ind.id}">Remove extractor</button><button class="btn btn-danger" data-pm-demolish="${ind.id}">Give up permit</button></div>`;
