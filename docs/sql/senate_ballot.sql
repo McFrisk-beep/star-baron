@@ -101,14 +101,17 @@ begin
     return jsonb_build_object('ok', false, 'error', 'Baron Tier ' || ballot_min || ' required');
   end if;
 
-  -- Weekly quota: tier 3 → 1, tier 4 → 2, … ; admins unlimited
-  week_quota := greatest(0, tier - (ballot_min - 1));
+  -- Weekly quota: tier pairs 3–4 → 1, 5–6 → 2, … ; Cosmocrat (last tier) gets +1.
+  -- Admins unlimited. (ponytail: galaxy docket still hard-capped below — whales can't flood it.)
+  week_quota := greatest(0, (tier - ballot_min) / 2 + 1);
+  if tier >= 6 then week_quota := week_quota + 1; end if;   -- last Baron Tier (Cosmocrat)
   select count(*) into week_used from public.world_senate
    where proposed_by = uid and created_at > now() - interval '7 days';
   if not is_admin and week_used >= week_quota then
     return jsonb_build_object('ok', false, 'error', 'weekly ballot limit reached (' || week_used || '/' || week_quota || ')');
   end if;
 
+  -- ponytail: shared open-ballot cap (not per-baron); raise if the chamber feels empty under weekly quotas
   select count(*) into open_player from public.world_senate
    where proposed_by is not null and votes_at > now();
   if open_player >= 8 then
@@ -289,6 +292,7 @@ begin
     return jsonb_build_object('ok', false, 'error', 'invalid bill');
   end if;
 
+  -- Identify the two rows, then lock them in id order (avoids deadlock + lost swaps).
   select id, votes_at, ends_at into my_id, my_at, my_ends
     from public.world_senate
    where id = bill_num and votes_at > now()
@@ -297,13 +301,29 @@ begin
     return jsonb_build_object('ok', false, 'error', 'bill not on the docket (or not yours)');
   end if;
 
-  select id, votes_at, ends_at into prev_id, prev_at, prev_ends
+  select id into prev_id
     from public.world_senate
    where votes_at > now() and votes_at < my_at
    order by votes_at desc, id desc
    limit 1;
   if prev_id is null then
     return jsonb_build_object('ok', false, 'error', 'already first on the docket');
+  end if;
+
+  -- Lock both bills ascending by id, then re-read times under the locks.
+  perform 1 from public.world_senate where id in (my_id, prev_id) order by id for update;
+
+  select votes_at, ends_at into my_at, my_ends from public.world_senate where id = my_id;
+  select votes_at, ends_at into prev_at, prev_ends from public.world_senate where id = prev_id;
+  if my_at is null or prev_at is null or not (my_at > now() and prev_at > now()) then
+    return jsonb_build_object('ok', false, 'error', 'bill left the docket — try again');
+  end if;
+  -- Still neighbors? Another bump may have reshuffled between identify and lock.
+  if exists (
+    select 1 from public.world_senate
+     where votes_at > now() and votes_at > prev_at and votes_at < my_at
+  ) then
+    return jsonb_build_object('ok', false, 'error', 'docket changed — try again');
   end if;
 
   begin

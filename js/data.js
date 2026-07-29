@@ -592,6 +592,8 @@ const SENATECFG = {
   ballotMinTier: 3, ballotCost: 250000, ballotBumpCost: 100000,
   ballotFactors: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2],
   ballotDaysMin: 1, ballotDaysMax: 10, ballotDaysDefault: 3,
+  // ponytail: soft galaxy docket cap for player-authored bills; raise if the chamber feels empty
+  ballotDocketCap: 8,
   // stance scale −3..+3 → label[v+3]; hidden stances read as the "unknown" string.
   stanceLabels: ["vehemently opposed", "strongly disagree", "slightly disagree", "either way", "slightly agree", "strongly agree", "solid support"],
   stanceUnknown: "information lacking",

@@ -261,10 +261,12 @@ in the SQL Editor after §1 (re-run to pick up fixes / new args).
 - Adds `proposed_by` / `proposed_label` on `world_senate`; `lean` becomes numeric
 - `app_senate_ballot(edict_id, target, factor, days)` — validates the measure,
   scales effect + fee by strength (`factor` 0.5–2) and duration (`days` 1–10),
-  weekly quota = tier−2 (tier 3 → 1/week; admins unlimited), deducts credits when
-  a Phase 1 `players` row exists (credits cast via `floor(...::numeric)` so float
-  balances no longer error), inserts the bill one day after the floor vote
+  weekly quota in tier pairs (3–4 → 1, 5–6 → 2, Cosmocrat +1 → 3; admins
+  unlimited), deducts credits when a Phase 1 `players` row exists (credits cast
+  via `floor(...::numeric)` so float balances no longer error), inserts the bill
+  one day after the floor vote
 - `app_senate_ballot_bump(bill_id)` — pay to swap your ballot one slot earlier
+  (row-locks both bills in id order)
 - Until this SQL is applied, the Ballot tab still appears for eligible barons,
   but tabling/bumping toasts that the clerks aren't accepting ballots yet
 

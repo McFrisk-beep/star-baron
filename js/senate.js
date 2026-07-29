@@ -697,11 +697,17 @@ const Senate = {
     return !!(window.Cloud && Cloud.signedIn());
   },
   isBallotAdmin() { return !!(window.Cloud && Cloud.isAdmin && Cloud.isAdmin()); },
-  // Tier 3 → 1/week, tier 4 → 2, … ; Infinity for admins.
+  // Weekly quota by Baron Tier pairs: 3–4 → 1, 5–6 → 2, … ; final Cosmocrat tier gets +1.
+  // Admins unlimited. (ponytail: docket still capped galaxy-wide at ballotDocketCap.)
   ballotWeekQuota() {
     if (this.isBallotAdmin()) return Infinity;
     const min = SENATECFG.ballotMinTier || 3;
-    return Math.max(0, this.tier() - (min - 1));
+    const tier = this.tier();
+    if (tier < min) return 0;
+    const last = (typeof BARON_TIERS !== "undefined" ? BARON_TIERS.length : 7) - 1;
+    let q = Math.floor((tier - min) / 2) + 1;
+    if (tier >= last) q += 1;
+    return q;
   },
   _ballotWeekState() {
     const sen = this.sen();

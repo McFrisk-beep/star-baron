@@ -1745,7 +1745,7 @@ const UI = {
           </div></div>`;
       }).join("")}</div>`
         : `<p class="muted-note">No ballot initiatives of yours on the docket yet.</p>`) + `</div>`;
-    ballotPanel = (ballotPanel || "") + minePanel;
+    if (Senate.canBallot()) ballotPanel = (ballotPanel || "") + minePanel;
 
     // ---- roster ----
     const f = this.senateFilt, q = (f.q || "").toLowerCase();

@@ -77,6 +77,14 @@ assert(!r.ok, "ballot gated below Baron Tier " + SENATECFG.ballotMinTier);
 ctx.Game.state.prestige.tier = SENATECFG.ballotMinTier;   // now eligible
 assert(Senate.canBallot(), "canBallot() true at/above the min tier");
 assert(Senate.ballotWeekQuota() === 1, "tier 3 weekly quota is 1");
+ctx.Game.state.prestige.tier = 4;
+assert(Senate.ballotWeekQuota() === 1, "tier 4 weekly quota is still 1 (pair with 3)");
+ctx.Game.state.prestige.tier = 5;
+assert(Senate.ballotWeekQuota() === 2, "tier 5 weekly quota is 2");
+ctx.Game.state.prestige.tier = 6;
+assert(Senate.ballotWeekQuota() === 3, "Cosmocrat (last tier) gets pair quota + 1");
+ctx.Game.state.prestige.tier = SENATECFG.ballotMinTier;   // back to 3 for the rest
+assert(Senate.canBallot(), "canBallot() true at/above the min tier");
 const opts = Senate.ballotOptions();
 assert(opts.length > 0 && opts.every(o => o.value && o.label), "ballotOptions() returns labelled choices");
 assert(opts.some(o => o.value.startsWith("salvage_act")), "salvage act is proposable");
@@ -108,7 +116,7 @@ assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
 
 // bump: need a second slot — mint another upcoming bill then bump ours
 sen.ballotWeek.n = 0;
-ctx.Game.state.prestige.tier = 5;   // quota 3
+ctx.Game.state.prestige.tier = 5;   // quota 2 — room for another table if needed
 const mineId = sen.bills.find(b => b.proposedBy === "you").id;
 const up = Senate.upcomingBills(now);
 assert(up.length >= 2, "docket has room to bump");
