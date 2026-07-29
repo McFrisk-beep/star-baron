@@ -42,6 +42,7 @@ const AdminUI = {
       mStatus: $("admin-mission-status"), mNew: $("admin-mission-new"), mListActions: $("admin-mission-listactions"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
+      devLocalMode: $("dev-local-mode"),
       devSenateVote: $("dev-senate-vote"), devSenateNext: $("dev-senate-next"),
       devGlobalReset: $("dev-global-reset"), devResetStatus: $("dev-reset-status"),
       closes: document.querySelectorAll(".admin-close"),
@@ -56,10 +57,27 @@ const AdminUI = {
     if (this.r.reset) this.r.reset.onclick = () => this.doReset();
 
     // dev tools: credit cheats (admin-gated by the whole panel)
-    const adjust = fn => { const s = window.Game && Game.state; if (!s) return; fn(s); if (window.Economy) Economy.refreshNetWorth(); if (window.UI) { UI.updateHeader(); UI.flashCredits(); } window.Game.requestSave(); };
+    const adjust = fn => { const s = window.Game && Game.state; if (!s) return; fn(s); if (window.Economy) Economy.refreshNetWorth(); if (window.UI) { UI.updateHeader(); UI.flashCredits(); } window.Game.requestSave();
+      // Authoritative economy → the server owns credits; a local set is overwritten
+      // on the next app_pull unless "Pause cloud sync" is on. Nudge the admin.
+      if (window.Cloud && Cloud.authoritative() && window.UI) UI.toast("Cloud sync is authoritative — tick “Pause cloud sync (local test)” above or this resets on the next server sync.", "warn", 6000);
+    };
     if (this.r.devSet) this.r.devSet.onclick = () => adjust(s => { s.credits = Math.max(0, Math.round(+this.r.devCredits.value || 0)); UI.toast(`Credits set to ${Util.creditsFull(s.credits)}.`, "good"); });
     if (this.r.dev10k) this.r.dev10k.onclick = () => adjust(s => { s.credits += 10000; UI.toast("+10,000c (dev)", "good"); });
     if (this.r.dev1m) this.r.dev1m.onclick = () => adjust(s => { s.credits += 1000000; UI.toast("+1,000,000c (dev)", "good"); });
+    // pause cloud authority so admin-set credits (and other local edits) stick
+    // for testing instead of being overwritten by the next app_pull.
+    if (this.r.devLocalMode) {
+      this.r.devLocalMode.checked = !!(window.Cloud && Cloud._devLocal);
+      this.r.devLocalMode.onchange = () => {
+        if (!window.Cloud) return;
+        Cloud._devLocal = this.r.devLocalMode.checked;
+        if (window.UI) UI.toast(Cloud._devLocal
+          ? "Cloud sync paused — local state is king (reload to re-sync)."
+          : "Cloud sync resumed — the server is authoritative again.", "good", 5000);
+        if (window.UI) UI.updateHeader();
+      };
+    }
     if (this.r.devSenateVote) this.r.devSenateVote.onclick = () => this.forceSenateVote();
     if (this.r.devGlobalReset) this.r.devGlobalReset.onclick = () => this.issueGlobalReset();
     if (this.r.mNew) this.r.mNew.onclick = () => this.newMission();

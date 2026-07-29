@@ -13,6 +13,10 @@ const Cloud = {
   enabled: false,
   _user: null,
   _role: "player",
+  // Admin/dev: pause server authority for this session so local state (e.g.
+  // admin-set credits) is king and app_pull/app_commit stop clobbering it. Not
+  // persisted — a reload re-syncs from the authoritative players row.
+  _devLocal: false,
   // true once app_bootstrap succeeds this session; false → legacy saves path.
   playersReady: false,
   // true once app_pull succeeds this session; false → local soft-income catch-up.
@@ -66,7 +70,7 @@ const Cloud = {
   signedIn() { return this.enabled && !!this._user; },
   // Server-authoritative economy path (Phase 1). Guests and pre-migration
   // projects stay on the local / saves sandbox.
-  authoritative() { return this.signedIn() && this.playersReady; },
+  authoritative() { return this.signedIn() && this.playersReady && !this._devLocal; },
   user() { return this._user; },
   email() { return this._user ? this._user.email : null; },
 
