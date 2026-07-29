@@ -99,6 +99,7 @@ const Economy = {
   },
   _applyServerSlice(r) {
     const s = this.s();
+    const equip = this._snapEquip();
     if (r.credits != null) s.credits = r.credits;
     if (r.positions) s.positions = r.positions;
     if (r.avgCost) s.avgCost = r.avgCost;
@@ -136,6 +137,7 @@ const Economy = {
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
     this.repairCosmeticNames();
+    this._restoreEquip(equip);
   },
 
   // Phase-2/3 SQL used to stamp stub names ("Battleship", "Shield uncommon").
@@ -156,10 +158,37 @@ const Economy = {
     }
   },
 
+  // Ship accessories and extractor component-fitment are equipped CLIENT-SIDE
+  // (no RPC), so app_commit forces server->ships / echoes fitment back empty and
+  // reverts the equip. Snapshot the live fitment before a server slice clobbers
+  // s.ships / s.extractors, then re-apply it wherever the slice cleared it. A
+  // real server value (future support) wins — we only fill an emptied slot.
+  _snapEquip() {
+    const s = this.s(), out = { acc: {}, comp: {} };
+    for (const sh of s.ships || []) if (sh && sh.uid && Array.isArray(sh.accessories) && sh.accessories.length) out.acc[sh.uid] = sh.accessories.slice();
+    const ex = s.extractors || {};
+    for (const k in ex) { const e = ex[k]; if (e && Array.isArray(e.components) && e.components.length) out.comp[(e.uid) || k] = e.components.slice(); }
+    return out;
+  },
+  _restoreEquip(snap) {
+    if (!snap) return;
+    const s = this.s();
+    for (const sh of s.ships || []) {
+      const kept = sh && snap.acc[sh.uid];
+      if (kept && !(Array.isArray(sh.accessories) && sh.accessories.length)) sh.accessories = kept;
+    }
+    const ex = s.extractors || {};
+    for (const k in ex) {
+      const e = ex[k], kept = e && snap.comp[(e.uid) || k];
+      if (kept && !(Array.isArray(e.components) && e.components.length)) e.components = kept;
+    }
+  },
+
   // Pull protected fields from an app_commit / app_pull response into live state.
   applyCommitState(st) {
     if (!st || typeof st !== "object") return;
     const s = this.s();
+    const equip = this._snapEquip();
     if (st.currentSystem) s.currentSystem = st.currentSystem;
     s.travel = st.travel && typeof st.travel === "object" ? st.travel : null;
     if (st.unlockedSystems) s.unlockedSystems = st.unlockedSystems;
@@ -193,6 +222,7 @@ const Economy = {
       if (st.stats.contractsDone != null) s.stats.contractsDone = st.stats.contractsDone;
     }
     this.repairCosmeticNames();
+    this._restoreEquip(equip);
   },
 
   // Snapshot non-stub cosmetic names before a server slice clobbers them.
