@@ -86,6 +86,11 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
   assert(ac.price > 0 && ac.item.value > 0);
   const ct = Bazaar.genSeededContract(epoch, 1, 0);
   assert.strictEqual(ct.id, `ct-${epoch}-1`);
+  assert.strictEqual(ct.createdAt, epoch * Bazaar.boardEpochMs);
+  assert.strictEqual(ct.expiresAt, (epoch + 2) * Bazaar.boardEpochMs);
+  assert(Number.isFinite(ct.expiresAt - T), "board expiry delta is finite");
+  assert.notStrictEqual(ctx.Util.duration(ct.expiresAt - T), "NaNs");
+  assert.strictEqual(ctx.Util.duration(NaN), "now");
   if (ct.kind === "job") assert(ct.reward.credits > 0 && ct.reward.credits < 100000);
 
   // 4) Authoritative buyShip + take/launch by contract id (not reward blob)
@@ -218,6 +223,67 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
   const authReps = await Missions.resolveMatured(T);
   assert(authReps.length === 1 && authReps[0].success);
   assert(calls.some(c => c[0] === "missionResolve"));
+
+  // 5) Pre-phase2c SQL: launch requires pending — client takes then retries
+  T = Date.UTC(2026, 0, 1, 12);
+  ctx.Game.state = fresh();
+  ctx.Game.state.credits = 90_000;
+  ctx.Game.state.ships = [{
+    uid: "s1", type: "drift", cls: "transport", name: "Hauler",
+    status: "idle", accessories: [], mercenary: false, dmg: 0,
+  }];
+  server = JSON.parse(JSON.stringify(ctx.Game.state));
+  const legacyCalls = [];
+  ctx.Cloud.takeContract = async (id) => {
+    legacyCalls.push(["takeContract", id]);
+    const offer = Bazaar.genSeededContract(Bazaar.boardEpoch(T), Number(id.split("-")[2]), 0);
+    assert.strictEqual(offer.kind, "job");
+    server.pendingContracts = (server.pendingContracts || []).concat([offer]);
+    server.bazaarBought = (server.bazaarBought || []).concat([id]);
+    return {
+      ok: true, contract: offer, credits: server.credits, ships: server.ships,
+      pendingContracts: server.pendingContracts.slice(),
+      bazaarBought: server.bazaarBought.slice(),
+      positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
+      missions: [], items: {}, inventory: server.inventory, seq: server.seq,
+    };
+  };
+  ctx.Cloud.missionLaunch = async (contractId, shipUids) => {
+    legacyCalls.push(["missionLaunch", contractId, shipUids]);
+    let offer = (server.pendingContracts || []).find(c => c.id === contractId);
+    if (!offer) {
+      return { ok: false, error: "Contract not in hand — take it from the board first." };
+    }
+    server.pendingContracts = server.pendingContracts.filter(c => c.id !== contractId);
+    const sh = server.ships.find(s => s.uid === shipUids[0]);
+    sh.status = "mission";
+    server.seq = (server.seq || 1) + 1;
+    const mission = {
+      uid: "m" + server.seq, contractId, type: offer.type, title: offer.title,
+      shipUids, totalMs: offer.durationMs, startedAt: T, rngSeed: 7,
+      successChance: 0.9, reward: offer.reward, resolved: false,
+      phases: [{ label: "x", dir: "out", ms: offer.durationMs }],
+    };
+    server.missions = (server.missions || []).concat([mission]);
+    return {
+      ok: true, credits: server.credits,
+      ships: JSON.parse(JSON.stringify(server.ships)),
+      missions: JSON.parse(JSON.stringify(server.missions)),
+      pendingContracts: server.pendingContracts.slice(), mission, seq: server.seq,
+      positions: {}, avgCost: {}, stats: server.stats, mainShip: server.mainShip,
+      items: {}, inventory: server.inventory,
+      bazaarBought: (server.bazaarBought || []).slice(),
+    };
+  };
+  Bazaar.fillSeededBoard(T);
+  const legacyJob = ctx.Game.state.bazaar.contracts.find(c => c.kind === "job");
+  assert(legacyJob, "legacy board has a job");
+  const legacyLaunch = await Missions.launch(legacyJob, ["s1"]);
+  assert(legacyLaunch.ok, legacyLaunch.msg || "legacy launch should succeed via take→launch");
+  assert.deepStrictEqual(
+    legacyCalls.map(c => c[0]),
+    ["missionLaunch", "takeContract", "missionLaunch"]
+  );
 
   console.log("check_phase2_missions_bazaar: ok");
 })().catch(e => { console.error(e); process.exit(1); });

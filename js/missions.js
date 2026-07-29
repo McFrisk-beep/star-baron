@@ -80,7 +80,17 @@ const Missions = {
     if (!contractId) return Promise.resolve({ ok: false, msg: "Contract not in hand." });
     return Economy._withRpc(
       () => this._launchLocal(contract, shipUids),
-      () => Cloud.missionLaunch(contractId, shipUids),
+      // phase2c: launch claims the board job. Pre-phase2c SQL only accepts
+      // pendingContracts — take once, then retry launch.
+      async () => {
+        let r = await Cloud.missionLaunch(contractId, shipUids);
+        const err = (r && (r.error || r.msg)) || "";
+        if (r && !r.ok && /not in hand/i.test(err)) {
+          const take = await Cloud.takeContract(contractId);
+          if (take && take.ok) r = await Cloud.missionLaunch(contractId, shipUids);
+        }
+        return r;
+      },
       "Couldn't launch mission — try again."
     );
   },
