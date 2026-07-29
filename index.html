@@ -387,6 +387,18 @@
         <div id="auth-account-home">
           <p><span data-i18n="auth.signedInAs">Signed in as</span> <b id="auth-who"></b>.</p>
           <p class="muted-note" data-i18n="auth.signedInNote">Your progress saves to the cloud automatically.</p>
+          <div class="auth-username-block">
+            <label class="auth-field"><span data-i18n="auth.username">Username</span>
+              <input type="text" id="auth-username" maxlength="16" autocomplete="username"
+                spellcheck="false" inputmode="text" placeholder="letters only" data-i18n-ph="auth.usernamePh" /></label>
+            <p class="muted-note" id="auth-username-hint">Default: <b id="auth-username-default">Baron #—</b>. Letters A–Z only, 3–16 characters. No numbers or other scripts.</p>
+            <p class="auth-err hidden" id="auth-username-err"></p>
+            <p class="auth-ok hidden" id="auth-username-ok"></p>
+            <div class="settings-actions auth-account-actions">
+              <button class="btn btn-go" id="auth-username-save" data-i18n="auth.saveUsername">Save username</button>
+              <button class="btn" id="auth-username-clear" data-i18n="auth.useDefault">Use default</button>
+            </div>
+          </div>
           <div class="settings-actions auth-account-actions">
             <button class="btn" id="auth-changepass-btn" data-i18n="auth.changePass">Change password</button>
             <button class="btn btn-danger" id="auth-signout" data-i18n="auth.signOut">Sign out</button>
@@ -542,6 +554,7 @@
   <script src="js/cloud-config.js"></script>
   <script src="js/store.js"></script>
   <script src="js/cloud.js"></script>
+  <script src="js/username.js"></script>
   <script src="js/content.js"></script>
   <script src="js/market.js"></script>
   <script src="js/galaxy.js"></script>

@@ -69,6 +69,7 @@ declare
   new_id bigint; sig text; taken boolean;
   lean_v numeric; sev_mult numeric;
   host_sev numeric; host_dur numeric; host_hard numeric;
+  join_num bigint;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -224,9 +225,25 @@ begin
   next_vote := greatest(next_vote, now()) + interval '1 day';
   ends := next_vote + (days || ' days')::interval;
 
-  select split_part(coalesce(u.email, 'baron'), '@', 1) into label
-    from auth.users u where u.id = uid;
-  if label is null or length(label) = 0 then label := 'baron'; end if;
+  -- Prefer custom username; else Baron #<join_n>; else email local-part.
+  begin
+    select nullif(btrim(p.username), ''), p.join_n
+      into label, join_num
+      from public.profiles p where p.user_id = uid;
+  exception when undefined_column then
+    label := null; join_num := null;
+  when others then
+    label := null; join_num := null;
+  end;
+  if label is null or length(label) = 0 then
+    if join_num is not null then
+      label := 'Baron #' || join_num;
+    else
+      select split_part(coalesce(u.email, 'baron'), '@', 1) into label
+        from auth.users u where u.id = uid;
+      if label is null or length(label) = 0 then label := 'baron'; end if;
+    end if;
+  end if;
   if length(label) > 24 then label := left(label, 22) || '…'; end if;
 
   if credits is not null then

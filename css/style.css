@@ -460,6 +460,9 @@ body.reduced .tt-dot { animation: none; }
   text-underline-offset: 2px; }
 .auth-link:hover { color: #fff; }
 .auth-account-actions { flex-wrap: wrap; }
+.auth-username-block { margin: 12px 0 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.auth-username-block .auth-field { margin-bottom: 6px; }
+.auth-username-block .muted-note { margin: 0 0 10px; text-transform: none; letter-spacing: 0; font-size: 12px; }
 /* live password-rule checklist (register + change/reset) */
 .auth-rules { display: flex; flex-direction: column; gap: 5px; margin: -4px 0 12px;
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #0a0e1a; }
