@@ -803,7 +803,7 @@ const Senate = {
   },
   myUpcomingBallots(now = Date.now()) {
     const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
-    return this.upcomingBills(now).filter(b => b.proposedBy === "you" || (me && b.proposedBy === me));
+    return this.upcomingBills(now).filter(b => b.proposedBy === "you" || (me && String(b.proposedBy) === String(me)));
   },
   // Build the bill payload without charging / inserting.
   _ballotDraft(value, factor, days) {
