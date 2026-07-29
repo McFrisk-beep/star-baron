@@ -480,20 +480,32 @@ const REP = {
 };
 
 /* ---- RIVAL BARONS ---------------------------------------------------------
-   The competitive ladder. Twelve AI barons whose net worth drifts upward over
-   time (idle = fall behind); the player climbs past them as they grow rich.
-   Each rival is affiliated with a faction — your standing colors how they
-   needle you when you trade ranks. `base` seeds their net worth (spread ~geo-
-   metrically so there's always someone just above and just below you for a
-   very long time); `growthPerHr` is their organic compounding rate.            */
+   The competitive ladder. Twelve named AI barons plus a seeded field of other
+   barons (RIVALCFG.fieldCount). Net worth drifts upward once a day (idle =
+   fall behind); the player climbs past them as they grow rich. Each rival is
+   affiliated with a faction — your standing colors how they needle you when
+   you trade ranks. `base` seeds their net worth (spread ~geometrically so
+   there's always someone just above and just below you for a very long time);
+   `growthPerHr` is their organic compounding rate (applied on the daily tick). */
 const RIVALCFG = {
-  driftMs: 4000,          // rivals re-price about this often
-  snapshotMs: 20 * 1000,  // how often the leaderboard re-baselines rank arrows
-  noiseSd: 0.01,          // per-drift gaussian wiggle on net worth
+  driftMs: 24 * 60 * 60 * 1000, // rival wealth updates once a day (not live)
+  snapshotMs: 24 * 60 * 60 * 1000, // rank arrows re-baseline with the daily tick
+  noiseSd: 0.02,          // per-day gaussian wiggle on net worth
   minMult: 0.4,           // a rival never sinks below base × this…
   maxMult: 6,             // …nor balloons past base × this
   barbMinGapMs: 70 * 1000,// throttle rival chatter (taunts/gloats/brags)
-  ambientChance: 0.06,    // chance per drift a rival brags unprompted
+  ambientChance: 0.35,    // chance per daily tick a rival brags unprompted
+  window: 10,             // leaderboard shows this many ranks above + below you
+  fieldCount: 88,         // extra generated barons filling the ladder
+  fieldMin: 1800,         // lowest field-baron seed net worth
+  fieldMax: 12000000,     // highest field-baron seed net worth
+  // Flavor epithets for generated field barons (Baron Tier title is separate).
+  fieldEpithets: [
+    "the Quiet", "the Driftward", "Belt-Born", "of the Outer Rim", "the Scrappy",
+    "Lane-Runner", "the Patient", "Dust-Purse", "the Upstart", "Hold-Empty",
+    "the Reckoner", "Spice-Bitten", "Ore-Touched", "the Thin Margin", "Dockside",
+    "the Long Bet", "Chart-Burner", "the Soft Touch", "Hull-Scarred", "the Frugal",
+  ],
 };
 const RIVALS = [
   { id: "pace",    name: "Dolio Pace",  epithet: "the Hopeful",        faction: "free_trade",      portrait: 0,  base: 2500,    growthPerHr: 0.060 },

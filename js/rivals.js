@@ -1,24 +1,85 @@
-/* rivals.js — the competitive ladder. A roster of AI barons (data.js RIVALS)
-   whose net worth drifts upward over time. The player's live net worth is
-   slotted into the same board, so climbing the exchange means climbing the
-   leaderboard. Overtakes (either direction) fire faction-flavored chatter and
-   toasts; idle players slide back down as the rivals keep compounding.        */
+/* rivals.js — the competitive ladder. Named AI barons (data.js RIVALS) plus a
+   seeded field of other barons fill a galaxy-wide board; the player's live net
+   worth slots in so climbing the exchange means climbing the ranks. Rival
+   wealth drifts once a day (idle = fall behind). Overtakes fire faction-
+   flavored chatter; the Barons tab pages ±window around you.                */
 
 const Rivals = {
   s() { return window.Game.state; },
-  data(id) { return RIVALS.find(r => r.id === id); },
+  data(id) { return this.roster().find(r => r.id === id); },
   nw(id) { return this.s().rivals[id] || 0; },
-  count() { return RIVALS.length + 1; },              // +1 = you
+  count() { return this.roster().length + 1; },              // +1 = you
+
+  // Named rivals + deterministically generated field barons (stable per galaxy seed).
+  roster() {
+    if (this._roster) return this._roster;
+    this._roster = RIVALS.concat(this._genField());
+    return this._roster;
+  },
+
+  _genField() {
+    const n = RIVALCFG.fieldCount || 0;
+    if (n <= 0) return [];
+    const seed = ((typeof GALAXY !== "undefined" ? GALAXY.seed : 1) ^ 0xB4A01) >>> 0;
+    const rng = (window.Galaxy && Galaxy._mk) ? Galaxy._mk(seed) : (() => Math.random());
+    const pick = arr => arr[Math.floor(rng() * arr.length)];
+    const factions = Object.keys(FACTIONS);
+    const styles = (typeof SENATE_FIRST !== "undefined") ? Object.keys(SENATE_FIRST) : ["soft"];
+    const epithets = RIVALCFG.fieldEpithets || ["the Wanderer"];
+    const used = new Set(RIVALS.map(r => r.name));
+    const lo = Math.log(RIVALCFG.fieldMin || 2000);
+    const hi = Math.log(RIVALCFG.fieldMax || 8000000);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const style = pick(styles);
+      const firsts = (typeof SENATE_FIRST !== "undefined" && SENATE_FIRST[style]) || ["Sael"];
+      const pre = (typeof SENATE_SUR !== "undefined" && SENATE_SUR.pre) || ["Vol"];
+      const suf = (typeof SENATE_SUR !== "undefined" && SENATE_SUR.suf) || ["ane"];
+      let name;
+      for (let t = 0; t < 10; t++) {
+        name = pick(firsts) + " " + pick(pre) + pick(suf);
+        if (!used.has(name)) break;
+        name = name + " " + (i + 2);
+      }
+      used.add(name);
+      // Log-spaced bases so the ladder stays dense from starter to apex.
+      const t = n === 1 ? 0.5 : i / (n - 1);
+      const base = Math.round(Math.exp(lo + (hi - lo) * t));
+      // Slower compounders at the top, hungrier near the bottom — mirrors RIVALS.
+      const growthPerHr = 0.055 - t * 0.038;
+      out.push({
+        id: "field_" + i,
+        name,
+        epithet: pick(epithets),
+        faction: pick(factions),
+        portrait: Math.floor(rng() * 12),
+        base,
+        growthPerHr,
+        field: true,
+      });
+    }
+    return out;
+  },
+
+  // Baron Tier title from wealth. Named/field barons "wear" the tier their pile
+  // would unlock; the player uses their ascended prestige tier instead.
+  titleFromNw(nw) {
+    const tiers = typeof BARON_TIERS !== "undefined" ? BARON_TIERS : [{ title: "Baron", threshold: 0 }];
+    let title = tiers[0].title;
+    for (const t of tiers) if (nw >= (t.threshold || 0)) title = t.title;
+    return title;
+  },
 
   // Seed/repair rival net worths and bookkeeping on any save shape.
   ensure() {
     const s = this.s();
     if (!s.rivals || typeof s.rivals !== "object") s.rivals = {};
-    for (const r of RIVALS) {
+    for (const r of this.roster()) {
       if (typeof s.rivals[r.id] !== "number" || !isFinite(s.rivals[r.id]))
         s.rivals[r.id] = Math.round(r.base * Util.randFloat(0.85, 1.15));
     }
-    for (const id of Object.keys(s.rivals)) if (!this.data(id)) delete s.rivals[id];
+    const known = new Set(this.roster().map(r => r.id));
+    for (const id of Object.keys(s.rivals)) if (!known.has(id)) delete s.rivals[id];
     s.rivalsMeta ||= {};
     const m = s.rivalsMeta;
     if (typeof m.lastAt !== "number") m.lastAt = Date.now();
@@ -27,45 +88,78 @@ const Rivals = {
     m.snap ||= null;
   },
 
-  // Drift every rival's net worth: organic compounding + a little noise, capped
-  // either side of `base`. Then look for rank changes and (maybe) some chatter.
+  // Daily drift: compound once per driftMs window, then check rank changes.
+  // Pass detection always runs so a climbing player still needles rivals mid-day.
   tick(now) {
     const s = this.s();
     this.ensure();
     const m = s.rivalsMeta;
     const dt = now - (m.lastAt || now);
-    if (dt < RIVALCFG.driftMs) return;
-    m.lastAt = now;
-    const gdt = Util.clamp(dt, 0, CONFIG.maxOfflineMs);
-    for (const r of RIVALS) {
-      let v = s.rivals[r.id];
-      v *= 1 + r.growthPerHr * (gdt / 3600000);   // organic growth
-      v *= 1 + Util.gauss(RIVALCFG.noiseSd);       // jitter
-      s.rivals[r.id] = Util.clamp(v, r.base * RIVALCFG.minMult, r.base * RIVALCFG.maxMult);
+    if (dt >= RIVALCFG.driftMs) {
+      m.lastAt = now;
+      const gdt = Util.clamp(dt, 0, CONFIG.maxOfflineMs);
+      for (const r of this.roster()) {
+        let v = s.rivals[r.id];
+        v *= 1 + r.growthPerHr * (gdt / 3600000);   // organic growth over elapsed time
+        v *= 1 + Util.gauss(RIVALCFG.noiseSd);       // daily jitter
+        s.rivals[r.id] = Util.clamp(v, r.base * RIVALCFG.minMult, r.base * RIVALCFG.maxMult);
+      }
+      this.refreshSnapshot(now);
+      this.maybeAmbient(now);
     }
     this.detectPasses(now);
-    this.maybeAmbient(now);
-    this.refreshSnapshot(now);
   },
 
   // ---- leaderboard ---------------------------------------------------------
   // Full board (rivals + you), richest first.
   board() {
-    const rows = RIVALS.map(r => ({
+    const rows = this.roster().map(r => ({
       id: r.id, name: r.name, epithet: r.epithet, faction: r.faction,
-      portrait: r.portrait, you: false, netWorth: this.nw(r.id),
+      portrait: r.portrait, you: false, field: !!r.field,
+      netWorth: this.nw(r.id),
+      title: this.titleFromNw(this.nw(r.id)),
     }));
-    rows.push({ id: "__you", name: "You", epithet: "the Baron", faction: null,
-      portrait: null, you: true, netWorth: Economy.netWorth() });
+    const youNw = Economy.netWorth();
+    const youName = (window.Cloud && Cloud.displayName && Cloud.displayName()) || "You";
+    rows.push({
+      id: "__you", name: youName, epithet: "your empire", faction: null,
+      portrait: null, you: true, field: false, netWorth: youNw,
+      title: Economy.tierTitle ? Economy.tierTitle() : this.titleFromNw(youNw),
+    });
     rows.sort((a, b) => b.netWorth - a.netWorth);
     rows.forEach((row, i) => { row.rank = i + 1; });
     return rows;
   },
 
+  // Slice of the board for the Barons tab. `offset` null → center on you (±window).
+  // Otherwise `offset` is the 0-based start index into the full board.
+  pageWindow(offset) {
+    const board = this.board();
+    const win = RIVALCFG.window || 10;
+    const pageLen = win * 2 + 1;
+    const youIdx = board.findIndex(r => r.you);
+    const maxStart = Math.max(0, board.length - pageLen);
+    let start;
+    if (offset == null || !Number.isFinite(offset)) {
+      start = youIdx < 0 ? 0 : Util.clamp(youIdx - win, 0, maxStart);
+    } else {
+      start = Util.clamp(Math.floor(offset), 0, maxStart);
+    }
+    const end = Math.min(board.length, start + pageLen);
+    return {
+      board, rows: board.slice(start, end), start, end, youIdx, youRank: youIdx + 1,
+      total: board.length, pageLen, win,
+      hasPrev: start > 0,
+      hasNext: end < board.length,
+      prevStart: Math.max(0, start - pageLen),
+      nextStart: Math.min(maxStart, start + pageLen),
+    };
+  },
+
   rank() {
     const nw = Economy.netWorth();
     let r = 1;
-    for (const x of RIVALS) if (this.nw(x.id) > nw) r++;
+    for (const x of this.roster()) if (this.nw(x.id) > nw) r++;
     return r;
   },
 
@@ -109,7 +203,9 @@ const Rivals = {
   maybeAmbient(now) {
     if (window.Game && window.Game._booting) return;
     if (Math.random() > RIVALCFG.ambientChance) return;
-    const r = Util.pick(RIVALS);
+    // Prefer named rivals for chatter; fall back to anyone.
+    const pool = RIVALS.length ? RIVALS : this.roster();
+    const r = Util.pick(pool);
     this.barb(r, "ambient", this.rank());
   },
 
