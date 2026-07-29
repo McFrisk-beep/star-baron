@@ -21,7 +21,10 @@ const SenateWorld = {
 
   enabled() { return !!(window.Cloud && Cloud.enabled && Cloud.client && window.Senate); },
 
-  cols: "id,issue,type,lean,effect,title,blurb,votes_at,ends_at,created_at",
+  // proposed_by/label need docs/sql/senate_ballot.sql — fall back if columns are missing
+  colsBase: "id,issue,type,lean,effect,title,blurb,votes_at,ends_at,created_at",
+  colsBallot: "id,issue,type,lean,effect,title,blurb,votes_at,ends_at,created_at,proposed_by,proposed_label",
+  _agendaCols: null,
   resCols: "bill_id,issue,type,lean,effect,title,blurb,votes,result,status,repeal_of,votes_at,ends_at,created_at",
 
   async init() {
@@ -32,11 +35,23 @@ const SenateWorld = {
   start() { if (this.enabled()) { clearInterval(this.timer); this.timer = setInterval(() => this.poll(), this.pollMs); } },
   stop() { clearInterval(this.timer); this.timer = null; },
 
+  async _selectAgenda(filter) {
+    const cols = this._agendaCols || this.colsBallot;
+    let q = Cloud.client.from("world_senate").select(cols);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error && cols === this.colsBallot && /proposed_by|proposed_label|column/i.test(String(error.message || error))) {
+      this._agendaCols = this.colsBase;         // pre-ballot schema — keep shared senate working
+      return this._selectAgenda(filter);
+    }
+    if (!error) this._agendaCols = cols;
+    return { data, error };
+  },
+
   async load() {
     let agenda = null, results = null;          // null = fetch failed; [] = reached server, empty
     try {
-      const { data, error } = await Cloud.client.from("world_senate")
-        .select(this.cols).order("id", { ascending: false }).limit(40);
+      const { data, error } = await this._selectAgenda(q => q.order("id", { ascending: false }).limit(40));
       if (error) throw error; agenda = data || [];
     } catch (e) { console.warn("[SenateWorld] agenda unavailable (run docs/SENATE_SETUP.md §1):", e.message || e); }
     try {
@@ -61,8 +76,8 @@ const SenateWorld = {
   async poll() {
     if (!this.active) return;
     try {
-      const { data, error } = await Cloud.client.from("world_senate")
-        .select(this.cols).gt("id", this.lastId).order("id", { ascending: true }).limit(20);
+      const lastId = this.lastId;
+      const { data, error } = await this._selectAgenda(q => q.gt("id", lastId).order("id", { ascending: true }).limit(20));
       if (error) throw error;
       for (const r of (data || [])) { this.ingest(r); this.lastId = Math.max(this.lastId, r.id); }
     } catch (e) { /* transient */ }
@@ -164,7 +179,48 @@ const SenateWorld = {
       votesAt: new Date(r.votes_at).getTime(),
       endsAt: r.ends_at ? new Date(r.ends_at).getTime() : null,
       status: "upcoming",
+      proposedBy: r.proposed_by || null,
+      proposedLabel: r.proposed_label || null,
     });
+  },
+
+  // Table a player ballot onto the shared agenda (docs/sql/senate_ballot.sql).
+  // Returns { ok, bill?, msg?, charged?, credits? }.
+  async proposeBallot(edictId, target) {
+    if (!this.enabled() || !Cloud.signedIn())
+      return { ok: false, msg: "Sign in to table a bill onto the galaxy-wide agenda." };
+    try {
+      const { data, error } = await Cloud.client.rpc("app_senate_ballot", {
+        p_edict_id: edictId, p_target: target || null,
+      });
+      if (error) {
+        if (Cloud._isMissingRpc && Cloud._isMissingRpc(error))
+          return { ok: false, msg: "Galaxy clerks aren't accepting ballots yet — run docs/sql/senate_ballot.sql." };
+        throw error;
+      }
+      if (!data || !data.ok) return { ok: false, msg: (data && data.error) || "Could not table that bill." };
+      const row = data.bill || {};
+      const bill = {
+        id: "wb" + row.id, issue: row.issue, type: row.type, lean: Number(row.lean) || 1,
+        effect: row.effect || null, title: row.title, blurb: row.blurb,
+        votesAt: row.votes_at ? new Date(row.votes_at).getTime() : Date.now(),
+        endsAt: row.ends_at ? new Date(row.ends_at).getTime() : null,
+        status: "upcoming",
+        proposedBy: row.proposed_by || (Cloud.user() && Cloud.user().id) || null,
+        proposedLabel: row.proposed_label || null,
+      };
+      this.ingest({
+        id: row.id, issue: bill.issue, type: bill.type, lean: bill.lean, effect: bill.effect,
+        title: bill.title, blurb: bill.blurb, votes_at: row.votes_at, ends_at: row.ends_at,
+        proposed_by: bill.proposedBy, proposed_label: bill.proposedLabel,
+      });
+      this.lastId = Math.max(this.lastId, Number(row.id) || 0);
+      if (window.UI && UI.page === "senate") UI.renderSenate();
+      return { ok: true, bill, charged: !!data.charged, credits: data.credits, cost: data.cost };
+    } catch (e) {
+      console.warn("[SenateWorld] ballot failed:", e.message || e);
+      return { ok: false, msg: e.message || "Could not table that bill." };
+    }
   },
   // resolve any now-due shared bills and refresh the open views/save
   resolveNow() {

@@ -9,6 +9,8 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const assert = (c, m) => { if (!c) { console.error("FAIL:", m); process.exit(1); } console.log("ok:", m); };
 
+(async () => {
+
 const ctx = { console, Math, Date, JSON, Object, Array, Number, String, isNaN, parseInt, parseFloat };
 ctx.window = ctx;
 ctx.matchMedia = () => ({ matches: false });
@@ -90,11 +92,34 @@ assert(r.bill.votesAt > floorBefore.votesAt, "tabled bill is slotted after the b
 r = Senate.proposeBill("subsidy|tech");
 assert(!r.ok && /already/i.test(r.msg), "duplicate measure refused");
 
-// shared play forbids tabling
+// shared play: guests can't table; signed-in barons go through SenateWorld
 Senate.shared = true;
 r = Senate.proposeBill("salvage_act");
-assert(!r.ok && /shared|clerks/i.test(r.msg), "ballot blocked in shared play");
+assert(!r.ok && /sign in/i.test(r.msg), "shared ballot requires sign-in");
+ctx.Cloud = {
+  signedIn: () => true, user: () => ({ id: "user-1" }), email: () => "raphael@example.com",
+  authoritative: () => false, _isMissingRpc: () => false,
+};
+assert(Senate.canBallot(), "signed-in shared play canBallot at tier");
+let sharedBill = null;
+ctx.SenateWorld = {
+  proposeBallot: async (edictId, target) => {
+    sharedBill = {
+      id: "wb42", status: "upcoming", proposedBy: "user-1", proposedLabel: "raphael",
+      issue: "subsidy", type: "salvage", title: "Salvage Rights Act", blurb: "…",
+      effect: { type: "salvage", add: 0.3 }, votesAt: Date.now() + 1e8,
+    };
+    Senate.ingestSharedBill(sharedBill);
+    return { ok: true, bill: sharedBill, charged: false, cost: Senate.ballotCost() };
+  },
+};
+const creditsSharedBefore = ctx.Game.state.credits;
+r = await Senate.proposeBill("salvage_act");
+assert(r.ok && r.bill.id === "wb42", "shared ballot tables via SenateWorld");
+assert(ctx.Game.state.credits === creditsSharedBefore - Senate.ballotCost(), "shared ballot fee charged locally when server did not");
+assert(sen.bills.some(b => b.id === "wb42" && b.proposedBy === "user-1"), "shared tabled bill is on the docket");
 Senate.shared = false;
+delete ctx.Cloud; delete ctx.SenateWorld;
 
 // every ballot value round-trips through proposeBill's parser into a real edict
 for (const o of opts) {
@@ -103,3 +128,4 @@ for (const o of opts) {
 }
 
 console.log("All senate-bills checks passed.");
+})().catch(e => { console.error("FAIL:", e); process.exit(1); });
