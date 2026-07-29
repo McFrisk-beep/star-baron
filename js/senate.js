@@ -871,6 +871,27 @@ const Senate = {
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost: draft.cost, bill: r.bill };
   },
+  // Find an upcoming bill by client id ("wb42") or raw world_senate id (42).
+  _upcomingById(id) {
+    const s = String(id == null ? "" : id);
+    const raw = s.replace(/^wb/, "");
+    return this.upcomingBills().find(b => b.id === s || b.id === "wb" + raw || String(b.id) === s || String(b.id) === raw) || null;
+  },
+  // Swap two upcoming bills' vote slots (keep each edict length). Used by local
+  // bump and after a shared bump RPC — poll only fetches new ids, not votes_at edits.
+  applyBallotBumpSwap(mineId, prevId) {
+    const mine = this._upcomingById(mineId), prev = this._upcomingById(prevId);
+    if (!mine || !prev || mine === prev) return false;
+    const a = mine.votesAt, ae = mine.endsAt, b = prev.votesAt, be = prev.endsAt;
+    const mineLen = (ae != null && a != null) ? ae - a : null;
+    const prevLen = (be != null && b != null) ? be - b : null;
+    mine.votesAt = b;
+    if (mineLen != null) mine.endsAt = b + mineLen;
+    prev.votesAt = a;
+    if (prevLen != null) prev.endsAt = a + prevLen;
+    this._bumpRev();
+    return true;
+  },
   // Pay to swap this upcoming ballot one slot earlier on the docket.
   bumpBill(billId) {
     const up = this.upcomingBills();
@@ -884,11 +905,9 @@ const Senate = {
     const cost = this.ballotBumpCost();
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to move this bill up." };
     if (this.shared) return this._bumpShared(mine, cost);
-    const prev = up[i - 1];
-    const a = mine.votesAt, b = prev.votesAt;
-    mine.votesAt = b; prev.votesAt = a;
+    this.applyBallotBumpSwap(mine.id, up[i - 1].id);
     s.credits -= cost;
-    Economy.refreshNetWorth(); this._bumpRev();
+    Economy.refreshNetWorth();
     return { ok: true, cost, bill: mine };
   },
   async _bumpShared(bill, cost) {
@@ -904,8 +923,7 @@ const Senate = {
     } else {
       this.s().credits = Math.max(0, this.s().credits - cost);
     }
-    // Refresh agenda so swapped votes_at land for everyone.
-    if (SenateWorld.poll) await SenateWorld.poll();
+    // SenateWorld.bumpBallot already applied the local swap + re-render.
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost, bill };
   },
