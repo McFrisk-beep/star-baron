@@ -1,4 +1,4 @@
-/* ui.js — all DOM rendering across the tabbed pages (Exchange, Fleet, Star
+/* ui.js — all DOM rendering across the tabbed pages (Hub, Exchange, Fleet, Star
    Systems, Bazaar, Milestones) plus the persistent broadcast/feed sidebar and
    the modals. No game logic here — it reads modules and writes the screen.     */
 
@@ -84,34 +84,18 @@ const UI = {
     this.renderSystems();
     this.renderAchievements();
     this.applySettings();
-    // Hub is admin-only: admins land on the walkable station, everyone else
-    // (players + guests) lands on the Exchange. Role is resolved before init
-    // (main.js awaits Cloud.restore), and re-checked on every auth change.
-    this.applyHubGate();
-    this.showPage(this.hubAllowed() ? "hub" : "exchange");
-    if (window.Bus) Bus.on("auth", () => this.applyHubGate());
-  },
-
-  // Server-verified admin role (same source as the Admin button); guests/players false.
-  hubAllowed() { return !!(window.Cloud && Cloud.isAdmin()); },
-  // Show/hide the Hub tab by role, and bounce a non-admin off the hub page.
-  applyHubGate() {
-    const admin = this.hubAllowed();
-    const tab = document.getElementById("tab-hub");
-    if (tab) tab.classList.toggle("hidden", !admin);
-    if (!admin && this.page === "hub") this.showPage("exchange");
-    this.updateNavIndicator();
+    this.showPage("exchange");
   },
 
   // ===== tabs ==============================================================
   showPage(name) {
     if (name === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // star map is an overlay, not a page
     if (window.StarMap && StarMap.open) StarMap.close();                        // picking any section leaves the star map
-    if (this.page === "hub" && name !== "hub" && window.Hub) Hub.deactivate();  // pause the walker when leaving the hub
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
     this.updateNavIndicator();
+    this.applyPageBg(name);
     if (name === "fleet") this.renderFleet();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
@@ -132,12 +116,20 @@ const UI = {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
     }
-    else if (name === "hub") { this.renderHub(); if (window.Hub) Hub.activate(); }
   },
 
-  // Station hub: the walkable canvas tilemap lives in js/hub.js (Hub). This just
-  // ensures it's built; Hub.activate() (called from showPage) runs the loop.
-  renderHub() { if (window.Hub) Hub.build(); },
+  // Per-tab 1920×1080 background (admin Images → Page backgrounds). Sits behind
+  // page UI (.page-bg z-index 0; panels/content are above). No URL → hide layer.
+  applyPageBg(name) {
+    const wrap = document.getElementById("page-bg");
+    const img = document.getElementById("page-bg-img");
+    if (!wrap || !img) return;
+    const page = name || this.page;
+    const url = (window.ASSET && typeof ASSET.pageBg === "function") ? ASSET.pageBg(page) : "";
+    if (!url) { wrap.classList.add("hidden"); img.removeAttribute("src"); return; }
+    if (img.getAttribute("src") !== url) img.src = url;
+    wrap.classList.remove("hidden");
+  },
 
   // Pin the chat to the newest message (the feed lives in a hidden tab until
   // opened, so scrollHeight is only correct once it's visible — hence the rAF).

@@ -701,6 +701,9 @@ const ASSET = {
   asteroids: () => _asset(`asteroids:_`, `assets/space/asteroids.png`),
   hub: id => _asset(`hub:${id}`, `assets/hub/${id}.png`),   // prop/NPC sprites for the station hub
   hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
+  // Per-tab page backgrounds (admin Images → Page backgrounds). Empty default = no image.
+  // Displayed as a 1920×1080 stage behind page UI (see .page-bg in style.css).
+  pageBg: id => _asset(`pagebg:${id}`, ""),
   // Bazaar / inventory art — admin can set a single PNG or a pool per key.
   accessory: (kind, salt = "") => _assetPool(`accessory:${kind}`, salt, `assets/accessories/${kind}.png`),
   extractor: (type, salt = "") => _assetPool(`extractor:${type}`, salt, `assets/extractors/${type}.png`),
@@ -714,6 +717,21 @@ const ASSET = {
     return def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
   },
 };
+
+/* PAGE_BG_PAGES — nav tabs that take an admin-uploaded 1920×1080 background.
+   Star Map is an overlay (uses its own nebula/spacebg), so it's omitted.       */
+const PAGE_BG_PAGES = [
+  { id: "hub", label: "Hub" },
+  { id: "exchange", label: "Exchange" },
+  { id: "fleet", label: "Fleet" },
+  { id: "systems", label: "Star Systems" },
+  { id: "bazaar", label: "Bazaar" },
+  { id: "industries", label: "Industries" },
+  { id: "senate", label: "Senate" },
+  { id: "barons", label: "Barons" },
+  { id: "ach", label: "Milestones" },
+  { id: "comms", label: "Comms" },
+];
 
 /* HUB_PROPS — the feature registry for the walkable hub. Each entry is a
    "station" the player can walk up to; opening it calls UI.showPage(page) (the
@@ -886,6 +904,7 @@ window.STAR_TYPES = STAR_TYPES;
 window.PLANET_TYPES = PLANET_TYPES;
 window.SYSTEMVIEW = SYSTEMVIEW;
 window.ASSET = ASSET;
+window.PAGE_BG_PAGES = PAGE_BG_PAGES;
 window.HUB_PROPS = HUB_PROPS;
 window.HUBCFG = HUBCFG;
 window.HUB_ROOMS = HUB_ROOMS;
