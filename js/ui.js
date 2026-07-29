@@ -115,7 +115,15 @@ const UI = {
     if (name === "fleet") this.renderFleet();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
-    else if (name === "barons") { this.lbOffset = null; this.renderLeaderboard(); }
+    else if (name === "barons") {
+      this.lbOffset = null;
+      this.renderLeaderboard();
+      if (window.Barons) {
+        Barons.refresh().then(() => {
+          if (Cloud.signedIn && Cloud.signedIn()) return Barons.publish();
+        }).finally(() => { if (this.page === "barons") this.renderLeaderboard(); this.updateHeader(); });
+      }
+    }
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") this.renderIndustries();
     else if (name === "senate") this.renderSenate();
@@ -689,7 +697,12 @@ const UI = {
     const s = this.s();
     this.refs.credits.textContent = Util.creditsFull(s.credits);
     this.refs.networth.textContent = Util.creditsFull(Economy.netWorth());
-    if (this.refs.rank && window.Rivals) this.refs.rank.textContent = `#${Rivals.rank()} / ${Rivals.count()}`;
+    if (this.refs.rank && window.Barons) {
+      const r = Barons.rank(), n = Barons.count();
+      this.refs.rank.textContent = r != null && n ? `#${r} / ${n}` : (n ? `— / ${n}` : "—");
+    } else if (this.refs.rank) {
+      this.refs.rank.textContent = "—";
+    }
     this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = Economy.tierTitle();
     const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
@@ -1921,49 +1934,66 @@ const UI = {
     this.refs.senatorModal.classList.remove("hidden");
   },
 
-  // ===== BARONS / leaderboard ==============================================
+  // ===== BARONS / leaderboard (human players only) =========================
   renderLeaderboard() {
     if (this.page !== "barons") return;
     this.renderBaronTrack();
-    const page = Rivals.pageWindow(this.lbOffset);
+    if (!window.Barons) {
+      this.refs.lbList.innerHTML = `<li class="muted-note">Leaderboard unavailable.</li>`;
+      return;
+    }
+    const page = Barons.pageWindow(this.lbOffset);
     this.lbOffset = page.start;
-    const snap = (this.s().rivalsMeta || {}).snap;
-    const nextDay = ((this.s().rivalsMeta || {}).lastAt || Date.now()) + (RIVALCFG.driftMs || 86400000);
-    const hrs = Math.max(0, Math.ceil((nextDay - Date.now()) / 3600000));
-    this.refs.lbSub.textContent = `you sit #${page.youRank} of ${page.total} — rival wealth updates daily`
-      + (hrs ? ` (next tick ~${hrs}h)` : "");
+    const signed = !!(window.Cloud && Cloud.signedIn && Cloud.signedIn());
+    if (Barons.missing) {
+      this.refs.lbSub.textContent = "board offline — run docs/sql/baron_board.sql on Supabase";
+    } else if (!signed) {
+      this.refs.lbSub.textContent = page.total
+        ? `${page.total} barons online — sign in to take your seat`
+        : "sign in to join the Baron Leaderboard";
+    } else if (page.youRank != null) {
+      this.refs.lbSub.textContent = `you sit #${page.youRank} of ${page.total} — rival piles update once a day`;
+    } else {
+      this.refs.lbSub.textContent = page.total ? `${page.total} barons on the board` : "no barons published yet";
+    }
     if (this.refs.lbPageLabel) {
       this.refs.lbPageLabel.textContent = page.total
         ? `Ranks #${page.start + 1}–#${page.end}`
-        : "No barons yet";
+        : "—";
     }
     if (this.refs.lbPrev) this.refs.lbPrev.disabled = !page.hasPrev;
     if (this.refs.lbNext) this.refs.lbNext.disabled = !page.hasNext;
+    if (!page.rows.length) {
+      const tip = Barons.missing
+        ? "Install the baron board SQL to go live."
+        : signed
+          ? "You're first — keep trading and your daily worth will post here."
+          : "Sign in to claim a seat among the barons.";
+      this.refs.lbList.innerHTML = `<li class="muted-note">${tip}</li>`;
+      return;
+    }
     this.refs.lbList.innerHTML = page.rows.map(r => {
-      const fac = r.faction ? FACTIONS[r.faction] : null;
-      const was = snap && snap.ranks ? snap.ranks[r.id] : null;
-      const d = was == null ? 0 : was - r.rank;
-      const arrow = d > 0 ? `<span class="lb-delta up">▲${d}</span>`
-        : d < 0 ? `<span class="lb-delta down">▼${-d}</span>`
-        : `<span class="lb-delta">·</span>`;
       const title = r.title ? `<span class="lb-title">${r.title}</span>` : "";
       const who = r.you
-        ? `<b class="lb-name">${r.name || "You"}</b> ${title}`
-        : `<b class="lb-name">${r.name}</b> ${title} <span class="lb-ep">${r.epithet || ""}</span>`;
-      const chip = fac
-        ? `<span class="lb-fac" style="color:${fac.color}">◆ ${fac.name}</span>`
-        : `<span class="lb-fac you">◆ your empire</span>`;
+        ? `<b class="lb-name">${r.name || "You"}</b> ${title}<span class="lb-fac you">◆ you</span>`
+        : `<b class="lb-name">${r.name}</b> ${title}`;
       return `<li class="lb-row ${r.you ? "lb-you" : ""}">
         <span class="lb-rank">#${r.rank}</span>
-        <span class="lb-who">${who}${chip}</span>
-        ${arrow}
+        <span class="lb-who">${who}</span>
         <span class="lb-nw">${Util.credits(r.netWorth)}c</span></li>`;
-    }).join("") || `<li class="muted-note">No barons on the board yet.</li>`;
+    }).join("");
   },
   lbPage(dir) {
-    const cur = Rivals.pageWindow(this.lbOffset);
+    if (!window.Barons) return;
+    const cur = Barons.pageWindow(this.lbOffset);
     this.lbOffset = dir < 0 ? cur.prevStart : cur.nextStart;
     this.renderLeaderboard();
+  },
+  async refreshBarons() {
+    if (!window.Barons) return;
+    await Barons.refresh();
+    if (this.page === "barons") this.renderLeaderboard();
+    this.updateHeader();
   },
 
   // the Baron Tier "ascension" track: current title + perks, and the next tier

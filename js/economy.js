@@ -504,9 +504,12 @@ const Economy = {
     const lines = [];
     const info = this.tierInfo();
     if (info.tax > 0) lines.push({ title: `${info.title} tier tax`, rate: info.tax, kind: "tier" });
-    if (window.Senate && Senate.windfallSurtax() > 0 && window.Rivals
-        && Rivals.rank() <= (SENATECFG.windfallTopN || 3)) {
-      for (const w of Senate.windfallLines()) lines.push({ title: w.title, rate: w.rate, kind: "windfall" });
+    if (window.Senate && Senate.windfallSurtax() > 0) {
+      const top = SENATECFG.windfallTopN || 3;
+      const ranked = (window.Barons && Barons.rank() != null)
+        ? Barons.rank() <= top
+        : (window.Rivals && Rivals.rank() <= top);
+      if (ranked) for (const w of Senate.windfallLines()) lines.push({ title: w.title, rate: w.rate, kind: "windfall" });
     }
     return lines;
   },
@@ -620,8 +623,13 @@ const Economy = {
   // barons ranked in the top N of the leaderboard — being #1 paints a target.
   baronTax() {
     let tax = this.tierInfo().tax;
-    if (window.Senate && Senate.windfallSurtax() > 0 && window.Rivals
-        && Rivals.rank() <= (SENATECFG.windfallTopN || 3)) tax += Senate.windfallSurtax();
+    if (window.Senate && Senate.windfallSurtax() > 0) {
+      const top = SENATECFG.windfallTopN || 3;
+      const ranked = (window.Barons && Barons.rank() != null)
+        ? Barons.rank() <= top
+        : (window.Rivals && Rivals.rank() <= top);
+      if (ranked) tax += Senate.windfallSurtax();
+    }
     return Util.clamp(tax, 0, 0.95);
   },
   afterTax(amount) { return amount > 0 ? Math.round(amount * (1 - this.baronTax())) : amount; },  // tax positive earnings only

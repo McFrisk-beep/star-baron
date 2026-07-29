@@ -280,6 +280,17 @@ const Game = {
     // ---- schedulers ----
     this.startSchedulers();
     if (window.WorldFeed) WorldFeed.init();   // shared, always-on world chat (Supabase cron)
+    if (window.Barons) {
+      Barons.refresh().then(() => {
+        if (Cloud.signedIn && Cloud.signedIn()) return Barons.publish();
+      }).finally(() => { if (window.UI) { UI.updateHeader(); if (UI.page === "barons") UI.renderLeaderboard(); } });
+      Bus.on("auth", () => {
+        Barons.refresh().then(() => {
+          if (Cloud.signedIn && Cloud.signedIn()) return Barons.publish();
+        }).finally(() => { if (window.UI) { UI.updateHeader(); if (UI.page === "barons") UI.renderLeaderboard(); } });
+      });
+      Bus.on("prestige", () => { if (Cloud.signedIn && Cloud.signedIn()) Barons.publish(); });
+    }
     if (window.SenateWorld) SenateWorld.init();   // shared, galaxy-wide senate agenda (Supabase cron)
 
     // When the tab is backgrounded we suspend ALL work (timers + the star-map
