@@ -270,9 +270,12 @@ const Senate = {
     const cur = senate.bills.find(x => x.id === b.id);
     if (cur) {
       if (cur.status !== "upcoming") return false;     // resolved → the outcome owns it
-      if (cur.votesAt === b.votesAt && cur.endsAt === b.endsAt && cur.title === b.title && cur.blurb === b.blurb) return false;
+      if (cur.votesAt === b.votesAt && cur.endsAt === b.endsAt && cur.title === b.title && cur.blurb === b.blurb
+          && cur.proposedBy === b.proposedBy) return false;
       Object.assign(cur, { issue: b.issue, type: b.type, lean: b.lean, effect: b.effect,
-        title: b.title, blurb: b.blurb, votesAt: b.votesAt, endsAt: b.endsAt });
+        title: b.title, blurb: b.blurb, votesAt: b.votesAt, endsAt: b.endsAt,
+        proposedBy: b.proposedBy || cur.proposedBy || null,
+        proposedLabel: b.proposedLabel || cur.proposedLabel || null });
       this._bumpRev(); return true;
     }
     senate.bills.push(b); this._bumpRev(); return true;
@@ -625,9 +628,14 @@ const Senate = {
   // ===== ballot initiative (table your own bill) ==========================
   // A high-tier baron can put a bill of their choosing onto the docket for a fee.
   // It still faces a real vote — you've set the agenda, not bought the outcome —
-  // and it's stamped proposedBy:"you" so the docket shows who tabled it.
+  // and it's stamped proposedBy so the docket shows who tabled it. In shared play
+  // the bill is inserted via SenateWorld → app_senate_ballot (galaxy-wide).
   ballotCost() { return SENATECFG.ballotCost || 250000; },
-  canBallot() { return !this.shared && this.tier() >= (SENATECFG.ballotMinTier || 3); },
+  canBallot() {
+    if (this.tier() < (SENATECFG.ballotMinTier || 3)) return false;
+    if (!this.shared) return true;
+    return !!(window.Cloud && Cloud.signedIn());   // shared agenda needs an account to attribute + rate-limit
+  },
   // Concrete bills the player may table: {value, label}. `value` is edictId or
   // edictId|target (cat / commId / faction). Labels reuse _instantiate so they
   // read exactly like the real bill.
@@ -644,9 +652,13 @@ const Senate = {
     }
     return out;
   },
-  proposeBill(value) {
-    if (this.shared) return { ok: false, msg: "The galaxy-wide agenda is authored by the Senate clerks — you can't table bills in shared play." };
-    if (!this.canBallot()) return { ok: false, msg: `Tabling a bill unlocks at Baron Tier ${SENATECFG.ballotMinTier}.` };
+  // Build the bill payload without charging / inserting — shared for local + RPC paths.
+  _ballotDraft(value) {
+    if (!this.canBallot()) {
+      if (this.shared && !(window.Cloud && Cloud.signedIn()))
+        return { ok: false, msg: "Sign in to table a bill onto the galaxy-wide agenda." };
+      return { ok: false, msg: `Tabling a bill unlocks at Baron Tier ${SENATECFG.ballotMinTier}.` };
+    }
     const [edictId, target] = String(value || "").split("|");
     const tpl = SENATE_EDICTS.find(t => t.id === edictId && t.ballot);
     if (!tpl) return { ok: false, msg: "Pick a measure to table." };
@@ -658,14 +670,43 @@ const Senate = {
     if (!up.length) return { ok: false, msg: "The docket is in recess — try again shortly." };
     const cost = this.ballotCost();
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to table this bill." };
-    s.credits -= cost;
-    const senate = this.sen();
-    const bill = { id: "bill_" + (++senate.billSeq), status: "upcoming", votesAt: up[0].votesAt + this.interval(),
-      proposedBy: "you", repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
-    for (let i = 1; i < up.length; i++) up[i].votesAt += this.interval();   // slot it in at #2; push the rest of the docket back
+    const uid = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
+    const bill = { status: "upcoming", votesAt: up[0].votesAt + this.interval(),
+      proposedBy: uid, proposedLabel: uid === "you" ? null : (Cloud.email() || "").split("@")[0] || "baron",
+      repealOf: null, issue: tpl.issue, lean: 1, type: tpl.type, title: inst.title, blurb: inst.blurb, effect: inst.effect };
+    return { ok: true, cost, bill, tpl, target: target || null, up };
+  },
+  proposeBill(value) {
+    const draft = this._ballotDraft(value);
+    if (!draft.ok) return draft;
+    if (this.shared) return this._proposeShared(draft);
+    const s = this.s(), senate = this.sen();
+    s.credits -= draft.cost;
+    const bill = Object.assign({}, draft.bill, { id: "bill_" + (++senate.billSeq), proposedBy: "you" });
+    delete bill.proposedLabel;
+    for (let i = 1; i < draft.up.length; i++) draft.up[i].votesAt += this.interval();   // slot #2; push the rest back
     senate.bills.push(bill);
     Economy.refreshNetWorth(); this._bumpRev();
-    return { ok: true, cost, bill };
+    return { ok: true, cost: draft.cost, bill };
+  },
+  // Shared play: server authors the row (everyone sees it). Returns a Promise.
+  async _proposeShared(draft) {
+    if (!(window.SenateWorld && SenateWorld.proposeBallot))
+      return { ok: false, msg: "Shared ballot isn't available yet — run docs/sql/senate_ballot.sql." };
+    const [edictId, target] = [draft.tpl.id, draft.target];
+    const r = await SenateWorld.proposeBallot(edictId, target);
+    if (!r || !r.ok) return { ok: false, msg: (r && r.msg) || "Could not table that bill." };
+    // Server charged when authoritative; otherwise deduct locally (same as lobby fees).
+    if (!r.charged) {
+      const s = this.s(); if (s.credits < draft.cost) return { ok: false, msg: "Not enough credits to table this bill." };
+      s.credits -= draft.cost;
+    } else if (typeof r.credits === "number") {
+      this.s().credits = r.credits;
+    } else {
+      this.s().credits = Math.max(0, this.s().credits - draft.cost);
+    }
+    Economy.refreshNetWorth(); this._bumpRev();
+    return { ok: true, cost: draft.cost, bill: r.bill };
   },
 
   // ===== welcome-back recap helper ========================================

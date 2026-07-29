@@ -252,6 +252,21 @@ create policy "admin writes world_senate_result" on public.world_senate_result
 > load the game in a second browser (or signed out) — the same edict and tally
 > appear. Guests can see and replay outcomes; they just can't author them.
 
+## 1d. Shared Ballot Initiative (optional)
+
+Lets signed-in barons at Baron Tier ≥ 3 **table their own bill** onto the
+galaxy-wide agenda for a fee (same Ballot Initiative UI as solo play). Run
+**`docs/sql/senate_ballot.sql`** in the SQL Editor after §1.
+
+- Adds `proposed_by` / `proposed_label` on `world_senate`
+- Creates `app_senate_ballot(edict_id, target)` (authenticated only): validates
+  the measure, rate-limits (1 open ballot / baron, 1 per 24h, max 3 player bills
+  on the docket), deducts credits when a Phase 1 `players` row exists, and
+  inserts the bill one day after the current floor vote
+- Until this SQL is applied, the Ballot Initiative form still appears for
+  eligible signed-in barons, but tabling toasts that the clerks aren't accepting
+  ballots yet
+
 ## 2. That's it
 
 The client activates automatically once rows exist: on load you'll see
@@ -274,6 +289,7 @@ generator switches off. Two browsers will show the same upcoming legislation.
 ### Remove it
 ```sql
 select cron.unschedule('senate-tick');
+drop function if exists public.app_senate_ballot(text, text);
 drop function if exists public.senate_tick();
 drop table if exists public.world_senate;
 drop table if exists public.world_senate_influence;

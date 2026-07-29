@@ -1539,7 +1539,15 @@ const UI = {
     const roster = Senate.roster(), active = Senate.activeEdicts(now), upcoming = Senate.upcomingBills(now);
     const next = upcoming[0] || null, p = Senate.pending(), tier = Senate.tier();
     const senate = Senate.sen();
-    const propBadge = b => b && b.proposedBy === "you" ? `<span class="bill-tabled" title="you tabled this bill">✎ Your ballot initiative</span>` : "";
+    const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : null;
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const propBadge = b => {
+      if (!b || !b.proposedBy) return "";
+      if (b.proposedBy === "you" || (me && b.proposedBy === me))
+        return `<span class="bill-tabled" title="you tabled this bill">✎ Your ballot initiative</span>`;
+      const who = esc(b.proposedLabel || "Baron");
+      return `<span class="bill-tabled" title="tabled by ${who}">✎ ${who}'s ballot</span>`;
+    };
 
     // ---- floor / influence ----
     const lobbyGated = !Senate.can("lobby");
@@ -1584,14 +1592,18 @@ const UI = {
 
     // ---- ballot initiative (table your own bill) ----
     let ballotPanel;
-    if (Senate.shared) {
-      ballotPanel = `<div class="panel"><h2>Ballot Initiative</h2><p class="muted-note">The galaxy-wide agenda is authored by the Senate clerks — bills can't be tabled in shared play.</p></div>`;
-    } else if (!Senate.canBallot()) {
-      ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2><p class="muted-note">Table your own legislation onto the docket at Baron Tier <b>${SENATECFG.ballotMinTier}</b> — you're Tier <b>${tier}</b>. Ascend to earn a seat at the rostrum.</p></div>`;
+    if (!Senate.canBallot()) {
+      const why = Senate.shared && !(window.Cloud && Cloud.signedIn())
+        ? `Sign in to table legislation onto the galaxy-wide agenda (Baron Tier <b>${SENATECFG.ballotMinTier}</b>+).`
+        : `Table your own legislation onto the docket at Baron Tier <b>${SENATECFG.ballotMinTier}</b> — you're Tier <b>${tier}</b>. Ascend to earn a seat at the rostrum.`;
+      ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2><p class="muted-note">${why}</p></div>`;
     } else {
       const opts = Senate.ballotOptions().map(o => `<option value="${o.value}">${o.label}</option>`).join("");
+      const sharedNote = Senate.shared
+        ? ` Put a bill of your choosing onto the <b>galaxy-wide</b> docket for <b>${Util.credits(Senate.ballotCost())}c</b> — every baron faces it. It still faces a full vote.`
+        : ` Put a bill of your choosing onto the floor for <b>${Util.credits(Senate.ballotCost())}c</b>. It still faces a full vote — table it, then lobby to carry it.`;
       ballotPanel = `<div class="panel"><h2>Ballot Initiative <small>set the agenda</small></h2>
-        <p class="muted-note">Put a bill of your choosing onto the floor for <b>${Util.credits(Senate.ballotCost())}c</b>. It still faces a full vote — table it, then lobby to carry it.</p>
+        <p class="muted-note">${sharedNote}</p>
         <div class="ballot-row">
           <select data-ballot="pick" aria-label="Bill to table">${opts}</select>
           <button class="btn btn-go" data-sn="ballot">Table it · ${Util.credits(Senate.ballotCost())}c</button>
@@ -1678,9 +1690,15 @@ const UI = {
     if (act === "want") { Senate.setWant(b.dataset.v); window.Game.requestSave(); this.renderSenate(); return; }
     if (act === "ballot") {
       const sel = this.refs.senateBody.querySelector('[data-ballot="pick"]');
+      const btn = b; btn.disabled = true;
+      const finish = r => {
+        btn.disabled = false;
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Could not table that bill.", "warn");
+        this.toast(`Tabled: ${r.bill.title}`, "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      };
       const r = Senate.proposeBill(sel ? sel.value : "");
-      if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast(`Tabled: ${r.bill.title}`, "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      if (r && typeof r.then === "function") { r.then(finish).catch(e => finish({ ok: false, msg: e.message || "Could not table that bill." })); return; }
+      finish(r);
       return;
     }
     if (act === "lobby") {
