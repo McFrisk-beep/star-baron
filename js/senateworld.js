@@ -172,6 +172,12 @@ const SenateWorld = {
   },
 
   ingest(r) {
+    let label = r.proposed_label || null;
+    // Prefer the live public handle (username / Baron #N) for the signed-in
+    // author's own bills — clears stale email local-parts from older SQL.
+    const uid = window.Cloud && Cloud.signedIn() && Cloud.user() && Cloud.user().id;
+    if (uid && r.proposed_by && String(r.proposed_by) === String(uid) && Cloud.displayName)
+      label = Cloud.displayName() || label;
     Senate.ingestSharedBill({
       id: "wb" + r.id,
       issue: r.issue, type: r.type, lean: Number(r.lean) || 1,
@@ -180,7 +186,7 @@ const SenateWorld = {
       endsAt: r.ends_at ? new Date(r.ends_at).getTime() : null,
       status: "upcoming",
       proposedBy: r.proposed_by || null,
-      proposedLabel: r.proposed_label || null,
+      proposedLabel: label,
     });
   },
 

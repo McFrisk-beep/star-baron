@@ -128,14 +128,12 @@ b { color: #fff; font-weight: 600; }
 }
 .page-bg {
   position: absolute; inset: 0; z-index: 0; overflow: hidden;
-  pointer-events: none; display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
 }
 .page-bg.hidden { display: none; }
-/* 1920×1080 design frame: source is stretched into the box; box sizes by height
-   and may overflow horizontally (centered) so mobile shows the middle. */
+/* Desktop: stretch to fill the page. Mobile: keep 16:9 by height, overflow L/R, center. */
 .page-bg-fit {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  height: 100%; width: auto; aspect-ratio: 1920 / 1080; min-width: 100%;
+  position: absolute; inset: 0; width: 100%; height: 100%;
 }
 .page-bg-fit img {
   display: block; width: 100%; height: 100%; object-fit: fill;
@@ -620,8 +618,11 @@ body.reduced .tt-dot { animation: none; }
   .layout { grid-template-columns: 1fr; height: auto; min-height: 0; align-items: start; }
   .col-main, .col-side { height: auto; min-height: 0; }
   .pages-wrap { flex: none; min-height: min(70vh, 720px); }
-  /* Mobile: keep the 1920×1080 frame sized by height — don't shrink width; overflow L/R, center shown */
-  .page-bg-fit { min-width: 0; width: auto; height: 100%; }
+  /* Mobile: size by height (16:9), don't shrink — overflow L/R, show center */
+  .page-bg-fit {
+    inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: auto; height: 100%; aspect-ratio: 1920 / 1080; min-width: 100%;
+  }
   .page { flex: none; min-height: 0; overflow: visible; padding-right: 0; }
   #page-bazaar { overflow: visible; }
   #bazaar-body { flex: none; height: auto; }
