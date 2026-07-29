@@ -34,6 +34,11 @@
     </div>
   </header>
 
+  <!-- Full-bleed page background (fixed; stretches edge-to-edge under the chrome) -->
+  <div class="page-bg hidden" id="page-bg" aria-hidden="true">
+    <div class="page-bg-fit"><img id="page-bg-img" alt="" /></div>
+  </div>
+
   <main class="layout">
     <div class="col-main">
       <nav class="floatnav" id="tabs" aria-label="Primary navigation">
@@ -55,12 +60,7 @@
         </div>
       </nav>
 
-      <!-- Page stage: shared 1920×1080 background behind the active page's UI -->
       <div class="pages-wrap">
-        <div class="page-bg hidden" id="page-bg" aria-hidden="true">
-          <div class="page-bg-fit"><img id="page-bg-img" alt="" /></div>
-        </div>
-
       <!-- HUB — background only (admin sets the image under Images → Page backgrounds) -->
       <section class="page hidden" id="page-hub"></section>
 
