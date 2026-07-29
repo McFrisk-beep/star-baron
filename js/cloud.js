@@ -13,6 +13,8 @@ const Cloud = {
   enabled: false,
   _user: null,
   _role: "player",
+  _username: null,
+  _joinN: null,
   // Admin/dev: pause server authority for this session so local state (e.g.
   // admin-set credits) is king and app_pull/app_commit stop clobbering it. Not
   // persisted — a reload re-syncs from the authoritative players row.
@@ -74,20 +76,68 @@ const Cloud = {
   user() { return this._user; },
   email() { return this._user ? this._user.email : null; },
 
-  // Role comes from the server-side `profiles` table (set by you in the
-  // dashboard) — never from anything the client can edit. Defaults to player.
+  // Role + public username come from `profiles` (server-side). Username is
+  // written only via app_set_username — never a direct client UPDATE.
   async fetchRole() {
-    if (!this.enabled || !this._user) { this._role = "player"; return this._role; }
+    if (!this.enabled || !this._user) {
+      this._role = "player"; this._username = null; this._joinN = null;
+      return this._role;
+    }
     try {
-      const { data, error } = await this.client
-        .from("profiles").select("role").eq("user_id", this._user.id).maybeSingle();
+      let data = null, error = null;
+      ({ data, error } = await this.client
+        .from("profiles").select("role,username,join_n").eq("user_id", this._user.id).maybeSingle());
+      if (error && /username|join_n|column/i.test(String(error.message || error))) {
+        ({ data, error } = await this.client
+          .from("profiles").select("role").eq("user_id", this._user.id).maybeSingle());
+      }
       if (error) throw error;
       this._role = (data && data.role) || "player";
-    } catch (e) { console.warn("[Cloud] role fetch failed:", e); this._role = "player"; }
+      this._username = (data && data.username) || null;
+      this._joinN = (data && data.join_n != null) ? Number(data.join_n) : null;
+    } catch (e) {
+      console.warn("[Cloud] role fetch failed:", e);
+      this._role = "player"; this._username = null; this._joinN = null;
+    }
     return this._role;
   },
   isAdmin() { return this.signedIn() && this._role === "admin"; },
   role() { return this.signedIn() ? this._role : "guest"; },
+  username() { return this.signedIn() ? this._username : null; },
+  joinN() { return this.signedIn() ? this._joinN : null; },
+  // Public handle: custom username, else "Baron #<join_n>", else email local-part.
+  displayName() {
+    if (!this.signedIn()) return null;
+    if (window.Username) return Username.display(this._username, this._joinN);
+    if (this._username) return this._username;
+    if (this._joinN) return "Baron #" + this._joinN;
+    const email = this.email() || "";
+    return email.split("@")[0] || "Baron";
+  },
+  defaultDisplayName() {
+    if (window.Username) return Username.defaultLabel(this._joinN);
+    return this._joinN ? "Baron #" + this._joinN : "Baron";
+  },
+  async setUsername(name) {
+    if (!this.signedIn()) throw new Error("not signed in");
+    if (window.Username) {
+      const v = Username.validate(name, { allowEmpty: true });
+      if (!v.ok) return { ok: false, msg: v.msg };
+      name = v.value;
+    }
+    try {
+      const data = await this.rpc("app_set_username", { p_username: name == null ? "" : String(name) });
+      if (!data || !data.ok) return { ok: false, msg: (data && data.error) || "Could not set username." };
+      this._username = data.username || null;
+      if (data.join_n != null) this._joinN = Number(data.join_n);
+      return { ok: true, username: this._username, join_n: this._joinN, display: data.display || this.displayName() };
+    } catch (e) {
+      if (this._isMissingRpc(e)) {
+        return { ok: false, msg: "Username isn't available yet — run docs/sql/profile_username.sql." };
+      }
+      throw e;
+    }
+  },
 
   // ---- auth --------------------------------------------------------------
   // Where confirmation / reset emails should send the player back (works on
@@ -133,6 +183,7 @@ const Cloud = {
     catch (e) { console.warn("[Cloud] signOut:", e); }
     finally {
       this._user = null; this._pendingRecovery = false;
+      this._username = null; this._joinN = null;
       this.playersReady = false; this.pullReady = false; this.pullMissing = false;
     }
   },

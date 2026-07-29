@@ -424,7 +424,16 @@ const Senate = {
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
   _vote(sn, bill, pending, ctx, now) {
     if (pending && pending.coerce && pending.coerce[sn.id]) return pending.coerce[sn.id] > 0 ? "a" : "n";  // coerced → forced vote
-    let score = (this.stanceNow(sn, bill.issue, now) / 3) * bill.lean + (ctx || 0);
+    const lean = bill.lean == null ? 1 : bill.lean;
+    let score;
+    if (bill.proposedBy && lean > 0 && lean < 1) {
+      // Player ballot: keep full stance signal, then push toward nay by how hard they pushed
+      // (lean encodes 1 − hostility from strength × duration).
+      score = (this.stanceNow(sn, bill.issue, now) / 3) + (ctx || 0);
+      score -= (1 - Math.min(1, lean)) * 1.35;
+    } else {
+      score = (this.stanceNow(sn, bill.issue, now) / 3) * lean + (ctx || 0);
+    }
     if (pending) {                                            // signed pushes (+ toward pass) — local OR pooled
       const f = pending.pushFac && pending.pushFac[this.blocNow(sn, now)]; if (f) score += f;
       const s = pending.pushSen && pending.pushSen[sn.id]; if (s) score += s;
@@ -724,10 +733,18 @@ const Senate = {
   // Binary measures (prohibitions) have no strength dial.
   ballotHasStrength(tpl) { return !!(tpl && tpl.type !== "ban" && tpl.type !== "shipBan"); },
   ballotFactors() { return SENATECFG.ballotFactors || [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]; },
+  // How hard the chamber resists a player ballot (0 = mild, ~1 = max push).
+  // Strength and duration both count; stacking them hurts more than either alone.
+  ballotHostility(factor, days, binary) {
+    const f = binary ? 1.25 : Util.clamp(Number(factor) || 1, 0.5, 2);
+    const d = Util.clamp(Math.round(Number(days) || 3), 1, 10);
+    const sev = binary ? 0.45 : (f - 0.5) / 1.5;          // 0 at 0.5× → 1 at 2×
+    const dur = (d - 1) / 9;                               // 0 at 1d → 1 at 10d
+    return Util.clamp(0.55 * sev + 0.45 * dur + 0.30 * sev * dur, 0, 1);
+  },
+  // Stored on the bill as `lean` (1 − hostility). Mild ≈ 1; max push ≈ 0.12.
   ballotLean(factor, days, binary) {
-    const sev = binary ? 0.12 : (Math.max(0.5, factor) - 0.5) * 0.25;
-    const dur = (Math.max(1, days) - 3) * 0.05;
-    return Util.clamp(1 - sev - dur, 0.15, 1);
+    return Util.clamp(1 - this.ballotHostility(factor, days, binary), 0.12, 1);
   },
   ballotCostFor(factor, days, binary) {
     const base = this.ballotCost();
@@ -749,9 +766,10 @@ const Senate = {
     });
   },
   // Chamber sentiment estimate (no player influence) for the draft parameters.
+  // Uses proposedBy so _vote applies the hostility penalty that scales with lean.
   ballotPassChance(issue, lean) {
     const roster = this.roster(), now = Date.now();
-    const bill = { id: "odds_" + issue, issue, lean: lean == null ? 1 : lean };
+    const bill = { id: "odds_" + issue + "_" + lean, issue, lean: lean == null ? 1 : lean, proposedBy: "preview" };
     const ctx = this._context(bill, now);
     let wAye = 0, wNay = 0;
     for (const sn of roster) {
@@ -817,7 +835,9 @@ const Senate = {
     const edictMs = d * this.ballotDayMs();
     const uid = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : "you";
     const bill = { status: "upcoming", votesAt: up[0].votesAt + this.interval(),
-      proposedBy: uid, proposedLabel: uid === "you" ? null : (Cloud.email() || "").split("@")[0] || "baron",
+      proposedBy: uid, proposedLabel: uid === "you" ? null
+        : ((window.Cloud && Cloud.displayName && Cloud.displayName())
+          || (Cloud.email() || "").split("@")[0] || "baron"),
       repealOf: null, issue: tpl.issue, lean, type: tpl.type, title: inst.title, blurb: inst.blurb,
       effect: inst.effect, edictMs, ballotFactor: f, ballotDays: d };
     return { ok: true, cost, bill, tpl, target: target || null, up, factor: f, days: d, binary };
@@ -853,6 +873,27 @@ const Senate = {
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost: draft.cost, bill: r.bill };
   },
+  // Find an upcoming bill by client id ("wb42") or raw world_senate id (42).
+  _upcomingById(id) {
+    const s = String(id == null ? "" : id);
+    const raw = s.replace(/^wb/, "");
+    return this.upcomingBills().find(b => b.id === s || b.id === "wb" + raw || String(b.id) === s || String(b.id) === raw) || null;
+  },
+  // Swap two upcoming bills' vote slots (keep each edict length). Used by local
+  // bump and after a shared bump RPC — poll only fetches new ids, not votes_at edits.
+  applyBallotBumpSwap(mineId, prevId) {
+    const mine = this._upcomingById(mineId), prev = this._upcomingById(prevId);
+    if (!mine || !prev || mine === prev) return false;
+    const a = mine.votesAt, ae = mine.endsAt, b = prev.votesAt, be = prev.endsAt;
+    const mineLen = (ae != null && a != null) ? ae - a : null;
+    const prevLen = (be != null && b != null) ? be - b : null;
+    mine.votesAt = b;
+    if (mineLen != null) mine.endsAt = b + mineLen;
+    prev.votesAt = a;
+    if (prevLen != null) prev.endsAt = a + prevLen;
+    this._bumpRev();
+    return true;
+  },
   // Pay to swap this upcoming ballot one slot earlier on the docket.
   bumpBill(billId) {
     const up = this.upcomingBills();
@@ -866,11 +907,9 @@ const Senate = {
     const cost = this.ballotBumpCost();
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits to move this bill up." };
     if (this.shared) return this._bumpShared(mine, cost);
-    const prev = up[i - 1];
-    const a = mine.votesAt, b = prev.votesAt;
-    mine.votesAt = b; prev.votesAt = a;
+    this.applyBallotBumpSwap(mine.id, up[i - 1].id);
     s.credits -= cost;
-    Economy.refreshNetWorth(); this._bumpRev();
+    Economy.refreshNetWorth();
     return { ok: true, cost, bill: mine };
   },
   async _bumpShared(bill, cost) {
@@ -886,8 +925,7 @@ const Senate = {
     } else {
       this.s().credits = Math.max(0, this.s().credits - cost);
     }
-    // Refresh agenda so swapped votes_at land for everyone.
-    if (SenateWorld.poll) await SenateWorld.poll();
+    // SenateWorld.bumpBallot already applied the local swap + re-render.
     Economy.refreshNetWorth(); this._bumpRev();
     return { ok: true, cost, bill };
   },

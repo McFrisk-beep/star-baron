@@ -237,9 +237,13 @@ const SenateWorld = {
         throw error;
       }
       if (!data || !data.ok) return { ok: false, msg: (data && data.error) || "Could not move that bill up." };
-      await this.poll();
+      // poll() only pulls new bill ids — apply the votes_at swap locally so the
+      // docket / "Your Ballots" #N update without a full page reload.
+      if (data.bill_id != null && data.swapped_with != null && window.Senate)
+        Senate.applyBallotBumpSwap(data.bill_id, data.swapped_with);
       if (window.UI && UI.page === "senate") UI.renderSenate();
-      return { ok: true, charged: !!data.charged, credits: data.credits, cost: data.cost };
+      return { ok: true, charged: !!data.charged, credits: data.credits, cost: data.cost,
+        bill_id: data.bill_id, swapped_with: data.swapped_with };
     } catch (e) {
       console.warn("[SenateWorld] ballot bump failed:", e.message || e);
       return { ok: false, msg: e.message || "Could not move that bill up." };

@@ -92,12 +92,30 @@ assert(!Senate.ballotHasStrength(edict("prohibition")), "prohibition has no stre
 assert(Senate.ballotHasStrength(edict("subsidy")), "subsidy has strength dial");
 assert(Senate.ballotCostFor(2, 6, false) > Senate.ballotCostFor(1, 3, false), "stronger/longer costs more");
 assert(Senate.ballotLean(2, 10, false) < Senate.ballotLean(1, 3, false), "stronger/longer leans harder");
+assert(Senate.ballotLean(0.5, 1, false) >= 0.99, "mild short ballot is near-neutral lean");
+assert(Senate.ballotHostility(2, 10, false) > Senate.ballotHostility(1, 3, false), "hostility scales with push");
+assert(Senate.ballotHostility(2, 10, false) > 0.85, "max push is near-max hostility");
+assert(Senate.ballotLean(1, 3, false) > Senate.ballotLean(1, 10, false), "longer duration alone lowers lean");
+assert(Senate.ballotLean(0.5, 5, false) > Senate.ballotLean(2, 5, false), "higher strength alone lowers lean");
 
 const floorBefore = Senate.nextBill(now);
 const creditsBefore = ctx.Game.state.credits;
+const freeOpt = (() => {
+  const taken = Senate._takenSet(Date.now());
+  return opts.find(o => {
+    const [id, key] = o.value.split("|");
+    const tpl = edict(id);
+    if (!Senate.ballotHasStrength(tpl)) return false;   // strength dial → known feeStd path
+    const chosen = tpl.scope === "cat" ? { cat: key } : tpl.scope === "comm" ? { comm: key }
+      : tpl.scope === "faction" ? { faction: key } : {};
+    const inst = Senate._instantiate(tpl, { factor: 1, label: "" }, chosen);
+    return !taken.has(Senate._effectSig(inst.effect));
+  });
+})();
+assert(freeOpt, "a free strength-dial ballot option exists to table");
 const feeStd = Senate.ballotCostFor(1, 3, false);
-r = Senate.proposeBill("subsidy|tech", 1, 3);
-assert(r.ok, "ballot: tech subsidy tabled");
+r = Senate.proposeBill(freeOpt.value, 1, 3);
+assert(r.ok, "ballot: free measure tabled (" + freeOpt.value + ")");
 assert(r.bill.proposedBy === "you", "tabled bill is stamped proposedBy:'you'");
 assert(r.bill.edictMs === 3 * Senate.ballotDayMs(), "ballot stores 3-day edict length");
 assert(ctx.Game.state.credits === creditsBefore - feeStd, "ballot fee was charged");
@@ -106,13 +124,25 @@ assert(r.bill.votesAt > floorBefore.votesAt, "tabled bill is slotted after the b
 assert(Senate.ballotWeekUsed() === 1, "weekly counter increments");
 
 // duplicate measure is refused
-r = Senate.proposeBill("subsidy|tech", 1, 3);
+r = Senate.proposeBill(freeOpt.value, 1, 3);
 assert(!r.ok && /already/i.test(r.msg), "duplicate measure refused");
 
-// weekly limit (tier 3 → 1/week) blocks a second distinct table
+// weekly limit (tier 3 → 1/week) blocks a second distinct free table
 sen.ballotWeek.n = 1;
-r = Senate.proposeBill("salvage_act", 1, 3);
-assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
+{
+  const taken = Senate._takenSet(Date.now());
+  const free = opts.find(o => {
+    const [id, key] = o.value.split("|");
+    const tpl = edict(id);
+    const chosen = tpl.scope === "cat" ? { cat: key } : tpl.scope === "comm" ? { comm: key }
+      : tpl.scope === "faction" ? { faction: key } : {};
+    const inst = Senate._instantiate(tpl, { factor: 1, label: "" }, chosen);
+    return !taken.has(Senate._effectSig(inst.effect));
+  });
+  assert(free, "a free ballot option remains for the weekly-limit test");
+  r = Senate.proposeBill(free.value, 1, 3);
+  assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
+}
 
 // bump: need a second slot — mint another upcoming bill then bump ours
 sen.ballotWeek.n = 0;
@@ -125,9 +155,11 @@ const mine = sen.bills.find(b => b.id === mineId);
 const first = up[0];
 if (mine.id === first.id) { mine.votesAt = first.votesAt + Senate.interval(); Senate._bumpRev(); }
 const bumpBefore = ctx.Game.state.credits;
+const idxBefore = Senate.upcomingBills(now).findIndex(b => b.id === mineId);
 r = Senate.bumpBill(mineId);
 assert(r.ok, "bump moves bill up");
 assert(ctx.Game.state.credits === bumpBefore - Senate.ballotBumpCost(), "bump fee charged");
+assert(Senate.upcomingBills(now).findIndex(b => b.id === mineId) === idxBefore - 1, "bump advances docket slot without reload");
 
 // shared play: guests can't table; signed-in barons go through SenateWorld
 Senate.shared = true;

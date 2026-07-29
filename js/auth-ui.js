@@ -39,6 +39,10 @@ const AuthUI = {
       newPassRules: $("auth-newpass-rules"),
       changeErr: $("auth-changepass-err"), changeOk: $("auth-changepass-ok"),
       changeSubmit: $("auth-changepass-submit"), changeBack: $("auth-changepass-back"),
+      username: $("auth-username"), usernameDefault: $("auth-username-default"),
+      usernameHint: $("auth-username-hint"),
+      usernameErr: $("auth-username-err"), usernameOk: $("auth-username-ok"),
+      usernameSave: $("auth-username-save"), usernameClear: $("auth-username-clear"),
     };
     // No backend configured → no account UI at all (pure local/guest game).
     if (!window.Cloud || !Cloud.enabled) { if (this.r.btn) this.r.btn.classList.add("hidden"); return; }
@@ -66,6 +70,12 @@ const AuthUI = {
       this.r.newPass.addEventListener("input", () => this.paintRules(this.r.newPassRules, this.r.newPass.value));
       this.r.newPass.addEventListener("keydown", e => { if (e.key === "Enter") this.doChangePassword(); });
     }
+    if (this.r.usernameSave) this.r.usernameSave.onclick = () => this.doSaveUsername();
+    if (this.r.usernameClear) this.r.usernameClear.onclick = () => this.doClearUsername();
+    if (this.r.username) {
+      this.r.username.addEventListener("keydown", e => { if (e.key === "Enter") this.doSaveUsername(); });
+      this.r.username.addEventListener("input", () => this.clearUsernameMsg());
+    }
 
     Bus.on("auth", () => {
       this.refresh();
@@ -78,12 +88,26 @@ const AuthUI = {
   refresh() {
     if (!this.r.btn) return;
     const inUser = Cloud.signedIn();
+    const label = inUser ? (Cloud.displayName() || this.short(Cloud.email())) : null;
     this.r.btn.textContent = inUser
-      ? `👤 ${this.short(Cloud.email())}`
+      ? `👤 ${this.short(label)}`
       : `👤 ${this.t("btn.signin", "Sign in")}`;
     this.r.btn.classList.toggle("signed-in", inUser);
+    if (inUser && this.r.modal && !this.r.modal.classList.contains("hidden")
+        && this.r.in && !this.r.in.classList.contains("hidden")) {
+      this.paintUsername();
+    }
   },
   short(email) { return email && email.length > 16 ? email.slice(0, 14) + "…" : (email || "account"); },
+
+  paintUsername() {
+    if (!this.r.username) return;
+    const def = Cloud.defaultDisplayName ? Cloud.defaultDisplayName() : "Baron";
+    if (this.r.usernameDefault) this.r.usernameDefault.textContent = def;
+    this.r.username.value = Cloud.username() || "";
+    this.r.username.placeholder = def;
+    this.clearUsernameMsg();
+  },
 
   open() {
     const inUser = Cloud.signedIn();
@@ -95,6 +119,7 @@ const AuthUI = {
     if (inUser) {
       this.r.who.textContent = Cloud.email() || "your account";
       this.showChangePass(!!this._fromRecovery);
+      if (!this._fromRecovery) this.paintUsername();
     } else {
       this.setMode("login");
       this.clearMsg();
@@ -232,6 +257,20 @@ const AuthUI = {
     if (!this.r.changeOk) return;
     this.r.changeOk.textContent = msg; this.r.changeOk.classList.remove("hidden");
   },
+  clearUsernameMsg() {
+    if (this.r.usernameErr) { this.r.usernameErr.classList.add("hidden"); this.r.usernameErr.textContent = ""; }
+    if (this.r.usernameOk) { this.r.usernameOk.classList.add("hidden"); this.r.usernameOk.textContent = ""; }
+  },
+  showUsernameErr(msg) {
+    if (this.r.usernameOk) { this.r.usernameOk.classList.add("hidden"); this.r.usernameOk.textContent = ""; }
+    if (!this.r.usernameErr) return;
+    this.r.usernameErr.textContent = msg; this.r.usernameErr.classList.remove("hidden");
+  },
+  showUsernameOk(msg) {
+    if (this.r.usernameErr) { this.r.usernameErr.classList.add("hidden"); this.r.usernameErr.textContent = ""; }
+    if (!this.r.usernameOk) return;
+    this.r.usernameOk.textContent = msg; this.r.usernameOk.classList.remove("hidden");
+  },
 
   setBusy(b) {
     this.busy = b;
@@ -345,6 +384,51 @@ const AuthUI = {
     } catch (e) {
       this.setChangeBusy(false);
       this.showChangeErr(this.friendly(e));
+    }
+  },
+
+  async doSaveUsername() {
+    if (this.busy || !Cloud.signedIn()) return;
+    const raw = (this.r.username && this.r.username.value) || "";
+    if (window.Username) {
+      const v = Username.validate(raw, { allowEmpty: false });
+      if (!v.ok) return this.showUsernameErr(v.msg);
+    }
+    this.clearUsernameMsg(); this.busy = true;
+    if (this.r.usernameSave) this.r.usernameSave.disabled = true;
+    try {
+      const r = await Cloud.setUsername(raw);
+      if (!r || !r.ok) { this.showUsernameErr((r && r.msg) || "Could not save username."); return; }
+      const ok = this.t("auth.usernameSaved", "Username saved.");
+      this.showUsernameOk(ok);
+      if (window.UI) UI.toast(ok, "good");
+      this.paintUsername();
+      this.refresh();
+    } catch (e) {
+      this.showUsernameErr(this.friendly(e));
+    } finally {
+      this.busy = false;
+      if (this.r.usernameSave) this.r.usernameSave.disabled = false;
+    }
+  },
+
+  async doClearUsername() {
+    if (this.busy || !Cloud.signedIn()) return;
+    this.clearUsernameMsg(); this.busy = true;
+    if (this.r.usernameClear) this.r.usernameClear.disabled = true;
+    try {
+      const r = await Cloud.setUsername("");
+      if (!r || !r.ok) { this.showUsernameErr((r && r.msg) || "Could not reset username."); return; }
+      const ok = this.t("auth.usernameCleared", "Using your default Baron # label.");
+      this.showUsernameOk(ok);
+      if (window.UI) UI.toast(ok, "good");
+      this.paintUsername();
+      this.refresh();
+    } catch (e) {
+      this.showUsernameErr(this.friendly(e));
+    } finally {
+      this.busy = false;
+      if (this.r.usernameClear) this.r.usernameClear.disabled = false;
     }
   },
 
