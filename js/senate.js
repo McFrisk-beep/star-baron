@@ -424,7 +424,16 @@ const Senate = {
   // a single senator's vote: "a" aye · "n" nay · "x" abstain
   _vote(sn, bill, pending, ctx, now) {
     if (pending && pending.coerce && pending.coerce[sn.id]) return pending.coerce[sn.id] > 0 ? "a" : "n";  // coerced → forced vote
-    let score = (this.stanceNow(sn, bill.issue, now) / 3) * bill.lean + (ctx || 0);
+    const lean = bill.lean == null ? 1 : bill.lean;
+    let score;
+    if (bill.proposedBy && lean > 0 && lean < 1) {
+      // Player ballot: keep full stance signal, then push toward nay by how hard they pushed
+      // (lean encodes 1 − hostility from strength × duration).
+      score = (this.stanceNow(sn, bill.issue, now) / 3) + (ctx || 0);
+      score -= (1 - Math.min(1, lean)) * 1.35;
+    } else {
+      score = (this.stanceNow(sn, bill.issue, now) / 3) * lean + (ctx || 0);
+    }
     if (pending) {                                            // signed pushes (+ toward pass) — local OR pooled
       const f = pending.pushFac && pending.pushFac[this.blocNow(sn, now)]; if (f) score += f;
       const s = pending.pushSen && pending.pushSen[sn.id]; if (s) score += s;
@@ -724,10 +733,18 @@ const Senate = {
   // Binary measures (prohibitions) have no strength dial.
   ballotHasStrength(tpl) { return !!(tpl && tpl.type !== "ban" && tpl.type !== "shipBan"); },
   ballotFactors() { return SENATECFG.ballotFactors || [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]; },
+  // How hard the chamber resists a player ballot (0 = mild, ~1 = max push).
+  // Strength and duration both count; stacking them hurts more than either alone.
+  ballotHostility(factor, days, binary) {
+    const f = binary ? 1.25 : Util.clamp(Number(factor) || 1, 0.5, 2);
+    const d = Util.clamp(Math.round(Number(days) || 3), 1, 10);
+    const sev = binary ? 0.45 : (f - 0.5) / 1.5;          // 0 at 0.5× → 1 at 2×
+    const dur = (d - 1) / 9;                               // 0 at 1d → 1 at 10d
+    return Util.clamp(0.55 * sev + 0.45 * dur + 0.30 * sev * dur, 0, 1);
+  },
+  // Stored on the bill as `lean` (1 − hostility). Mild ≈ 1; max push ≈ 0.12.
   ballotLean(factor, days, binary) {
-    const sev = binary ? 0.12 : (Math.max(0.5, factor) - 0.5) * 0.25;
-    const dur = (Math.max(1, days) - 3) * 0.05;
-    return Util.clamp(1 - sev - dur, 0.15, 1);
+    return Util.clamp(1 - this.ballotHostility(factor, days, binary), 0.12, 1);
   },
   ballotCostFor(factor, days, binary) {
     const base = this.ballotCost();
@@ -749,9 +766,10 @@ const Senate = {
     });
   },
   // Chamber sentiment estimate (no player influence) for the draft parameters.
+  // Uses proposedBy so _vote applies the hostility penalty that scales with lean.
   ballotPassChance(issue, lean) {
     const roster = this.roster(), now = Date.now();
-    const bill = { id: "odds_" + issue, issue, lean: lean == null ? 1 : lean };
+    const bill = { id: "odds_" + issue + "_" + lean, issue, lean: lean == null ? 1 : lean, proposedBy: "preview" };
     const ctx = this._context(bill, now);
     let wAye = 0, wNay = 0;
     for (const sn of roster) {

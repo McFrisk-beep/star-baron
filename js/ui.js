@@ -1721,7 +1721,7 @@ const UI = {
         <div class="ballot-meta">
           <span class="ballot-odds ${odds ? odds.cls : ""}">Chamber sentiment: <b>${odds ? odds.text : "—"}</b>
             ${odds ? `(~${Math.round(odds.pct * 100)}% lean to pass)` : ""}</span>
-          <span class="muted-note">Fee <b>${Util.credits(costNow)}c</b></span>
+          <span class="muted-note">Fee <b>${Util.credits(costNow)}c</b> · resistance ${(Math.round((1 - leanNow) * 100))}%</span>
         </div>
         <div class="ballot-row">
           <button class="btn btn-go" data-sn="ballot">Table it · ${Util.credits(costNow)}c</button>

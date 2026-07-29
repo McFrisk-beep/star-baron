@@ -92,6 +92,11 @@ assert(!Senate.ballotHasStrength(edict("prohibition")), "prohibition has no stre
 assert(Senate.ballotHasStrength(edict("subsidy")), "subsidy has strength dial");
 assert(Senate.ballotCostFor(2, 6, false) > Senate.ballotCostFor(1, 3, false), "stronger/longer costs more");
 assert(Senate.ballotLean(2, 10, false) < Senate.ballotLean(1, 3, false), "stronger/longer leans harder");
+assert(Senate.ballotLean(0.5, 1, false) >= 0.99, "mild short ballot is near-neutral lean");
+assert(Senate.ballotHostility(2, 10, false) > Senate.ballotHostility(1, 3, false), "hostility scales with push");
+assert(Senate.ballotHostility(2, 10, false) > 0.85, "max push is near-max hostility");
+assert(Senate.ballotLean(1, 3, false) > Senate.ballotLean(1, 10, false), "longer duration alone lowers lean");
+assert(Senate.ballotLean(0.5, 5, false) > Senate.ballotLean(2, 5, false), "higher strength alone lowers lean");
 
 const floorBefore = Senate.nextBill(now);
 const creditsBefore = ctx.Game.state.credits;
@@ -109,10 +114,22 @@ assert(Senate.ballotWeekUsed() === 1, "weekly counter increments");
 r = Senate.proposeBill("subsidy|tech", 1, 3);
 assert(!r.ok && /already/i.test(r.msg), "duplicate measure refused");
 
-// weekly limit (tier 3 → 1/week) blocks a second distinct table
+// weekly limit (tier 3 → 1/week) blocks a second distinct free table
 sen.ballotWeek.n = 1;
-r = Senate.proposeBill("salvage_act", 1, 3);
-assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
+{
+  const taken = Senate._takenSet(Date.now());
+  const free = opts.find(o => {
+    const [id, key] = o.value.split("|");
+    const tpl = edict(id);
+    const chosen = tpl.scope === "cat" ? { cat: key } : tpl.scope === "comm" ? { comm: key }
+      : tpl.scope === "faction" ? { faction: key } : {};
+    const inst = Senate._instantiate(tpl, { factor: 1, label: "" }, chosen);
+    return !taken.has(Senate._effectSig(inst.effect));
+  });
+  assert(free, "a free ballot option remains for the weekly-limit test");
+  r = Senate.proposeBill(free.value, 1, 3);
+  assert(!r.ok && /weekly/i.test(r.msg), "weekly ballot limit enforced");
+}
 
 // bump: need a second slot — mint another upcoming bill then bump ours
 sen.ballotWeek.n = 0;
