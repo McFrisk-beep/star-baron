@@ -9,10 +9,11 @@ const UI = {
   feedPaused: false,
   page: "exchange",
   bazaarTab: "shipyard",
-  fleetTab: "flagship",
+  fleetTab: "logistics",
   industriesTab: "permits",
   bzSort: { contracts: "reward", gear: "value", mercs: "power" },
   bzFilt: { contracts: "all", gear: "all" },
+  fleetSort: { ships: "name", inv: "value" },
   tutStep: 0,
   _missionSig: "",
   _reportSig: "",
@@ -101,7 +102,7 @@ const UI = {
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
     this.updateNavIndicator();
     this.applyPageBg(name);
-    if (name === "fleet") { this.showFleetTab(this.fleetTab || "flagship"); this.renderFleet(); }
+    if (name === "fleet") { this.showFleetTab(this.fleetTab || "logistics"); this.renderFleet(); }
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
     else if (name === "barons") {
@@ -123,28 +124,33 @@ const UI = {
     }
   },
 
-  // ---- Fleet subtabs (Flagship / Routes / Missions / Ships / Inventory) ---
+  // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
+  // Logistics keeps flagship, missions (+ reports) and routes together so a
+  // finished mission report is one click from the page you land on.
   showFleetTab(name) {
-    const ok = { flagship: 1, routes: 1, missions: 1, ships: 1, inventory: 1 };
-    const tab = ok[name] ? name : "flagship";
-    this.fleetTab = tab;
-    const nav = document.getElementById("fleet-tabs");
-    if (nav) for (const b of nav.querySelectorAll("[data-fleet]"))
-      b.classList.toggle("active", b.dataset.fleet === tab);
-    for (const pane of document.querySelectorAll("#page-fleet [data-fleet-pane]"))
-      pane.classList.toggle("hidden", pane.dataset.fleetPane !== tab);
+    const ok = { logistics: 1, ships: 1, inventory: 1 };
+    this.fleetTab = ok[name] ? name : "logistics";
+    this._syncSubtabs("fleet-tabs", "fleet", "#page-fleet [data-fleet-pane]", "fleetPane", this.fleetTab);
   },
 
   // ---- Industries subtabs (Permits / Extractors / Components) --------------
   showIndustriesTab(name) {
     const ok = { permits: 1, extractors: 1, components: 1 };
-    const tab = ok[name] ? name : "permits";
-    this.industriesTab = tab;
-    const nav = document.getElementById("industries-tabs");
-    if (nav) for (const b of nav.querySelectorAll("[data-ind]"))
-      b.classList.toggle("active", b.dataset.ind === tab);
-    for (const pane of document.querySelectorAll("#page-industries [data-ind-pane]"))
-      pane.classList.toggle("hidden", pane.dataset.indPane !== tab);
+    this.industriesTab = ok[name] ? name : "permits";
+    this._syncSubtabs("industries-tabs", "ind", "#page-industries [data-ind-pane]", "indPane", this.industriesTab);
+  },
+
+  // Light up one subtab button + show its pane. aria-current is what tells a
+  // screen reader which tab is active — the .active class is only paint.
+  _syncSubtabs(navId, attr, paneSel, paneKey, tab) {
+    const nav = document.getElementById(navId);
+    if (nav) for (const b of nav.querySelectorAll(`[data-${attr}]`)) {
+      const on = b.dataset[attr] === tab;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-current", on ? "page" : "false");
+    }
+    for (const pane of document.querySelectorAll(paneSel))
+      pane.classList.toggle("hidden", pane.dataset[paneKey] !== tab);
   },
 
   // Per-tab background (admin Images → Page backgrounds). Fixed full-viewport
@@ -781,14 +787,51 @@ const UI = {
     // ships
     this.refs.fleetCount.textContent = `${s.ships.length}`;
     if (!s.ships.length) this.refs.fleetShips.innerHTML = `<p class="muted-note">No ships yet. Buy transports & escorts in the Bazaar.</p>`;
-    else this.refs.fleetShips.innerHTML = s.ships.map(sh => this.shipCard(sh)).join("");
+    else {
+      const tools = s.ships.length > 1 ? this.bzTools([["Sort", "sort.ships", this.fleetSort.ships,
+        [["name", "Name"], ["cls", "Class"], ["status", "Status"], ["firepower", "Firepower"], ["cargo", "Cargo"]]]]) : "";
+      this.refs.fleetShips.innerHTML = tools +
+        [...s.ships].sort(this.shipSorter(this.fleetSort.ships)).map(sh => this.shipCard(sh)).join("");
+    }
     this.refs.fleetShips.onclick = e => this.onFleetClick(e);
+    this.refs.fleetShips.onchange = e => this.onFleetSort(e);
     // inventory
     this.renderInventory();
     // trade routes + missions + reports
     this.renderRoutes();
     this._missionSig = ""; this.renderMissions();
     this.renderReports();
+  },
+
+  // ---- fleet sorting ------------------------------------------------------
+  // ponytail: Fleet.stats() re-runs per comparison over a fleet cap of ~24
+  // ships; precompute a keyed array if hulls ever run into the hundreds.
+  shipSorter(key) {
+    const byName = (a, z) => a.name.localeCompare(z.name);
+    const stat = f => (a, z) => f(Fleet.stats(z)) - f(Fleet.stats(a)) || byName(a, z);
+    return {
+      name: byName,
+      cls: (a, z) => Fleet.shipDef(a.type).cls.localeCompare(Fleet.shipDef(z.type).cls) || byName(a, z),
+      status: (a, z) => (a.status || "").localeCompare(z.status || "") || byName(a, z),
+      firepower: stat(st => st.firepower),
+      cargo: stat(st => st.cargo),
+    }[key] || byName;
+  },
+  invSorter(key) {
+    const rIdx = id => RARITIES.findIndex(r => r.id === id);
+    const byName = (a, z) => a.name.localeCompare(z.name);
+    return {
+      value: (a, z) => z.value - a.value || byName(a, z),
+      rarity: (a, z) => rIdx(z.rarity) - rIdx(a.rarity) || byName(a, z),
+      kind: (a, z) => (a.kind || "").localeCompare(z.kind || "") || byName(a, z),
+      name: byName,
+    }[key] || byName;
+  },
+  // Reuses the Bazaar toolbar markup, so the selects carry data-bzf="sort.<key>".
+  onFleetSort(e) {
+    const sel = e.target.closest("[data-bzf]"); if (!sel) return;
+    this.fleetSort[sel.dataset.bzf.split(".")[1]] = sel.value;
+    this.renderFleet();
   },
 
   // ---- trade routes -------------------------------------------------------
@@ -972,8 +1015,10 @@ const UI = {
     this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
     let html = "";
     if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories in the Bazaar, or win them from contracts.</p>`;
+    if (inv.length > 1) html += this.bzTools([["Sort", "sort.inv", this.fleetSort.inv,
+      [["value", "Value"], ["rarity", "Rarity"], ["kind", "Type"], ["name", "Name"]]]]);
     if (inv.length) {
-      html += `<div class="buy-grid">` + inv.map(it => {
+      html += `<div class="buy-grid">` + [...inv].sort(this.invSorter(this.fleetSort.inv)).map(it => {
         const kind = ACCESSORY_KINDS[it.kind], letter = (kind && kind.label) || it.kind || "?";
         return `<div class="buy-card inv-card" style="border-color:${this.rarityColor(it.rarity)}">
           ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
@@ -1000,6 +1045,7 @@ const UI = {
       }).join("") + `</div>`;
     }
     this.refs.fleetInventory.innerHTML = html;
+    this.refs.fleetInventory.onchange = e => this.onFleetSort(e);
     this.refs.fleetInventory.onclick = e => {
       const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
       if (eq) this.openEquipForItem(eq.dataset.equip);
@@ -2045,8 +2091,7 @@ const UI = {
   renderBaronTrack() {
     const el = this.refs.baronTrack; if (!el) return;
     const cur = Economy.tierInfo(), next = Economy.nextTier(), nw = Economy.netWorth();
-    const taxPct = (cur.tax * 100).toFixed(0);
-    const perks = `<div class="bt-perks"><span>Earnings tax <b class="${cur.tax ? "down" : "up"}">${taxPct}%</b></span><span>Industry permits <b>${cur.permits}</b></span><span>Fleet cap <b>${cur.fleet}</b></span><span>Trade cap <b>${Util.credits(cur.cap)}c</b></span></div>`;
+    const perks = this.tierPerks(cur);
     let nextHtml;
     if (!next) {
       nextHtml = `<p class="muted-note">You've reached the apex — there is no higher office than <b>${cur.title}</b>.</p>`;
@@ -2068,21 +2113,28 @@ const UI = {
     const ranksBtn = el.querySelector("#baron-ranks-btn");
     if (ranksBtn) ranksBtn.onclick = () => this.openBaronRanks();
   },
+  // one perk row, shared by the ascension track and the All-ranks modal
+  tierPerks(t) {
+    return `<div class="bt-perks">
+      <span>${this.t("barons.tax")} <b class="${t.tax ? "down" : "up"}">${(t.tax * 100).toFixed(0)}%</b></span>
+      <span>${this.t("barons.permits")} <b>${t.permits}</b></span>
+      <span>${this.t("barons.fleetCap")} <b>${t.fleet}</b></span>
+      <span>${this.t("barons.tradeCap")} <b>${Util.credits(t.cap)}c</b></span>
+    </div>`;
+  },
   openBaronRanks() {
     const body = this.refs.baronRanksBody, modal = this.refs.baronRanks;
     if (!body || !modal) return;
     const curIdx = Economy.tier();
     body.innerHTML = `<div class="baron-ranks-list">` + BARON_TIERS.map((t, i) => {
       const mine = i === curIdx;
+      const gate = t.threshold
+        ? this.t("barons.fromNetWorth").replace("{c}", Util.credits(t.threshold))
+        : this.t("barons.startTitle");
       return `<div class="baron-rank-row${mine ? " current" : ""}">
-        <div class="baron-rank-head"><b>${t.title}</b>${mine ? `<span class="baron-rank-you">${this.t("barons.ranksYou", "you")}</span>` : ""}
-          <span class="muted-note">${t.threshold ? `from ${Util.credits(t.threshold)}c net worth` : "starting title"}</span></div>
-        <div class="bt-perks">
-          <span>Tax <b class="${t.tax ? "down" : "up"}">${(t.tax * 100).toFixed(0)}%</b></span>
-          <span>Permits <b>${t.permits}</b></span>
-          <span>Fleet <b>${t.fleet}</b></span>
-          <span>Trade cap <b>${Util.credits(t.cap)}c</b></span>
-        </div>
+        <div class="baron-rank-head"><b>${t.title}</b>${mine ? `<span class="baron-rank-you">${this.t("barons.ranksYou")}</span>` : ""}
+          <span class="muted-note">${gate}</span></div>
+        ${this.tierPerks(t)}
       </div>`;
     }).join("") + `</div>`;
     modal.classList.remove("hidden");

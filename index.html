@@ -102,38 +102,43 @@
       <!-- FLEET -->
       <section class="page hidden" id="page-fleet">
         <nav class="subtabs fleet-subtabs" id="fleet-tabs" aria-label="Fleet sections">
-          <button type="button" class="subtab active" data-fleet="flagship"><span data-i18n="fleet.flagship">Flagship</span></button>
-          <button type="button" class="subtab" data-fleet="routes"><span data-i18n="fleet.routes">Trade Routes</span></button>
-          <button type="button" class="subtab" data-fleet="missions"><span data-i18n="fleet.missions">Active Missions</span></button>
-          <button type="button" class="subtab" data-fleet="ships"><span data-i18n="fleet.owned">Owned Ships</span></button>
-          <button type="button" class="subtab" data-fleet="inventory"><span data-i18n="fleet.inventory">Inventory</span></button>
+          <button type="button" class="subtab active" aria-current="page" data-fleet="logistics"><span data-i18n="fleet.logistics">Logistics</span></button>
+          <button type="button" class="subtab" aria-current="false" data-fleet="ships"><span data-i18n="fleet.owned">Owned Ships</span></button>
+          <button type="button" class="subtab" aria-current="false" data-fleet="inventory"><span data-i18n="fleet.inventory">Inventory</span></button>
         </nav>
 
-        <section class="panel fleet-pane" id="fleet-main" data-fleet-pane="flagship"></section>
+        <div class="fleet-pane" data-fleet-pane="logistics">
+          <section class="panel" id="fleet-main"></section>
 
-        <section class="panel fleet-pane hidden" data-fleet-pane="routes">
-          <h2><span data-i18n="fleet.routes">Trade Routes</span> <small id="routes-sub"></small></h2>
-          <div id="fleet-routes"></div>
-        </section>
+          <section class="panel">
+            <h2 data-i18n="fleet.missions">Active Missions</h2>
+            <div id="fleet-missions"></div>
+          </section>
 
-        <section class="panel fleet-pane hidden" data-fleet-pane="missions">
-          <h2 data-i18n="fleet.missions">Active Missions</h2>
-          <div id="fleet-missions"></div>
-          <div class="hidden" id="fleet-reports-panel">
+          <section class="panel hidden" id="fleet-reports-panel">
             <h2 data-i18n="fleet.reports">Mission Reports</h2>
             <div id="fleet-reports"></div>
-          </div>
-        </section>
+          </section>
 
-        <section class="panel fleet-pane hidden" data-fleet-pane="ships">
-          <h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2>
-          <div id="fleet-ships"></div>
-        </section>
+          <section class="panel">
+            <h2><span data-i18n="fleet.routes">Trade Routes</span> <small id="routes-sub"></small></h2>
+            <div id="fleet-routes"></div>
+          </section>
+        </div>
 
-        <section class="panel fleet-pane hidden" data-fleet-pane="inventory">
-          <h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2>
-          <div id="fleet-inventory"></div>
-        </section>
+        <div class="fleet-pane hidden" data-fleet-pane="ships">
+          <section class="panel">
+            <h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2>
+            <div id="fleet-ships"></div>
+          </section>
+        </div>
+
+        <div class="fleet-pane hidden" data-fleet-pane="inventory">
+          <section class="panel">
+            <h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2>
+            <div id="fleet-inventory"></div>
+          </section>
+        </div>
       </section>
 
       <!-- STAR SYSTEMS -->
@@ -153,9 +158,9 @@
       <!-- INDUSTRIES -->
       <section class="page hidden" id="page-industries">
         <nav class="subtabs industries-subtabs" id="industries-tabs" aria-label="Industries sections">
-          <button type="button" class="subtab active" data-ind="permits"><span data-i18n="industries.permits">Permits</span></button>
-          <button type="button" class="subtab" data-ind="extractors"><span data-i18n="industries.extractors">Extractors</span></button>
-          <button type="button" class="subtab" data-ind="components"><span data-i18n="industries.components">Components</span></button>
+          <button type="button" class="subtab active" aria-current="page" data-ind="permits"><span data-i18n="industries.permits">Permits</span></button>
+          <button type="button" class="subtab" aria-current="false" data-ind="extractors"><span data-i18n="industries.extractors">Extractors</span></button>
+          <button type="button" class="subtab" aria-current="false" data-ind="components"><span data-i18n="industries.components">Components</span></button>
         </nav>
 
         <section class="panel industries-pane" data-ind-pane="permits">
