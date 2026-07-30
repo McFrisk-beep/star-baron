@@ -162,7 +162,13 @@ const Economy = {
   // (no RPC), so app_commit forces server->ships / echoes fitment back empty and
   // reverts the equip. Snapshot the live fitment before a server slice clobbers
   // s.ships / s.extractors, then re-apply it wherever the slice cleared it. A
-  // real server value (future support) wins — we only fill an emptied slot.
+  // real server value wins — we only fill an emptied slot.
+  //
+  // NOTE: this is an in-memory patch only — it cannot survive a reload, because
+  // Store.load() takes the authoritative app_bootstrap row. The actual fix is
+  // server-side (docs/sql/equip_persist.sql makes app_commit persist the fitment
+  // via app._merge_ships); this stays as the fallback for projects that haven't
+  // pasted that file yet. Don't drop the SQL merge assuming this covers it.
   _snapEquip() {
     const s = this.s(), out = { acc: {}, comp: {} };
     for (const sh of s.ships || []) if (sh && sh.uid && Array.isArray(sh.accessories) && sh.accessories.length) out.acc[sh.uid] = sh.accessories.slice();
