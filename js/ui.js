@@ -9,6 +9,8 @@ const UI = {
   feedPaused: false,
   page: "exchange",
   bazaarTab: "shipyard",
+  fleetTab: "flagship",
+  industriesTab: "permits",
   bzSort: { contracts: "reward", gear: "value", mercs: "power" },
   bzFilt: { contracts: "all", gear: "all" },
   tutStep: 0,
@@ -50,6 +52,8 @@ const UI = {
       lbPrev: $("lb-prev"), lbNext: $("lb-next"), lbPageLabel: $("lb-page-label"),
       achList: $("ach-list"), achCount: $("ach-count"),
       indList: $("industry-list"), indCount: $("ind-count"),
+      indExList: $("industry-extractors"), indExCount: $("ind-ex-count"),
+      indCompList: $("industry-components"), indCompCount: $("ind-comp-count"),
       senateBody: $("senate-body"),
       senatorModal: $("senator-modal"), senatorCard: $("senator-card"), senatorClose: $("senator-close"),
       bcFrame: $("bc-frame"), bcTitle: $("bc-title"), bcCaption: $("bc-caption"),
@@ -66,6 +70,7 @@ const UI = {
       mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
       equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
+      baronRanks: $("baron-ranks-modal"), baronRanksBody: $("baron-ranks-body"), baronRanksClose: $("baron-ranks-close"),
       route: $("route-modal"), rtTitle: $("rt-title"), rtBody: $("rt-body"), rtStart: $("rt-start"), rtCancel: $("rt-cancel"),
       survey: $("survey-modal"), svTitle: $("sv-title"), svBody: $("sv-body"), svStart: $("sv-start"), svCancel: $("sv-cancel"),
       incident: $("incident-modal"), incIcon: $("inc-icon"), incTitle: $("inc-title"), incText: $("inc-text"),
@@ -96,7 +101,7 @@ const UI = {
     for (const p of document.querySelectorAll(".page")) p.classList.toggle("hidden", p.id !== "page-" + name);
     this.updateNavIndicator();
     this.applyPageBg(name);
-    if (name === "fleet") this.renderFleet();
+    if (name === "fleet") { this.showFleetTab(this.fleetTab || "flagship"); this.renderFleet(); }
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
     else if (name === "barons") {
@@ -109,13 +114,37 @@ const UI = {
       }
     }
     else if (name === "ach") this.renderAchievements();
-    else if (name === "industries") this.renderIndustries();
+    else if (name === "industries") { this.showIndustriesTab(this.industriesTab || "permits"); this.renderIndustries(); }
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
     }
+  },
+
+  // ---- Fleet subtabs (Flagship / Routes / Missions / Ships / Inventory) ---
+  showFleetTab(name) {
+    const ok = { flagship: 1, routes: 1, missions: 1, ships: 1, inventory: 1 };
+    const tab = ok[name] ? name : "flagship";
+    this.fleetTab = tab;
+    const nav = document.getElementById("fleet-tabs");
+    if (nav) for (const b of nav.querySelectorAll("[data-fleet]"))
+      b.classList.toggle("active", b.dataset.fleet === tab);
+    for (const pane of document.querySelectorAll("#page-fleet [data-fleet-pane]"))
+      pane.classList.toggle("hidden", pane.dataset.fleetPane !== tab);
+  },
+
+  // ---- Industries subtabs (Permits / Extractors / Components) --------------
+  showIndustriesTab(name) {
+    const ok = { permits: 1, extractors: 1, components: 1 };
+    const tab = ok[name] ? name : "permits";
+    this.industriesTab = tab;
+    const nav = document.getElementById("industries-tabs");
+    if (nav) for (const b of nav.querySelectorAll("[data-ind]"))
+      b.classList.toggle("active", b.dataset.ind === tab);
+    for (const pane of document.querySelectorAll("#page-industries [data-ind-pane]"))
+      pane.classList.toggle("hidden", pane.dataset.indPane !== tab);
   },
 
   // Per-tab background (admin Images → Page backgrounds). Fixed full-viewport
@@ -1524,16 +1553,15 @@ const UI = {
     const spareComp = Components.unequipped();
     const ownedEx = Object.keys(Extractors.pool()).length;
     const ownedComp = Object.keys(Components.pool()).length;
-    const bits = [`${list.length}/${INDUSTRYCFG.maxPerPlayer} permits`];
-    if (spareEx.length) bits.push(`${spareEx.length} extractor${spareEx.length > 1 ? "s" : ""} in storage`);
-    if (spareComp.length) bits.push(`${spareComp.length} component${spareComp.length > 1 ? "s" : ""} free`);
-    this.refs.indCount.textContent = bits.join(" · ");
+    this.refs.indCount.textContent = `${list.length}/${INDUSTRYCFG.maxPerPlayer} permits`;
+    if (this.refs.indExCount) this.refs.indExCount.textContent = ownedEx ? `${spareEx.length} in storage · ${ownedEx} owned` : "";
+    if (this.refs.indCompCount) this.refs.indCompCount.textContent = ownedComp ? `${spareComp.length} free · ${ownedComp} owned` : "";
 
-    let html = "";
+    let permitsHtml = "";
     if (!list.length) {
-      html += `<p class="muted-note">No permits yet. Open the <b>Star Map</b>, click a planet, buy a permit, then install an extractor (from the Bazaar) — it produces into your tradeable stock while you're away.</p>`;
+      permitsHtml = `<p class="muted-note">No permits yet. Open the <b>Star Map</b>, click a planet, buy a permit, then install an extractor (from the Bazaar) — it produces into your tradeable stock while you're away.</p>`;
     } else {
-      html += list.map(ind => {
+      permitsHtml = list.map(ind => {
         const sys = Galaxy.get(ind.systemId), planet = sys && sys.planets[ind.planetIdx];
         const where = planet ? planet.name : ind.systemId;
         const st = Industries.status(ind);
@@ -1553,37 +1581,41 @@ const UI = {
         return `<div class="industry">${head}<div class="ind-foot">${ex ? ex.name + " → " : ""}≈ <b>${b.net}</b> ${name}/12h <span class="muted-note">(${(b.rate * 100).toFixed(0)}% tax)</span>${edictNote} · next ${next} · ${owner}</div>${warn}${this._exCompRow(ex)}</div>`;
       }).join("");
     }
+    this.refs.indList.innerHTML = permitsHtml;
 
-    // Always show storage — bazaar extractors/components live here, not in Fleet inventory.
-    html += `<div class="inv-sub">Extractor storage</div>`;
+    let exHtml = "";
     if (!ownedEx) {
-      html += `<p class="muted-note">No extractors owned. Buy them in the <b>Bazaar → Extractors</b>.</p>`;
+      exHtml = `<p class="muted-note">No extractors owned. Buy them in the <b>Bazaar → Extractors</b>.</p>`;
     } else if (!spareEx.length) {
-      html += `<p class="muted-note">All extractors are installed. Fit components on a permit above, or remove one from a planet to free it.</p>`;
+      exHtml = `<p class="muted-note">All extractors are installed. Fit components on a permit, or remove one from a planet to free it.</p>`;
     } else {
-      html += spareEx.map(ex =>
+      exHtml = spareEx.map(ex =>
         `<div class="industry"><div class="ind-head"><b>${ex.name}</b><span class="ind-stat">in storage</span></div>
           <div class="ind-foot">${Extractors.describe(ex)}</div>${this._exCompRow(ex)}
           <div class="ind-foot">Install on a planet permit via the <b>Star Map</b>.</div></div>`
       ).join("");
     }
+    if (this.refs.indExList) this.refs.indExList.innerHTML = exHtml;
 
-    html += `<div class="inv-sub">Component storage</div>`;
+    let compHtml = "";
     if (!ownedComp) {
-      html += `<p class="muted-note">No components owned. Buy them in the <b>Bazaar → Extractors</b>, then fit them to an extractor above.</p>`;
+      compHtml = `<p class="muted-note">No components owned. Buy them in the <b>Bazaar → Extractors</b>, then fit them to an extractor.</p>`;
     } else if (!spareComp.length) {
-      html += `<p class="muted-note">All components are fitted. Detach one (✕) to free a slot.</p>`;
+      compHtml = `<p class="muted-note">All components are fitted. Detach one (✕) to free a slot.</p>`;
     } else {
-      html += spareComp.map(c =>
+      compHtml = spareComp.map(c =>
         `<div class="item" style="border-left-color:${Components.rarity(c.rarity).color}">
           <div class="item-top"><b>${c.name}</b><span class="rar" style="color:${Components.rarity(c.rarity).color}">${Components.rarity(c.rarity).label}</span></div>
           <div class="item-stat">${Components.describe(c)}</div>
-          <div class="item-acts"><span class="muted-note">use Fit on an extractor above</span></div></div>`
+          <div class="item-acts"><span class="muted-note">use Fit on an extractor</span></div></div>`
       ).join("");
     }
+    if (this.refs.indCompList) this.refs.indCompList.innerHTML = compHtml;
 
-    this.refs.indList.innerHTML = html;
-    this.refs.indList.onclick = e => this.onIndustriesClick(e);
+    const onInd = e => this.onIndustriesClick(e);
+    this.refs.indList.onclick = onInd;
+    if (this.refs.indExList) this.refs.indExList.onclick = onInd;
+    if (this.refs.indCompList) this.refs.indCompList.onclick = onInd;
   },
 
   onIndustriesClick(e) {
@@ -1596,7 +1628,7 @@ const UI = {
     const att = e.target.closest("[data-ind-attach]");
     if (att) {
       const exUid = att.dataset.indAttach;
-      const sel = this.refs.indList.querySelector(`select[data-comp-sel="${exUid}"]`);
+      const sel = document.querySelector(`#page-industries select[data-comp-sel="${exUid}"]`);
       if (!sel) return;
       const r = Extractors.attachComponent(exUid, sel.value);
       if (!r.ok) return this.toast(r.msg, "warn");
@@ -2014,7 +2046,7 @@ const UI = {
     const el = this.refs.baronTrack; if (!el) return;
     const cur = Economy.tierInfo(), next = Economy.nextTier(), nw = Economy.netWorth();
     const taxPct = (cur.tax * 100).toFixed(0);
-    const perks = `<div class="bt-perks"><span>Earnings tax <b class="${cur.tax ? "down" : "up"}">${taxPct}%</b></span><span>Industry permits <b>${cur.permits}</b></span><span>Fleet cap <b>${cur.fleet}</b></span></div>`;
+    const perks = `<div class="bt-perks"><span>Earnings tax <b class="${cur.tax ? "down" : "up"}">${taxPct}%</b></span><span>Industry permits <b>${cur.permits}</b></span><span>Fleet cap <b>${cur.fleet}</b></span><span>Trade cap <b>${Util.credits(cur.cap)}c</b></span></div>`;
     let nextHtml;
     if (!next) {
       nextHtml = `<p class="muted-note">You've reached the apex — there is no higher office than <b>${cur.title}</b>.</p>`;
@@ -2027,11 +2059,33 @@ const UI = {
         <button class="btn ${ready ? "btn-go" : ""}" id="baron-ascend" ${ready ? "" : "disabled"}>${ready ? `Ascend to ${next.title} ▸` : `${Util.credits(Math.max(0, next.threshold - nw))}c to go`}</button>
       </div>`;
     }
-    el.innerHTML = `<h2>Your Title <small>${cur.title}</small></h2>
+    el.innerHTML = `<h2 class="bt-title-row"><span>${this.t("barons.yourTitle", "Your Title")} <small>${cur.title}</small></span>
+      <button type="button" class="btn btn-mini" id="baron-ranks-btn">${this.t("barons.ranksBtn", "All ranks")}</button></h2>
       <p class="muted-note">Ascending a tier keeps everything you own — stocks, industries, ships, senator ties — and grants a bigger empire, at the price of a steeper tax on all earnings.</p>
       ${perks}${nextHtml}`;
     const btn = el.querySelector("#baron-ascend");
     if (btn) btn.onclick = () => this.doAscend();
+    const ranksBtn = el.querySelector("#baron-ranks-btn");
+    if (ranksBtn) ranksBtn.onclick = () => this.openBaronRanks();
+  },
+  openBaronRanks() {
+    const body = this.refs.baronRanksBody, modal = this.refs.baronRanks;
+    if (!body || !modal) return;
+    const curIdx = Economy.tier();
+    body.innerHTML = `<div class="baron-ranks-list">` + BARON_TIERS.map((t, i) => {
+      const mine = i === curIdx;
+      return `<div class="baron-rank-row${mine ? " current" : ""}">
+        <div class="baron-rank-head"><b>${t.title}</b>${mine ? `<span class="baron-rank-you">${this.t("barons.ranksYou", "you")}</span>` : ""}
+          <span class="muted-note">${t.threshold ? `from ${Util.credits(t.threshold)}c net worth` : "starting title"}</span></div>
+        <div class="bt-perks">
+          <span>Tax <b class="${t.tax ? "down" : "up"}">${(t.tax * 100).toFixed(0)}%</b></span>
+          <span>Permits <b>${t.permits}</b></span>
+          <span>Fleet <b>${t.fleet}</b></span>
+          <span>Trade cap <b>${Util.credits(t.cap)}c</b></span>
+        </div>
+      </div>`;
+    }).join("") + `</div>`;
+    modal.classList.remove("hidden");
   },
   async doAscend() {
     if (!Economy.canPrestige()) return;
@@ -2258,6 +2312,16 @@ const UI = {
       const b = e.target.closest("[data-comms]"); if (!b) return;
       this.showCommsTab(b.dataset.comms);
     };
+    const fleetTabs = document.getElementById("fleet-tabs");
+    if (fleetTabs) fleetTabs.onclick = e => {
+      const b = e.target.closest("[data-fleet]"); if (!b) return;
+      this.showFleetTab(b.dataset.fleet);
+    };
+    const indTabs = document.getElementById("industries-tabs");
+    if (indTabs) indTabs.onclick = e => {
+      const b = e.target.closest("[data-ind]"); if (!b) return;
+      this.showIndustriesTab(b.dataset.ind);
+    };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
@@ -2274,6 +2338,8 @@ const UI = {
     r.mmCancel.onclick = () => { this._pending = null; r.mission.classList.add("hidden"); };
     r.mmLaunch.onclick = () => this.launchMission();
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
+    if (r.baronRanksClose) r.baronRanksClose.onclick = () => r.baronRanks.classList.add("hidden");
+    if (r.baronRanks) r.baronRanks.onclick = e => { if (e.target === r.baronRanks) r.baronRanks.classList.add("hidden"); };
     r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
     r.incClose.onclick = () => r.incident.classList.add("hidden");
     r.rtStart.onclick = async () => {
