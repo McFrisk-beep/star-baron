@@ -101,12 +101,39 @@
 
       <!-- FLEET -->
       <section class="page hidden" id="page-fleet">
-        <div class="panel" id="fleet-main"></div>
-        <div class="panel"><h2><span data-i18n="fleet.routes">Trade Routes</span> <small id="routes-sub"></small></h2><div id="fleet-routes"></div></div>
-        <div class="panel"><h2 data-i18n="fleet.missions">Active Missions</h2><div id="fleet-missions"></div></div>
-        <div class="panel hidden" id="fleet-reports-panel"><h2 data-i18n="fleet.reports">Mission Reports</h2><div id="fleet-reports"></div></div>
-        <div class="panel"><h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2><div id="fleet-ships"></div></div>
-        <div class="panel"><h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2><div id="fleet-inventory"></div></div>
+        <nav class="subtabs fleet-subtabs" id="fleet-tabs" aria-label="Fleet sections">
+          <button type="button" class="subtab active" data-fleet="flagship"><span data-i18n="fleet.flagship">Flagship</span></button>
+          <button type="button" class="subtab" data-fleet="routes"><span data-i18n="fleet.routes">Trade Routes</span></button>
+          <button type="button" class="subtab" data-fleet="missions"><span data-i18n="fleet.missions">Active Missions</span></button>
+          <button type="button" class="subtab" data-fleet="ships"><span data-i18n="fleet.owned">Owned Ships</span></button>
+          <button type="button" class="subtab" data-fleet="inventory"><span data-i18n="fleet.inventory">Inventory</span></button>
+        </nav>
+
+        <section class="panel fleet-pane" id="fleet-main" data-fleet-pane="flagship"></section>
+
+        <section class="panel fleet-pane hidden" data-fleet-pane="routes">
+          <h2><span data-i18n="fleet.routes">Trade Routes</span> <small id="routes-sub"></small></h2>
+          <div id="fleet-routes"></div>
+        </section>
+
+        <section class="panel fleet-pane hidden" data-fleet-pane="missions">
+          <h2 data-i18n="fleet.missions">Active Missions</h2>
+          <div id="fleet-missions"></div>
+          <div class="hidden" id="fleet-reports-panel">
+            <h2 data-i18n="fleet.reports">Mission Reports</h2>
+            <div id="fleet-reports"></div>
+          </div>
+        </section>
+
+        <section class="panel fleet-pane hidden" data-fleet-pane="ships">
+          <h2><span data-i18n="fleet.owned">Owned Ships</span> <small id="fleet-count"></small></h2>
+          <div id="fleet-ships"></div>
+        </section>
+
+        <section class="panel fleet-pane hidden" data-fleet-pane="inventory">
+          <h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2>
+          <div id="fleet-inventory"></div>
+        </section>
       </section>
 
       <!-- STAR SYSTEMS -->
@@ -125,11 +152,27 @@
 
       <!-- INDUSTRIES -->
       <section class="page hidden" id="page-industries">
-        <div class="panel">
+        <nav class="subtabs industries-subtabs" id="industries-tabs" aria-label="Industries sections">
+          <button type="button" class="subtab active" data-ind="permits"><span data-i18n="industries.permits">Permits</span></button>
+          <button type="button" class="subtab" data-ind="extractors"><span data-i18n="industries.extractors">Extractors</span></button>
+          <button type="button" class="subtab" data-ind="components"><span data-i18n="industries.components">Components</span></button>
+        </nav>
+
+        <section class="panel industries-pane" data-ind-pane="permits">
           <h2><span data-i18n="industries.title">Industries</span> <small id="ind-count"></small></h2>
           <p class="sys-legend" data-i18n="industries.legend">Build factories, mines &amp; farms on planets from the <b>Star Map</b> (open a system, pick a planet). They produce that planet's commodity slowly into your tradeable stock while you're away. Licences depend on your standing with the controlling faction; strikes &amp; faction wars can halt a line.</p>
           <div id="industry-list"></div>
-        </div>
+        </section>
+
+        <section class="panel industries-pane hidden" data-ind-pane="extractors">
+          <h2><span data-i18n="industries.extractors">Extractors</span> <small id="ind-ex-count"></small></h2>
+          <div id="industry-extractors"></div>
+        </section>
+
+        <section class="panel industries-pane hidden" data-ind-pane="components">
+          <h2><span data-i18n="industries.components">Components</span> <small id="ind-comp-count"></small></h2>
+          <div id="industry-components"></div>
+        </section>
       </section>
 
       <!-- SENATE / SPACE POLITICS -->
@@ -308,6 +351,16 @@
   <div class="modal-backdrop hidden" id="equip-modal">
     <div class="modal"><h3 id="eq-title">Equip Accessory</h3><div id="eq-body"></div>
       <button class="btn" id="eq-cancel">Cancel</button></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="baron-ranks-modal">
+    <div class="modal modal-wide">
+      <h3 data-i18n="barons.ranksTitle">Baron Ranks</h3>
+      <div id="baron-ranks-body" class="baron-ranks-body"></div>
+      <div class="settings-actions">
+        <button class="btn btn-go" id="baron-ranks-close" data-i18n="barons.ranksClose">Close</button>
+      </div>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="incident-modal">
