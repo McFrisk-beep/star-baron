@@ -359,9 +359,12 @@ const UI = {
     }
     const b = e.target.closest("[data-act]"); if (!b || b.disabled) return;
     const [arc, ...rest] = b.dataset.act.split(":");
-    const r = Story.act(arc, rest.join(":"));
-    if (!r.ok && r.msg) return this.toast(r.msg, "warn");
-    this.renderDispatches(); this.updateHeader();
+    b.disabled = true;   // prevent double-tap while Phase 3 survey RPC settles
+    Promise.resolve(Story.act(arc, rest.join(":"))).then(r => {
+      if (r && !r.ok && r.msg) this.toast(r.msg, "warn");
+      this.renderDispatches(); this.updateHeader();
+      if (this.page === "fleet") this.renderFleet();
+    }).catch(() => { this.renderDispatches(); });
   },
 
   // Unread indicator on the Comms tab (chat + news arrive while you're elsewhere).
@@ -2318,8 +2321,15 @@ const UI = {
     Bus.on("achievement", a => { this.toast(`★ ${a.name} — ${a.desc}`, "good", 4500); if (this.page === "ach") this.renderAchievements(); window.Game.audio("good"); });
     Bus.on("missionDone", r => {
       if (window.Game._booting) return;
-      this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`, r.success ? "good" : "bad", 5000);
-      if (this.page === "fleet") this.renderFleet(); this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
+      this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"} — report in Dispatches ▸`, r.success ? "good" : "bad", 5000);
+      if (this.page === "fleet") this.renderFleet();
+      if (this.page === "comms" && this.commsTab === "dispatches") this.renderDispatches();
+      this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
+    });
+    Bus.on("missionDebrief", () => {
+      if (window.Game._booting) return;
+      this.bumpComms();
+      if (this.page === "comms") this.showCommsTab("dispatches");
     });
     Bus.on("surveyDebrief", () => {
       if (window.Game._booting) return;

@@ -18,7 +18,8 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
 
 | RPC | Authority |
 |---|---|
-| `app_pull` | Banks routes / industries / expeditions / listings; also runs mission resolve. Server clock only. Caps offline window at 7 days. |
+| `app_pull` | Banks routes / industries / listings; parks matured expeditions at **debrief** (no auto-loot); also runs mission resolve. Server clock only. Caps offline window at 7 days. |
+| `app_survey_debrief` | Closes a parked survey from Dispatches (`leave` / `push_ok` / `push_fail`). Bounded credit stubs + ship release. |
 | `app_prestige` | Recomputes net worth (spot prices + catalog fleet + item values); bumps tier if ≥ next threshold |
 | `app_route_start` / `app_route_stop` | Assign/free route ships **server-side** (sets `'trading'` status). Routes are fully server-owned; `app_commit` forces the `routes` slice from the server. |
 | `app_buy_extractor` / `app_buy_component` | Recompute the seeded offer by id, charge credits, add the **server-authored** extractor/component. `app_commit` forces the component pool and keeps only server-owned extractors. |
@@ -63,7 +64,8 @@ procedurally-generated planet without porting galaxy generation to SQL.
 - Route cargo/speed uses **catalog** ship stats (accessories ignored).
 - Route events are seeded; hull damage from route events is skipped.
 - Industry war/strike overlays ignored (production mult = 1); tax ignores Senate.
-- Expedition gear/seam outcomes pay a **credit stub** (no item gen / local events).
+- Survey trips **park at debrief** on pull; the player finishes them in Dispatches.
+  `app_survey_debrief` pays a **credit stub** (no item gen / local events).
 
 ## Client behaviour
 

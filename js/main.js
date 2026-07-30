@@ -482,7 +482,12 @@ const Game = {
         console.warn("[Game] app_pull failed:", (r && r.error) || r);
         return null;
       }
-      return Economy.applyPull(r) || {};
+      const away = Economy.applyPull(r) || {};
+      // Parked surveys / just-resolved contracts → open Dispatches threads.
+      if (window.Expeditions && Expeditions.openPendingDebriefs) Expeditions.openPendingDebriefs();
+      if (window.MissionStory && MissionStory.openPending)
+        MissionStory.openPending(away.resolved || []);
+      return away;
     } catch (e) {
       if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
         Cloud.pullMissing = true;
@@ -500,7 +505,7 @@ const Game = {
     if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
     if ((s.routes || []).some(r => now >= (r.nextAt || 0))) return true;
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
-    if ((s.expeditions || []).some(e => !e.resolved && now >= e.startedAt + e.etaMs)) return true;
+    if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;
     return false;
   },

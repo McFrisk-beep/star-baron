@@ -83,9 +83,14 @@ const Expeditions = {
 
   // Mature finished survey trips into Dispatches debriefs (not auto-loot).
   // Returns stub reports for the "while you were away" recap ("awaiting debrief").
-  // Phase 3: logged-in surveys still resolve in app_pull when softIncomeLocal is false.
+  // Phase 3 live: app_pull parks expeditions at debrief; openPendingDebriefs()
+  // opens the Dispatches threads. Guests still mature here.
   resolve(now = Date.now()) {
-    if (window.Routes && !Routes.softIncomeLocal()) return [];
+    if (window.Routes && !Routes.softIncomeLocal()) {
+      // Server already parked matured trips — just open any missing threads.
+      this.openPendingDebriefs(now);
+      return [];
+    }
     const s = this.s(); const out = [];
     for (const exp of this.list()) {
       if (exp.resolved || exp.debrief || now < exp.startedAt + exp.etaMs) continue;
@@ -109,7 +114,23 @@ const Expeditions = {
       s.expeditions = this.list().filter(e => !e.resolved);
       for (const r of out) Bus.emit("surveyDone", r);
     }
+    this.openPendingDebriefs(now);
     return out;
+  },
+
+  // Open SurveyStory threads for parked debriefs that don't have one yet
+  // (after app_pull, or if begin() was skipped during boot).
+  openPendingDebriefs(now = Date.now()) {
+    if (!window.SurveyStory || !window.Story) return 0;
+    let n = 0;
+    for (const exp of this.list()) {
+      if (!exp.debrief || exp.resolved) continue;
+      const id = "survey_" + exp.id;
+      const prog = Story.s() && Story.s().prog[id];
+      if (prog) continue;
+      if (SurveyStory.begin(exp, now)) n++;
+    }
+    return n;
   },
 };
 
