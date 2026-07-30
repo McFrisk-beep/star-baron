@@ -13,6 +13,9 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
 3. `docs/sql/phase2_missions_bazaar.sql` — if not already applied
 4. **`docs/sql/phase3_pull_prestige.sql`** ← this phase (safe to re-run;
    `create or replace`)
+5. **`docs/sql/equip_persist.sql`** ← required, and must come **after** step 4
+   (it replaces `app_commit` so ship accessories persist — see
+   [Equip persistence](#equip-persistence-fitment-survives-a-reload))
 
 ## Trust model
 
@@ -58,6 +61,41 @@ type, but production magnitude stays capped and the commodity is bounded to a
 **purchased** extractor's scope. The server can't fully validate a
 procedurally-generated planet without porting galaxy generation to SQL.
 
+### Equip persistence (fitment survives a reload)
+
+`docs/sql/equip_persist.sql` fixes a long-standing bug: **gear equipped to a ship
+came unequipped after a refresh.**
+
+Equipping is a client-side action (`Fleet.equip` just pushes an item uid onto
+`ship.accessories` — there's no RPC), but `app_commit` forced the whole `ships`
+array from the server row, so the fitment array was discarded on every autosave
+and the players row kept `accessories: []` forever. `Economy._restoreEquip`
+patched it back **in memory**, which is why the equip looked fine until the next
+reload — when `app_bootstrap` returned the server row and the gear popped back
+into inventory.
+
+`app_commit` now merges ships the way it already merges extractors: the server
+keeps the roster and every field it owns (uid / type / cls / name / status / dmg /
+mercenary / expiresAt / retrieveCost) and **only** the fitment array comes from
+the client, validated by `app._merge_ships` so it can't forge stats:
+
+| Rule | Blocks |
+|---|---|
+| uid must exist in the **server's** item pool | fitting gear you don't own |
+| de-duplicated within a ship | stacking one item for 2× stats |
+| claimed fleet-wide, first ship wins | cloning one item onto N ships |
+| truncated to `app._ship_slots(type)` | exceeding the hull's slot count |
+
+An **empty** client array is honoured, so an unequip still persists. A ship the
+client didn't send keeps its stored fitment, and a client-only ship is dropped —
+the roster stays server-owned. There's deliberately **no idle gate**: `app_pull`'s
+mission/route math ignores accessories entirely (`app._ship_cargo`), so refitting
+a busy ship buys no advantage, and gating it would wipe gear mid-mission.
+
+`app._ship_slots` duplicates the slot counts from `SHIP_CATALOG` (js/data.js);
+`tools/check_equip_persist.js` asserts the two stay in lockstep, so adding or
+retuning a hull fails the check rather than silently truncating fitment.
+
 ### Simplifications (ponytail)
 
 - Route cargo/speed uses **catalog** ship stats (accessories ignored).
@@ -80,9 +118,15 @@ procedurally-generated planet without porting galaxy generation to SQL.
 ```bash
 for f in js/*.js; do node --check "$f"; done
 node tools/check_phase3_pull_prestige.js
+node tools/check_equip_persist.js
+node tools/check_equip_sync.js
 ```
+
+In the app: equip an accessory to a ship, hard-refresh, and confirm it's still
+fitted (the ship's slot count stays `1/4`, not `0/4`).
 
 ## Re-paste note
 
 Safe to re-run. Replaces `app_commit`, `app.result_slice`, and adds
-`app_pull` / `app_prestige`.
+`app_pull` / `app_prestige`. `equip_persist.sql` replaces `app_commit` again, so
+always paste it **after** `phase3_pull_prestige.sql`.
