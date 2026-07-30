@@ -520,192 +520,83 @@ begin
 end;
 $$;
 
--- Expeditions: seeded outcomes. Credits / dry / hazard / faction; gear→credit stub; seam→dry.
+-- Expeditions: mature trips park at debrief — player finishes them in Dispatches
+-- (SurveyStory). Payouts apply via app_survey_debrief, not auto-loot here.
 create or replace function app._catchup_expeditions(p_state jsonb, p_now_ms bigint)
 returns jsonb
 language plpgsql immutable as $$
 declare
   st jsonb := p_state;
   kept jsonb := '[]'::jsonb;
-  reports jsonb := coalesce(st->'reports', '[]'::jsonb);
   out_reps jsonb := '[]'::jsonb;
   exp jsonb;
   sh jsonb;
   ships jsonb;
-  seed bigint;
-  roll double precision;
-  kind text;
-  band text;
-  amt int;
-  credits double precision;
   report jsonb;
-  danger double precision;
-  destroy_p double precision;
-  dmg double precision;
-  fac text;
-  rep jsonb;
-  surveyed jsonb;
+  sys_name text;
 begin
   ships := coalesce(st->'ships', '[]'::jsonb);
-  credits := coalesce((st->>'credits')::float8, 0);
-  surveyed := coalesce(st->'surveyed', '{}'::jsonb);
 
   for exp in select value from jsonb_array_elements(coalesce(st->'expeditions', '[]'::jsonb)) loop
-    if coalesce((exp->>'resolved')::boolean, false)
-       or p_now_ms < coalesce((exp->>'startedAt')::bigint, 0)
-                    + coalesce((exp->>'etaMs')::float8, 0) then
+    if coalesce((exp->>'resolved')::boolean, false) then
+      continue;  -- drop resolved leftovers
+    end if;
+
+    if p_now_ms < coalesce((exp->>'startedAt')::bigint, 0)
+                  + coalesce((exp->>'etaMs')::float8, 0) then
       kept := kept || jsonb_build_array(exp);
       continue;
     end if;
 
+    -- Already awaiting player choice — keep parked.
+    if coalesce((exp->>'debrief')::boolean, false) then
+      kept := kept || jsonb_build_array(exp);
+      continue;
+    end if;
+
+    sys_name := coalesce(exp->>'sysId', 'an outpost');
     select value into sh from jsonb_array_elements(ships) x(value)
       where x.value->>'uid' = exp->>'shipUid' limit 1;
 
-    report := jsonb_build_object(
+    if sh is null then
+      -- Lost contact: close without a player thread.
+      report := jsonb_build_object(
+        'uid', exp->>'id', 'type', 'survey',
+        'title', 'Survey — ' || sys_name, 'sysName', sys_name,
+        'success', false, 'ts', p_now_ms,
+        'credits', 0, 'items', '[]'::jsonb,
+        'lost', '[]'::jsonb, 'damaged', '[]'::jsonb,
+        'summary', 'Lost contact with the survey ship near ' || sys_name || '.'
+      );
+      st := jsonb_set(st, '{reports}',
+        jsonb_build_array(report) || coalesce(st->'reports', '[]'::jsonb));
+      st := jsonb_set(st, '{surveyed}',
+        jsonb_set(coalesce(st->'surveyed', '{}'::jsonb), array[exp->>'sysId'], to_jsonb(p_now_ms)));
+      out_reps := out_reps || jsonb_build_array(report);
+      continue;
+    end if;
+
+    exp := jsonb_set(exp, '{debrief}', 'true'::jsonb);
+    ships := (
+      select coalesce(jsonb_agg(
+        case when x.value->>'uid' = exp->>'shipUid'
+          then jsonb_set(x.value, '{status}', '"debrief"') else x.value end
+      ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
+    );
+    kept := kept || jsonb_build_array(exp);
+    out_reps := out_reps || jsonb_build_array(jsonb_build_object(
       'uid', exp->>'id', 'type', 'survey',
-      'title', 'Survey — ' || coalesce(exp->>'sysId', 'outpost'),
-      'sysName', coalesce(exp->>'sysId', 'outpost'),
+      'title', 'Survey — ' || sys_name, 'sysName', sys_name,
       'success', true, 'ts', p_now_ms,
       'credits', 0, 'items', '[]'::jsonb,
-      'lost', '[]'::jsonb, 'damaged', '[]'::jsonb, 'summary', ''
-    );
-
-    if sh is null then
-      report := jsonb_set(report, '{success}', 'false'::jsonb);
-      report := jsonb_set(report, '{summary}',
-        to_jsonb(('Lost contact with the survey ship near ' || coalesce(exp->>'sysId', 'an outpost') || '.')::text));
-    else
-      band := case when coalesce((exp->>'far')::boolean, false) then 'far' else 'near' end;
-      danger := least(1.0, greatest(0.0, coalesce((exp->>'danger')::float8, 0.2)));
-      seed := coalesce((exp->>'rngSeed')::bigint,
-        market.seed_hash('cosmocrat-market-v1', 'exped', exp->>'id', (exp->>'startedAt')));
-      roll := market.u01(seed, 0);
-
-      -- Weights near: gear3 seam3 credits3 faction2 hazard1 dry4 = 16
-      -- far: gear4 seam3 credits3 faction2 hazard4 dry2 = 18
-      if band = 'far' then
-        if roll < 4.0/18 then kind := 'gear';
-        elsif roll < 7.0/18 then kind := 'seam';
-        elsif roll < 10.0/18 then kind := 'credits';
-        elsif roll < 12.0/18 then kind := 'faction';
-        elsif roll < 16.0/18 then kind := 'hazard';
-        else kind := 'dry'; end if;
-      else
-        if roll < 3.0/16 then kind := 'gear';
-        elsif roll < 6.0/16 then kind := 'seam';
-        elsif roll < 9.0/16 then kind := 'credits';
-        elsif roll < 11.0/16 then kind := 'faction';
-        elsif roll < 12.0/16 then kind := 'hazard';
-        else kind := 'dry'; end if;
-      end if;
-
-      if kind in ('gear', 'seam') then
-        -- Simplified: gear/seam → modest credit stub (no item gen / local events)
-        amt := case when band = 'far' then 800 + floor(market.u01(seed, 1) * 1201)::int
-                    else 200 + floor(market.u01(seed, 1) * 501)::int end;
-        credits := credits + amt;
-        report := jsonb_set(report, '{credits}', to_jsonb(amt));
-        report := jsonb_set(report, '{summary}',
-          to_jsonb(('Salvaged data near ' || coalesce(exp->>'sysId', 'an outpost') || '.')::text));
-        ships := (
-          select coalesce(jsonb_agg(
-            case when x.value->>'uid' = exp->>'shipUid'
-              then jsonb_set(x.value, '{status}', '"idle"') else x.value end
-          ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
-        );
-      elsif kind = 'credits' then
-        if band = 'far' then
-          amt := 1500 + floor(market.u01(seed, 1) * 4501)::int;
-        else
-          amt := 300 + floor(market.u01(seed, 1) * 901)::int;
-        end if;
-        credits := credits + amt;
-        report := jsonb_set(report, '{credits}', to_jsonb(amt));
-        report := jsonb_set(report, '{summary}',
-          to_jsonb(('Salvaged and sold data — +' || amt::text || 'c.')::text));
-        ships := (
-          select coalesce(jsonb_agg(
-            case when x.value->>'uid' = exp->>'shipUid'
-              then jsonb_set(x.value, '{status}', '"idle"') else x.value end
-          ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
-        );
-      elsif kind = 'faction' then
-        fac := coalesce(exp->>'faction', 'free_trade');
-        amt := 3 + round(danger * 4)::int;
-        rep := app._rep_change(coalesce(st->'reputation', '{}'::jsonb), fac, amt);
-        st := jsonb_set(st, '{reputation}', rep);
-        report := jsonb_set(report, '{summary}',
-          to_jsonb(('Recovered a faction cache — standing +' || amt::text || '.')::text));
-        ships := (
-          select coalesce(jsonb_agg(
-            case when x.value->>'uid' = exp->>'shipUid'
-              then jsonb_set(x.value, '{status}', '"idle"') else x.value end
-          ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
-        );
-      elsif kind = 'hazard' then
-        destroy_p := 0.10 * (0.5 + danger);
-        if market.u01(seed, 2) < destroy_p then
-          report := jsonb_set(report, '{success}', 'false'::jsonb);
-          report := jsonb_set(report, '{lost}', jsonb_build_array(jsonb_build_object(
-            'uid', sh->>'uid', 'name', coalesce(sh->>'name', sh->>'uid')
-          )));
-          report := jsonb_set(report, '{summary}',
-            to_jsonb((coalesce(sh->>'name', 'Ship') || ' was lost to a hazard.')::text));
-          ships := (
-            select coalesce(jsonb_agg(x.value), '[]'::jsonb)
-            from jsonb_array_elements(ships) x(value)
-            where x.value->>'uid' is distinct from exp->>'shipUid'
-          );
-        else
-          dmg := (0.08 + market.u01(seed, 3) * 0.22) * (0.6 + danger);
-          ships := (
-            select coalesce(jsonb_agg(
-              case when x.value->>'uid' = exp->>'shipUid' then
-                jsonb_set(
-                  jsonb_set(x.value, '{status}', '"idle"'),
-                  '{dmg}', to_jsonb(least(0.85, coalesce((x.value->>'dmg')::float8, 0) + dmg))
-                )
-              else x.value end
-            ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
-          );
-          report := jsonb_set(report, '{damaged}', jsonb_build_array(jsonb_build_object(
-            'uid', sh->>'uid', 'name', coalesce(sh->>'name', sh->>'uid'),
-            'pct', round(dmg * 100)::int
-          )));
-          report := jsonb_set(report, '{summary}',
-            to_jsonb((coalesce(sh->>'name', 'Ship') || ' limped home shaken but intact.')::text));
-        end if;
-      else  -- dry
-        report := jsonb_set(report, '{summary}',
-          to_jsonb(('Charted ' || coalesce(exp->>'sysId', 'the system') || '. Nothing of value.')::text));
-        ships := (
-          select coalesce(jsonb_agg(
-            case when x.value->>'uid' = exp->>'shipUid'
-              then jsonb_set(x.value, '{status}', '"idle"') else x.value end
-          ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
-        );
-      end if;
-    end if;
-
-    reports := jsonb_build_array(report) || reports;
-    if jsonb_array_length(reports) > 20 then
-      reports := (
-        select coalesce(jsonb_agg(value), '[]'::jsonb)
-        from (
-          select value, ordinality from jsonb_array_elements(reports) with ordinality
-          order by ordinality limit 20
-        ) t
-      );
-    end if;
-    out_reps := out_reps || jsonb_build_array(report);
-    surveyed := jsonb_set(surveyed, array[exp->>'sysId'], to_jsonb(p_now_ms));
+      'lost', '[]'::jsonb, 'damaged', '[]'::jsonb,
+      'summary', 'Survey team returned from ' || sys_name || ' — debrief waiting in Dispatches.',
+      'awaitingDebrief', true
+    ));
   end loop;
 
-  st := jsonb_set(st, '{credits}', to_jsonb(credits));
   st := jsonb_set(st, '{ships}', ships);
   st := jsonb_set(st, '{expeditions}', kept);
-  st := jsonb_set(st, '{reports}', reports);
-  st := jsonb_set(st, '{surveyed}', surveyed);
   return jsonb_build_object('state', st, 'surveys', out_reps);
 end;
 $$;
@@ -1408,6 +1299,188 @@ begin
 end;
 $$;
 
+-- ===========================================================================
+-- app_survey_debrief — player closes a parked survey in Dispatches.
+-- Outcome is the client's rolled choice: leave | push_ok | push_fail.
+-- Payouts are bounded credit stubs (same spirit as the old auto-catchup).
+-- ===========================================================================
+create or replace function public.app_survey_debrief(p_exp_id text, p_outcome text)
+returns jsonb
+language plpgsql security definer set search_path = public, market, app as $$
+declare
+  now_ms bigint := app._now_ms();
+  st jsonb;
+  exp jsonb;
+  kept jsonb := '[]'::jsonb;
+  ships jsonb;
+  sh jsonb;
+  credits double precision;
+  surveyed jsonb;
+  reports jsonb;
+  report jsonb;
+  band text;
+  danger double precision;
+  seed bigint;
+  amt int := 0;
+  destroy_p double precision;
+  dmg double precision;
+  fac text;
+  rep jsonb;
+  outcome text := lower(coalesce(p_outcome, ''));
+  sys_id text;
+  sys_name text;
+  ship_uid text;
+  e jsonb;
+  summary text;
+  success boolean := true;
+begin
+  if p_exp_id is null or p_exp_id = '' then
+    return jsonb_build_object('ok', false, 'error', 'Missing expedition.');
+  end if;
+  if outcome not in ('leave', 'push_ok', 'push_fail') then
+    return jsonb_build_object('ok', false, 'error', 'Bad survey outcome.');
+  end if;
+
+  st := app._lock_state(now_ms);
+  ships := coalesce(st->'ships', '[]'::jsonb);
+  credits := coalesce((st->>'credits')::float8, 0);
+  surveyed := coalesce(st->'surveyed', '{}'::jsonb);
+  reports := coalesce(st->'reports', '[]'::jsonb);
+
+  select value into exp from jsonb_array_elements(coalesce(st->'expeditions', '[]'::jsonb)) x(value)
+    where x.value->>'id' = p_exp_id limit 1;
+  if exp is null then
+    return jsonb_build_object('ok', false, 'error', 'Survey not found.');
+  end if;
+  if not coalesce((exp->>'debrief')::boolean, false) then
+    return jsonb_build_object('ok', false, 'error', 'Survey is still under way.');
+  end if;
+
+  sys_id := coalesce(exp->>'sysId', 'outpost');
+  sys_name := sys_id;
+  ship_uid := exp->>'shipUid';
+  band := case when coalesce((exp->>'far')::boolean, false) then 'far' else 'near' end;
+  danger := least(1.0, greatest(0.0, coalesce((exp->>'danger')::float8, 0.2)));
+  seed := coalesce((exp->>'rngSeed')::bigint,
+    market.seed_hash('cosmocrat-market-v1', 'exped', exp->>'id', (exp->>'startedAt')));
+
+  select value into sh from jsonb_array_elements(ships) x(value)
+    where x.value->>'uid' = ship_uid limit 1;
+
+  report := jsonb_build_object(
+    'uid', exp->>'id', 'type', 'survey',
+    'title', 'Survey — ' || sys_name, 'sysName', sys_name,
+    'success', true, 'ts', now_ms,
+    'credits', 0, 'items', '[]'::jsonb,
+    'lost', '[]'::jsonb, 'damaged', '[]'::jsonb, 'summary', ''
+  );
+
+  if sh is null then
+    success := false;
+    summary := 'Lost contact with the survey ship near ' || sys_name || '.';
+  elsif outcome = 'leave' then
+    amt := case when band = 'far' then 50 + floor(market.u01(seed, 4) * 101)::int
+                else 0 end;
+    if amt > 0 then
+      credits := credits + amt;
+      report := jsonb_set(report, '{credits}', to_jsonb(amt));
+      summary := 'Broke off near ' || sys_name || ' — tip fee +' || amt::text || 'c.';
+    else
+      summary := 'Broke off near ' || sys_name || '. Survey filed cold.';
+    end if;
+    ships := (
+      select coalesce(jsonb_agg(
+        case when x.value->>'uid' = ship_uid
+          then jsonb_set(x.value, '{status}', '"idle"') else x.value end
+      ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
+    );
+  elsif outcome = 'push_ok' then
+    amt := case when band = 'far' then 900 + floor(market.u01(seed, 5) * 2601)::int
+                else 250 + floor(market.u01(seed, 5) * 751)::int end;
+    credits := credits + amt;
+    report := jsonb_set(report, '{credits}', to_jsonb(amt));
+    summary := 'Survey push paid — +' || amt::text || 'c from ' || sys_name || '.';
+    if market.u01(seed, 6) < 0.35 then
+      fac := coalesce(exp->>'faction', 'free_trade');
+      rep := app._rep_change(coalesce(st->'reputation', '{}'::jsonb), fac, 2 + round(danger * 3)::int);
+      st := jsonb_set(st, '{reputation}', rep);
+      summary := summary || ' Standing improved.';
+    end if;
+    ships := (
+      select coalesce(jsonb_agg(
+        case when x.value->>'uid' = ship_uid
+          then jsonb_set(x.value, '{status}', '"idle"') else x.value end
+      ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
+    );
+  else  -- push_fail
+    success := false;
+    destroy_p := 0.10 * (0.5 + danger);
+    if market.u01(seed, 7) < destroy_p then
+      report := jsonb_set(report, '{lost}', jsonb_build_array(jsonb_build_object(
+        'uid', sh->>'uid', 'name', coalesce(sh->>'name', sh->>'uid')
+      )));
+      summary := coalesce(sh->>'name', 'Ship') || ' was lost while surveying ' || sys_name || '.';
+      ships := (
+        select coalesce(jsonb_agg(x.value), '[]'::jsonb)
+        from jsonb_array_elements(ships) x(value)
+        where x.value->>'uid' is distinct from ship_uid
+      );
+    else
+      dmg := (0.08 + market.u01(seed, 8) * 0.22) * (0.6 + danger);
+      ships := (
+        select coalesce(jsonb_agg(
+          case when x.value->>'uid' = ship_uid then
+            jsonb_set(
+              jsonb_set(x.value, '{status}', '"idle"'),
+              '{dmg}', to_jsonb(least(0.85, coalesce((x.value->>'dmg')::float8, 0) + dmg))
+            )
+          else x.value end
+        ), '[]'::jsonb) from jsonb_array_elements(ships) x(value)
+      );
+      report := jsonb_set(report, '{damaged}', jsonb_build_array(jsonb_build_object(
+        'uid', sh->>'uid', 'name', coalesce(sh->>'name', sh->>'uid'),
+        'pct', round(dmg * 100)::int
+      )));
+      amt := 50 + floor(market.u01(seed, 9) * 151)::int;
+      credits := credits + amt;
+      report := jsonb_set(report, '{credits}', to_jsonb(amt));
+      summary := coalesce(sh->>'name', 'Ship') || ' limped home from ' || sys_name
+        || ' — shaken. Consolation +' || amt::text || 'c.';
+    end if;
+  end if;
+
+  report := jsonb_set(report, '{success}', to_jsonb(success));
+  report := jsonb_set(report, '{summary}', to_jsonb(summary));
+  reports := jsonb_build_array(report) || reports;
+  if jsonb_array_length(reports) > 20 then
+    reports := (
+      select coalesce(jsonb_agg(value), '[]'::jsonb)
+      from (
+        select value, ordinality from jsonb_array_elements(reports) with ordinality
+        order by ordinality limit 20
+      ) t
+    );
+  end if;
+
+  for e in select value from jsonb_array_elements(coalesce(st->'expeditions', '[]'::jsonb)) loop
+    if e->>'id' is distinct from p_exp_id then
+      kept := kept || jsonb_build_array(e);
+    end if;
+  end loop;
+
+  surveyed := jsonb_set(surveyed, array[sys_id], to_jsonb(now_ms));
+  st := jsonb_set(st, '{credits}', to_jsonb(credits));
+  st := jsonb_set(st, '{ships}', ships);
+  st := jsonb_set(st, '{expeditions}', kept);
+  st := jsonb_set(st, '{reports}', reports);
+  st := jsonb_set(st, '{surveyed}', surveyed);
+  st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
+  perform app._write_state(st, now_ms);
+
+  return app.result_slice(st) || jsonb_build_object('summary', summary, 'report', report);
+end;
+$$;
+
 grant execute on function public.app_pull() to authenticated;
 grant execute on function public.app_prestige() to authenticated;
 grant execute on function public.app_route_start(text, text, text, jsonb) to authenticated;
@@ -1415,3 +1488,4 @@ grant execute on function public.app_route_stop(text) to authenticated;
 grant execute on function public.app_buy_extractor(text) to authenticated;
 grant execute on function public.app_buy_component(text) to authenticated;
 grant execute on function public.app_commit(jsonb) to authenticated;
+grant execute on function public.app_survey_debrief(text, text) to authenticated;

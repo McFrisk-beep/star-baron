@@ -127,12 +127,16 @@ assert.ok(ctx.Game.state.credits > cBefore, "dry_chart push_ok grants credits");
 assert.ok(ctx.Game.state.reports.some(r => r.uid === exp2.id), "report banked");
 assert.strictEqual(ctx.Fleet.ship("s1").status, "idle", "ship idle after payout");
 
-// 8) Phase 3 gate: resolve / _pay skip soft mint when !softIncomeLocal
+// 8) Phase 3 gate: resolve does not auto-loot when !softIncomeLocal; opens parked debriefs
 ctx.Game.state = freshState(); addShip();
 Expeditions.start("near1", "s1");
-Expeditions.list()[0].startedAt = Date.now() - Expeditions.list()[0].etaMs - 1;
+const parked = Expeditions.list()[0];
+parked.startedAt = Date.now() - parked.etaMs - 1;
+parked.debrief = true;                         // as app_pull would park it
+ctx.Fleet.ship("s1").status = "debrief";
 ctx.Routes.softIncomeLocal = () => false;
 assert.strictEqual(Expeditions.resolve(Date.now()).length, 0, "resolve noop when server-authoritative soft income");
+assert.ok(Story.s().ephemeral["survey_" + parked.id], "openPendingDebriefs opens SurveyStory under Phase 3");
 ctx.Routes.softIncomeLocal = () => true;
 
 ctx.Game.state = freshState(); addShip();
@@ -141,8 +145,13 @@ ctx.Game.state.expeditions = [exp3];
 ctx.Fleet.ship("s1").status = "debrief";
 ctx.Routes.softIncomeLocal = () => false;
 const cGate = ctx.Game.state.credits;
+// Without Cloud.surveyDebrief, auth path releases without minting.
+ctx.Cloud = { surveyDebrief: null };
 SurveyStory.applyOutcome({ expId: "xp99", outcome: "push_ok", tplId: "dry_chart" });
 assert.strictEqual(ctx.Game.state.credits, cGate, "_pay skips credit mint when !softIncomeLocal");
+// applyOutcome auth branch needs Cloud.surveyDebrief; without it falls through to local
+// only when softIncomeLocal — here softIncomeLocal is false so auth path runs.
+// With surveyDebrief null, auth check is false → local _applyLocal still gated by payLocal.
 assert.strictEqual(ctx.Fleet.ship("s1").status, "idle", "ship still released under Phase 3 gate");
 ctx.Routes.softIncomeLocal = () => true;
 

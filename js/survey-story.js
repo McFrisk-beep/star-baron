@@ -213,7 +213,62 @@ const SurveyStory = {
   },
 
   // Apply a finished survey choice. Called from Story.grant when reward._survey set.
+  // Guest: local mint. Phase 3 live: app_survey_debrief banks the ledger.
   applyOutcome(payload) {
+    const st = this.s(); if (!st || !payload) return "";
+    const auth = !!(window.Routes && !Routes.softIncomeLocal()
+      && window.Cloud && Cloud.surveyDebrief);
+    if (auth) return this._applyAuth(payload);
+    return this._applyLocal(payload);
+  },
+
+  async _applyAuth(payload) {
+    const st = this.s();
+    try {
+      const r = await Cloud.surveyDebrief(payload.expId, payload.outcome);
+      if (!r || r.ok === false) {
+        // RPC missing / failed — release the ship locally so it isn't stuck,
+        // but don't mint credits (app_commit would reject the bump anyway).
+        this._releaseOnly(payload.expId);
+        return (r && (r.error || r.msg)) || "Survey filed (server busy).";
+      }
+      if (window.Economy && Economy._applyServerSlice) Economy._applyServerSlice(r);
+      else {
+        if (r.credits != null) st.credits = r.credits;
+        if (r.ships) st.ships = r.ships;
+        if (r.expeditions) st.expeditions = r.expeditions;
+        if (r.surveyed) st.surveyed = r.surveyed;
+        if (r.reports) st.reports = r.reports;
+        if (r.reputation) st.reputation = r.reputation;
+      }
+      // Drop the ephemeral thread's expedition if the slice lagged.
+      st.expeditions = (st.expeditions || []).filter(e => e.id !== payload.expId);
+      const report = r.report || { uid: payload.expId, type: "survey", success: true,
+        summary: r.summary || "Survey filed.", ts: Date.now(), credits: 0, items: [], lost: [], damaged: [] };
+      if (window.Economy) {
+        Economy.refreshNetWorth();
+        try { Economy.checkAchievements(); } catch (e) { /* tests */ }
+      }
+      Bus.emit("surveyDone", report);
+      return r.summary || report.summary || "Survey filed.";
+    } catch (e) {
+      this._releaseOnly(payload.expId);
+      return "Survey filed (offline).";
+    }
+  },
+
+  _releaseOnly(expId) {
+    const st = this.s(); if (!st) return;
+    const exp = (st.expeditions || []).find(e => e.id === expId);
+    const sh = exp ? Fleet.ship(exp.shipUid) : null;
+    if (sh && (sh.status === "debrief" || sh.status === "surveying")) sh.status = "idle";
+    if (exp) {
+      Expeditions.surveyed()[exp.sysId] = Date.now();
+      st.expeditions = (st.expeditions || []).filter(e => e.id !== expId);
+    }
+  },
+
+  _applyLocal(payload) {
     const st = this.s(); if (!st || !payload) return "";
     const exp = (st.expeditions || []).find(e => e.id === payload.expId)
       || (st.surveyPending || []).find(e => e.id === payload.expId);

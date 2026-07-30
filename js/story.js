@@ -178,15 +178,15 @@ const Story = {
     }
 
     // 2) start one eligible new storyline (throttled so they never dump at once).
-    // Survey debriefs are force-opened and don't consume the MAX_ACTIVE budget.
+    // Survey / mission-report debriefs are force-opened and don't consume MAX_ACTIVE.
     const active = Object.keys(prog).filter(id => {
       if (prog[id].status !== "active") return false;
       const sl = this.storyline(id);
-      return !(sl && sl._survey);
+      return !(sl && (sl._survey || sl._missionReport));
     }).length;
     if (active < this.MAX_ACTIVE && now - (story.lastArrivalAt || 0) >= this.ARRIVAL_GAP_MS) {
       for (const sl of this.all()) {
-        if (sl._survey) continue;                          // ephemeral surveys are opened by Expeditions
+        if (sl._survey || sl._missionReport) continue;     // ephemeral threads opened by Missions / Expeditions
         if (prog[sl.id]) continue;                         // already started or done
         if (!this._trigger(sl, st)) continue;
         prog[sl.id] = { step: 0, base: this.snap(st), status: "active" };
@@ -211,7 +211,8 @@ const Story = {
     this._advance(sl, p, (step && (step.end || step.goto != null)) ? step : null);
   },
 
-  // Player taps a reply on a choice step.
+  // Player taps a reply on a choice step. May return a Promise when a survey
+  // debrief hits Phase 3 app_survey_debrief (async ledger).
   choose(id, idx) {
     const st = window.Game.state; const p = this.s().prog[id]; const sl = this.storyline(id);
     if (!p || !sl || p.status !== "active") return { ok: false };
@@ -222,34 +223,38 @@ const Story = {
     if (ch.cost) st.credits -= ch.cost;
     this._postOut(sl, ch.reply || ch.label);
 
+    const afterGrant = (sum, advanceTo) => {
+      if (sum && typeof sum.then === "function") {
+        return sum.then(s => {
+          if (s) this._postReward(sl, s);
+          this._advance(sl, p, advanceTo);
+          window.Game.requestSave();
+          return { ok: true };
+        });
+      }
+      if (sum) this._postReward(sl, sum);
+      this._advance(sl, p, advanceTo);
+      window.Game.requestSave();
+      return { ok: true };
+    };
+
     // Risky survey (etc.) choices: roll chance, then success/fail acks + rewards.
     if (ch.chance != null) {
       const okRoll = Math.random() < +ch.chance;
       if (okRoll) {
         if (ch.ack) this._postIn(sl, { text: ch.ack });
         if (ch.set) this.setFlags(ch.set);
-        const sum = this.grant(ch.reward, st);
-        if (sum) this._postReward(sl, sum);
-        this._advance(sl, p, ch.success || ch);
-      } else {
-        if (ch.failAck) this._postIn(sl, { text: ch.failAck });
-        else if (ch.ack) this._postIn(sl, { text: ch.ack });
-        if (ch.failSet) this.setFlags(ch.failSet);
-        const sum = this.grant(ch.failReward || ch.reward, st);
-        if (sum) this._postReward(sl, sum);
-        this._advance(sl, p, ch.fail || { end: true });
+        return afterGrant(this.grant(ch.reward, st), ch.success || ch);
       }
-      window.Game.requestSave();
-      return { ok: true };
+      if (ch.failAck) this._postIn(sl, { text: ch.failAck });
+      else if (ch.ack) this._postIn(sl, { text: ch.ack });
+      if (ch.failSet) this.setFlags(ch.failSet);
+      return afterGrant(this.grant(ch.failReward || ch.reward, st), ch.fail || { end: true });
     }
 
     if (ch.ack) this._postIn(sl, { text: ch.ack });
     if (ch.set) this.setFlags(ch.set);
-    const sum = this.grant(ch.reward, st);
-    if (sum) this._postReward(sl, sum);
-    this._advance(sl, p, ch);
-    window.Game.requestSave();
-    return { ok: true };
+    return afterGrant(this.grant(ch.reward, st), ch);
   },
 
   // Move a storyline to its next step, honoring choice branching (goto / end).
@@ -261,8 +266,8 @@ const Story = {
     else {
       p.status = "done";
       if (sl.outro) this._postReward(sl, sl.outro);
-      // Drop ephemeral survey threads once finished (save bloat).
-      if (sl._survey && this.s().ephemeral) delete this.s().ephemeral[sl.id];
+      // Drop ephemeral survey / mission-report threads once finished (save bloat).
+      if ((sl._survey || sl._missionReport) && this.s().ephemeral) delete this.s().ephemeral[sl.id];
     }
   },
 
@@ -300,10 +305,14 @@ const Story = {
     }
     if (reward.set) this.setFlags(reward.set);
     // Survey debrief payout (Dispatches mini-story) — summary is the whole line.
+    // May return a Promise when Phase 3 app_survey_debrief is live.
     if (reward._survey && window.SurveyStory) {
       const summary = SurveyStory.applyOutcome(reward._survey);
-      if (window.Economy && Economy.refreshNetWorth) Economy.refreshNetWorth();
-      return summary || (bits.length ? "Reward: " + bits.join(" · ") : "");
+      const finish = s => {
+        if (window.Economy && Economy.refreshNetWorth) Economy.refreshNetWorth();
+        return s || (bits.length ? "Reward: " + bits.join(" · ") : "");
+      };
+      return (summary && typeof summary.then === "function") ? summary.then(finish) : finish(summary);
     }
     if (window.Economy && Economy.refreshNetWorth) Economy.refreshNetWorth();
     return bits.length ? "Reward: " + bits.join(" · ") : "";

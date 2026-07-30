@@ -155,7 +155,10 @@ const Missions = {
     const out = Array.isArray(r.resolved) ? r.resolved : [];
     Economy.refreshNetWorth();
     Economy.checkAchievements();
-    for (const rep of out) Bus.emit("missionDone", rep);
+    for (const rep of out) {
+      if (window.MissionStory) MissionStory.begin(rep);
+      Bus.emit("missionDone", rep);
+    }
     return out;
   },
 
@@ -167,6 +170,7 @@ const Missions = {
       m.resolved = true;
       let success = Math.random() < m.successChance;
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
+        sysName: m.sysName || null, danger: m.danger || null, faction: m.faction || null,
         credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [] };
 
       // ---- battle damage & attrition: every ship rolls wear against the
@@ -233,7 +237,10 @@ const Missions = {
       s.missions = s.missions.filter(m => !m.resolved);
       Economy.refreshNetWorth();
       Economy.checkAchievements();
-      for (const r of out) Bus.emit("missionDone", r);
+      for (const r of out) {
+        if (window.MissionStory) MissionStory.begin(r);
+        Bus.emit("missionDone", r);
+      }
     }
     return out;
   },

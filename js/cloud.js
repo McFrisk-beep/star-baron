@@ -265,6 +265,10 @@ const Cloud = {
   async missionAbandon(missionUid) {
     return this.rpc("app_mission_abandon", { p_mission_uid: missionUid });
   },
+  // Phase 3: close a parked survey debrief (Dispatches choice).
+  async surveyDebrief(expId, outcome) {
+    return this.rpc("app_survey_debrief", { p_exp_id: expId, p_outcome: outcome });
+  },
   async upgradeInventory() {
     return this.rpc("app_upgrade_inventory");
   },
