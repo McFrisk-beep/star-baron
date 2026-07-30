@@ -2339,7 +2339,13 @@ const UI = {
     r.mmLaunch.onclick = () => this.launchMission();
     r.eqCancel.onclick = () => r.equip.classList.add("hidden");
     if (r.baronRanksClose) r.baronRanksClose.onclick = () => r.baronRanks.classList.add("hidden");
-    if (r.baronRanks) r.baronRanks.onclick = e => { if (e.target === r.baronRanks) r.baronRanks.classList.add("hidden"); };
+    if (r.baronRanks) {
+      r.baronRanks.onclick = e => { if (e.target === r.baronRanks) r.baronRanks.classList.add("hidden"); };
+      document.addEventListener("keydown", e => {
+        if (e.key === "Escape" && r.baronRanks && !r.baronRanks.classList.contains("hidden"))
+          r.baronRanks.classList.add("hidden");
+      });
+    }
     r.rtCancel.onclick = () => { this._routeShip = null; r.route.classList.add("hidden"); };
     r.incClose.onclick = () => r.incident.classList.add("hidden");
     r.rtStart.onclick = async () => {
