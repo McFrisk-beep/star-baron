@@ -55,7 +55,10 @@ b { color: #fff; font-weight: 600; }
   padding: 8px 14px;
   background: linear-gradient(180deg, #131a2c, #0d111c);
   border-bottom: 1px solid var(--line);
-  /* position so z-index beats the fixed full-bleed .page-bg (z-index:0) */
+  /* position:relative is required on mobile (≤980px body becomes display:block).
+     On desktop body is flex, so z-index already works on this flex item even with
+     position:static — but block layout ignores z-index without a position, and the
+     fixed full-bleed .page-bg (z-index:0) then covers the header. */
   flex: none; position: relative; z-index: 20;
 }
 .brand { display: flex; align-items: baseline; gap: 8px; }
