@@ -55,7 +55,8 @@ b { color: #fff; font-weight: 600; }
   padding: 8px 14px;
   background: linear-gradient(180deg, #131a2c, #0d111c);
   border-bottom: 1px solid var(--line);
-  flex: none; z-index: 20;
+  /* position so z-index beats the fixed full-bleed .page-bg (z-index:0) */
+  flex: none; position: relative; z-index: 20;
 }
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .brand-mark { color: var(--pink); font-size: 17px; text-shadow: 0 0 10px rgba(255,62,232,.7); }
