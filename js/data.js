@@ -702,7 +702,7 @@ const ASSET = {
   hub: id => _asset(`hub:${id}`, `assets/hub/${id}.png`),   // prop/NPC sprites for the station hub
   hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
   // Per-tab page backgrounds (admin Images → Page backgrounds). Empty default = no image.
-  // Displayed as a centered 1920×1080 cut-out behind page UI (see .page-bg in style.css).
+  // Cover+center stage behind page UI — mobile crops left/right (see .page-bg).
   pageBg: id => _asset(`pagebg:${id}`, ""),
   // Bazaar / inventory art — admin can set a single PNG or a pool per key.
   accessory: (kind, salt = "") => _assetPool(`accessory:${kind}`, salt, `assets/accessories/${kind}.png`),

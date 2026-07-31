@@ -133,8 +133,8 @@ b { color: #fff; font-weight: 600; }
 .col-main, .col-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; height: 100%; }
 
 /* Full-viewport page background — pinned to the viewport (not the max-width
-   layout column). Kept as a centered 16:9 cut-out (contain) so portrait /
-   mismatched viewports don't squash the art. Body bg shows in the letterbox. */
+   layout column). Cover + center: mobile portrait is a tall cut-out of the
+   middle of the 16:9 art (sides cropped), never stretched/squashed. */
 .page-bg {
   position: fixed !important;
   top: 0 !important;
@@ -142,7 +142,7 @@ b { color: #fff; font-weight: 600; }
   width: 100vw !important;
   height: 100vh !important;
   max-width: none !important;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center center;
   z-index: 0;
   pointer-events: none;
