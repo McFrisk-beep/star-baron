@@ -1423,6 +1423,21 @@ body {
 /* reduced-motion: drop the press micro-interaction */
 body.reduced .btn:active { transform: none; }
 
+/* ===== Workshop ========================================================= */
+.workshop-queue { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 14px; }
+.ws-job { padding: 8px 10px; border-radius: 8px; background: rgba(20, 32, 60, .55); border: 1px solid rgba(120, 160, 220, .22); }
+.ws-job-top { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.workshop-upgrade { margin-bottom: 4px; }
+.ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.ws-card { padding: 10px 12px; border-radius: 8px; background: rgba(20, 32, 60, .55); border: 1px solid rgba(120, 160, 220, .22); display: flex; flex-direction: column; gap: 8px; }
+.ws-card-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.ws-ings { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 11px; }
+.ws-ing.ok { color: #8fd6a6; }
+.ws-ing.short { color: #ff9a9a; }
+.ws-flav { font-size: 11px; color: var(--ink-faint); display: flex; flex-direction: column; gap: 4px; }
+.ws-flav select { font: inherit; }
+.ws-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: auto; }
+
 /* ===== Hub boost bar (active blackboxes) ================================ */
 .hub-boosts { max-width: 720px; margin: 18px auto; }
 .boost-bar { display: flex; flex-wrap: wrap; gap: 8px; min-height: 0; }

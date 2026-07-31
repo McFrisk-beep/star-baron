@@ -165,6 +165,10 @@ const SHIP_CATALOG = {
     { id: "cruiser",   name: "Cruiser",    cls: "escort", cargo: 14, firepower: 120, hull: 480, armor: 120, shields: 90,  speed: 1.2, slots: 4, price: 95000,  sprite: "krell" },
     { id: "carrier",   name: "Escort Carrier", cls: "escort", cargo: 18, firepower: 90, hull: 520, armor: 100, shields: 110, speed: 1.1, slots: 4, price: 120000, sprite: "krell" },
     { id: "battleship",name: "Battleship", cls: "escort", cargo: 20, firepower: 260, hull: 900, armor: 240, shields: 180, speed: 1.0, slots: 4, price: 270000, sprite: "aurelian" },
+    // Workshop craftables (not sold in the Bazaar shipyard — price 0; blueprint-gated).
+    { id: "craft_corvette", name: "Yard Corvette", cls: "escort", cargo: 5, firepower: 32, hull: 145, armor: 38, shields: 26, speed: 1.85, slots: 3, price: 0, sprite: "voidkin", craftOnly: true },
+    { id: "craft_cruiser",  name: "Yard Cruiser",  cls: "escort", cargo: 16, firepower: 150, hull: 560, armor: 140, shields: 105, speed: 1.25, slots: 4, price: 0, sprite: "krell", craftOnly: true },
+    { id: "last_aegis",     name: "The Last Aegis", cls: "escort", cargo: 24, firepower: 340, hull: 1100, armor: 300, shields: 220, speed: 1.15, slots: 5, price: 0, sprite: "aurelian", craftOnly: true, unique: true },
   ],
   // Survey hulls: weak in a fight, strong on anomaly scans (scan / endure).
   survey: [
@@ -249,6 +253,7 @@ const BAZAARCFG = {
   contractSlots: 14,       // how many contracts on the board
   accessorySlots: 18,      // how many accessories for sale
   blackboxSlots: 2,        // rare rotating consumable blackboxes on the Gear tab
+  blueprintSlots: 2,       // rare rotating recipe blueprints on the Gear tab
   flagshipSlots: 4,        // rotating flagship offers (current flagship is always shown separately)
   mercTickMs: 90 * 1000,   // how often merc offers churn
   accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
@@ -425,6 +430,7 @@ const EXPEDCFG = {
   materialQty: { near: [2, 6], far: [4, 14] },
   materialExoticChance: { near: 0.12, far: 0.35 },  // otherwise rare/uncommon pool
   blackboxChance: { near: 0.10, far: 0.22 },       // chance a materials reward also drops a blackbox
+  // blueprintDropChance lives on WORKSHOPCFG (shared with mission drops)
   // Matured surveys open a Dispatches mini-story (SurveyStory) instead of
   // auto-resolving. weights still bias which event template pool is favored.
   weights: {
@@ -449,6 +455,129 @@ const BLACKBOX_EFFECTS = [
     stat: "missionDamage",  mag: -0.30, durationMs: 2 * 3600 * 1000 },
   { id: "tax_ghost",       name: "Tax Ghost",       desc: "-50% industry tax",
     stat: "industryTax",    mag: -0.50, durationMs: 4 * 3600 * 1000 },
+  { id: "fabricators_boon", name: "Fabricator's Boon", desc: "-30% Workshop craft time",
+    stat: "craftTime",      mag: -0.30, durationMs: 3 * 3600 * 1000 },
+];
+
+/* ---- WORKSHOP / CRAFTING --------------------------------------------------
+   Timed craft queue + blueprint-gated recipes. See CRAFTING_AND_MATERIALS §3. */
+const WORKSHOPCFG = {
+  baseSlots: 2,
+  maxSlots: 5,
+  slotUpgradeBase: 14000,          // first extra slot cost (scales like inventory)
+  maxResolvePerCatchup: 12,        // crafts delivered in one offline resolve
+  blueprintDropChance: { near: 0.06, far: 0.14 },
+  missionBlueprintChance: 0.12,    // on high/extreme success
+};
+
+// Blueprint meta. recipeId unlocks into state.knownRecipes on acquire.
+// source: auto | bazaar | expedition | mission (acquisition hint for drops/stock).
+const BLUEPRINTS = [
+  { id: "bp_plating_common",   name: "Blueprint: Common Plating",      recipeId: "gear_plating_common",   outputType: "gear",      source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_cannon_uncommon",  name: "Blueprint: Uncommon Cannon",     recipeId: "gear_cannon_uncommon",  outputType: "gear",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_shield_rare",      name: "Blueprint: Rare Shield",         recipeId: "gear_shield_rare",      outputType: "gear",      source: "expedition", uses: Infinity, destroyOnUse: false },
+  { id: "bp_reactor_epic",     name: "Blueprint: Epic Reactor",        recipeId: "gear_reactor_epic",     outputType: "gear",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_scanner_legend",   name: "Blueprint: Legendary Scanner",   recipeId: "gear_scanner_legend",   outputType: "gear",      source: "mission",    uses: Infinity, destroyOnUse: false },
+  { id: "bp_ex_jack",          name: "Blueprint: Jack Extractor",      recipeId: "ex_jack",               outputType: "extractor", source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_ex_semi",          name: "Blueprint: Semi-Spec Extractor", recipeId: "ex_semi",               outputType: "extractor", source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_ex_specialized",   name: "Blueprint: Specialized Extractor", recipeId: "ex_specialized",      outputType: "extractor", source: "expedition", uses: Infinity, destroyOnUse: false },
+  { id: "bp_ship_corvette",    name: "Blueprint: Yard Corvette",       recipeId: "ship_corvette",         outputType: "ship",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_ship_cruiser",     name: "Blueprint: Yard Cruiser",        recipeId: "ship_cruiser",          outputType: "ship",      source: "expedition", uses: Infinity, destroyOnUse: false },
+  { id: "bp_ship_last_aegis",  name: "Blueprint: The Last Aegis",      recipeId: "ship_last_aegis",       outputType: "ship",      source: "mission",    uses: 1, destroyOnUse: true },
+  { id: "bp_bb_overclock",     name: "Blueprint: Overclock Core",      recipeId: "bb_overclock_core",     outputType: "blackbox",  source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_veil",          name: "Blueprint: Smuggler's Veil",     recipeId: "bb_smugglers_veil",     outputType: "blackbox",  source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_autopilot",     name: "Blueprint: Autopilot Surge",     recipeId: "bb_autopilot_surge",    outputType: "blackbox",  source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_silver",        name: "Blueprint: Silver Tongue",       recipeId: "bb_silver_tongue",      outputType: "blackbox",  source: "bazaar",     uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_void",          name: "Blueprint: Void Shield",         recipeId: "bb_void_shield",        outputType: "blackbox",  source: "expedition", uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_tax",           name: "Blueprint: Tax Ghost",           recipeId: "bb_tax_ghost",          outputType: "blackbox",  source: "mission",    uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_fabricator",    name: "Blueprint: Fabricator's Boon",   recipeId: "bb_fabricators_boon",   outputType: "blackbox",  source: "bazaar",     uses: Infinity, destroyOnUse: false },
+];
+
+const RECIPES = [
+  // Gear
+  { id: "gear_plating_common",  name: "Common Plating",     outputType: "gear", tier: "common",
+    ingredients: [{ id: "iron_ore", qty: 6 }, { id: "silicon", qty: 2 }],
+    craftMs: 20 * 60 * 1000, blueprintId: "bp_plating_common",
+    output: { kind: "plating", rarity: "common" } },
+  { id: "gear_cannon_uncommon", name: "Uncommon Cannon",    outputType: "gear", tier: "uncommon",
+    ingredients: [{ id: "titanium_ore", qty: 8 }, { id: "nanochips", qty: 4 }],
+    craftMs: 60 * 60 * 1000, blueprintId: "bp_cannon_uncommon",
+    output: { kind: "cannon", rarity: "uncommon" } },
+  { id: "gear_shield_rare",     name: "Rare Shield",        outputType: "gear", tier: "rare",
+    ingredients: [{ id: "titanium_ore", qty: 6 }, { id: "sensor_array", qty: 5 }, { id: "quantum_core", qty: 2 }],
+    craftMs: 2 * 60 * 60 * 1000, blueprintId: "bp_shield_rare",
+    output: { kind: "shield", rarity: "rare" } },
+  { id: "gear_reactor_epic",    name: "Epic Reactor",       outputType: "gear", tier: "epic",
+    ingredients: [{ id: "quantum_core", qty: 4 }, { id: "plasma_gas", qty: 3 }, { id: "gemstones", qty: 2 }],
+    craftMs: 4 * 60 * 60 * 1000, blueprintId: "bp_reactor_epic",
+    output: { kind: "reactor", rarity: "epic" } },
+  { id: "gear_scanner_legend",  name: "Legendary Scanner",  outputType: "gear", tier: "legendary",
+    ingredients: [{ id: "ai_matrix", qty: 2 }, { id: "quantum_core", qty: 3 }, { id: "voidstone", qty: 1 }],
+    craftMs: 8 * 60 * 60 * 1000, blueprintId: "bp_scanner_legend",
+    output: { kind: "scanner", rarity: "legendary" } },
+  // Extractors
+  { id: "ex_jack", name: "Jack Extractor", outputType: "extractor", tier: "jack",
+    ingredients: [{ id: "iron_ore", qty: 10 }, { id: "silicon", qty: 5 }, { id: "nanochips", qty: 2 }],
+    craftMs: 3 * 60 * 60 * 1000, blueprintId: "bp_ex_jack",
+    output: { extractorType: "jack", scope: "all" } },
+  { id: "ex_semi", name: "Semi-Spec Extractor", outputType: "extractor", tier: "semi",
+    ingredients: [{ id: "titanium_ore", qty: 8 }, { id: "nanochips", qty: 6 }, { id: "sensor_array", qty: 3 }],
+    craftMs: 6 * 60 * 60 * 1000, blueprintId: "bp_ex_semi",
+    output: { extractorType: "semi", scope: "mineral" } },
+  { id: "ex_specialized", name: "Specialized Extractor", outputType: "extractor", tier: "specialized",
+    ingredients: [{ id: "titanium_ore", qty: 12 }, { id: "nanochips", qty: 10 }, { id: "quantum_core", qty: 4 }],
+    flavor: [
+      { id: "pulsar_shard", qty: 1, scopeCat: "mineral" },
+      { id: "plasma_gas", qty: 1, scopeCat: "gas" },
+      { id: "spore_culture", qty: 1, scopeCat: "agri" },
+      { id: "neural_processor", qty: 1, scopeCat: "tech" },
+      { id: "fine_art", qty: 1, scopeCat: "luxury" },
+      { id: "bio_toxin", qty: 1, scopeCat: "illicit" },
+    ],
+    craftMs: 10 * 60 * 60 * 1000, blueprintId: "bp_ex_specialized",
+    output: { extractorType: "specialized" } },
+  // Ships
+  { id: "ship_corvette", name: "Yard Corvette", outputType: "ship", tier: "escort",
+    ingredients: [{ id: "titanium_ore", qty: 40 }, { id: "nanochips", qty: 20 }, { id: "plasma_gas", qty: 15 }],
+    credits: 10000, craftMs: 24 * 60 * 60 * 1000, blueprintId: "bp_ship_corvette",
+    output: { shipType: "craft_corvette" } },
+  { id: "ship_cruiser", name: "Yard Cruiser", outputType: "ship", tier: "escort",
+    ingredients: [{ id: "titanium_ore", qty: 70 }, { id: "nanochips", qty: 35 }, { id: "quantum_core", qty: 20 }],
+    credits: 40000, craftMs: 48 * 60 * 60 * 1000, blueprintId: "bp_ship_cruiser",
+    output: { shipType: "craft_cruiser" } },
+  { id: "ship_last_aegis", name: "The Last Aegis", outputType: "ship", tier: "unique",
+    ingredients: [{ id: "voidstone", qty: 30 }, { id: "ai_matrix", qty: 20 }, { id: "quantum_core", qty: 40 }, { id: "antimatter", qty: 25 }],
+    credits: 250000, craftMs: 5 * 24 * 60 * 60 * 1000, blueprintId: "bp_ship_last_aegis",
+    output: { shipType: "last_aegis" } },
+  // Blackboxes
+  { id: "bb_overclock_core", name: "Overclock Core (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "quantum_core", qty: 4 }, { id: "plasma_gas", qty: 2 }, { id: "gemstones", qty: 3 }],
+    craftMs: 30 * 60 * 1000, blueprintId: "bp_bb_overclock",
+    output: { effectId: "overclock_core" } },
+  { id: "bb_smugglers_veil", name: "Smuggler's Veil (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "weapons_cache", qty: 5 }, { id: "cipher_shard", qty: 3 }, { id: "narcotics", qty: 2 }],
+    craftMs: 45 * 60 * 1000, blueprintId: "bp_bb_veil",
+    output: { effectId: "smugglers_veil" } },
+  { id: "bb_autopilot_surge", name: "Autopilot Surge (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "sensor_array", qty: 6 }, { id: "plasma_gas", qty: 4 }],
+    craftMs: 30 * 60 * 1000, blueprintId: "bp_bb_autopilot",
+    output: { effectId: "autopilot_surge" } },
+  { id: "bb_silver_tongue", name: "Silver Tongue (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "fine_art", qty: 4 }, { id: "vintage_wine", qty: 3 }, { id: "gemstones", qty: 2 }],
+    craftMs: 40 * 60 * 1000, blueprintId: "bp_bb_silver",
+    output: { effectId: "silver_tongue" } },
+  { id: "bb_void_shield", name: "Void Shield (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "titanium_ore", qty: 5 }, { id: "biofiber", qty: 4 }, { id: "quantum_core", qty: 2 }],
+    craftMs: 40 * 60 * 1000, blueprintId: "bp_bb_void",
+    output: { effectId: "void_shield" } },
+  { id: "bb_tax_ghost", name: "Tax Ghost (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "cipher_shard", qty: 6 }, { id: "bio_toxin", qty: 4 }],
+    craftMs: 60 * 60 * 1000, blueprintId: "bp_bb_tax",
+    output: { effectId: "tax_ghost" } },
+  { id: "bb_fabricators_boon", name: "Fabricator's Boon (box)", outputType: "blackbox", tier: "consumable",
+    ingredients: [{ id: "nanochips", qty: 5 }, { id: "graphene_lattice", qty: 3 }, { id: "fusion_cell", qty: 2 }],
+    craftMs: 35 * 60 * 1000, blueprintId: "bp_bb_fabricator",
+    output: { effectId: "fabricators_boon" } },
 ];
 
 /* ---- MARKET MICROSTRUCTURE ------------------------------------------------
@@ -794,6 +923,7 @@ const PAGE_BG_PAGES = [
   { id: "systems", label: "Star Systems" },
   { id: "bazaar", label: "Bazaar" },
   { id: "industries", label: "Industries" },
+  { id: "workshop", label: "Workshop" },
   { id: "senate", label: "Senate" },
   { id: "barons", label: "Barons" },
   { id: "ach", label: "Milestones" },
@@ -810,6 +940,7 @@ const HUB_PROPS = [
   { id: "fleet",      page: "fleet",      label: "Fleet Bay",    icon: "🚀" },
   { id: "bazaar",     page: "bazaar",     label: "Bazaar",       icon: "🛒" },
   { id: "industries", page: "industries", label: "Foundry",      icon: "🏭" },
+  { id: "workshop",   page: "workshop",   label: "Workshop",     icon: "🔧" },
   { id: "senate",     page: "senate",     label: "Senate",       icon: "🏛️" },
   { id: "starmap",    page: "starmap",    label: "Star Map",     icon: "🗺️" },
   { id: "systems",    page: "systems",    label: "Star Systems", icon: "🪐" },
@@ -947,6 +1078,9 @@ window.DMGCFG = DMGCFG;
 window.CUSTOMS = CUSTOMS;
 window.EXPEDCFG = EXPEDCFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
+window.WORKSHOPCFG = WORKSHOPCFG;
+window.BLUEPRINTS = BLUEPRINTS;
+window.RECIPES = RECIPES;
 window.MARKETCFG = MARKETCFG;
 window.ROUTECFG = ROUTECFG;
 window.ROUTE_EVENTS = ROUTE_EVENTS;

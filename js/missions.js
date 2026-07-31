@@ -219,6 +219,17 @@ const Missions = {
           s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
           report.stock = { commId: c.id, name: c.name, qty };
         }
+        // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).
+        const danger = m.danger || "";
+        if (window.Workshop && (danger === "high" || danger === "extreme")
+            && Math.random() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
+          const pool = Workshop.dropPool("mission");
+          if (pool.length) {
+            const bp = Util.pick(pool);
+            const gr = Workshop.grantBlueprint(bp.id);
+            if (gr.ok) report.blueprint = bp.name;
+          }
+        }
         for (const sh of survivors) sh.status = "idle";
       } else {
         // failure: survivors are seized (smuggle jobs) or limp home damaged.

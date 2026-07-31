@@ -348,6 +348,16 @@ const SurveyStory = {
           report.items.push(box);
         }
       }
+      // Expedition-tier blueprints (CRAFTING_AND_MATERIALS §3.3).
+      const bpP = (window.WORKSHOPCFG && WORKSHOPCFG.blueprintDropChance && WORKSHOPCFG.blueprintDropChance[far ? "far" : "near"]) || 0;
+      if (bpP && Math.random() < bpP && window.Workshop) {
+        const pool = Workshop.dropPool("expedition");
+        if (pool.length) {
+          const bp = Util.pick(pool);
+          const gr = Workshop.grantBlueprint(bp.id);
+          if (gr.ok) report.summary = (report.summary ? report.summary + " " : "") + `Recovered ${bp.name}.`;
+        }
+      }
     }
     if (spec.seam && sys && window.Galaxy) {
       const scarce = Math.random() < 0.5;

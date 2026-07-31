@@ -21,8 +21,11 @@ const Game = {
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
       missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
       activeBoosts: [],   // [{ effectId, expiresAt }] — blackbox timed buffs (CRAFTING_AND_MATERIALS §2)
+      knownRecipes: [],   // recipe ids unlocked by blueprints (Workshop)
+      craftedOnce: [],    // one-of-a-kind recipes already completed
+      workshop: { upgrades: 0, queue: [] },
       inventory: { capacity: 6, upgrades: 0 },
-      bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], extractors: [], components: [], flagships: [] },
+      bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], blueprints: [], extractors: [], components: [], flagships: [] },
       pendingContracts: [],
       bazaarBought: [],
       travel: null,
@@ -81,6 +84,11 @@ const Game = {
     if (!Array.isArray(s.activeBoosts)) s.activeBoosts = [];
     // Drop expired / unknown boosts so old/corrupt saves don't stick forever.
     s.activeBoosts = s.activeBoosts.filter(b => b && typeof b.effectId === "string" && Number.isFinite(+b.expiresAt) && +b.expiresAt > Date.now());
+    if (!Array.isArray(s.knownRecipes)) s.knownRecipes = [];
+    if (!Array.isArray(s.craftedOnce)) s.craftedOnce = [];
+    if (!s.workshop || typeof s.workshop !== "object") s.workshop = { upgrades: 0, queue: [] };
+    if (!Array.isArray(s.workshop.queue)) s.workshop.queue = [];
+    s.workshop.upgrades = Math.max(0, s.workshop.upgrades | 0);
     // story flags / ephemeral survey threads — old saves lack the keys
     s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
     s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {}; s.story.ephemeral ||= {};
@@ -96,7 +104,9 @@ const Game = {
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
+    s.bazaar.blueprints ||= [];
     s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
+    if (window.Workshop) Workshop.ensureAutoUnlocks();
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
@@ -213,6 +223,8 @@ const Game = {
       offlineOrders = await Orders.process();
       offlineIndustry = Industries.resolve(now);
     }
+    // Workshop is client-local (not on the Phase-3 ledger yet).
+    if (window.Workshop) Workshop.resolve(now);
     Wars.tick(now);               // resolve a faction war that ended while away
     if (window.Senate) Senate.resolve(now);   // run the daily senate votes while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
@@ -346,7 +358,11 @@ const Game = {
         const routed = Routes.resolve(now);
         for (const ev of routed.events) Bus.emit("routeEvent", ev);
         const made = Industries.resolve(now);
-        if (surveyed.length || routed.total || made.length) this.requestSave();
+        const crafted = window.Workshop ? Workshop.resolve(now) : [];
+        if (surveyed.length || routed.total || made.length || crafted.length) this.requestSave();
+      } else if (window.Workshop) {
+        const crafted = Workshop.resolve(now);
+        if (crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
       Rivals.tick(now);
@@ -370,7 +386,8 @@ const Game = {
         if (orderEv.length) this.requestSave();
       }).catch(e => console.warn("[Orders] process failed:", e));
       const made = Industries.resolve(now);
-      if (surveyed.length || routed.total || made.length || senateBills.length) this.requestSave();
+      const crafted = window.Workshop ? Workshop.resolve(now) : [];
+      if (surveyed.length || routed.total || made.length || crafted.length || senateBills.length) this.requestSave();
     }
     UI.tick();
   },
@@ -451,6 +468,7 @@ const Game = {
             void Orders.process();
             Industries.resolve(now);
           }
+          if (window.Workshop) Workshop.resolve(now);
           finish();
         });
         return;
@@ -462,6 +480,7 @@ const Game = {
       Routes.resolve(now);
       void Orders.process();
       Industries.resolve(now);
+      if (window.Workshop) Workshop.resolve(now);
       finish();
       return;
     }

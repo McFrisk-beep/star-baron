@@ -83,6 +83,23 @@ const Bazaar = {
     return { id: "bb" + (++this.s().seq), item, price: Math.round(item.value * Util.randFloat(1.05, 1.4)) };
   },
 
+  // Rotating blueprint offers (bazaar-source recipes the player doesn't know yet).
+  genSeededBlueprint(epoch, slot) {
+    const s = this._seed(["bp", String(epoch), String(slot)]);
+    const pool = (window.Workshop ? Workshop.dropPool("bazaar") : BLUEPRINTS.filter(b => b.source === "bazaar"));
+    if (!pool.length) return null;
+    const bp = pool[Math.floor(this._u01(s, 0) * pool.length) % pool.length];
+    const price = Math.round(12000 * (0.9 + this._u01(s, 1) * 0.8) * (bp.destroyOnUse ? 4 : 1));
+    return { id: `bp-${epoch}-${slot}`, blueprintId: bp.id, name: bp.name, outputType: bp.outputType, price };
+  },
+  genBlueprint() {
+    const pool = window.Workshop ? Workshop.dropPool("bazaar") : [];
+    if (!pool.length) return null;
+    const bp = Util.pick(pool);
+    return { id: "bp" + (++this.s().seq), blueprintId: bp.id, name: bp.name, outputType: bp.outputType,
+      price: Math.round(Util.randInt(10000, 22000) * (bp.destroyOnUse ? 4 : 1)) };
+  },
+
   // Seeded extractor offer — mirrors app.gen_extractor in phase3 SQL.
   genSeededExtractor(epoch, slot) {
     const s = this._seed(["ex", String(epoch), String(slot)]);
@@ -234,6 +251,11 @@ const Bazaar = {
       const o = this.genSeededBlackbox(epoch, i);
       if (o && !bought.has(o.id)) b.blackboxes.push(o);
     }
+    b.blueprints = [];
+    for (let i = 0; i < (BAZAARCFG.blueprintSlots || 0); i++) {
+      const o = this.genSeededBlueprint(epoch, i);
+      if (o && !bought.has(o.id)) b.blueprints.push(o);
+    }
     b.contracts = [];
     for (let i = 0; i < BAZAARCFG.contractSlots; i++) {
       const o = this.genSeededContract(epoch, i, tier);
@@ -361,11 +383,14 @@ const Bazaar = {
   ensure(now = Date.now()) {
     if (this.authoritative()) { this.fillSeededBoard(now); return; }
     const b = this.bz();
-    b.mercs ||= []; b.contracts ||= []; b.accessories ||= []; b.blackboxes ||= [];
+    b.mercs ||= []; b.contracts ||= []; b.accessories ||= []; b.blackboxes ||= []; b.blueprints ||= [];
     b.extractors ||= []; b.components ||= []; b.flagships ||= [];
     while (b.mercs.length < BAZAARCFG.mercSlots) b.mercs.push(this.genMerc(now));
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
     while (b.blackboxes.length < (BAZAARCFG.blackboxSlots || 0)) b.blackboxes.push(this.genBlackbox());
+    while (b.blueprints.length < (BAZAARCFG.blueprintSlots || 0)) {
+      const o = this.genBlueprint(); if (!o) break; b.blueprints.push(o);
+    }
     while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
     while (b.components.length < COMPONENTCFG.bazaarSlots) b.components.push(this.genComponent());
     while (b.flagships.length < (BAZAARCFG.flagshipSlots || 4)) {
@@ -409,6 +434,7 @@ const Bazaar = {
     // accessories + extractors occasionally get bought by NPCs
     b.accessories = b.accessories.filter(a => Math.random() > 0.06);
     b.blackboxes = (b.blackboxes || []).filter(a => Math.random() > 0.08);
+    b.blueprints = (b.blueprints || []).filter(a => Math.random() > 0.07);
     b.extractors = (b.extractors || []).filter(a => Math.random() > 0.04);
     b.components = (b.components || []).filter(a => Math.random() > 0.05);
     b.flagships = (b.flagships || []).filter(a => Math.random() > 0.08);
@@ -589,6 +615,22 @@ const Bazaar = {
     this._markBought(offerId);
     Economy.refreshNetWorth();
     return { ok: true, item: offer.item };
+  },
+
+  buyBlueprint(offerId) {
+    const b = this.bz(); const s = this.s();
+    const offer = (b.blueprints || []).find(a => a.id === offerId);
+    if (!offer) return { ok: false, msg: "Sold to another buyer." };
+    if (!window.Workshop) return { ok: false, msg: "Workshop unavailable." };
+    const price = Math.round(offer.price * (1 - Rep.discount()));
+    if (price > s.credits) return { ok: false, msg: "Not enough credits." };
+    const r = Workshop.grantBlueprint(offer.blueprintId);
+    if (!r.ok) return r;
+    s.credits -= price;
+    b.blueprints = b.blueprints.filter(a => a.id !== offerId);
+    this._markBought(offerId);
+    Economy.refreshNetWorth();
+    return { ok: true, blueprint: r.blueprint, name: offer.name };
   },
 
   _buyExtractorLocal(offerId) {
