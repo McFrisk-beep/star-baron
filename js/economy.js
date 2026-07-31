@@ -714,15 +714,16 @@ const Economy = {
     return null;
   },
 
-  // Customs scan on arrival: if you're carrying contraband, roll a seizure and
-  // confiscate a slice of the stack. Odds rise with Senate border edicts and at
-  // low-tolerance systems, and fall with Syndicate standing. Returns the
-  // seizure event (also emitted on the bus) or null. Reused live + offline.
+  // Customs scan on arrival: if you're carrying any illicit goods, roll a
+  // seizure and confiscate a slice of one stack. Odds rise with Senate border
+  // edicts and at low-tolerance systems, and fall with Syndicate standing.
+  // Returns the seizure event (also emitted on the bus) or null. Reused live + offline.
   customsScan(sysId) {
     const s = this.s();
-    const held = s.positions.contraband || 0;
-    if (held <= 0) return null;
-    const comm = COMMODITIES.find(c => c.id === "contraband"); if (!comm) return null;
+    const illicit = COMMODITIES.filter(c => c.cat === "illicit" && (s.positions[c.id] || 0) > 0);
+    if (!illicit.length) return null;
+    const comm = Util.pick(illicit);
+    const held = s.positions[comm.id] || 0;
     const sys = SYSTEMS.find(x => x.id === sysId);
     const tol = (sys && sys.mods && sys.mods.illicit) || 1;
     const scrutiny = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
@@ -731,11 +732,11 @@ const Economy = {
     const chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
     if (Math.random() >= chance) return null;
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
-    const value = Math.round(qty * this.priceHere("contraband"));
-    s.positions.contraband = held - qty;
-    if (s.positions.contraband <= 0) { s.positions.contraband = 0; s.avgCost.contraband = 0; } // stack cleared → drop its cost basis
+    const value = Math.round(qty * this.priceHere(comm.id));
+    s.positions[comm.id] = held - qty;
+    if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
     this.refreshNetWorth();
-    const ev = { commId: "contraband", name: comm.name, qty, value, sysId, chance };
+    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance };
     Bus.emit("customs", ev);
     return ev;
   },
