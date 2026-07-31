@@ -47,6 +47,7 @@ const I18n = {
     }
     for (const el of root.querySelectorAll("[data-i18n-ph]")) el.setAttribute("placeholder", this.t(el.getAttribute("data-i18n-ph")));
     for (const el of root.querySelectorAll("[data-i18n-title]")) el.setAttribute("title", this.t(el.getAttribute("data-i18n-title")));
+    for (const el of root.querySelectorAll("[data-i18n-label]")) el.setAttribute("aria-label", this.t(el.getAttribute("data-i18n-label")));
     // let the UI refresh JS-generated labels once it's ready
     if (window.UI && UI.rows && typeof UI.onLangChange === "function") UI.onLangChange();
   },
@@ -60,7 +61,7 @@ const I18n = {
       "hud.sentimentTip": "Market sentiment",
       "hud.titleTip": "Your Baron Tier — ascend in the Barons tab",
       "btn.starmap": "🗺 Star Map", "btn.signin": "Sign in", "btn.admin": "🛠 Admin",
-      "btn.help": "❔ Help", "btn.settings": "⚙ Settings",
+      "btn.help": "❔ Help", "btn.settings": "⚙ Settings", "btn.menu": "Menu",
       "nav.exchange": "Exchange", "nav.fleet": "Fleet", "nav.starmap": "Star Map", "nav.systems": "Star Systems", "nav.bazaar": "Bazaar",
       "nav.industries": "Industries", "nav.senate": "Senate", "nav.barons": "Barons",
       "nav.milestones": "Milestones", "nav.comms": "Comms", "nav.hub": "Hub",
@@ -173,7 +174,7 @@ const I18n = {
       "hud.sentimentTip": "市場のセンチメント",
       "hud.titleTip": "あなたの男爵位 —「男爵」タブで昇位できます",
       "btn.starmap": "🗺 星図", "btn.signin": "サインイン", "btn.admin": "🛠 管理",
-      "btn.help": "❔ ヘルプ", "btn.settings": "⚙ 設定",
+      "btn.help": "❔ ヘルプ", "btn.settings": "⚙ 設定", "btn.menu": "メニュー",
       "nav.exchange": "取引所", "nav.fleet": "艦隊", "nav.starmap": "星図", "nav.systems": "星系", "nav.bazaar": "バザール",
       "nav.industries": "産業", "nav.senate": "元老院", "nav.barons": "男爵",
       "nav.milestones": "実績", "nav.comms": "通信", "nav.hub": "拠点",
