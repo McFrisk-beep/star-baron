@@ -155,7 +155,7 @@ const UI = {
   },
 
   // Per-tab background (admin Images → Page backgrounds). Fixed full-viewport
-  // <img id="page-bg-img"> centered cut-out behind page UI. No URL → hide.
+  // <img id="page-bg-img"> cover+center behind page UI (mobile crops sides). No URL → hide.
   applyPageBg(name) {
     const img = document.getElementById("page-bg-img");
     if (!img) return;
