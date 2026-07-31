@@ -96,8 +96,10 @@ const Galaxy = {
     for (let i = 0; i < n; i++) {
       const cat = (rng() < 0.5 && sec.specialty) ? sec.specialty : pick(cats);
       const otherCat = pick(cats.filter(c => c !== cat));
-      const imp = pick(COMMODITIES.filter(c => c.cat === otherCat)) || pick(COMMODITIES);
-      const prod = pick(COMMODITIES.filter(c => c.cat === cat)) || pick(COMMODITIES);
+      // craftOnly exotics never spawn as planet industry outputs (expedition-sourced).
+      const pool = COMMODITIES.filter(c => !c.craftOnly);
+      const imp = pick(pool.filter(c => c.cat === otherCat)) || pick(pool) || pick(COMMODITIES);
+      const prod = pick(pool.filter(c => c.cat === cat)) || pick(pool) || pick(COMMODITIES);
       out.push({
         name: `${sysName} ${roman[i]}`,
         type: pick(PLANET_TYPES),
@@ -119,6 +121,7 @@ const Galaxy = {
   signatureCommodity(sys) {
     let best = null, dev = -1;
     for (const c of COMMODITIES) {
+      if (c.craftOnly) continue;
       const d = Math.abs((sys.mods[c.cat] ?? 1) - 1);
       if (d > dev) { dev = d; best = c; }
     }

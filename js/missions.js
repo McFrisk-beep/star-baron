@@ -209,7 +209,7 @@ const Missions = {
           if (Math.random() < bias * 0.4) { const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2); }
         }
         if (Math.random() < (m.reward.stockChance || 0)) {
-          const c = Util.pick(COMMODITIES);
+          const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
           const qty = Util.randInt(8, 40);
           const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
           s.positions[c.id] = held + qty;

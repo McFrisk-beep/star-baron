@@ -65,20 +65,62 @@ const CONFIG = {
 
 /* ---- COMMODITIES ----------------------------------------------------------
    category drives which systems are cheap/dear and which news hits it.
-   vol = volatility (0–1); higher = bigger live price swings.                  */
+   vol = volatility (0–1); higher = bigger live price swings.
+   rarity = common|uncommon|rare|exotic — gates Exchange stocking (Market.stocks).
+   craftOnly = not in normal system stock; expedition/mission/blueprint sourced.
+   See docs/CRAFTING_AND_MATERIALS.md §1.                                        */
 const COMMODITIES = [
-  { id: "iron_ore",    name: "Iron Ore",    cat: "mineral", base: 40,  vol: 0.04 },
-  { id: "silicon",     name: "Silicon",     cat: "mineral", base: 65,  vol: 0.05 },
-  { id: "rare_earths", name: "Rare Earths", cat: "mineral", base: 220, vol: 0.09 },
-  { id: "hydrogen",    name: "Hydrogen",    cat: "gas",     base: 30,  vol: 0.05 },
-  { id: "helium3",     name: "Helium-3",    cat: "gas",     base: 180, vol: 0.08 },
-  { id: "water_ice",   name: "Water Ice",   cat: "gas",     base: 25,  vol: 0.06 },
-  { id: "foodstuffs",  name: "Foodstuffs",  cat: "agri",    base: 55,  vol: 0.05 },
-  { id: "synthsilk",   name: "Synthsilk",   cat: "agri",    base: 140, vol: 0.07 },
-  { id: "nanochips",   name: "Nanochips",   cat: "tech",    base: 320, vol: 0.10 },
-  { id: "antimatter",  name: "Antimatter",  cat: "tech",    base: 900, vol: 0.14 },
-  { id: "spice",       name: "Spice",       cat: "luxury",  base: 260, vol: 0.12 },
-  { id: "contraband",  name: "Contraband",  cat: "illicit", base: 480, vol: 0.18 },
+  // Minerals
+  { id: "iron_ore",         name: "Iron Ore",         cat: "mineral", base: 40,   vol: 0.04, rarity: "common" },
+  { id: "silicon",          name: "Silicon",          cat: "mineral", base: 65,   vol: 0.05, rarity: "common" },
+  { id: "rare_earths",      name: "Rare Earths",      cat: "mineral", base: 220,  vol: 0.09, rarity: "uncommon" },
+  { id: "titanium_ore",     name: "Titanium Ore",     cat: "mineral", base: 150,  vol: 0.07, rarity: "uncommon" },
+  { id: "cobalt_ore",       name: "Cobalt Ore",       cat: "mineral", base: 90,   vol: 0.06, rarity: "common" },
+  { id: "graphene_lattice", name: "Graphene Lattice", cat: "mineral", base: 260,  vol: 0.09, rarity: "uncommon" },
+  { id: "pulsar_shard",     name: "Pulsar Shard",     cat: "mineral", base: 680,  vol: 0.17, rarity: "rare" },
+  { id: "voidstone",        name: "Voidstone",        cat: "mineral", base: 1400, vol: 0.20, rarity: "exotic", craftOnly: true },
+  // Gas
+  { id: "hydrogen",         name: "Hydrogen",         cat: "gas",     base: 30,   vol: 0.05, rarity: "common" },
+  { id: "helium3",          name: "Helium-3",         cat: "gas",     base: 180,  vol: 0.08, rarity: "common" },
+  { id: "water_ice",        name: "Water Ice",        cat: "gas",     base: 25,   vol: 0.06, rarity: "common" },
+  { id: "plasma_gas",       name: "Plasma Gas",       cat: "gas",     base: 210,  vol: 0.10, rarity: "uncommon" },
+  { id: "methane_slurry",   name: "Methane Slurry",   cat: "gas",     base: 85,   vol: 0.06, rarity: "common" },
+  { id: "xenon_gas",        name: "Xenon Gas",        cat: "gas",     base: 260,  vol: 0.11, rarity: "uncommon" },
+  { id: "cryo_vapor",       name: "Cryo Vapor",       cat: "gas",     base: 340,  vol: 0.12, rarity: "rare" },
+  { id: "quantum_foam",     name: "Quantum Foam",     cat: "gas",     base: 1100, vol: 0.19, rarity: "exotic", craftOnly: true },
+  // Agri
+  { id: "foodstuffs",       name: "Foodstuffs",       cat: "agri",    base: 55,   vol: 0.05, rarity: "common" },
+  { id: "synthsilk",        name: "Synthsilk",        cat: "agri",    base: 140,  vol: 0.07, rarity: "common" },
+  { id: "grain",            name: "Grain",            cat: "agri",    base: 35,   vol: 0.04, rarity: "common" },
+  { id: "protein_stock",    name: "Protein Stock",    cat: "agri",    base: 70,   vol: 0.05, rarity: "common" },
+  { id: "hydro_greens",     name: "Hydro Greens",     cat: "agri",    base: 50,   vol: 0.05, rarity: "common" },
+  { id: "algae_paste",      name: "Algae Paste",      cat: "agri",    base: 45,   vol: 0.05, rarity: "common" },
+  { id: "biofiber",         name: "Biofiber",         cat: "agri",    base: 160,  vol: 0.08, rarity: "uncommon" },
+  { id: "nectar_extract",   name: "Nectar Extract",   cat: "agri",    base: 190,  vol: 0.08, rarity: "uncommon" },
+  { id: "medicinal_herbs",  name: "Medicinal Herbs",  cat: "agri",    base: 200,  vol: 0.09, rarity: "uncommon" },
+  { id: "spore_culture",    name: "Spore Culture",    cat: "agri",    base: 380,  vol: 0.14, rarity: "rare" },
+  // Tech
+  { id: "nanochips",        name: "Nanochips",        cat: "tech",    base: 320,  vol: 0.10, rarity: "common" },
+  { id: "antimatter",       name: "Antimatter",       cat: "tech",    base: 900,  vol: 0.14, rarity: "rare" },
+  { id: "fusion_cell",      name: "Fusion Cell",      cat: "tech",    base: 260,  vol: 0.08, rarity: "common" },
+  { id: "sensor_array",     name: "Sensor Array",     cat: "tech",    base: 410,  vol: 0.11, rarity: "uncommon" },
+  { id: "neural_processor", name: "Neural Processor", cat: "tech",    base: 560,  vol: 0.13, rarity: "rare" },
+  { id: "quantum_core",     name: "Quantum Core",     cat: "tech",    base: 750,  vol: 0.13, rarity: "rare" },
+  { id: "ai_matrix",        name: "AI Matrix",        cat: "tech",    base: 2200, vol: 0.22, rarity: "exotic", craftOnly: true },
+  // Luxury
+  { id: "spice",            name: "Spice",            cat: "luxury",  base: 260,  vol: 0.12, rarity: "common" },
+  { id: "gemstones",        name: "Gemstones",        cat: "luxury",  base: 300,  vol: 0.10, rarity: "common" },
+  { id: "vintage_wine",     name: "Vintage Wine",     cat: "luxury",  base: 180,  vol: 0.08, rarity: "common" },
+  { id: "perfume_essence",  name: "Perfume Essence",  cat: "luxury",  base: 220,  vol: 0.09, rarity: "common" },
+  { id: "fine_art",         name: "Fine Art",         cat: "luxury",  base: 420,  vol: 0.13, rarity: "uncommon" },
+  { id: "exotic_pelts",     name: "Exotic Pelts",     cat: "luxury",  base: 520,  vol: 0.15, rarity: "rare" },
+  // Contraband / illicit
+  { id: "contraband",         name: "Contraband",         cat: "illicit", base: 480,  vol: 0.18, rarity: "common" },
+  { id: "narcotics",          name: "Narcotics",          cat: "illicit", base: 340,  vol: 0.16, rarity: "common" },
+  { id: "forged_credentials", name: "Forged Credentials", cat: "illicit", base: 410,  vol: 0.15, rarity: "uncommon" },
+  { id: "weapons_cache",      name: "Weapons Cache",      cat: "illicit", base: 600,  vol: 0.17, rarity: "uncommon" },
+  { id: "bio_toxin",          name: "Bio Toxin",          cat: "illicit", base: 720,  vol: 0.19, rarity: "rare" },
+  { id: "cipher_shard",       name: "Cipher Shard",       cat: "illicit", base: 950,  vol: 0.21, rarity: "rare", craftOnly: true },
 ];
 
 /* ---- STAR SYSTEMS ---------------------------------------------------------
@@ -378,6 +420,9 @@ const EXPEDCFG = {
   destroyChance: 0.10,           // chance a hazard is catastrophic (ship lost) — scaled by danger
   creditsBy: { near: [300, 1200], far: [1500, 6000] },
   seamMult: { scarce: 1.5, glut: 0.62 },   // the price swing a discovered seam applies locally
+  // Crafting materials (esp. craftOnly exotics) from survey loot — see CRAFTING_AND_MATERIALS §1.2.
+  materialQty: { near: [2, 6], far: [4, 14] },
+  materialExoticChance: { near: 0.12, far: 0.35 },  // otherwise rare/uncommon pool
   // Matured surveys open a Dispatches mini-story (SurveyStory) instead of
   // auto-resolving. weights still bias which event template pool is favored.
   weights: {
@@ -406,6 +451,8 @@ const MARKETCFG = {
   // cap: impact is computed against depth × this, so a big order jumps the price
   // far less than before (still linear, so splitting an order can't dodge it).
   impactSoftening: 3,            // 1 = old behaviour; higher = flatter price response to order size
+  // Rare goods only appear at 1–2 stations and cost more where they do (scarcity).
+  rareStockPremium: 1.35,
 
   // ---- Deterministic market (Phase 0 — see docs/SERVER_AUTHORITATIVE_DESIGN.md §4)
   // Seed MUST match the SQL market_price() function. Same seed → same curve.

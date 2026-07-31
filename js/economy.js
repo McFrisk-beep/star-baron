@@ -486,6 +486,7 @@ const Economy = {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const s = this.s();
+    if (window.Market && !Market.stocks(commId, s.currentSystem)) return 0;
     if (this.spotHere(commId) <= 0 || s.credits <= 0) return 0;
     return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
   },
@@ -534,6 +535,9 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
+    if (window.Market && !Market.stocks(commId, s.currentSystem)) {
+      return { ok: false, msg: "This station doesn't stock that commodity." };
+    }
     const capQ = this.buyCapQty(commId);                              // per-trade notional cap (credits paid ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
     const capped = qty > capQ; if (capped) qty = capQ;

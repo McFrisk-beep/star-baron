@@ -25,6 +25,49 @@ const Market = {
 
   byId(id) { return COMMODITIES.find(c => c.id === id); },
 
+  // Tradeable pool (excludes craftOnly exotics that never hit the Exchange).
+  tradeable() { return COMMODITIES.filter(c => !c.craftOnly); },
+
+  // Sector specialty for a system id (capital or generated). Illicit has no
+  // dedicated specialty sector — it rides with Sable Sprawl (luxury).
+  _specialty(systemId) {
+    if (window.Galaxy) {
+      const sys = Galaxy.get(systemId);
+      if (sys) {
+        const sec = Galaxy.sector(sys.sectorId);
+        return sec ? sec.specialty : null;
+      }
+    }
+    const sec = (typeof SECTORS !== "undefined" ? SECTORS : []).find(s => s.capital === systemId);
+    return sec ? sec.specialty : null;
+  },
+  _specialtyCat(cat) { return cat === "illicit" ? "luxury" : cat; },
+
+  // Rare goods: specialty-capital always; ~55% also Navos (seeded per commodity).
+  _rareHosts(c) {
+    const cat = this._specialtyCat(c.cat);
+    const sec = (typeof SECTORS !== "undefined" ? SECTORS : []).find(s => s.specialty === cat);
+    const hosts = sec ? [sec.capital] : ["navos"];
+    const s = this._seed([c.id, "rareHost2"]);
+    if (this._u01(s, 0) < 0.55 && !hosts.includes("navos")) hosts.push("navos");
+    return hosts;
+  },
+
+  // Whether a commodity appears on this system's Exchange (CRAFTING_AND_MATERIALS §1.2).
+  stocks(commId, systemId) {
+    const c = this.byId(commId);
+    if (!c) return false;
+    if (c.craftOnly || c.rarity === "exotic") return false;
+    const rarity = c.rarity || "common";
+    if (rarity === "common") return true;
+    const isHome = systemId === "navos" || !!(SYSTEMS.find(s => s.id === systemId)?.home);
+    const specialty = this._specialty(systemId);
+    const want = this._specialtyCat(c.cat);
+    if (rarity === "uncommon") return isHome || specialty === want;
+    if (rarity === "rare") return this._rareHosts(c).includes(systemId);
+    return false;
+  },
+
   init() {
     this.prices = {};
     this.hist = {};
@@ -106,9 +149,10 @@ const Market = {
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
     // ~70% category-wide, ~30% single commodity — keeps the tape alive without chaos.
     const pickCat = this._u01(s, 0) < 0.7;
+    const tradeable = this.tradeable();
     const target = pickCat
       ? cats[Math.floor(this._u01(s, 1) * cats.length) % cats.length]
-      : COMMODITIES[Math.floor(this._u01(s, 1) * COMMODITIES.length) % COMMODITIES.length].id;
+      : tradeable[Math.floor(this._u01(s, 1) * tradeable.length) % tradeable.length].id;
     // mult in [0.55, 0.85] ∪ [1.15, 1.70]
     const up = this._u01(s, 2) < 0.55;
     const mult = up ? 1.15 + this._u01(s, 3) * 0.55 : 0.55 + this._u01(s, 3) * 0.30;
@@ -136,9 +180,10 @@ const Market = {
     const s = this._seed(["local", systemId, "slot", String(slot)]);
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
     const pickCat = this._u01(s, 0) < 0.6;
+    const tradeable = this.tradeable();
     const target = pickCat
       ? cats[Math.floor(this._u01(s, 1) * cats.length) % cats.length]
-      : COMMODITIES[Math.floor(this._u01(s, 1) * COMMODITIES.length) % COMMODITIES.length].id;
+      : tradeable[Math.floor(this._u01(s, 1) * tradeable.length) % tradeable.length].id;
     const up = this._u01(s, 2) < 0.5;
     const mult = up ? 1.2 + this._u01(s, 3) * 0.5 : 0.5 + this._u01(s, 3) * 0.35;
     return { target, mult };
@@ -196,8 +241,13 @@ const Market = {
   // Spot at a system EXCLUDING your own pressure (mods + seeded local + overlays).
   spot(id, systemId, now = Date.now()) {
     const c = this.byId(id);
-    return this.prices[id] * this._mod(c.cat, systemId)
+    let p = this.prices[id] * this._mod(c.cat, systemId)
       * this.localEventMult(c, systemId, now) * this.localMult(c, systemId, now);
+    // Rare scarcity: when a rare good is stocked here, buy/sell marks higher.
+    if ((c.rarity || "common") === "rare" && this.stocks(id, systemId)) {
+      p *= (MARKETCFG.rareStockPremium || 1.35);
+    }
+    return p;
   },
 
   // Combined active-news multiplier for one commodity (decays to 1 over life).

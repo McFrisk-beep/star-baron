@@ -32,9 +32,10 @@ const Extractors = {
   },
   targets(ex) {
     if (!ex) return [];
+    const pool = COMMODITIES.filter(c => !c.craftOnly);
     if (ex.type === "specialized") return [ex.scope];
-    if (ex.type === "semi") return COMMODITIES.filter(c => c.cat === ex.scope).map(c => c.id);
-    return COMMODITIES.map(c => c.id);          // jack
+    if (ex.type === "semi") return pool.filter(c => c.cat === ex.scope).map(c => c.id);
+    return pool.map(c => c.id);                 // jack
   },
   describe(ex) {
     const t = EXTRACTORCFG.types[ex.type];
@@ -55,8 +56,9 @@ const Extractors = {
   gen() {
     const r = Math.random();
     const type = r < 0.45 ? "specialized" : r < 0.8 ? "semi" : "jack";
-    const scope = type === "specialized" ? Util.pick(COMMODITIES).id
-      : type === "semi" ? Util.pick([...new Set(COMMODITIES.map(c => c.cat))])
+    const tradeable = COMMODITIES.filter(c => !c.craftOnly);
+    const scope = type === "specialized" ? Util.pick(tradeable).id
+      : type === "semi" ? Util.pick([...new Set(tradeable.map(c => c.cat))])
         : "all";
     return { uid: "ex" + (++this.s().seq), type, scope, name: this.name(type, scope), components: [] };
   },

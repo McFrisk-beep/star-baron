@@ -615,7 +615,12 @@ const UI = {
     } else this.refs.transit.classList.add("hidden");
 
     for (const c of COMMODITIES) {
-      const r = this.rows[c.id];
+      const r = this.rows[c.id]; if (!r) continue;
+      const q = this.s().positions[c.id] || 0;
+      const stocked = Market.stocks(c.id, sys);
+      // Hide unstocked rows unless you hold some (so you can still sell).
+      r.tr.classList.toggle("hidden", !stocked && !q);
+      if (!stocked && !q) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
       if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
@@ -624,7 +629,6 @@ const UI = {
       r.chg.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
       r.chg.className = "num chg " + (pct > 0.1 ? "up" : pct < -0.1 ? "down" : "");
       r.trend.innerHTML = this.spark(Market.history(c.id), pct >= 0);
-      const q = this.s().positions[c.id] || 0;
       r.held.textContent = q ? q : "·";
       if (q) { const cost = this.s().avgCost[c.id] || 0, upl = (p - cost) * q;
         r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
@@ -686,7 +690,7 @@ const UI = {
 
   // ===== standing orders & alerts =========================================
   buildOrders() {
-    this.refs.ordComm.innerHTML = COMMODITIES.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+    this.refs.ordComm.innerHTML = Market.tradeable().map(c => `<option value="${c.id}">${c.name}</option>`).join("");
     this.refs.ordAdd.onclick = () => this.addOrder();
     this.renderOrders();
   },
@@ -883,7 +887,7 @@ const UI = {
     }).join("");
     this.refs.rtBody.innerHTML =
       `<div class="rt-form">
-         <label>Commodity <select id="rt-comm">${opts(COMMODITIES, COMMODITIES[0].id)}</select></label>
+         <label>Commodity <select id="rt-comm">${opts(Market.tradeable(), Market.tradeable()[0].id)}</select></label>
          <label>Buy at <select id="rt-from">${opts(unlocked, from0)}</select></label>
          <label>Sell at <select id="rt-to">${opts(unlocked, to0)}</select></label>
        </div>
