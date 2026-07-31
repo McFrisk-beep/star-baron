@@ -15,22 +15,33 @@
       <span class="brand-name">COSMOCRAT</span>
       <span class="brand-sub" data-i18n="brand.sub">galactic exchange</span>
     </div>
-    <div class="stats">
+    <!-- Credits + Net Worth stay pinned in the bar on every screen size; the rest
+         of the HUD and every top button live in .topmenu, which is a plain flex
+         row on desktop (display:contents) and a hamburger drawer on mobile. -->
+    <div class="stats stats-key">
       <div class="stat"><label data-i18n="hud.credits">Credits</label><span id="hud-credits">—</span></div>
       <div class="stat"><label data-i18n="hud.networth">Net Worth</label><span id="hud-networth">—</span></div>
-      <div class="stat" data-i18n-title="hud.rankTip" title="Your place among the galaxy's barons"><label data-i18n="hud.rank">Rank</label><span id="hud-rank">—</span></div>
-      <div class="stat"><label data-i18n="hud.location">Location</label><span id="hud-system">—</span></div>
-      <div class="stat" data-i18n-title="hud.sentimentTip" title="Market sentiment"><label data-i18n="hud.sentiment">Sentiment</label>
-        <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
-      <div class="stat" data-i18n-title="hud.titleTip" title="Your Baron Tier — ascend in the Barons tab"><label data-i18n="hud.title">Title</label><span id="hud-tier">Baron</span></div>
-      <div class="stat stat-stealth"><label data-i18n="hud.cycle">Cycle</label><span id="hud-clock">—</span></div>
     </div>
-    <div class="topbtns">
-      <button id="btn-account" class="btn hidden" data-i18n="btn.signin">Sign in</button>
-      <button id="btn-admin" class="btn hidden" data-i18n="btn.admin">🛠 Admin</button>
-      <button id="btn-prestige" class="btn btn-prestige hidden">Ascend ▸</button>
-      <button id="btn-help" class="btn" data-i18n="btn.help">❔ Help</button>
-      <button id="btn-settings" class="btn" data-i18n="btn.settings">⚙ Settings</button>
+    <button id="btn-menu" class="hamburger" type="button" aria-expanded="false" aria-controls="topmenu"
+            aria-label="Menu" title="Menu" data-i18n-label="btn.menu" data-i18n-title="btn.menu">
+      <span aria-hidden="true"></span>
+    </button>
+    <div class="topmenu" id="topmenu">
+      <div class="stats stats-more">
+        <div class="stat" data-i18n-title="hud.rankTip" title="Your place among the galaxy's barons"><label data-i18n="hud.rank">Rank</label><span id="hud-rank">—</span></div>
+        <div class="stat"><label data-i18n="hud.location">Location</label><span id="hud-system">—</span></div>
+        <div class="stat" data-i18n-title="hud.sentimentTip" title="Market sentiment"><label data-i18n="hud.sentiment">Sentiment</label>
+          <span class="sentiment"><span id="hud-sentiment-fill"></span></span></div>
+        <div class="stat" data-i18n-title="hud.titleTip" title="Your Baron Tier — ascend in the Barons tab"><label data-i18n="hud.title">Title</label><span id="hud-tier">Baron</span></div>
+        <div class="stat stat-stealth"><label data-i18n="hud.cycle">Cycle</label><span id="hud-clock">—</span></div>
+      </div>
+      <div class="topbtns">
+        <button id="btn-account" class="btn hidden" data-i18n="btn.signin">Sign in</button>
+        <button id="btn-admin" class="btn hidden" data-i18n="btn.admin">🛠 Admin</button>
+        <button id="btn-prestige" class="btn btn-prestige hidden">Ascend ▸</button>
+        <button id="btn-help" class="btn" data-i18n="btn.help">❔ Help</button>
+        <button id="btn-settings" class="btn" data-i18n="btn.settings">⚙ Settings</button>
+      </div>
     </div>
   </header>
 

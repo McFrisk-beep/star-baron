@@ -64,6 +64,7 @@ const UI = {
       dispatchBody: $("dispatch-body"),
       pendingBody: $("pending-body"),
       btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
+      topbar: document.querySelector(".topbar"), btnMenu: $("btn-menu"), topmenu: $("topmenu"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
       tutBack: $("tut-back"), tutNext: $("tut-next"),
@@ -2376,6 +2377,19 @@ const UI = {
     };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());
+    // Mobile hamburger. The drawer's open/closed paint is pure CSS (.menu-open);
+    // this only flips the class, keeps aria-expanded honest, and closes on
+    // outside tap / Escape / picking anything inside.
+    if (r.btnMenu && r.topbar) {
+      const setMenu = on => {
+        r.topbar.classList.toggle("menu-open", on);
+        r.btnMenu.setAttribute("aria-expanded", on ? "true" : "false");
+      };
+      r.btnMenu.onclick = () => setMenu(!r.topbar.classList.contains("menu-open"));
+      if (r.topmenu) r.topmenu.addEventListener("click", e => { if (e.target.closest(".btn")) setMenu(false); });
+      document.addEventListener("click", e => { if (!r.topbar.contains(e.target)) setMenu(false); });
+      document.addEventListener("keydown", e => { if (e.key === "Escape") setMenu(false); });
+    }
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
     r.btnHelp.onclick = () => this.openTutorial();
