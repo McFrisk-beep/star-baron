@@ -338,6 +338,16 @@ const SurveyStory = {
         st.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // salvage — no cost basis
         report.stock = { commId: c.id, name: c.name, qty };
       }
+      // Occasional blackbox alongside material salvage (CRAFTING_AND_MATERIALS §2.3).
+      const bbP = (EXPEDCFG.blackboxChance && EXPEDCFG.blackboxChance[far ? "far" : "near"]) || 0;
+      if (bbP && Math.random() < bbP && window.Items) {
+        const room = !(window.Bazaar) || (() => { try { return Bazaar.inventoryUsed() < Bazaar.capacity(); } catch (e) { return true; } })();
+        if (room) {
+          const box = Items.genBlackbox();
+          this.s().items[box.uid] = box;
+          report.items.push(box);
+        }
+      }
     }
     if (spec.seam && sys && window.Galaxy) {
       const scarce = Math.random() < 0.5;

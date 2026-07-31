@@ -1423,6 +1423,30 @@ body {
 /* reduced-motion: drop the press micro-interaction */
 body.reduced .btn:active { transform: none; }
 
+/* ===== Hub boost bar (active blackboxes) ================================ */
+.hub-boosts { max-width: 720px; margin: 18px auto; }
+.boost-bar { display: flex; flex-wrap: wrap; gap: 8px; min-height: 0; }
+.boost-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 8px;
+  background: rgba(20, 32, 60, .72);
+  border: 1px solid rgba(120, 160, 220, .28);
+  min-width: 140px;
+}
+.boost-chip .boost-ico {
+  width: 28px; height: 28px; border-radius: 6px;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  background: rgba(86, 200, 220, .15); color: #8fd6e8;
+  border: 1px solid rgba(86, 200, 220, .35);
+  flex: 0 0 auto;
+}
+.boost-chip .boost-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.boost-chip .boost-name { font-size: 12px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boost-chip .boost-cd { font-family: var(--mono); font-size: 11px; color: var(--gold); }
+.boost-chip[title] { cursor: help; }
+#boost-empty.hidden { display: none; }
+
 /* ===== Station Hub — walkable canvas tilemap ============================= */
 .hub-scene {
   position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 72vh;

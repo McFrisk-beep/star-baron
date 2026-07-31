@@ -20,8 +20,9 @@ const Game = {
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
       missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
+      activeBoosts: [],   // [{ effectId, expiresAt }] — blackbox timed buffs (CRAFTING_AND_MATERIALS §2)
       inventory: { capacity: 6, upgrades: 0 },
-      bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [], flagships: [] },
+      bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], extractors: [], components: [], flagships: [] },
       pendingContracts: [],
       bazaarBought: [],
       travel: null,
@@ -77,6 +78,9 @@ const Game = {
       delete s.avgCost; s.avgCost = (loaded.avgCost && typeof loaded.avgCost === "object") ? loaded.avgCost : {};
     }
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    if (!Array.isArray(s.activeBoosts)) s.activeBoosts = [];
+    // Drop expired / unknown boosts so old/corrupt saves don't stick forever.
+    s.activeBoosts = s.activeBoosts.filter(b => b && typeof b.effectId === "string" && Number.isFinite(+b.expiresAt) && +b.expiresAt > Date.now());
     // story flags / ephemeral survey threads — old saves lack the keys
     s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
     s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {}; s.story.ephemeral ||= {};
@@ -91,7 +95,8 @@ const Game = {
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
-    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
+    s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
+    s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);

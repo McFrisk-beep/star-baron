@@ -29,7 +29,8 @@ const Missions = {
   buildPhases(contract, uids) {
     const speed = Fleet.avgSpeed(uids) || 1;
     const total = contract.durationMs;
-    const leg = (total * 0.3) / speed;
+    const transit = window.Boosts ? (1 + Boosts.mag("missionTransit")) : 1;
+    const leg = ((total * 0.3) / speed) * Math.max(0.2, transit);
     const work = total * 0.4;
     const labels = MISSION_PHASES[contract.type] || ["Working"];
     const fill = t => t.replace(/\{SYS\}/g, contract.sysName || "the site");
@@ -187,7 +188,8 @@ const Missions = {
         const hitP = success ? prof.chance : Math.min(1, prof.chance * 1.5);
         if (Math.random() < hitP) {
           const before = sh.dmg || 0;
-          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult));
+          const dmgMult = window.Boosts ? Math.max(0, 1 + Boosts.mag("missionDamage")) : 1;
+          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult) * dmgMult);
           report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
         }
       }
@@ -196,7 +198,8 @@ const Missions = {
       if (!survivors.length && report.lost.length) { success = false; report.success = false; report.wipe = true; } // nobody came home
 
       if (success) {
-        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1));
+        const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
+        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
         report.credits = Economy.afterTax(gross);                 // Baron Tier earnings tax
         report.taxed = gross - report.credits;
         s.credits += report.credits;

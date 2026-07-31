@@ -248,6 +248,7 @@ const BAZAARCFG = {
   mercSlots: 8,            // how many mercs are on offer at once
   contractSlots: 14,       // how many contracts on the board
   accessorySlots: 18,      // how many accessories for sale
+  blackboxSlots: 2,        // rare rotating consumable blackboxes on the Gear tab
   flagshipSlots: 4,        // rotating flagship offers (current flagship is always shown separately)
   mercTickMs: 90 * 1000,   // how often merc offers churn
   accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
@@ -423,6 +424,7 @@ const EXPEDCFG = {
   // Crafting materials (esp. craftOnly exotics) from survey loot — see CRAFTING_AND_MATERIALS §1.2.
   materialQty: { near: [2, 6], far: [4, 14] },
   materialExoticChance: { near: 0.12, far: 0.35 },  // otherwise rare/uncommon pool
+  blackboxChance: { near: 0.10, far: 0.22 },       // chance a materials reward also drops a blackbox
   // Matured surveys open a Dispatches mini-story (SurveyStory) instead of
   // auto-resolving. weights still bias which event template pool is favored.
   weights: {
@@ -430,6 +432,24 @@ const EXPEDCFG = {
     far:  { gear: 3, seam: 3, credits: 2, faction: 2, hazard: 3, dry: 1, signal: 3, derelict: 3, ruin: 2 },
   },
 };
+
+/* ---- BLACKBOX EFFECTS -----------------------------------------------------
+   Consumable inventory items. Use → entry on state.activeBoosts until expiresAt.
+   See docs/CRAFTING_AND_MATERIALS.md §2.                                       */
+const BLACKBOX_EFFECTS = [
+  { id: "overclock_core",  name: "Overclock Core",  desc: "+25% extractor yield",
+    stat: "industryYield",  mag: 0.25,  durationMs: 2 * 3600 * 1000 },
+  { id: "smugglers_veil",  name: "Smuggler's Veil", desc: "-50% customs seizure odds",
+    stat: "customsSeize",   mag: -0.50, durationMs: 3 * 3600 * 1000 },
+  { id: "autopilot_surge", name: "Autopilot Surge", desc: "-20% mission transit time",
+    stat: "missionTransit", mag: -0.20, durationMs: 4 * 3600 * 1000 },
+  { id: "silver_tongue",   name: "Silver Tongue",   desc: "+15% contract reward",
+    stat: "contractReward", mag: 0.15,  durationMs: 3 * 3600 * 1000 },
+  { id: "void_shield",     name: "Void Shield",     desc: "-30% mission hull damage",
+    stat: "missionDamage",  mag: -0.30, durationMs: 2 * 3600 * 1000 },
+  { id: "tax_ghost",       name: "Tax Ghost",       desc: "-50% industry tax",
+    stat: "industryTax",    mag: -0.50, durationMs: 4 * 3600 * 1000 },
+];
 
 /* ---- MARKET MICROSTRUCTURE ------------------------------------------------
    Kills cross-system arbitrage as a free-money printer. Three levers:
@@ -926,6 +946,7 @@ window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
 window.CUSTOMS = CUSTOMS;
 window.EXPEDCFG = EXPEDCFG;
+window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.MARKETCFG = MARKETCFG;
 window.ROUTECFG = ROUTECFG;
 window.ROUTE_EVENTS = ROUTE_EVENTS;
