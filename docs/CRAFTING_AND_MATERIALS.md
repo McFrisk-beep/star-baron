@@ -16,7 +16,7 @@ use judgement on exact numbers during balancing.
 
 ---
 
-## 1. Commodities — 12 → 33
+## 1. Commodities — 12 → 45 (33 new, in addition to the existing 12)
 
 Keep the existing flat shape in `js/data.js` `COMMODITIES` (`{id, name, cat,
 base, vol}`) and add two optional fields:
@@ -34,70 +34,82 @@ base, vol}`) and add two optional fields:
 
 Existing entries unchanged in **bold**; new entries follow.
 
-**Minerals (5)** — ship hulls, gear frames, extractor housings
+**Minerals — 8 total (3 existing + 5 new)** — ship hulls, gear frames, extractor housings
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **iron_ore** | Iron Ore | 40 | 0.04 | common |
 | **silicon** | Silicon | 65 | 0.05 | common |
 | **rare_earths** | Rare Earths | 220 | 0.09 | uncommon |
 | titanium_ore | Titanium Ore | 150 | 0.07 | uncommon |
+| cobalt_ore | Cobalt Ore | 90 | 0.06 | common |
+| graphene_lattice | Graphene Lattice | 260 | 0.09 | uncommon |
+| pulsar_shard | Pulsar Shard | 680 | 0.17 | rare |
 | voidstone | Voidstone | 1400 | 0.20 | exotic, `craftOnly` |
 
-**Gas (5)** — fuel, engines, cooling
+**Gas — 8 total (3 existing + 5 new)** — fuel, engines, cooling
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **hydrogen** | Hydrogen | 30 | 0.05 | common |
 | **helium3** | Helium-3 | 180 | 0.08 | common |
 | **water_ice** | Water Ice | 25 | 0.06 | common |
 | plasma_gas | Plasma Gas | 210 | 0.10 | uncommon |
+| methane_slurry | Methane Slurry | 85 | 0.06 | common |
+| xenon_gas | Xenon Gas | 260 | 0.11 | uncommon |
 | cryo_vapor | Cryo Vapor | 340 | 0.12 | rare |
+| quantum_foam | Quantum Foam | 1100 | 0.19 | exotic, `craftOnly` |
 
-**Agri (8)** — crew upkeep now, seeds the future staff mechanic later
+**Agri — 10 total (2 existing + 8 new)** — crew upkeep now, seeds the future staff mechanic later
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **foodstuffs** | Foodstuffs | 55 | 0.05 | common |
 | **synthsilk** | Synthsilk | 140 | 0.07 | common |
 | grain | Grain | 35 | 0.04 | common |
 | protein_stock | Protein Stock | 70 | 0.05 | common |
-| biofiber | Biofiber | 160 | 0.08 | uncommon |
-| medicinal_herbs | Medicinal Herbs | 200 | 0.09 | uncommon |
+| hydro_greens | Hydro Greens | 50 | 0.05 | common |
 | algae_paste | Algae Paste | 45 | 0.05 | common |
+| biofiber | Biofiber | 160 | 0.08 | uncommon |
+| nectar_extract | Nectar Extract | 190 | 0.08 | uncommon |
+| medicinal_herbs | Medicinal Herbs | 200 | 0.09 | uncommon |
 | spore_culture | Spore Culture | 380 | 0.14 | rare |
 
-Rationale: `grain`/`protein_stock` are cheap staples (later: what hired staff
-consume as upkeep); `biofiber`/`medicinal_herbs` are crafting inputs (gear
-padding, blackbox healing effects, future staff medbay); `algae_paste` is a
-cheap life-support filler (fuel/food hybrid flavor); `spore_culture` is the
-one exotic biotech ingredient for top-tier blackboxes/gear. When the staff
-mechanic lands, grain/protein_stock/medicinal_herbs are already positioned as
-"what staff need" without renaming anything.
+Rationale: `grain`/`protein_stock`/`hydro_greens` are cheap staples (later:
+what hired staff consume as upkeep); `biofiber`/`medicinal_herbs`/
+`nectar_extract` are crafting inputs (gear padding, blackbox effects, future
+staff morale/medbay); `algae_paste` is a cheap life-support filler (fuel/food
+hybrid flavor); `spore_culture` is the one exotic biotech ingredient for
+top-tier blackboxes/gear. When the staff mechanic lands, the staples are
+already positioned as "what staff need" without renaming anything.
 
-**Tech (5)** — the advanced-parts tier
+**Tech — 7 total (2 existing + 5 new)** — the advanced-parts tier
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **nanochips** | Nanochips | 320 | 0.10 | common |
 | **antimatter** | Antimatter | 900 | 0.14 | rare |
+| fusion_cell | Fusion Cell | 260 | 0.08 | common |
 | sensor_array | Sensor Array | 410 | 0.11 | uncommon |
+| neural_processor | Neural Processor | 560 | 0.13 | rare |
 | quantum_core | Quantum Core | 750 | 0.13 | rare |
 | ai_matrix | AI Matrix | 2200 | 0.22 | exotic, `craftOnly` |
 
-**Luxury (5)** — mostly sell-fodder, a couple double as cosmetic crafting inputs
+**Luxury — 6 total (1 existing + 5 new)** — mostly sell-fodder, a couple double as cosmetic crafting inputs
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **spice** | Spice | 260 | 0.12 | common |
 | gemstones | Gemstones | 300 | 0.10 | common |
 | vintage_wine | Vintage Wine | 180 | 0.08 | common |
+| perfume_essence | Perfume Essence | 220 | 0.09 | common |
 | fine_art | Fine Art | 420 | 0.13 | uncommon |
 | exotic_pelts | Exotic Pelts | 520 | 0.15 | rare |
 
-**Contraband (5)** — illicit crafting, seizure risk stays the deterrent
+**Contraband — 6 total (1 existing + 5 new)** — illicit crafting, seizure risk stays the deterrent
 | id | name | base | vol | rarity |
 |---|---|---|---|---|
 | **contraband** | Contraband | 480 | 0.18 | common |
 | narcotics | Narcotics | 340 | 0.16 | common |
+| forged_credentials | Forged Credentials | 410 | 0.15 | uncommon |
 | weapons_cache | Weapons Cache | 600 | 0.17 | uncommon |
 | bio_toxin | Bio Toxin | 720 | 0.19 | rare |
-| black_data | Black Data | 950 | 0.21 | rare, `craftOnly` |
+| cipher_shard | Cipher Shard | 950 | 0.21 | rare, `craftOnly` |
 
 ### 1.2 Rarity → sourcing rule
 
@@ -266,11 +278,11 @@ repeatable grind.
 | recipe | effect | ingredients | craft time | blueprint source |
 |---|---|---|---|---|
 | Overclock Core (box) | overclock_core | 4 quantum_core + 2 plasma_gas + 3 gemstones | 30 min | auto-unlocked |
-| Smuggler's Veil (box) | smugglers_veil | 5 weapons_cache + 3 black_data + 2 narcotics | 45 min | Bazaar |
+| Smuggler's Veil (box) | smugglers_veil | 5 weapons_cache + 3 cipher_shard + 2 narcotics | 45 min | Bazaar |
 | Autopilot Surge (box) | autopilot_surge | 6 sensor_array + 4 plasma_gas | 30 min | auto-unlocked |
 | Silver Tongue (box) | silver_tongue | 4 fine_art + 3 vintage_wine + 2 gemstones | 40 min | Bazaar |
 | Void Shield (box) | void_shield | 5 titanium_ore + 4 biofiber + 2 quantum_core | 40 min | Expedition |
-| Tax Ghost (box) | tax_ghost | 6 black_data + 4 bio_toxin | 1 h | Mission |
+| Tax Ghost (box) | tax_ghost | 6 cipher_shard + 4 bio_toxin | 1 h | Mission |
 
 ### 3.5 Cross-system hooks (per your ask — missions / senate / blackbox synergy)
 
