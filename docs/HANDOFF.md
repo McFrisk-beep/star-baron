@@ -45,12 +45,13 @@ come first; runtime-only references can come later):**
 supabase CDN → data.js → flavor.js → cloud-config.js → store.js → cloud.js →
 username.js → content.js → market.js → galaxy.js → items.js → fleet.js → economy.js →
 reputation.js → rivals.js → missions.js → routes.js → incidents.js → orders.js →
-extractors.js → industries.js → bazaar.js → feed.js → broadcast.js → wars.js →
+extractors.js → industries.js → workshop.js → bazaar.js → feed.js → broadcast.js → wars.js →
 worldfeed.js → ui.js → auth-ui.js → admin-ui.js → planetview.js → starmap.js →
 main.js
 ```
-(`extractors.js` before `industries.js`; `planetview.js` before `starmap.js`;
-`wars.js` after `broadcast.js` because `Wars.start` uses `Broadcast.announce`.)
+(`extractors.js` before `industries.js`; `workshop.js` before `bazaar.js`;
+`planetview.js` before `starmap.js`; `wars.js` after `broadcast.js` because
+`Wars.start` uses `Broadcast.announce`.)
 (`username.js` after `cloud.js` — Account handle validation + `Cloud.displayName`.)
 
 ### Decoupling
@@ -89,7 +90,8 @@ be **overridden live** (see §6 Content CMS).
 | `wars.js` | `Wars` — periodic faction wars + market shocks (see §3). |
 | `extractors.js` | `Extractors` + `Components` — mining machines & their upgrades (see §3). |
 | `industries.js` | `Industries` — offworld manufacturing on star-map planets (see §3). |
-| `bazaar.js` | `Bazaar` — shop board (ships/mercs/contracts/accessories/**extractors/components**), ship resale, churn. Retains a save-compat shim for retired item "listings" — **don't delete it** (it pays out / prevents stranded gear in old saves). |
+| `workshop.js` | `Workshop` — timed craft queue, blueprint unlocks, recipes (gear / extractors / ships / blackboxes). Config in `WORKSHOPCFG` / `BLUEPRINTS` / `RECIPES` (`data.js`). |
+| `bazaar.js` | `Bazaar` — shop board (ships/mercs/contracts/accessories/**extractors/components**/blackboxes/blueprints), ship resale, churn. Retains a save-compat shim for retired item "listings" — **don't delete it** (it pays out / prevents stranded gear in old saves). |
 | `feed.js` | `Feed` — live trader chat scheduler, token templating, omens, `prime()`. |
 | `broadcast.js` | `Broadcast` — TV rotation + news→market pipeline + newswire + `backfill()` + `disableLocalNews()`. |
 | `worldfeed.js` | `WorldFeed` — reads the **shared** Supabase world (chat + news). |
@@ -168,6 +170,14 @@ prestige. On top of that:
   - All mining state is in `state.industries` / `state.extractors` /
     `state.components` (+ `bazaar.extractors`/`bazaar.components`), so it's covered
     by save/migrate/prestige and cloud sync like everything else.
+- **Materials / Blackboxes / Workshop** (`docs/CRAFTING_AND_MATERIALS.md`).
+  45 commodities with `rarity` / `craftOnly`; Exchange stocking via
+  `Market.stocks()`. Consumable **blackboxes** (`Items` + `Boosts`, Hub
+  `#boost-bar`). **Workshop** nav page: timed queue, slot upgrades, blueprint
+  gating (auto / bazaar / expedition / mission / Senate Fabrication Rights).
+  Unique ship **The Last Aegis** is story-chain only (`last_aegis` in
+  `story.js`) and burns after one craft. `craftOnly` stock cannot be sold on
+  the Exchange.
 
 **Welcome-back recap (`Game.awayRecap` + `UI.showWYWA`).** After an absence the
 "While You Were Away" modal summarizes net worth then→now, an ongoing/ended war,
@@ -369,9 +379,11 @@ table been created?" toast means `saves` is missing.
 The trading core is feature-complete (market, fleet, missions, bazaar, factions,
 rivals, prestige, star map, onboarding) and has since grown a full layer of
 endgame systems: automated trade routes, choice-driven incidents, standing
-orders/price alerts, faction wars, and a deep **offworld Industries/mining**
+orders/price alerts, faction wars, a deep **offworld Industries/mining**
 chain (permits → extractors → rarity-tiered components → 12h taxed batches, with
-faction licensing and seizure). Accounts + per-user cloud saves, an admin
+faction licensing and seizure), and **Workshop crafting** (45 commodities with
+rarity/craftOnly stocking, blackbox timed buffs, blueprint-gated recipes for
+gear/extractors/ships/blackboxes, Senate Fabrication Rights). Accounts + per-user cloud saves, an admin
 role + content/image CMS, and a shared persistent world (chat + news via Supabase
 Cron) are built and working; save/login/logout are solid and the offline
 catch-up + welcome-back recap cover every system. The biggest open work is an

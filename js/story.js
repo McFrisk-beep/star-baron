@@ -288,6 +288,10 @@ const Story = {
     if (reward.component && window.Components) { const c = Components.acquire(Components.gen()); bits.push("component — " + c.name); }
     if (reward.extractor && window.Extractors) { const e = Extractors.acquire(Extractors.gen()); bits.push("extractor — " + e.name); }
     if (reward.item && window.Items) { const it = Items.gen(reward.item === true ? {} : { rarity: reward.item }); s.items[it.uid] = it; bits.push("gear — " + it.name); }
+    if (reward.blueprint && window.Workshop) {
+      const gr = Workshop.grantBlueprint(reward.blueprint);
+      if (gr.ok) bits.push("blueprint — " + ((gr.blueprint && gr.blueprint.name) || reward.blueprint));
+    }
     if (reward.taxBreak) {
       const st = this.s(); const now = Date.now();
       st.taxBreakPct = Math.max(st.taxBreakPct || 0, reward.taxBreak.pct);
@@ -476,7 +480,7 @@ const Story = {
    Flags: choice/accept/decline/continue/step/reward may `set: { flag: true }`.
    Later triggers read Story.flag("x") / Story.done("id"). That's how a smuggle
    run today makes Customs furious next week.
-   Reward fields: { credits, ship, component, extractor, item, taxBreak, rep:{faction:Δ}, set }
+   Reward fields: { credits, ship, component, extractor, item, blueprint, taxBreak, rep:{faction:Δ}, set }
    ========================================================================== */
 const STORYLINES = [
 
@@ -1292,6 +1296,37 @@ const STORYLINES = [
         goal: { desc: "Complete 3 more trades OR 1 contract",
           done: (s, b) => ((s.stats.trades || 0) - b.trades >= 3) || ((s.stats.contractsDone || 0) - b.contracts >= 1) },
         reward: { credits: 5500, rep: { agri_collective: 5 }, set: { agri_feast: true } } },
+    ],
+  },
+
+  // The Last Aegis — one-of-a-kind craftable hull (CRAFTING_AND_MATERIALS §3.4).
+  // Blueprint is mission-chain only; never in random contract/expedition pools.
+  {
+    id: "last_aegis", kind: "arc", from: "Archivist Wren", portrait: 5,
+    trigger: s => (s.stats.contractsDone || 0) >= 8
+      && (window.Economy ? Economy.netWorth() : s.credits) >= 250000
+      && !(window.Workshop && Workshop.burned("ship_last_aegis"))
+      && !(window.Workshop && Workshop.known("ship_last_aegis")),
+    outro: "Wren: “One hull. One forge. Don't waste the ending.”",
+    steps: [
+      { key: "a0", text: "Encrypted packet. Subject: Last Aegis. Pre-Guild keel plan, thought erased. I can reconstruct the blueprint — if you prove you won't sell the skeleton to the highest bidder. Two hard contracts from this mark. High or extreme. No theatre.",
+        accept: { label: "I'll earn it", reply: "Name the proof.", ack: "Two high/extreme contracts. Then we talk forgings.", set: { aegis_hunt: true } },
+        decline: { label: "Too steep", reply: "Not my war.", ack: "Then the archive stays shut. Some endings prefer dust.", set: { aegis_refused: true }, outro: "Wren: “Refused. Logged.”" },
+        goal: { desc: "Complete 2 more contracts", done: (s, b) => (s.stats.contractsDone || 0) - b.contracts >= 2 },
+        reward: { credits: 8000 },
+        replies: [
+          { label: "What is the Aegis?", reply: "What was the Last Aegis?",
+            ack: "A shield that outlived its empire. Stats suggest it still could." },
+        ] },
+      { key: "a1", text: "Proof accepted. The yard still needs feedstock theatre — voidstone, matrices, antimatter — but first: one more extreme push so Customs writes you as inevitable, not lucky. One contract.",
+        goal: { desc: "Complete 1 more contract", done: (s, b) => (s.stats.contractsDone || 0) - b.contracts >= 1 },
+        reward: { credits: 12000, item: "rare" } },
+      { key: "a2", text: "Here. Blueprint: The Last Aegis. File it in the Workshop. Craft once — the plate burns on completion. If you already forged it in some other life, this packet is ash.",
+        choices: [
+          { label: "Take the blueprint", reply: "I'll forge it once.",
+            ack: "Then don't queue two. The slips remember greed.",
+            reward: { blueprint: "bp_ship_last_aegis", set: { aegis_blueprint: true } }, end: true },
+        ] },
     ],
   },
 ];

@@ -4,15 +4,15 @@
 > more systems), not `docs/PHASE2_SETUP.md` (that's server-authoritative infra
 > for missions/bazaar — unrelated, don't confuse the two).
 
-Status: Phase 1 (static site, trading + industries + missions + senate + prestige)
-is complete. This doc specs the next content layer: a bigger commodity list,
-a consumable "Blackbox" item with timed buffs, and a full crafting system
-(ships, gear, extractors, blackboxes) fed by those commodities. Station-level
-resource exclusivity is **shelved** — for now, exclusivity is handled purely
-via a `rarity` tag on each commodity (see below), not a station/module system.
+Status: **Implemented** on branch `claude/game-crafting-brainstorm-2q6nx9`
+(commodities + rarity stocking, blackboxes + Hub boost bar, Workshop queue/
+blueprints/recipes, Senate Fabrication Rights + craft discounts, Last Aegis
+story chain). Remaining work is playtest tuning of §5 knobs.
 
-This is a design spec for implementation, not a task list to run mechanically —
-use judgement on exact numbers during balancing.
+Station-level resource exclusivity is **shelved** — exclusivity is handled via
+a `rarity` tag on each commodity (see below), not a station/module system.
+
+Numbers below were starting points — tune against live prices during playtest.
 
 ---
 
@@ -316,13 +316,13 @@ repeatable grind.
 4. Cross-system hooks (§3.5) — senate bill archetype + mission blueprint
    rewards, once Workshop itself is stable.
 
-## 5. Open balancing knobs (revisit during implementation, not before)
+## 5. Open balancing knobs (revisit during playtest)
 
 - Exact ingredient quantities/craft times above are placeholders — tune
   against existing price points (`COMMODITIES.base`) once in-game.
 - Workshop slot count + upgrade cost curve (mirror `inventoryUpgradeStep`/
   `inventoryUpgradeBase`).
-- Whether "auto-unlocked" recipes should still require a Baron Tier floor
-  (recommended: yes, reuse the tier gate already used for permit caps).
-- Blueprint drop rates from expeditions/missions — start conservative, the
-  whole point of the one-of-a-kind ship is that it should feel rare.
+- Auto-unlocked Baron Tier floor: **yes** — `BLUEPRINTS[].minBaronTier`
+  (0 = Baron for plating/jack; 1 = Magnate for auto blackbox recipes).
+- Blueprint drop rates: expedition 6%/14%, mission 12% on high/extreme;
+  **Last Aegis** excluded from RNG pools (Dispatches arc `last_aegis` only).

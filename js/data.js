@@ -467,26 +467,27 @@ const WORKSHOPCFG = {
   slotUpgradeBase: 14000,          // first extra slot cost (scales like inventory)
   maxResolvePerCatchup: 12,        // crafts delivered in one offline resolve
   blueprintDropChance: { near: 0.06, far: 0.14 },
-  missionBlueprintChance: 0.12,    // on high/extreme success
+  missionBlueprintChance: 0.12,    // on high/extreme success (excludes destroyOnUse uniques)
 };
 
 // Blueprint meta. recipeId unlocks into state.knownRecipes on acquire.
 // source: auto | bazaar | expedition | mission (acquisition hint for drops/stock).
+// minBaronTier: prestige.tier floor for source:"auto" (0 = Baron / "Tier 1").
 const BLUEPRINTS = [
-  { id: "bp_plating_common",   name: "Blueprint: Common Plating",      recipeId: "gear_plating_common",   outputType: "gear",      source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_plating_common",   name: "Blueprint: Common Plating",      recipeId: "gear_plating_common",   outputType: "gear",      source: "auto",       minBaronTier: 0, uses: Infinity, destroyOnUse: false },
   { id: "bp_cannon_uncommon",  name: "Blueprint: Uncommon Cannon",     recipeId: "gear_cannon_uncommon",  outputType: "gear",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
   { id: "bp_shield_rare",      name: "Blueprint: Rare Shield",         recipeId: "gear_shield_rare",      outputType: "gear",      source: "expedition", uses: Infinity, destroyOnUse: false },
   { id: "bp_reactor_epic",     name: "Blueprint: Epic Reactor",        recipeId: "gear_reactor_epic",     outputType: "gear",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
   { id: "bp_scanner_legend",   name: "Blueprint: Legendary Scanner",   recipeId: "gear_scanner_legend",   outputType: "gear",      source: "mission",    uses: Infinity, destroyOnUse: false },
-  { id: "bp_ex_jack",          name: "Blueprint: Jack Extractor",      recipeId: "ex_jack",               outputType: "extractor", source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_ex_jack",          name: "Blueprint: Jack Extractor",      recipeId: "ex_jack",               outputType: "extractor", source: "auto",       minBaronTier: 0, uses: Infinity, destroyOnUse: false },
   { id: "bp_ex_semi",          name: "Blueprint: Semi-Spec Extractor", recipeId: "ex_semi",               outputType: "extractor", source: "bazaar",     uses: Infinity, destroyOnUse: false },
   { id: "bp_ex_specialized",   name: "Blueprint: Specialized Extractor", recipeId: "ex_specialized",      outputType: "extractor", source: "expedition", uses: Infinity, destroyOnUse: false },
   { id: "bp_ship_corvette",    name: "Blueprint: Yard Corvette",       recipeId: "ship_corvette",         outputType: "ship",      source: "bazaar",     uses: Infinity, destroyOnUse: false },
   { id: "bp_ship_cruiser",     name: "Blueprint: Yard Cruiser",        recipeId: "ship_cruiser",          outputType: "ship",      source: "expedition", uses: Infinity, destroyOnUse: false },
   { id: "bp_ship_last_aegis",  name: "Blueprint: The Last Aegis",      recipeId: "ship_last_aegis",       outputType: "ship",      source: "mission",    uses: 1, destroyOnUse: true },
-  { id: "bp_bb_overclock",     name: "Blueprint: Overclock Core",      recipeId: "bb_overclock_core",     outputType: "blackbox",  source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_overclock",     name: "Blueprint: Overclock Core",      recipeId: "bb_overclock_core",     outputType: "blackbox",  source: "auto",       minBaronTier: 1, uses: Infinity, destroyOnUse: false },
   { id: "bp_bb_veil",          name: "Blueprint: Smuggler's Veil",     recipeId: "bb_smugglers_veil",     outputType: "blackbox",  source: "bazaar",     uses: Infinity, destroyOnUse: false },
-  { id: "bp_bb_autopilot",     name: "Blueprint: Autopilot Surge",     recipeId: "bb_autopilot_surge",    outputType: "blackbox",  source: "auto",       uses: Infinity, destroyOnUse: false },
+  { id: "bp_bb_autopilot",     name: "Blueprint: Autopilot Surge",     recipeId: "bb_autopilot_surge",    outputType: "blackbox",  source: "auto",       minBaronTier: 1, uses: Infinity, destroyOnUse: false },
   { id: "bp_bb_silver",        name: "Blueprint: Silver Tongue",       recipeId: "bb_silver_tongue",      outputType: "blackbox",  source: "bazaar",     uses: Infinity, destroyOnUse: false },
   { id: "bp_bb_void",          name: "Blueprint: Void Shield",         recipeId: "bb_void_shield",        outputType: "blackbox",  source: "expedition", uses: Infinity, destroyOnUse: false },
   { id: "bp_bb_tax",           name: "Blueprint: Tax Ghost",           recipeId: "bb_tax_ghost",          outputType: "blackbox",  source: "mission",    uses: Infinity, destroyOnUse: false },

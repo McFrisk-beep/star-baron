@@ -39,18 +39,26 @@ const Workshop = {
     return { ok: true, slots: this.slots(), cost };
   },
 
-  // Auto-source blueprints unlock for every save (Baron floor).
+  baronTier() { return window.Economy ? Economy.tier() : ((this.s().prestige || {}).tier || 0); },
+
+  // Auto-source blueprints unlock once Baron Tier floor is met (§5 / recipe table).
   ensureAutoUnlocks() {
     this.meta();
     const s = this.s();
+    const tier = this.baronTier();
     for (const bp of BLUEPRINTS) {
-      if (bp.source === "auto" && !s.knownRecipes.includes(bp.recipeId)) {
-        s.knownRecipes.push(bp.recipeId);
-      }
+      if (bp.source !== "auto") continue;
+      if (tier < (bp.minBaronTier || 0)) continue;
+      if (!s.knownRecipes.includes(bp.recipeId)) s.knownRecipes.push(bp.recipeId);
     }
   },
 
   burned(recipeId) { return (this.s().craftedOnce || []).includes(recipeId); },
+
+  // Unique (destroyOnUse) already sitting in the craft queue — treat as reserved.
+  queued(recipeId) {
+    return (this.meta().queue || []).some(j => j.recipeId === recipeId);
+  },
 
   // Allied standing check for Fabrication Rights (REP Allied = +50).
   _alliedWith(factionId) {
@@ -72,6 +80,8 @@ const Workshop = {
   known(recipeId) {
     if (this.burned(recipeId)) return false;
     if ((this.s().knownRecipes || []).includes(recipeId)) return true;
+    const bp = this.blueprintForRecipe(recipeId);
+    if (bp && bp.source === "auto" && this.baronTier() >= (bp.minBaronTier || 0)) return true;
     return this.senateRecipes().has(recipeId);
   },
 
@@ -146,6 +156,10 @@ const Workshop = {
     if (!recipe) return { ok: false, msg: "Unknown recipe." };
     if (!this.known(recipeId)) return { ok: false, msg: "Blueprint required." };
     if (this.burned(recipeId)) return { ok: false, msg: "Already crafted — unique blueprint spent." };
+    const bp = this.blueprintForRecipe(recipeId);
+    if (bp && bp.destroyOnUse && this.queued(recipeId)) {
+      return { ok: false, msg: "That unique hull is already on the slips." };
+    }
     if (this.freeSlots() <= 0) return { ok: false, msg: "No free Workshop slots." };
     const s = this.s();
     const credits = this.creditCost(recipe);
@@ -280,9 +294,14 @@ const Workshop = {
     return done;
   },
 
-  // Blueprints eligible for bazaar / expedition / mission drops.
+  // Blueprints eligible for bazaar / expedition / mission RNG drops.
+  // destroyOnUse uniques (Last Aegis) are story-chain only — never random.
   dropPool(source) {
-    return BLUEPRINTS.filter(bp => bp.source === source && !this.known(bp.recipeId) && !this.burned(bp.recipeId));
+    return BLUEPRINTS.filter(bp =>
+      bp.source === source
+      && !bp.destroyOnUse
+      && !this.known(bp.recipeId)
+      && !this.burned(bp.recipeId));
   },
 };
 

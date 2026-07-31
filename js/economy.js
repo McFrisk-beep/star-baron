@@ -491,7 +491,9 @@ const Economy = {
     return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
   },
   maxSell(commId) {
-    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const c = COMMODITIES.find(x => x.id === commId);
+    if (c && c.craftOnly) return 0; // crafting ingredient — no Exchange bid
+    const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const held = this.s().positions[commId] || 0;
     if (held <= 0 || this.spotHere(commId) <= 0) return 0;
@@ -559,10 +561,12 @@ const Economy = {
   _sellLocal(commId, qty) {
     const s = this.s();
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
+    const c = COMMODITIES.find(x => x.id === commId);
+    if (c && c.craftOnly) return { ok: false, msg: "Crafting stock — the Exchange won't bid on it." };
     const held = s.positions[commId] || 0;
     qty = Math.min(Math.floor(qty), held);
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
-    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
     const capQ = this.sellCapQty(commId);                            // per-trade notional cap (credits taken ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
