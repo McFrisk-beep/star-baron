@@ -45,7 +45,7 @@
     </div>
   </header>
 
-  <!-- Full-bleed page background — fixed to the viewport, stretched to fill -->
+  <!-- Full-viewport page background — fixed, centered cut-out (object-fit: contain) -->
   <img class="page-bg hidden" id="page-bg-img" alt="" aria-hidden="true" />
 
   <main class="layout">
@@ -55,6 +55,7 @@
           <div class="floatnav-inner" id="floatnav-inner">
             <span class="floatnav-indicator" id="floatnav-indicator" aria-hidden="true"></span>
             <button class="tab" id="tab-hub" data-page="hub"><span class="tab-ico" aria-hidden="true">🛰️</span><span class="tab-label" data-i18n="nav.hub">Hub</span></button>
+            <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label" data-i18n="nav.comms">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
             <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
           <button class="tab" data-page="starmap"><span class="tab-ico" aria-hidden="true">🗺️</span><span class="tab-label" data-i18n="nav.starmap">Star Map</span></button>
@@ -64,7 +65,6 @@
             <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label" data-i18n="nav.senate">Senate</span></button>
             <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label" data-i18n="nav.barons">Barons</span></button>
             <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label" data-i18n="nav.milestones">Milestones</span></button>
-            <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label" data-i18n="nav.comms">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
           </div>
         </div>
       </nav>

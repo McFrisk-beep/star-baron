@@ -155,7 +155,7 @@ const UI = {
   },
 
   // Per-tab background (admin Images → Page backgrounds). Fixed full-viewport
-  // <img id="page-bg-img"> stretched behind page UI. No URL → hide.
+  // <img id="page-bg-img"> centered cut-out behind page UI. No URL → hide.
   applyPageBg(name) {
     const img = document.getElementById("page-bg-img");
     if (!img) return;
@@ -2185,7 +2185,7 @@ const UI = {
     li.append(img, body); ul.appendChild(li);
     while (ul.children.length > CONFIG.chatMaxMessages) ul.removeChild(ul.firstChild);
     if (!this.feedPaused) ul.scrollTop = ul.scrollHeight;
-    this.bumpComms();
+    // ponytail: chat is ambient chatter — no Comms badge. Dispatches + Broadcast still bump.
   },
 
   toast(text, kind = "info", ms = 3200) {
