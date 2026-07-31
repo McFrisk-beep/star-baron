@@ -861,6 +861,10 @@ const SENATE_EDICTS = [
   { id: "lane_dereg",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: -0.4,  weight: 0.3,  title: "Lane Patrol Cuts", blurb: "Slashed patrols leave the lanes to the corsairs — route raids bite about {PCT} harder." },
   { id: "rationing",     issue: "trade",       type: "ration",      scope: "comm",    mag: 1.3,   weight: 0.8,  ballot: true, title: "{TARGET} Emergency Rationing", blurb: "Mandatory stockpiling of {TARGET} spikes demand — prices sit about {PCT} above their drift until repeal." },
   { id: "salvage_act",   issue: "subsidy",     type: "salvage",     scope: "none",    mag: 0.3,   weight: 0.9,  ballot: true, title: "Salvage Rights Act", blurb: "Opened salvage claims enrich survey debriefs — expedition payouts run about {PCT} higher." },
+  // — Workshop / crafting (CRAFTING_AND_MATERIALS §3.5) —
+  { id: "fab_rights",    issue: "subsidy",     type: "blueprintGrant", scope: "faction", mag: 0,    weight: 0.65, ballot: true, title: "Fabrication Rights: {TARGET}", blurb: "Barons Allied with {TARGET} may craft “{RECIPE}” in the Workshop while the act stands." },
+  { id: "yard_accel",    issue: "subsidy",     type: "craftTime",   scope: "none",    mag: -0.25, weight: 0.75, ballot: true, title: "Yard Acceleration Act", blurb: "Public yard subsidies cut Workshop craft times about {PCT}." },
+  { id: "materiel_act",  issue: "subsidy",     type: "craftCost",   scope: "none",    mag: -0.20, weight: 0.7,  ballot: true, title: "Materiel Allocation Act", blurb: "State feedstock allocations trim Workshop ingredient & credit costs about {PCT}." },
   // — heavy-handed, deliberately RARE (kept, but uncommon) —
   { id: "prohibition",   issue: "prohibition", type: "ban",         scope: "comm",    mag: 0,     weight: 0.32, ballot: true, title: "{TARGET} Prohibition", blurb: "Outlaws all buying and selling of {TARGET} in senate space." },
   { id: "cat_embargo",   issue: "prohibition", type: "ban",         scope: "cat",     mag: 0,     weight: 0.16, title: "{TARGET} Embargo", blurb: "Suspends all trade in {TARGET}-class goods until repeal." },

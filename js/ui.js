@@ -1695,36 +1695,55 @@ const UI = {
       }
     }
     const list = Workshop.visible(this.workshopTab);
+    const senateUnlocks = Workshop.senateRecipes();
+    const edictBits = [];
+    if (window.Senate) {
+      const ct = Senate.craftTimeAdd(), cc = Senate.craftCostAdd();
+      if (ct) edictBits.push(`${ct < 0 ? "" : "+"}${Math.round(ct * 100)}% craft time`);
+      if (cc) edictBits.push(`${cc < 0 ? "" : "+"}${Math.round(cc * 100)}% craft cost`);
+      for (const g of Senate.blueprintGrants()) {
+        if (senateUnlocks.has(g.recipeId)) {
+          const r = Workshop.recipe(g.recipeId);
+          edictBits.push(`Fabrication Rights: ${r ? r.name : g.recipeId}`);
+        }
+      }
+    }
+    const edictNote = edictBits.length
+      ? `<p class="muted-note ws-edict">Senate: ${edictBits.join(" · ")}</p>` : "";
     const ingHtml = (recipe) => (recipe.ingredients || []).map(ing => {
       const c = COMMODITIES.find(x => x.id === ing.id);
+      const need = Workshop.ingQty(ing);
       const have = Workshop.haveQty(ing.id);
-      const ok = have >= ing.qty;
-      return `<span class="ws-ing ${ok ? "ok" : "short"}" title="${c ? c.name : ing.id}">${c ? c.name : ing.id} ${have}/${ing.qty}</span>`;
+      const ok = have >= need;
+      return `<span class="ws-ing ${ok ? "ok" : "short"}" title="${c ? c.name : ing.id}">${c ? c.name : ing.id} ${have}/${need}</span>`;
     }).join("");
-    this.refs.workshopRecipes.innerHTML = list.length
+    this.refs.workshopRecipes.innerHTML = edictNote + (list.length
       ? `<div class="ws-grid">` + list.map(recipe => {
           const flavs = recipe.flavor || [];
           const flavSel = flavs.length
             ? `<label class="ws-flav">Flavor <select data-flavor-for="${recipe.id}">` +
               flavs.map(f => {
                 const c = COMMODITIES.find(x => x.id === f.id);
+                const need = Workshop.ingQty(f);
                 const have = Workshop.haveQty(f.id);
-                return `<option value="${f.id}" ${have < f.qty ? "disabled" : ""}>${c ? c.name : f.id} (${have}/${f.qty})</option>`;
+                return `<option value="${f.id}" ${have < need ? "disabled" : ""}>${c ? c.name : f.id} (${have}/${need})</option>`;
               }).join("") + `</select></label>`
             : "";
-          const creditBit = recipe.credits ? `<span class="ws-ing">${Util.credits(recipe.credits)}c</span>` : "";
+          const cred = Workshop.creditCost(recipe);
+          const creditBit = cred ? `<span class="ws-ing">${Util.credits(cred)}c</span>` : "";
           const chk = Workshop.canCraft(recipe.id);
+          const viaSenate = senateUnlocks.has(recipe.id) && !(this.s().knownRecipes || []).includes(recipe.id);
           return `<div class="ws-card">
-            <div class="ws-card-top"><b>${recipe.name}</b><span class="cls-tag">${recipe.tier || recipe.outputType}</span></div>
+            <div class="ws-card-top"><b>${recipe.name}</b><span class="cls-tag">${viaSenate ? "senate" : (recipe.tier || recipe.outputType)}</span></div>
             <div class="ws-ings">${ingHtml(recipe)}${creditBit}</div>
             ${flavSel}
             <div class="ws-foot">
               <span class="muted-note">${Util.duration(Workshop.craftMs(recipe, now))}</span>
-              <button class="btn btn-mini btn-go" data-craft="${recipe.id}" ${chk.ok ? "" : "disabled"}>${chk.ok ? "Craft" : "Craft"}</button>
+              <button class="btn btn-mini btn-go" data-craft="${recipe.id}" ${chk.ok ? "" : "disabled"}>Craft</button>
             </div>
           </div>`;
         }).join("") + `</div>`
-      : `<p class="muted-note">No ${this.workshopTab} recipes unlocked yet. Buy blueprints in the Bazaar, or find them on surveys and high-danger contracts.</p>`;
+      : `<p class="muted-note">No ${this.workshopTab} recipes unlocked yet. Buy blueprints in the Bazaar, find them on surveys and high-danger contracts, or watch for Fabrication Rights in the Senate.</p>`);
 
     this.refs.workshopRecipes.onclick = e => {
       const btn = e.target.closest("[data-craft]"); if (!btn) return;

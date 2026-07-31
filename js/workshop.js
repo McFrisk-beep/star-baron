@@ -50,8 +50,30 @@ const Workshop = {
     }
   },
 
-  known(recipeId) { return (this.s().knownRecipes || []).includes(recipeId); },
   burned(recipeId) { return (this.s().craftedOnce || []).includes(recipeId); },
+
+  // Allied standing check for Fabrication Rights (REP Allied = +50).
+  _alliedWith(factionId) {
+    if (!factionId || factionId === "all") return true;
+    if (!window.Rep) return false;
+    return Rep.tierIndex(Rep.tierOf(factionId).id) >= Rep.tierIndex("allied");
+  },
+
+  // Temporary unlocks from active Fabrication Rights edicts.
+  senateRecipes(now = Date.now()) {
+    const out = new Set();
+    if (!window.Senate) return out;
+    for (const g of Senate.blueprintGrants()) {
+      if (g.recipeId && this._alliedWith(g.faction) && !this.burned(g.recipeId)) out.add(g.recipeId);
+    }
+    return out;
+  },
+
+  known(recipeId) {
+    if (this.burned(recipeId)) return false;
+    if ((this.s().knownRecipes || []).includes(recipeId)) return true;
+    return this.senateRecipes().has(recipeId);
+  },
 
   unlockRecipe(recipeId) {
     this.meta();
@@ -59,6 +81,21 @@ const Workshop = {
     if (this.burned(recipeId)) return { ok: false, msg: "That one-of-a-kind craft is already spent." };
     if (!s.knownRecipes.includes(recipeId)) s.knownRecipes.push(recipeId);
     return { ok: true };
+  },
+
+  // Senate cost/time helpers (neg mag = discount).
+  craftCostFactor() {
+    const add = window.Senate ? Senate.craftCostAdd() : 0;
+    return Math.max(0.2, 1 + add);
+  },
+  ingQty(ing) {
+    const q = Math.max(1, Math.ceil((ing.qty || 1) * this.craftCostFactor()));
+    return q;
+  },
+  creditCost(recipe) {
+    const base = recipe.credits || 0;
+    if (!base) return 0;
+    return Math.max(0, Math.round(base * this.craftCostFactor()));
   },
 
   // Grant a blueprint (by blueprint id or recipe id). Inventory item optional.
@@ -92,15 +129,16 @@ const Workshop = {
   craftMs(recipe, now = Date.now()) {
     let ms = recipe.craftMs || 60 * 1000;
     if (window.Boosts) ms *= Math.max(0.2, 1 + Boosts.mag("craftTime", now));
+    if (window.Senate) ms *= Math.max(0.2, 1 + Senate.craftTimeAdd());
     return Math.max(CONFIG.marketTickMs, ms / (window.Game.timeScale || 1));
   },
 
   haveQty(commId) { return this.s().positions[commId] || 0; },
 
-  // Flavor options the player can afford right now.
+  // Flavor options the player can afford right now (senate cost factor applied).
   affordableFlavors(recipe) {
     if (!recipe.flavor || !recipe.flavor.length) return [];
-    return recipe.flavor.filter(f => this.haveQty(f.id) >= f.qty);
+    return recipe.flavor.filter(f => this.haveQty(f.id) >= this.ingQty(f));
   },
 
   canCraft(recipeId, flavorId = null) {
@@ -110,11 +148,13 @@ const Workshop = {
     if (this.burned(recipeId)) return { ok: false, msg: "Already crafted — unique blueprint spent." };
     if (this.freeSlots() <= 0) return { ok: false, msg: "No free Workshop slots." };
     const s = this.s();
-    if ((recipe.credits || 0) > s.credits) return { ok: false, msg: "Not enough credits." };
+    const credits = this.creditCost(recipe);
+    if (credits > s.credits) return { ok: false, msg: "Not enough credits." };
     for (const ing of recipe.ingredients || []) {
-      if (this.haveQty(ing.id) < ing.qty) {
+      const need = this.ingQty(ing);
+      if (this.haveQty(ing.id) < need) {
         const n = (COMMODITIES.find(c => c.id === ing.id) || {}).name || ing.id;
-        return { ok: false, msg: `Need ${ing.qty} ${n}.` };
+        return { ok: false, msg: `Need ${need} ${n}.` };
       }
     }
     let flavor = null;
@@ -123,9 +163,10 @@ const Workshop = {
         ? recipe.flavor.find(f => f.id === flavorId)
         : this.affordableFlavors(recipe)[0];
       if (!flavor) return { ok: false, msg: "Need a category-flavor ingredient." };
-      if (this.haveQty(flavor.id) < flavor.qty) {
+      const fNeed = this.ingQty(flavor);
+      if (this.haveQty(flavor.id) < fNeed) {
         const n = (COMMODITIES.find(c => c.id === flavor.id) || {}).name || flavor.id;
-        return { ok: false, msg: `Need ${flavor.qty} ${n}.` };
+        return { ok: false, msg: `Need ${fNeed} ${n}.` };
       }
     }
     if (recipe.outputType === "gear" || recipe.outputType === "blackbox") {
@@ -151,14 +192,17 @@ const Workshop = {
     const { recipe, flavor } = chk;
     const s = this.s();
     for (const ing of recipe.ingredients || []) {
-      s.positions[ing.id] = (s.positions[ing.id] || 0) - ing.qty;
+      const need = this.ingQty(ing);
+      s.positions[ing.id] = (s.positions[ing.id] || 0) - need;
       if (s.positions[ing.id] <= 0) { s.positions[ing.id] = 0; s.avgCost[ing.id] = 0; }
     }
     if (flavor) {
-      s.positions[flavor.id] = (s.positions[flavor.id] || 0) - flavor.qty;
+      const fNeed = this.ingQty(flavor);
+      s.positions[flavor.id] = (s.positions[flavor.id] || 0) - fNeed;
       if (s.positions[flavor.id] <= 0) { s.positions[flavor.id] = 0; s.avgCost[flavor.id] = 0; }
     }
-    if (recipe.credits) s.credits -= recipe.credits;
+    const credits = this.creditCost(recipe);
+    if (credits) s.credits -= credits;
     const ms = this.craftMs(recipe, now);
     const job = {
       id: "ck" + (++s.seq),
