@@ -11,6 +11,7 @@ const UI = {
   bazaarTab: "shipyard",
   fleetTab: "logistics",
   industriesTab: "permits",
+  workshopTab: "gear",
   bzSort: { contracts: "reward", gear: "value", mercs: "power" },
   bzFilt: { contracts: "all", gear: "all" },
   fleetSort: { ships: "name", inv: "value" },
@@ -79,6 +80,10 @@ const UI = {
       incChoices: $("inc-choices"), incResult: $("inc-result"), incClose: $("inc-close"),
       ordComm: $("ord-comm"), ordKind: $("ord-kind"), ordPrice: $("ord-price"), ordQty: $("ord-qty"),
       ordAdd: $("ord-add"), ordersList: $("orders-list"),
+      boostBar: $("boost-bar"), boostEmpty: $("boost-empty"),
+      workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
+      workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
+      workshopTabs: $("workshop-tabs"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
@@ -117,12 +122,31 @@ const UI = {
     }
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") { this.showIndustriesTab(this.industriesTab || "permits"); this.renderIndustries(); }
+    else if (name === "workshop") this.renderWorkshop();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
+    else if (name === "hub") this.renderBoostBar();
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
     }
+  },
+
+  // Hub buff bar — icon + countdown + tooltip from activeBoosts (read-time clock).
+  renderBoostBar(now = Date.now()) {
+    const bar = this.refs.boostBar, empty = this.refs.boostEmpty;
+    if (!bar) return;
+    const list = window.Boosts ? Boosts.active(now) : [];
+    if (empty) empty.classList.toggle("hidden", list.length > 0);
+    bar.innerHTML = list.map(b => {
+      const e = Boosts.effect(b.effectId); if (!e) return "";
+      const left = Math.max(0, b.expiresAt - now);
+      const letters = (e.name || "?").split(/\s+/).map(w => w[0]).join("").slice(0, 2);
+      return `<div class="boost-chip" title="${e.desc.replace(/"/g, "&quot;")}">
+        <span class="boost-ico" aria-hidden="true">${letters}</span>
+        <span class="boost-meta"><span class="boost-name">${e.name}</span>
+        <span class="boost-cd">${Util.duration(left)}</span></span></div>`;
+    }).join("");
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -615,7 +639,12 @@ const UI = {
     } else this.refs.transit.classList.add("hidden");
 
     for (const c of COMMODITIES) {
-      const r = this.rows[c.id];
+      const r = this.rows[c.id]; if (!r) continue;
+      const q = this.s().positions[c.id] || 0;
+      const stocked = Market.stocks(c.id, sys);
+      // Hide unstocked rows unless you hold some (so you can still sell).
+      r.tr.classList.toggle("hidden", !stocked && !q);
+      if (!stocked && !q) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
       if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
@@ -624,7 +653,6 @@ const UI = {
       r.chg.textContent = (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%";
       r.chg.className = "num chg " + (pct > 0.1 ? "up" : pct < -0.1 ? "down" : "");
       r.trend.innerHTML = this.spark(Market.history(c.id), pct >= 0);
-      const q = this.s().positions[c.id] || 0;
       r.held.textContent = q ? q : "·";
       if (q) { const cost = this.s().avgCost[c.id] || 0, upl = (p - cost) * q;
         r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
@@ -686,7 +714,7 @@ const UI = {
 
   // ===== standing orders & alerts =========================================
   buildOrders() {
-    this.refs.ordComm.innerHTML = COMMODITIES.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+    this.refs.ordComm.innerHTML = Market.tradeable().map(c => `<option value="${c.id}">${c.name}</option>`).join("");
     this.refs.ordAdd.onclick = () => this.addOrder();
     this.renderOrders();
   },
@@ -883,7 +911,7 @@ const UI = {
     }).join("");
     this.refs.rtBody.innerHTML =
       `<div class="rt-form">
-         <label>Commodity <select id="rt-comm">${opts(COMMODITIES, COMMODITIES[0].id)}</select></label>
+         <label>Commodity <select id="rt-comm">${opts(Market.tradeable(), Market.tradeable()[0].id)}</select></label>
          <label>Buy at <select id="rt-from">${opts(unlocked, from0)}</select></label>
          <label>Sell at <select id="rt-to">${opts(unlocked, to0)}</select></label>
        </div>
@@ -1015,20 +1043,27 @@ const UI = {
     const inv = Bazaar.inventoryItems(), listed = this.s().listings;
     this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
     let html = "";
-    if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories in the Bazaar, or win them from contracts.</p>`;
+    if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories or blackboxes in the Bazaar, or win them from contracts &amp; surveys.</p>`;
     if (inv.length > 1) html += this.bzTools([["Sort", "sort.inv", this.fleetSort.inv,
       [["value", "Value"], ["rarity", "Rarity"], ["kind", "Type"], ["name", "Name"]]]]);
     if (inv.length) {
       html += `<div class="buy-grid">` + [...inv].sort(this.invSorter(this.fleetSort.inv)).map(it => {
-        const kind = ACCESSORY_KINDS[it.kind], letter = (kind && kind.label) || it.kind || "?";
+        const box = Items.isBlackbox(it);
+        const kind = ACCESSORY_KINDS[it.kind], letter = box ? "B" : ((kind && kind.label) || it.kind || "?");
+        const art = box ? this._art(ASSET.accessory("blackbox", it.uid), letter)
+          : this._art(ASSET.accessory(it.kind, it.uid), letter);
+        const rarLabel = box ? "consumable" : ((Items.rarity(it.rarity) || {}).label || "");
+        const act = box
+          ? `<button class="btn btn-mini btn-go" data-use="${it.uid}">Use</button>`
+          : `<button class="btn btn-mini" data-equip="${it.uid}">Equip</button>`;
         return `<div class="buy-card inv-card" style="border-color:${this.rarityColor(it.rarity)}">
-          ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
+          ${art}
           <div class="bc-name">${it.name}</div>
-          <div class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</div>
+          <div class="rar" style="color:${this.rarityColor(it.rarity)}">${rarLabel}</div>
           <div class="bc-stats">${Items.label(it)}</div>
           <div class="item-acts inv-acts">
             <span class="item-val">${Util.credits(it.value)}c</span>
-            <button class="btn btn-mini" data-equip="${it.uid}">Equip</button>
+            ${act}
             <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
           </div></div>`;
       }).join("") + `</div>`;
@@ -1048,11 +1083,22 @@ const UI = {
     this.refs.fleetInventory.innerHTML = html;
     this.refs.fleetInventory.onchange = e => this.onFleetSort(e);
     this.refs.fleetInventory.onclick = e => {
-      const eq = e.target.closest("[data-equip]"), sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
-      if (eq) this.openEquipForItem(eq.dataset.equip);
+      const eq = e.target.closest("[data-equip]"), use = e.target.closest("[data-use]");
+      const sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
+      if (use) this._useBlackbox(use.dataset.use);
+      else if (eq) this.openEquipForItem(eq.dataset.equip);
       else if (sn) { void this._sellItemClick(sn.dataset.sellnow); }
       else if (ca) { Bazaar.cancelListing(ca.dataset.cancel); this.toast("Listing cancelled.", "info"); window.Game.requestSave(); this.renderInventory(); }
     };
+  },
+  _useBlackbox(uid) {
+    if (!window.Boosts) return;
+    const r = Boosts.use(uid);
+    if (!r.ok) return this.toast(r.msg || "Can't use.", "warn");
+    this.toast(`${r.effect.name} active — ${r.effect.desc}`, "good");
+    window.Game.requestSave();
+    this.renderInventory();
+    this.renderBoostBar();
   },
   async _sellItemClick(uid) {
     if (Economy.busy()) return;
@@ -1115,6 +1161,7 @@ const UI = {
       if (r.success) {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
+        if (r.blueprint) detail += ` · blueprint: ${r.blueprint}`;
         if (r.items.length) detail += ` · ${r.items.length} item${r.items.length > 1 ? "s" : ""} won`;
         if (r.lost.length) detail += ` · <span class="down">lost ${r.lost.map(x => x.name).join(", ")}</span>`;
       } else {
@@ -1203,7 +1250,7 @@ const UI = {
     this.refs.equip.classList.remove("hidden");
   },
   openEquipForShip(shipUid) {
-    const inv = Bazaar.inventoryItems();
+    const inv = Bazaar.inventoryItems().filter(it => !Items.isBlackbox(it));
     this.refs.eqTitle.textContent = "Equip a slot — " + Fleet.ship(shipUid).name;
     this.refs.eqBody.innerHTML = inv.length
       ? inv.map(it => `<button class="btn eq-pick" data-item="${it.uid}" style="border-left:3px solid ${this.rarityColor(it.rarity)}">${it.name} — ${Items.label(it)}</button>`).join("")
@@ -1232,7 +1279,7 @@ const UI = {
     const noShips = this.s().ships.length === 0;
     const yardDefs = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || [])];
     const yard = yardDefs
-      .filter(d => d.price > 0 || noShips)
+      .filter(d => !d.craftOnly && (d.price > 0 || noShips))
       .map(d => {
         const sprite = d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite);
         const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"] : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
@@ -1381,6 +1428,27 @@ const UI = {
         <button class="btn btn-mini" data-buyacc="${a.id}" data-cost="${Math.round(a.price * (1 - Rep.discount()))}">Buy</button></div></div>`;
       }).join("") || `<p class="muted-note">${allAcc.length ? "No gear matches this filter." : "Restocking the accessory stalls…"}</p>`;
 
+    const boxes = (b.blackboxes || []).map(a => {
+      const it = a.item, price = Math.round(a.price * (1 - Rep.discount()));
+      const e = BLACKBOX_EFFECTS.find(x => x.id === it.effectId);
+      return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
+        ${this._art(ASSET.accessory("blackbox", it.uid), "B")}
+        <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">blackbox</span></div>
+        <div class="item-stat">${e ? e.desc : Items.label(it)} · ${e ? Util.duration(e.durationMs) : ""}</div>
+        <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
+        <button class="btn btn-mini" data-buyblackbox="${a.id}" data-cost="${price}">Buy</button></div></div>`;
+    }).join("") || `<p class="muted-note">No blackboxes in stock — check back soon.</p>`;
+
+    const bps = (b.blueprints || []).map(a => {
+      const price = Math.round(a.price * (1 - Rep.discount()));
+      return `<div class="item buy" style="border-left-color:#5aa9ff">
+        ${this._art(ASSET.accessory("blueprint", a.id), "P")}
+        <div class="item-top"><b>${a.name}</b><span class="rar" style="color:#5aa9ff">${a.outputType}</span></div>
+        <div class="item-stat">Unlocks a Workshop recipe permanently</div>
+        <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
+        <button class="btn btn-mini" data-buyblueprint="${a.id}" data-cost="${price}">Buy</button></div></div>`;
+    }).join("") || `<p class="muted-note">No blueprints in stock — check back soon.</p>`;
+
     const exo = (b.extractors || []).map(o => {
       const t = EXTRACTORCFG.types[o.ex.type], price = Math.round(o.price * (1 - Rep.discount()));
       return `<div class="item buy ext-${o.ex.type}">
@@ -1421,6 +1489,8 @@ const UI = {
       contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`
         + `<div class="panel"><h2>Senator Dossiers <small>unlock hidden stances &amp; voting records</small></h2><div class="contract-list">${dossiers}</div></div>`,
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
+             <div class="panel"><h2>Blackboxes <small>consumable timed buffs — Use from Inventory</small></h2><div class="item-grid">${boxes}</div></div>
+             <div class="panel"><h2>Blueprints <small>unlock Workshop recipes</small></h2><div class="item-grid">${bps}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv" data-cost="${invCost}">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
@@ -1473,6 +1543,8 @@ const UI = {
     const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
+      ["buyblackbox", id => Bazaar.buyBlackbox(id), "Blackbox acquired — Use it from Inventory."],
+      ["buyblueprint", id => Bazaar.buyBlueprint(id), "Blueprint filed — check the Workshop."],
       ["buyextractor", id => Bazaar.buyExtractor(id), "Extractor acquired — see Industries → storage (then install on a planet)."],
       ["buycomponent", id => Bazaar.buyComponent(id), "Component acquired — fit it on an extractor in Industries."],
       ["buydossier", id => Bazaar.buyDossier(id), "Dossier filed — read it in the Senate roster."]];
@@ -1573,6 +1645,116 @@ const UI = {
     this.refs.achCount.textContent = `${got.length}/${ACHIEVEMENTS.length}`;
     this.refs.achList.innerHTML = ACHIEVEMENTS.map(a => { const have = got.includes(a.id);
       return `<li class="ach ${have ? "got" : ""}"><b>${have ? "★" : "☆"} ${a.name}</b><span>${a.desc}</span></li>`; }).join("");
+  },
+
+  // ===== workshop ==========================================================
+  renderWorkshop(now = Date.now()) {
+    if (!window.Workshop || !this.refs.workshopRecipes) return;
+    Workshop.ensureAutoUnlocks();
+    Workshop.resolve(now); // deliver anything that's ready before paint
+    const q = Workshop.meta().queue;
+    const slots = Workshop.slots(), free = Workshop.freeSlots();
+    if (this.refs.workshopSlots) {
+      this.refs.workshopSlots.textContent = `${q.length}/${slots} slots used · ${free} free`;
+    }
+    if (this.refs.workshopQueue) {
+      this.refs.workshopQueue.innerHTML = q.length
+        ? q.map(job => {
+            const recipe = Workshop.recipe(job.recipeId);
+            const left = Math.max(0, job.readyAt - now);
+            const total = Math.max(1, job.readyAt - job.startedAt);
+            const pct = Util.clamp(1 - left / total, 0, 1) * 100;
+            return `<div class="ws-job">
+              <div class="ws-job-top"><b>${recipe ? recipe.name : job.recipeId}</b>
+                <span class="muted-note">${left > 0 ? Util.duration(left) : "ready"}</span></div>
+              <div class="bar"><span style="width:${pct.toFixed(1)}%"></span></div>
+            </div>`;
+          }).join("")
+        : `<p class="muted-note">No crafts in progress. Queue a recipe below.</p>`;
+    }
+    if (this.refs.workshopUpgrade) {
+      if (slots >= WORKSHOPCFG.maxSlots) {
+        this.refs.workshopUpgrade.innerHTML = `<span class="muted-note">Workshop fully expanded (${slots} slots).</span>`;
+      } else {
+        const cost = Workshop.upgradeCost();
+        this.refs.workshopUpgrade.innerHTML =
+          `<button class="btn btn-go" id="ws-buy-slot" data-cost="${cost}">Add slot — ${Util.credits(cost)}c</button>`;
+      }
+      this.markUnaffordable(this.refs.workshopUpgrade);
+      const btn = this.refs.workshopUpgrade.querySelector("#ws-buy-slot");
+      if (btn) btn.onclick = () => {
+        const r = Workshop.buySlot();
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Workshop expanded to ${r.slots} slots.`, "good");
+        this.flashCredits(); window.Game.requestSave(); this.renderWorkshop();
+      };
+    }
+    if (this.refs.workshopTabs) {
+      for (const t of this.refs.workshopTabs.querySelectorAll("[data-ws]")) {
+        t.classList.toggle("active", t.dataset.ws === this.workshopTab);
+      }
+    }
+    const list = Workshop.visible(this.workshopTab);
+    const senateUnlocks = Workshop.senateRecipes();
+    const edictBits = [];
+    if (window.Senate) {
+      const ct = Senate.craftTimeAdd(), cc = Senate.craftCostAdd();
+      if (ct) edictBits.push(`${ct < 0 ? "" : "+"}${Math.round(ct * 100)}% craft time`);
+      if (cc) edictBits.push(`${cc < 0 ? "" : "+"}${Math.round(cc * 100)}% craft cost`);
+      for (const g of Senate.blueprintGrants()) {
+        if (senateUnlocks.has(g.recipeId)) {
+          const r = Workshop.recipe(g.recipeId);
+          edictBits.push(`Fabrication Rights: ${r ? r.name : g.recipeId}`);
+        }
+      }
+    }
+    const edictNote = edictBits.length
+      ? `<p class="muted-note ws-edict">Senate: ${edictBits.join(" · ")}</p>` : "";
+    const ingHtml = (recipe) => (recipe.ingredients || []).map(ing => {
+      const c = COMMODITIES.find(x => x.id === ing.id);
+      const need = Workshop.ingQty(ing);
+      const have = Workshop.haveQty(ing.id);
+      const ok = have >= need;
+      return `<span class="ws-ing ${ok ? "ok" : "short"}" title="${c ? c.name : ing.id}">${c ? c.name : ing.id} ${have}/${need}</span>`;
+    }).join("");
+    this.refs.workshopRecipes.innerHTML = edictNote + (list.length
+      ? `<div class="ws-grid">` + list.map(recipe => {
+          const flavs = recipe.flavor || [];
+          const flavSel = flavs.length
+            ? `<label class="ws-flav">Flavor <select data-flavor-for="${recipe.id}">` +
+              flavs.map(f => {
+                const c = COMMODITIES.find(x => x.id === f.id);
+                const need = Workshop.ingQty(f);
+                const have = Workshop.haveQty(f.id);
+                return `<option value="${f.id}" ${have < need ? "disabled" : ""}>${c ? c.name : f.id} (${have}/${need})</option>`;
+              }).join("") + `</select></label>`
+            : "";
+          const cred = Workshop.creditCost(recipe);
+          const creditBit = cred ? `<span class="ws-ing">${Util.credits(cred)}c</span>` : "";
+          const chk = Workshop.canCraft(recipe.id);
+          const viaSenate = senateUnlocks.has(recipe.id) && !(this.s().knownRecipes || []).includes(recipe.id);
+          return `<div class="ws-card">
+            <div class="ws-card-top"><b>${recipe.name}</b><span class="cls-tag">${viaSenate ? "senate" : (recipe.tier || recipe.outputType)}</span></div>
+            <div class="ws-ings">${ingHtml(recipe)}${creditBit}</div>
+            ${flavSel}
+            <div class="ws-foot">
+              <span class="muted-note">${Util.duration(Workshop.craftMs(recipe, now))}</span>
+              <button class="btn btn-mini btn-go" data-craft="${recipe.id}" ${chk.ok ? "" : "disabled"}>Craft</button>
+            </div>
+          </div>`;
+        }).join("") + `</div>`
+      : `<p class="muted-note">No ${this.workshopTab} recipes unlocked yet. Buy blueprints in the Bazaar, find them on surveys and high-danger contracts, or watch for Fabrication Rights in the Senate.</p>`);
+
+    this.refs.workshopRecipes.onclick = e => {
+      const btn = e.target.closest("[data-craft]"); if (!btn) return;
+      const id = btn.dataset.craft;
+      const sel = this.refs.workshopRecipes.querySelector(`select[data-flavor-for="${id}"]`);
+      const flavorId = sel ? sel.value : null;
+      const r = Workshop.craft(id, flavorId);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Crafting ${r.recipe.name}…`, "good");
+      this.flashCredits(); window.Game.requestSave(); this.renderWorkshop(); this.updateHeader();
+    };
   },
 
   // ===== industries ========================================================
@@ -2375,6 +2557,11 @@ const UI = {
       const b = e.target.closest("[data-ind]"); if (!b) return;
       this.showIndustriesTab(b.dataset.ind);
     };
+    if (this.refs.workshopTabs) this.refs.workshopTabs.onclick = e => {
+      const b = e.target.closest("[data-ws]"); if (!b) return;
+      this.workshopTab = b.dataset.ws;
+      this.renderWorkshop();
+    };
     window.addEventListener("resize", () => this.updateNavIndicator());
     requestAnimationFrame(() => this.updateNavIndicator());
     // Mobile hamburger. The drawer's open/closed paint is pure CSS (.menu-open);
@@ -2537,6 +2724,8 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
+    if (this.page === "hub") this.renderBoostBar();
+    if (this.page === "workshop") this.renderWorkshop();
     if (this.page === "fleet") { this.renderMissions(); this.renderRoutes(); }
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
     if (this.page === "industries") this.renderIndustries();

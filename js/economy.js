@@ -486,11 +486,14 @@ const Economy = {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const s = this.s();
+    if (window.Market && !Market.stocks(commId, s.currentSystem)) return 0;
     if (this.spotHere(commId) <= 0 || s.credits <= 0) return 0;
     return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
   },
   maxSell(commId) {
-    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const c = COMMODITIES.find(x => x.id === commId);
+    if (c && c.craftOnly) return 0; // crafting ingredient — no Exchange bid
+    const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const held = this.s().positions[commId] || 0;
     if (held <= 0 || this.spotHere(commId) <= 0) return 0;
@@ -534,6 +537,9 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Quantity must be positive." };
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
+    if (window.Market && !Market.stocks(commId, s.currentSystem)) {
+      return { ok: false, msg: "This station doesn't stock that commodity." };
+    }
     const capQ = this.buyCapQty(commId);                              // per-trade notional cap (credits paid ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
     const capped = qty > capQ; if (capped) qty = capQ;
@@ -555,10 +561,12 @@ const Economy = {
   _sellLocal(commId, qty) {
     const s = this.s();
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
+    const c = COMMODITIES.find(x => x.id === commId);
+    if (c && c.craftOnly) return { ok: false, msg: "Crafting stock — the Exchange won't bid on it." };
     const held = s.positions[commId] || 0;
     qty = Math.min(Math.floor(qty), held);
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
-    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
+    const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
     const capQ = this.sellCapQty(commId);                            // per-trade notional cap (credits taken ≤ depth)
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
@@ -710,28 +718,30 @@ const Economy = {
     return null;
   },
 
-  // Customs scan on arrival: if you're carrying contraband, roll a seizure and
-  // confiscate a slice of the stack. Odds rise with Senate border edicts and at
-  // low-tolerance systems, and fall with Syndicate standing. Returns the
-  // seizure event (also emitted on the bus) or null. Reused live + offline.
+  // Customs scan on arrival: if you're carrying any illicit goods, roll a
+  // seizure and confiscate a slice of one stack. Odds rise with Senate border
+  // edicts and at low-tolerance systems, and fall with Syndicate standing.
+  // Returns the seizure event (also emitted on the bus) or null. Reused live + offline.
   customsScan(sysId) {
     const s = this.s();
-    const held = s.positions.contraband || 0;
-    if (held <= 0) return null;
-    const comm = COMMODITIES.find(c => c.id === "contraband"); if (!comm) return null;
+    const illicit = COMMODITIES.filter(c => c.cat === "illicit" && (s.positions[c.id] || 0) > 0);
+    if (!illicit.length) return null;
+    const comm = Util.pick(illicit);
+    const held = s.positions[comm.id] || 0;
     const sys = SYSTEMS.find(x => x.id === sysId);
     const tol = (sys && sys.mods && sys.mods.illicit) || 1;
     const scrutiny = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
     const border = window.Senate ? Senate.smuggleFailAdd() : 0;
     const shield = Math.max(0, Rep.get("syndicate")) / 100 * CUSTOMS.repShield;
-    const chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
+    let chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
+    if (window.Boosts) chance = Util.clamp(chance * (1 + Boosts.mag("customsSeize")), 0, CUSTOMS.cap);
     if (Math.random() >= chance) return null;
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
-    const value = Math.round(qty * this.priceHere("contraband"));
-    s.positions.contraband = held - qty;
-    if (s.positions.contraband <= 0) { s.positions.contraband = 0; s.avgCost.contraband = 0; } // stack cleared → drop its cost basis
+    const value = Math.round(qty * this.priceHere(comm.id));
+    s.positions[comm.id] = held - qty;
+    if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
     this.refreshNetWorth();
-    const ev = { commId: "contraband", name: comm.name, qty, value, sysId, chance };
+    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance };
     Bus.emit("customs", ev);
     return ev;
   },

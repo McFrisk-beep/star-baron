@@ -1,10 +1,34 @@
-/* items.js — procedurally generated ship accessories. Each has a kind, a
-   rarity, one primary stat (legendaries get a bonus second stat), a unique
-   generated name, and a credit value. There are effectively thousands of
-   distinct items from a small data set.                                       */
+/* items.js — procedurally generated ship accessories + consumable blackboxes.
+   Accessories: kind/rarity/primary(+bonus)/name/value.
+   Blackboxes: consumable:true + effectId → Boosts.use pushes state.activeBoosts.
+   See docs/CRAFTING_AND_MATERIALS.md §2.                                       */
 
 const Items = {
   rarity(id) { return RARITIES.find(r => r.id === id); },
+  isBlackbox(it) { return !!(it && (it.consumable || it.kind === "blackbox") && it.effectId); },
+
+  // Credit value for a blackbox effect (duration × |mag|).
+  blackboxValue(effect) {
+    const e = typeof effect === "string" ? BLACKBOX_EFFECTS.find(x => x.id === effect) : effect;
+    if (!e) return 2000;
+    return Math.round(6000 * Math.abs(e.mag) * (e.durationMs / (2 * 3600 * 1000)) / 10) * 10;
+  },
+
+  // Mint a consumable blackbox into inventory shape.
+  genBlackbox(effectId) {
+    const e = (effectId && BLACKBOX_EFFECTS.find(x => x.id === effectId)) || Util.pick(BLACKBOX_EFFECTS);
+    return {
+      uid: "i" + (++window.Game.state.seq),
+      kind: "blackbox",
+      rarity: "rare",
+      name: `${e.name} Blackbox`,
+      consumable: true,
+      effectId: e.id,
+      primary: null,
+      bonus: null,
+      value: this.blackboxValue(e),
+    };
+  },
 
   rollRarity(bias = 0) {
     // bias shifts the weight toward rarer drops (0..1).
@@ -55,7 +79,9 @@ const Items = {
 
   // Credit value: scales with stat magnitude × rarity price multiplier.
   value(item) {
+    if (this.isBlackbox(item)) return item.value || this.blackboxValue(item.effectId);
     const k = ACCESSORY_KINDS[item.kind];
+    if (!k || !item.primary) return item.value || 0;
     const r = this.rarity(item.rarity);
     const base = k.pct ? item.primary.amount * 8000 : item.primary.amount * 90;
     let v = base * r.price;
@@ -72,6 +98,10 @@ const Items = {
   },
 
   label(item) {
+    if (this.isBlackbox(item)) {
+      const e = BLACKBOX_EFFECTS.find(x => x.id === item.effectId);
+      return e ? e.desc : "Timed boost (consumable)";
+    }
     let s = this.statLabel(item.primary);
     if (item.bonus) s += " · " + this.statLabel(item.bonus);
     return s;
@@ -80,6 +110,10 @@ const Items = {
   // Server Phase-2 stubs look like "Shield uncommon" (initcap(kind) + rarity).
   isStubName(it) {
     if (!it || !it.name) return true;
+    if (this.isBlackbox(it)) {
+      const e = BLACKBOX_EFFECTS.find(x => x.id === it.effectId);
+      return !e || it.name !== `${e.name} Blackbox`;
+    }
     const kind = String(it.kind || "");
     const stub = kind.charAt(0).toUpperCase() + kind.slice(1) + " " + it.rarity;
     return it.name === stub;
@@ -88,6 +122,10 @@ const Items = {
   // hash the uid so the same item keeps a stable name across reloads.
   nameFromUid(it) {
     if (!it) return "Gear";
+    if (this.isBlackbox(it)) {
+      const e = BLACKBOX_EFFECTS.find(x => x.id === it.effectId);
+      return e ? `${e.name} Blackbox` : "Blackbox";
+    }
     const m = /^i(\d+)a(\d+)$/.exec(it.uid || "");
     if (m && window.Bazaar && Bazaar.genSeededAccessory) {
       try { return Bazaar.genSeededAccessory(+m[1], +m[2]).item.name; } catch (e) {}
@@ -105,4 +143,46 @@ const Items = {
   },
 };
 
+/* Active blackbox buffs. Read-time filter on expiresAt — no expiry timer.
+   Systems call Boosts.mag("industryYield") etc. when computing numbers.       */
+const Boosts = {
+  s() { return window.Game.state; },
+  effect(id) { return (typeof BLACKBOX_EFFECTS !== "undefined" ? BLACKBOX_EFFECTS : []).find(e => e.id === id); },
+
+  // Drop expired entries when read (keeps save tidy without a scheduler).
+  prune(now = Date.now()) {
+    const s = this.s();
+    if (!s) return [];
+    s.activeBoosts = (s.activeBoosts || []).filter(b => b && b.expiresAt > now && this.effect(b.effectId));
+    return s.activeBoosts;
+  },
+  active(now = Date.now()) { return this.prune(now); },
+
+  // Sum of mag for a stat across non-expired boosts (0 if none).
+  mag(stat, now = Date.now()) {
+    let m = 0;
+    for (const b of this.active(now)) {
+      const e = this.effect(b.effectId);
+      if (e && e.stat === stat) m += e.mag;
+    }
+    return m;
+  },
+
+  // Consume a blackbox from inventory. Same effectId refreshes duration (no stack).
+  use(itemUid, now = Date.now()) {
+    const s = this.s();
+    const it = s.items[itemUid];
+    if (!it || !Items.isBlackbox(it)) return { ok: false, msg: "Not a blackbox." };
+    const e = this.effect(it.effectId);
+    if (!e) return { ok: false, msg: "Unknown blackbox effect." };
+    if (window.Bazaar && Bazaar.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
+    delete s.items[itemUid];
+    this.prune(now);
+    s.activeBoosts = s.activeBoosts.filter(b => b.effectId !== e.id);
+    s.activeBoosts.push({ effectId: e.id, expiresAt: now + e.durationMs });
+    return { ok: true, effect: e, expiresAt: now + e.durationMs };
+  },
+};
+
 window.Items = Items;
+window.Boosts = Boosts;

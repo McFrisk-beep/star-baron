@@ -14,7 +14,7 @@ const SurveyStory = {
       pushOk: "Airlock yields. Hold still has sealed crates — and a few opinions about ownership.",
       pushFail: "Boarding clamps shear. Something in the dark takes a bite out of the hull.",
       leave: "Mark it and burn out. Some freighters stay silent for a reason.",
-      rewardOk: { credits: [800, 2800], item: true },
+      rewardOk: { credits: [800, 2800], item: true, materials: true },
       rewardFail: { hazard: true },
       leaveReward: { credits: [100, 400] } },
     { id: "ghost_signal", kind: "signal", from: "Survey Ops",
@@ -23,7 +23,7 @@ const SurveyStory = {
       pushOk: "Ping resolves into a cache buoy. Data sells. Conscience optional.",
       pushFail: "Ping was a lure. Micrometeor screen eats your approach vector.",
       leave: "Let the ghost talk to itself.",
-      rewardOk: { credits: [600, 2200], rep: true },
+      rewardOk: { credits: [600, 2200], rep: true, materials: true },
       rewardFail: { hazard: true },
       leaveReward: {} },
     { id: "ore_whisper", kind: "seam", from: "Survey Ops",
@@ -41,7 +41,7 @@ const SurveyStory = {
       pushOk: "The gate accepts the probe. Relic gear comes back singing.",
       pushFail: "The gate closes on the probe. Feedback walks up the tether into your hull.",
       leave: "Photograph from range. Archaeologists can sue each other later.",
-      rewardOk: { item: "rare", credits: [400, 1500] },
+      rewardOk: { item: "rare", credits: [400, 1500], materials: true },
       rewardFail: { hazard: true },
       leaveReward: { credits: [150, 500] } },
     { id: "cache_drop", kind: "faction", from: "Survey Ops",
@@ -59,7 +59,7 @@ const SurveyStory = {
       pushOk: "Clamps hold. Salvage sells clean.",
       pushFail: "A pod spins wrong. Cable snags and kisses the plating.",
       leave: "Too messy. Burn past.",
-      rewardOk: { credits: [500, 2500] },
+      rewardOk: { credits: [500, 2500], materials: true },
       rewardFail: { hazard: true, credits: [100, 300] },
       leaveReward: {} },
     { id: "gear_locker", kind: "gear", from: "Survey Ops",
@@ -86,7 +86,7 @@ const SurveyStory = {
       pushOk: "Sample bottled. Science (and the black market) pays.",
       pushFail: "Bloom bites back. Hull complains in several languages.",
       leave: "Abort. Live barons chart more systems.",
-      rewardOk: { credits: [1000, 3500], item: true },
+      rewardOk: { credits: [1000, 3500], item: true, materials: true },
       rewardFail: { hazard: true },
       leaveReward: { credits: [50, 150] } },
     { id: "mirror_wreck", kind: "derelict", from: "Survey Ops",
@@ -95,7 +95,7 @@ const SurveyStory = {
       pushOk: "Not a mirror — a cousin. Loot and a bad feeling.",
       pushFail: "It was a trap with good taste. Shields flare.",
       leave: "Break lock. Some jokes write themselves in hull plating.",
-      rewardOk: { credits: [700, 2400], item: true },
+      rewardOk: { credits: [700, 2400], item: true, materials: true },
       rewardFail: { hazard: true },
       leaveReward: {} },
     { id: "senate_buoy", kind: "signal", from: "Survey Ops",
@@ -113,7 +113,7 @@ const SurveyStory = {
       pushOk: "Buried seed-vault tech. Agri desks will duel over it.",
       pushFail: "Cave-in. The prayer continues without you.",
       leave: "Record the hymn. Sell the vibe.",
-      rewardOk: { seam: true, credits: [400, 1400] },
+      rewardOk: { seam: true, credits: [400, 1400], materials: true },
       rewardFail: { hazard: true },
       leaveReward: { credits: [180, 600] } },
   ],
@@ -322,6 +322,43 @@ const SurveyStory = {
       const room = !(window.Bazaar) || (() => { try { return Bazaar.inventoryUsed() < Bazaar.capacity(); } catch (e) { return true; } })();
       if (room) { this.s().items[it.uid] = it; report.items.push(it); }
     }
+    if (spec.materials && payLocal) {
+      const far = !!(exp && exp.far);
+      const qtyRange = (EXPEDCFG.materialQty && EXPEDCFG.materialQty[far ? "far" : "near"]) || [2, 8];
+      const exoticP = (EXPEDCFG.materialExoticChance && EXPEDCFG.materialExoticChance[far ? "far" : "near"]) || 0.2;
+      const exotic = COMMODITIES.filter(c => c.craftOnly || c.rarity === "exotic");
+      const rareish = COMMODITIES.filter(c => !c.craftOnly && (c.rarity === "rare" || c.rarity === "uncommon"));
+      const pool = (Math.random() < exoticP && exotic.length ? exotic : rareish.length ? rareish : COMMODITIES);
+      const c = Util.pick(pool);
+      if (c) {
+        const qty = Util.randInt(qtyRange[0], qtyRange[1]);
+        const st = this.s();
+        const held = st.positions[c.id] || 0, avg = st.avgCost[c.id] || 0;
+        st.positions[c.id] = held + qty;
+        st.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // salvage — no cost basis
+        report.stock = { commId: c.id, name: c.name, qty };
+      }
+      // Occasional blackbox alongside material salvage (CRAFTING_AND_MATERIALS §2.3).
+      const bbP = (EXPEDCFG.blackboxChance && EXPEDCFG.blackboxChance[far ? "far" : "near"]) || 0;
+      if (bbP && Math.random() < bbP && window.Items) {
+        const room = !(window.Bazaar) || (() => { try { return Bazaar.inventoryUsed() < Bazaar.capacity(); } catch (e) { return true; } })();
+        if (room) {
+          const box = Items.genBlackbox();
+          this.s().items[box.uid] = box;
+          report.items.push(box);
+        }
+      }
+      // Expedition-tier blueprints (CRAFTING_AND_MATERIALS §3.3).
+      const bpP = (window.WORKSHOPCFG && WORKSHOPCFG.blueprintDropChance && WORKSHOPCFG.blueprintDropChance[far ? "far" : "near"]) || 0;
+      if (bpP && Math.random() < bpP && window.Workshop) {
+        const pool = Workshop.dropPool("expedition");
+        if (pool.length) {
+          const bp = Util.pick(pool);
+          const gr = Workshop.grantBlueprint(bp.id);
+          if (gr.ok) report.summary = (report.summary ? report.summary + " " : "") + `Recovered ${bp.name}.`;
+        }
+      }
+    }
     if (spec.seam && sys && window.Galaxy) {
       const scarce = Math.random() < 0.5;
       const comm = Galaxy.signatureCommodity(sys);
@@ -358,6 +395,7 @@ const SurveyStory = {
     if (!report.summary) {
       if (report.credits) report.summary = `Salvage from ${report.sysName}: +${Util.credits(report.credits)}c.`;
       else if (report.items.length) report.summary = `Recovered ${report.items[0].name} near ${report.sysName}.`;
+      else if (report.stock) report.summary = `Salvaged ${report.stock.qty} ${report.stock.name} near ${report.sysName}.`;
       else report.summary = `Survey of ${report.sysName} filed.`;
     }
   },

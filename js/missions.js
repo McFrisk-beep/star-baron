@@ -29,7 +29,8 @@ const Missions = {
   buildPhases(contract, uids) {
     const speed = Fleet.avgSpeed(uids) || 1;
     const total = contract.durationMs;
-    const leg = (total * 0.3) / speed;
+    const transit = window.Boosts ? (1 + Boosts.mag("missionTransit")) : 1;
+    const leg = ((total * 0.3) / speed) * Math.max(0.2, transit);
     const work = total * 0.4;
     const labels = MISSION_PHASES[contract.type] || ["Working"];
     const fill = t => t.replace(/\{SYS\}/g, contract.sysName || "the site");
@@ -187,7 +188,8 @@ const Missions = {
         const hitP = success ? prof.chance : Math.min(1, prof.chance * 1.5);
         if (Math.random() < hitP) {
           const before = sh.dmg || 0;
-          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult));
+          const dmgMult = window.Boosts ? Math.max(0, 1 + Boosts.mag("missionDamage")) : 1;
+          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult) * dmgMult);
           report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
         }
       }
@@ -196,7 +198,8 @@ const Missions = {
       if (!survivors.length && report.lost.length) { success = false; report.success = false; report.wipe = true; } // nobody came home
 
       if (success) {
-        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1));
+        const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
+        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
         report.credits = Economy.afterTax(gross);                 // Baron Tier earnings tax
         report.taxed = gross - report.credits;
         s.credits += report.credits;
@@ -209,12 +212,23 @@ const Missions = {
           if (Math.random() < bias * 0.4) { const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2); }
         }
         if (Math.random() < (m.reward.stockChance || 0)) {
-          const c = Util.pick(COMMODITIES);
+          const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
           const qty = Util.randInt(8, 40);
           const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
           s.positions[c.id] = held + qty;
           s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
           report.stock = { commId: c.id, name: c.name, qty };
+        }
+        // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).
+        const danger = m.danger || "";
+        if (window.Workshop && (danger === "high" || danger === "extreme")
+            && Math.random() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
+          const pool = Workshop.dropPool("mission");
+          if (pool.length) {
+            const bp = Util.pick(pool);
+            const gr = Workshop.grantBlueprint(bp.id);
+            if (gr.ok) report.blueprint = bp.name;
+          }
         }
         for (const sh of survivors) sh.status = "idle";
       } else {

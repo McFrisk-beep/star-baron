@@ -14,6 +14,24 @@ alter table public.world_senate alter column lean type numeric using lean::numer
 create index if not exists world_senate_proposed_by_idx
   on public.world_senate (proposed_by) where proposed_by is not null;
 
+-- world_senate_result (SENATE_SETUP.md §1c) must accept the SAME fractional lean.
+-- It was created with `lean int`, so publishing a resolved ballot (lean 0.12–1.0)
+-- errored, the admin client swallowed it as a warning, and no row ever landed —
+-- the author saw their bill pass while every other client, which never re-votes a
+-- shared bill, waited on a result that was never written. Carry the ballot's
+-- authorship too, so a client that never cached the upcoming bill still shows who
+-- tabled it. Guarded: §1c may not have been run yet.
+do $$
+begin
+  if to_regclass('public.world_senate_result') is not null then
+    alter table public.world_senate_result alter column lean type numeric using lean::numeric;
+    alter table public.world_senate_result
+      add column if not exists proposed_by uuid references auth.users(id) on delete set null;
+    alter table public.world_senate_result
+      add column if not exists proposed_label text;
+  end if;
+end $$;
+
 -- Drop prior overloads so the new signature is the only write path.
 drop function if exists public.app_senate_ballot(text, text);
 drop function if exists public.app_senate_ballot(text, text, numeric, int);

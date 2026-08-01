@@ -147,6 +147,7 @@ const Fleet = {
   equip(shipUid, itemUid) {
     const sh = this.ship(shipUid); const it = this.s().items[itemUid];
     if (!sh || !it) return { ok: false, msg: "Not found." };
+    if (window.Items && Items.isBlackbox(it)) return { ok: false, msg: "Blackboxes are used from Inventory, not equipped." };
     if (sh.status !== "idle") return { ok: false, msg: "Ship is busy." };
     const slots = this.shipDef(sh.type).slots || 2;
     if ((sh.accessories || []).length >= slots) return { ok: false, msg: "No free slots." };

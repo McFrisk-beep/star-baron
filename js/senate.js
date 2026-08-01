@@ -23,7 +23,7 @@ const Senate = {
   _seats: null,
   _seatEls: {},
   _rev: 0,            // module-local revision; bumped on any change → invalidates the effects cache
-  BILLGEN: 3,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
+  BILLGEN: 4,         // bill-generation version; bump to regenerate queued (unvoted) bills on load
   shared: false,      // true when the galaxy-wide agenda (world_senate, via SenateWorld) is the source of bills
   _pool: {},          // billId -> aggregated pooled influence (shared mode)
   _poolReady: {},     // billId -> true once the final (post-deadline) pool has been fetched
@@ -176,6 +176,12 @@ const Senate = {
       effect.faction = fac; effect.add = tpl.mag * f;
       target = all ? "all sectors" : FACTIONS[fac].name;
       pct = rnd(Math.abs(tpl.mag * f) * 100) + "%";
+      if (tpl.type === "blueprintGrant" && typeof BLUEPRINTS !== "undefined") {
+        // Pick a non-auto, non-unique blueprint; player keeps access only while the edict stands.
+        const pool = BLUEPRINTS.filter(bp => bp.source !== "auto" && !bp.destroyOnUse);
+        const bp = pool.length ? Util.pick(pool) : null;
+        if (bp) { effect.blueprintId = bp.id; effect.recipeId = bp.recipeId; effect.recipeName = (RECIPES.find(r => r.id === bp.recipeId) || {}).name || bp.name; }
+      }
     } else if (tpl.scope === "shipcls") {
       const cls = ["escort", "transport"].includes(chosen.cls) ? chosen.cls : Util.pick(["escort", "transport"]);
       effect.cls = cls; target = cap(cls);
@@ -185,7 +191,8 @@ const Senate = {
       effect.add = tpl.mag * f;
       pct = (tpl.type === "warpGate") ? (tpl.mag * f * 100).toFixed(1) + "%" : rnd(Math.abs(tpl.mag * f) * 100) + "%";
     }
-    const fill = t => t.replace(/\{TARGET\}/g, target).replace(/\{PCT\}/g, pct);
+    const recipeName = effect.recipeName || "a Workshop recipe";
+    const fill = t => t.replace(/\{TARGET\}/g, target).replace(/\{PCT\}/g, pct).replace(/\{RECIPE\}/g, recipeName);
     const prefix = (sev && sev.label) ? sev.label + " " : "";
     return { title: prefix + fill(tpl.title), blurb: fill(tpl.blurb), effect };
   },
@@ -197,7 +204,10 @@ const Senate = {
   },
   // a signature for what a bill *does*, so the docket never lists two of the same
   // edict (or two repeals of the same edict).
-  _effectSig(e) { return e ? e.type + ":" + (e.cat || e.commId || e.faction || e.cls || "") : ""; },
+  _effectSig(e) {
+    if (!e) return "";
+    return e.type + ":" + (e.cat || e.commId || e.faction || e.cls || "") + (e.recipeId ? ":" + e.recipeId : "");
+  },
   _billSig(b) { return b && b.repealOf ? ("repeal:" + b.repealOf) : this._effectSig(b && b.effect); },
   // everything already on the books (active edicts + queued upcoming bills)
   _takenSet(now) {
@@ -222,7 +232,8 @@ const Senate = {
     for (let tries = 0; tries < 14; tries++) {
       tpl = this._weighted(SENATE_EDICTS);
       // bans are binary (no magnitude) → no severity roll/prefix; everything else scales
-      const sev = (tpl.type === "ban" || tpl.type === "shipBan") ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
+      const sev = (tpl.type === "ban" || tpl.type === "shipBan" || tpl.type === "blueprintGrant")
+        ? { factor: 1, label: "" } : this._weighted(SENATECFG.severities);
       inst = this._instantiate(tpl, sev);
       if (!taken.has(this._effectSig(inst.effect))) break;   // found one not already on the books
     }
@@ -490,7 +501,8 @@ const Senate = {
     const bucket = Math.floor(now / 2000);
     if (this._fx && this._fxSig === this._rev && this._fxBucket === bucket) return this._fx;
     const fx = { banComm: {}, banCat: {}, catMult: {}, commMult: {}, buyTax: {}, sellTax: {},
-      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {}, warp: 0, windfall: 0, route: 0, salvage: 0 };
+      indTaxAll: 0, indTaxFac: {}, border: 0, shipBan: {}, warp: 0, windfall: 0, route: 0, salvage: 0,
+      craftTime: 0, craftCost: 0, blueprintGrants: [] };
     for (const b of this.activeEdicts(now)) {
       const e = b.effect; if (!e) continue;
       switch (e.type) {
@@ -509,6 +521,11 @@ const Senate = {
         case "windfall": fx.windfall += e.add; break;      // antitrust surtax on the top barons' earnings
         case "routeSafety": fx.route += e.add; break;       // +safer / −riskier automated routes
         case "salvage": fx.salvage += e.add; break;         // richer expedition/survey payouts
+        case "craftTime": fx.craftTime += e.add; break;     // Workshop craft duration (neg = faster)
+        case "craftCost": fx.craftCost += e.add; break;     // Workshop ingredient/credit cost (neg = cheaper)
+        case "blueprintGrant":
+          if (e.recipeId) fx.blueprintGrants.push({ recipeId: e.recipeId, faction: e.faction || "all", title: b.title });
+          break;
       }
     }
     this._fx = fx; this._fxSig = this._rev; this._fxBucket = bucket;
@@ -525,6 +542,10 @@ const Senate = {
   windfallSurtax() { return this._effects().windfall || 0; },      // extra earnings tax (economy.js gates it to the top barons)
   routeSafetyAdd() { return this._effects().route || 0; },         // +safer / −riskier route events (routes.js)
   salvageBonusAdd() { return this._effects().salvage || 0; },      // richer survey debrief payouts (survey-story.js)
+  craftTimeAdd() { return this._effects().craftTime || 0; },       // Workshop craft duration delta (neg = faster)
+  craftCostAdd() { return this._effects().craftCost || 0; },       // Workshop cost delta (neg = cheaper)
+  // Temporary Workshop recipe unlocks for Allied players (Fabrication Rights).
+  blueprintGrants() { return this._effects().blueprintGrants || []; },
 
   // ===== edict attribution (player-facing "which bill did this?") ==========
   // _effects() collapses bills into numbers; these helpers keep the bill titles
@@ -731,7 +752,7 @@ const Senate = {
     return Math.max(0, q - this.ballotWeekUsed());
   },
   // Binary measures (prohibitions) have no strength dial.
-  ballotHasStrength(tpl) { return !!(tpl && tpl.type !== "ban" && tpl.type !== "shipBan"); },
+  ballotHasStrength(tpl) { return !!(tpl && tpl.type !== "ban" && tpl.type !== "shipBan" && tpl.type !== "blueprintGrant"); },
   ballotFactors() { return SENATECFG.ballotFactors || [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]; },
   // How hard the chamber resists a player ballot (0 = mild, ~1 = max push).
   // Strength and duration both count; stacking them hurts more than either alone.

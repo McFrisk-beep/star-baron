@@ -62,6 +62,7 @@
           <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
           <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
             <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label" data-i18n="nav.industries">Industries</span></button>
+            <button class="tab" data-page="workshop"><span class="tab-ico" aria-hidden="true">🔧</span><span class="tab-label">Workshop</span></button>
             <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label" data-i18n="nav.senate">Senate</span></button>
             <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label" data-i18n="nav.barons">Barons</span></button>
             <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label" data-i18n="nav.milestones">Milestones</span></button>
@@ -70,8 +71,14 @@
       </nav>
 
       <div class="pages-wrap">
-      <!-- HUB — background only (admin sets the image under Images → Page backgrounds) -->
-      <section class="page hidden" id="page-hub"></section>
+      <!-- HUB — page background + active blackbox boost bar -->
+      <section class="page hidden" id="page-hub">
+        <div class="panel hub-boosts" id="hub-boosts">
+          <h2>Active Boosts <small>blackbox effects</small></h2>
+          <div class="boost-bar" id="boost-bar"></div>
+          <p class="muted-note" id="boost-empty">No active blackboxes. Find them on surveys or in the Bazaar Gear tab — Use from Inventory.</p>
+        </div>
+      </section>
 
       <!-- EXCHANGE -->
       <section class="page" id="page-exchange">
@@ -164,6 +171,25 @@
       <!-- BAZAAR -->
       <section class="page hidden" id="page-bazaar">
         <div id="bazaar-body"></div>
+      </section>
+
+      <!-- WORKSHOP -->
+      <section class="page hidden" id="page-workshop">
+        <div class="panel">
+          <h2>Workshop <small id="workshop-slots"></small></h2>
+          <p class="sys-legend">Craft gear, extractors, ships, and blackboxes from commodities. Recipes unlock via blueprints (auto, Bazaar, surveys, or missions). Crafts take real time and use a Workshop slot until done.</p>
+          <div id="workshop-queue" class="workshop-queue"></div>
+          <div class="workshop-upgrade" id="workshop-upgrade"></div>
+        </div>
+        <nav class="subtabs" id="workshop-tabs" aria-label="Workshop recipe groups">
+          <button type="button" class="subtab active" data-ws="gear">Gear</button>
+          <button type="button" class="subtab" data-ws="extractor">Extractors</button>
+          <button type="button" class="subtab" data-ws="blackbox">Blackboxes</button>
+          <button type="button" class="subtab" data-ws="ship">Ships</button>
+        </nav>
+        <div class="panel">
+          <div id="workshop-recipes" class="workshop-recipes"></div>
+        </div>
       </section>
 
       <!-- INDUSTRIES -->
@@ -643,6 +669,7 @@
   <script src="js/orders.js"></script>
   <script src="js/extractors.js"></script>
   <script src="js/industries.js"></script>
+  <script src="js/workshop.js"></script>
   <script src="js/bazaar.js"></script>
   <script src="js/feed.js"></script>
   <script src="js/broadcast.js"></script>

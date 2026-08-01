@@ -25,7 +25,10 @@ const SenateWorld = {
   colsBase: "id,issue,type,lean,effect,title,blurb,votes_at,ends_at,created_at",
   colsBallot: "id,issue,type,lean,effect,title,blurb,votes_at,ends_at,created_at,proposed_by,proposed_label",
   _agendaCols: null,
-  resCols: "bill_id,issue,type,lean,effect,title,blurb,votes,result,status,repeal_of,votes_at,ends_at,created_at",
+  // authorship on a result needs the senate_ballot.sql migration — fall back like the agenda does
+  resColsBase: "bill_id,issue,type,lean,effect,title,blurb,votes,result,status,repeal_of,votes_at,ends_at,created_at",
+  resColsBallot: "bill_id,issue,type,lean,effect,title,blurb,votes,result,status,repeal_of,votes_at,ends_at,created_at,proposed_by,proposed_label",
+  _resultCols: null,
 
   async init() {
     if (!this.enabled()) return;
@@ -48,6 +51,19 @@ const SenateWorld = {
     return { data, error };
   },
 
+  async _selectResults(filter) {
+    const cols = this._resultCols || this.resColsBallot;
+    let q = Cloud.client.from("world_senate_result").select(cols);
+    if (filter) q = filter(q);
+    const { data, error } = await q;
+    if (error && cols === this.resColsBallot && /proposed_by|proposed_label|column/i.test(String(error.message || error))) {
+      this._resultCols = this.resColsBase;       // pre-ballot schema — keep shared outcomes working
+      return this._selectResults(filter);
+    }
+    if (!error) this._resultCols = cols;
+    return { data, error };
+  },
+
   async load() {
     let agenda = null, results = null;          // null = fetch failed; [] = reached server, empty
     try {
@@ -55,8 +71,7 @@ const SenateWorld = {
       if (error) throw error; agenda = data || [];
     } catch (e) { console.warn("[SenateWorld] agenda unavailable (run docs/SENATE_SETUP.md §1):", e.message || e); }
     try {
-      const { data, error } = await Cloud.client.from("world_senate_result")
-        .select(this.resCols).order("created_at", { ascending: false }).limit(80);
+      const { data, error } = await this._selectResults(q => q.order("created_at", { ascending: false }).limit(80));
       if (error) throw error; results = data || [];
     } catch (e) { console.warn("[SenateWorld] results unavailable (run docs/SENATE_SETUP.md §1c):", e.message || e); }
 
@@ -82,8 +97,7 @@ const SenateWorld = {
       for (const r of (data || [])) { this.ingest(r); this.lastId = Math.max(this.lastId, r.id); }
     } catch (e) { /* transient */ }
     try {
-      const { data, error } = await Cloud.client.from("world_senate_result")
-        .select(this.resCols).order("created_at", { ascending: false }).limit(60);
+      const { data, error } = await this._selectResults(q => q.order("created_at", { ascending: false }).limit(60));
       if (error) throw error;
       for (const r of (data || []).reverse()) this.applyResult(r, true);   // announce newly-landed outcomes
     } catch (e) { /* transient or table missing */ }
@@ -92,14 +106,20 @@ const SenateWorld = {
 
   // ---- canonical outcomes (published by the admin, applied by everyone) ----
   applyResult(r, announce) {
-    const bill = Senate.ingestResolvedBill({
+    const row = {
       id: r.bill_id, issue: r.issue, type: r.type, lean: Number(r.lean) || 1,
       effect: r.effect || null, title: r.title, blurb: r.blurb,
       votes: r.votes || "", result: r.result || null, status: r.status || "passed",
       repealOf: r.repeal_of || null,
       votesAt: r.votes_at ? new Date(r.votes_at).getTime() : Date.now(),
       endsAt: r.ends_at ? new Date(r.ends_at).getTime() : null,
-    });
+    };
+    // Only carry authorship when the columns actually came back: ingestResolvedBill
+    // Object.assigns this row, so writing undefined→null on a pre-migration project
+    // would wipe the attribution a client already has from the upcoming bill.
+    if (r.proposed_by !== undefined) row.proposedBy = r.proposed_by || null;
+    if (r.proposed_label !== undefined) row.proposedLabel = r.proposed_label || null;
+    const bill = Senate.ingestResolvedBill(row);
     if (!bill) return;                            // already applied → no churn
     if (window.Game && window.Game.state) Game.requestSave();
     if (announce && window.Bus) Bus.emit("senateVote", bill);
@@ -108,16 +128,33 @@ const SenateWorld = {
   // the admin client writes the one true result every account reads
   async publishResult(bill) {
     if (!this.enabled() || !Cloud.isAdmin()) return;
+    // proposedBy may be the local sentinel "you" (or a preview id) while the column
+    // is a uuid — map ours to the signed-in id and drop anything that isn't one.
+    const me = (Cloud.user && Cloud.user()) ? Cloud.user().id : null;
+    const raw = bill.proposedBy === "you" ? me : bill.proposedBy;
+    const author = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(raw || "")) ? raw : null;
+    const row = {
+      bill_id: bill.id, issue: bill.issue, type: bill.type, lean: bill.lean,
+      effect: bill.effect || null, title: bill.title, blurb: bill.blurb,
+      votes: bill.votes || "", result: bill.result || null, status: bill.status,
+      repeal_of: bill.repealOf || null,
+      votes_at: bill.votesAt ? new Date(bill.votesAt).toISOString() : null,
+      ends_at: bill.endsAt ? new Date(bill.endsAt).toISOString() : null,
+      proposed_by: author, proposed_label: bill.proposedLabel || null,
+    };
     try {
-      await Cloud.client.from("world_senate_result").upsert({
-        bill_id: bill.id, issue: bill.issue, type: bill.type, lean: bill.lean,
-        effect: bill.effect || null, title: bill.title, blurb: bill.blurb,
-        votes: bill.votes || "", result: bill.result || null, status: bill.status,
-        repeal_of: bill.repealOf || null,
-        votes_at: bill.votesAt ? new Date(bill.votesAt).toISOString() : null,
-        ends_at: bill.endsAt ? new Date(bill.endsAt).toISOString() : null,
-      }, { onConflict: "bill_id" });
-    } catch (e) { console.warn("[SenateWorld] publish result failed (run docs/SENATE_SETUP.md §1c):", e.message || e); }
+      let { error } = await Cloud.client.from("world_senate_result").upsert(row, { onConflict: "bill_id" });
+      if (error && /proposed_by|proposed_label|column/i.test(String(error.message || error))) {
+        const { proposed_by, proposed_label, ...base } = row;   // pre-ballot schema
+        ({ error } = await Cloud.client.from("world_senate_result").upsert(base, { onConflict: "bill_id" }));
+      }
+      if (error) throw error;
+    } catch (e) {
+      // Silence here strands every other client: they never re-vote a shared bill,
+      // so an unpublished outcome means only this account ever sees the result.
+      console.warn("[SenateWorld] publish result FAILED — no other player will see this outcome. "
+        + "If this was a player ballot, re-run docs/sql/senate_ballot.sql (world_senate_result.lean must be numeric):", e.message || e);
+    }
   },
 
   // ---- pooled influence ---------------------------------------------------
