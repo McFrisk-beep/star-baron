@@ -188,6 +188,13 @@ const Game = {
         try { if (loaded && !localStorage.getItem("starbaron.corrupt")) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
         this.state = this.defaultState();
         this._corruptSaveReset = true;
+        // Local is backed up above, but the cloud row is the authoritative copy on
+        // the next boot — and app_commit accepts a LOWER credits value (it only
+        // rejects increases), so autosaving this 1,500c fresh game would overwrite
+        // the player's real credits and every client-owned slice (Workshop, story,
+        // achievements) server-side. Gate cloud writes exactly like a failed cloud
+        // load does; a reload after a real fix still finds the good remote save.
+        Store._cloudReady = false;
       }
       if (sharedReset != null) this.state.appliedResetEpoch = Math.max(this.state.appliedResetEpoch || 0, sharedReset);  // new/up-to-date players adopt the current epoch (no reset)
     }
@@ -254,7 +261,7 @@ const Game = {
 
     // ---- UI + flavor wiring ----
     UI.init();
-    if (this._corruptSaveReset && UI.toast) UI.toast("Your save couldn't be read and was reset. The old data is kept under localStorage 'starbaron.corrupt'.", "warn", 9000);
+    if (this._corruptSaveReset && UI.toast) UI.toast("Your save couldn't be read and was reset. The old data is kept under localStorage 'starbaron.corrupt', and cloud sync is paused this session so it can't overwrite your saved game.", "warn", 12000);
     if (window.AuthUI) AuthUI.init();
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
@@ -680,4 +687,13 @@ const Game = {
 };
 
 window.Game = Game;
-window.addEventListener("DOMContentLoaded", () => Game.init());
+// init() is ~60 lines of unguarded module calls after the migrate try/catch (catch-up
+// resolvers, Galaxy, UI wiring). A throw in any of them used to be an unhandled promise
+// rejection: no UI, no message, blank page — which is how the PR #83 save wipe hid for a
+// day. Surface it instead; the save is untouched, so a fixed reload recovers.
+window.addEventListener("DOMContentLoaded", () => Game.init().catch(e => {
+  console.error("[Game] boot failed:", e);
+  if (window.UI && UI.toast) UI.toast("Something went wrong loading the game. Your save is untouched — try reloading.", "warn", 0);
+  else document.body.insertAdjacentHTML("afterbegin",
+    '<p role="alert" style="padding:1rem;font:14px system-ui;color:#fff;background:#a11">Something went wrong loading the game. Your save is untouched — try reloading.</p>');
+}));

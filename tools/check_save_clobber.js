@@ -97,5 +97,24 @@ const Store = ctx.Store;
   await Store.save(st);
   assert(st.cloudUserId === "user-aaa", "save stamps cloudUserId");
 
+  // 6) Corrupt-save reset: the cloud load SUCCEEDED (so writes are ungated), but
+  //    migrate() failed and the game fell back to a 1,500c defaultState. That fresh
+  //    state must never reach the cloud — app_commit takes a lower credits value, so
+  //    the upload would destroy the real save server-side. Game.init gates writes the
+  //    same way a failed load does; prove the gate survives the debounce.
+  cloud._bootErr = null;
+  cloud._boot = { credits: 800000, lastSeenAt: 1000, cloudUserId: "user-aaa" };
+  mem.local = null;
+  loaded = await Store.load();
+  assert(loaded.credits === 800000 && Store._cloudReady === true, "bootstrap ok → cloud writes open");
+  Store._cloudReady = false;                       // what Game.init does on _corruptSaveReset
+  Store._cloudMs = 0;                              // don't wait out the real debounce
+  cloud._saved = null;
+  await Store.save({ credits: 1500, lastSeenAt: Date.now() });
+  await new Promise(r => setTimeout(r, 5));        // let the (gated) debounce fire
+  assert(cloud._saved == null, "post-corrupt-reset fresh state never reaches the cloud");
+  await Store.flush({ credits: 1500 });
+  assert(cloud._saved == null, "flush on unload also gated after a corrupt-save reset");
+
   console.log("All save-clobber checks passed.");
 })().catch(e => { console.error(e); process.exit(1); });
