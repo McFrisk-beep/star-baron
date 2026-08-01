@@ -42,10 +42,13 @@ const Workshop = {
   baronTier() { return window.Economy ? Economy.tier() : ((this.s().prestige || {}).tier || 0); },
 
   // Auto-source blueprints unlock once Baron Tier floor is met (§5 / recipe table).
-  ensureAutoUnlocks() {
-    this.meta();
-    const s = this.s();
-    const tier = this.baronTier();
+  // Optional `state` so Game.migrate can unlock before Game.state is assigned.
+  ensureAutoUnlocks(state) {
+    const s = state || this.s();
+    s.workshop ||= { upgrades: 0, queue: [] };
+    s.workshop.queue ||= [];
+    s.knownRecipes ||= [];
+    const tier = state ? ((s.prestige || {}).tier || 0) : this.baronTier();
     for (const bp of BLUEPRINTS) {
       if (bp.source !== "auto") continue;
       if (tier < (bp.minBaronTier || 0)) continue;

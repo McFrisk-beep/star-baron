@@ -117,7 +117,14 @@ const Game = {
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
     s.bazaar.blueprints ||= [];
     s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
-    if (window.Workshop) Workshop.ensureAutoUnlocks();
+    // Pass `s` — Game.state isn't assigned yet during migrate. A throw here used
+    // to trip init's migrate catch and wipe the whole save (tutorialSeen, Exchange
+    // credits/positions, …) on every reload. Keep unlocks best-effort so a
+    // Workshop bug can never brick persistence again.
+    if (window.Workshop) {
+      try { Workshop.ensureAutoUnlocks(s); }
+      catch (e) { console.warn("[Game] ensureAutoUnlocks during migrate failed:", e); }
+    }
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
@@ -175,7 +182,10 @@ const Game = {
         this.state = loaded ? this.migrate(loaded) : this.defaultState();
       } catch (e) {
         console.error("[Game] save migration failed — starting fresh:", e);
-        try { if (loaded) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
+        // Never clobber an existing backup: a bug that throws on every boot would
+        // otherwise overwrite the real save with the already-wiped one on reload #2.
+        // First failure wins — that's the copy still holding the player's progress.
+        try { if (loaded && !localStorage.getItem("starbaron.corrupt")) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
         this.state = this.defaultState();
         this._corruptSaveReset = true;
       }
