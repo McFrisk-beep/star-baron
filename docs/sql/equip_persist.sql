@@ -33,7 +33,11 @@ language sql immutable as $$
       ('gunboat', 2), ('corvette', 2), ('destroyer', 3), ('frigate', 3),
       ('cruiser', 4), ('carrier', 4), ('battleship', 4),
       ('probe_skiff', 3), ('survey_cutter', 3), ('deep_mapper', 4),
-      ('void_cartograph', 4)
+      ('void_cartograph', 4),
+      -- Workshop-crafted hulls (craftOnly in SHIP_CATALOG). They are never sold,
+      -- but they carry more slots than the fallback of 2, so leaving them out
+      -- silently truncated their fitment on every commit.
+      ('craft_corvette', 3), ('craft_cruiser', 4), ('last_aegis', 5)
     ) as t(id, slots) where t.id = p_type
   ), 2);
 $$;
