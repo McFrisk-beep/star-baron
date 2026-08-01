@@ -117,7 +117,9 @@ const Game = {
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
     s.bazaar.blueprints ||= [];
     s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
-    if (window.Workshop) Workshop.ensureAutoUnlocks();
+    // Pass `s` — Game.state isn't assigned yet during migrate (ensureAutoUnlocks
+    // used to read Game.state and throw, wiping every save on boot).
+    if (window.Workshop) Workshop.ensureAutoUnlocks(s);
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
