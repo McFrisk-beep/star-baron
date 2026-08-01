@@ -117,9 +117,14 @@ const Game = {
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
     s.bazaar.blueprints ||= [];
     s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
-    // Pass `s` — Game.state isn't assigned yet during migrate (ensureAutoUnlocks
-    // used to read Game.state and throw, wiping every save on boot).
-    if (window.Workshop) Workshop.ensureAutoUnlocks(s);
+    // Pass `s` — Game.state isn't assigned yet during migrate. A throw here used
+    // to trip init's migrate catch and wipe the whole save (tutorialSeen, Exchange
+    // credits/positions, …) on every reload. Keep unlocks best-effort so a
+    // Workshop bug can never brick persistence again.
+    if (window.Workshop) {
+      try { Workshop.ensureAutoUnlocks(s); }
+      catch (e) { console.warn("[Game] ensureAutoUnlocks during migrate failed:", e); }
+    }
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
