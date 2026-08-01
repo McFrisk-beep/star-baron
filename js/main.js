@@ -261,7 +261,11 @@ const Game = {
 
     // ---- UI + flavor wiring ----
     UI.init();
-    if (this._corruptSaveReset && UI.toast) UI.toast("Your save couldn't be read and was reset. The old data is kept under localStorage 'starbaron.corrupt', and cloud sync is paused this session so it can't overwrite your saved game.", "warn", 12000);
+    if (this._corruptSaveReset && UI.toast) UI.toast("Your save couldn't be read and was reset. The old data is kept under localStorage 'starbaron.corrupt', and cloud sync is paused this session so it can't overwrite your saved game. Use Settings → Restore backup when you're ready.", "warn", 12000);
+    else if (this.corruptBackupIsRicher() && UI.toast) {
+      // Wipe-day survivors: backup still has Workshop gear the live save lost.
+      UI.toast("A pre-wipe backup with Workshop progress is in this browser — open Settings → Restore backup to recover it.", "warn", 12000);
+    }
     if (window.AuthUI) AuthUI.init();
     if (window.AdminUI) AdminUI.init();
     StarMap.init();
@@ -665,6 +669,111 @@ const Game = {
     Galaxy.localLog = {};
     Market.effects = []; Market.localEffects = [];
     location.reload();
+  },
+
+  // ---- wiped-save backup (localStorage "starbaron.corrupt") --------------------
+  // Written on the first migrate failure. Workshop / knownRecipes / story are
+  // client-owned slices app_commit will accept from the client, so a defaultState
+  // upload during the wipe could erase them server-side even when credits/items
+  // (server-protected) survived. The backup is how those slices come back.
+  readCorruptBackup() {
+    try {
+      const raw = localStorage.getItem("starbaron.corrupt");
+      if (!raw) return null;
+      const bak = JSON.parse(raw);
+      return bak && typeof bak === "object" ? bak : null;
+    } catch (e) { return null; }
+  },
+  _sliceCounts(st) {
+    if (!st || typeof st !== "object") return { items: 0, queue: 0, recipes: 0, crafted: 0, upgrades: 0, extractors: 0 };
+    return {
+      items: Object.keys(st.items || {}).length,
+      queue: (st.workshop && Array.isArray(st.workshop.queue)) ? st.workshop.queue.length : 0,
+      recipes: Array.isArray(st.knownRecipes) ? st.knownRecipes.length : 0,
+      crafted: Array.isArray(st.craftedOnce) ? st.craftedOnce.length : 0,
+      upgrades: (st.workshop && st.workshop.upgrades) | 0,
+      extractors: Object.keys(st.extractors || {}).length,
+    };
+  },
+  corruptBackupSummary(bak = this.readCorruptBackup()) {
+    if (!bak) return "";
+    const c = this._sliceCounts(bak);
+    const bits = [];
+    if (c.items) bits.push(`${c.items} inventor${c.items === 1 ? "y item" : "y items"}`);
+    if (c.queue) bits.push(`${c.queue} craft${c.queue === 1 ? "" : "s"} in queue`);
+    if (c.recipes) bits.push(`${c.recipes} blueprint${c.recipes === 1 ? "" : "s"}`);
+    if (c.upgrades) bits.push(`Workshop +${c.upgrades} slot upgrade${c.upgrades === 1 ? "" : "s"}`);
+    if (c.extractors) bits.push(`${c.extractors} extractor${c.extractors === 1 ? "" : "s"}`);
+    if (Number.isFinite(+bak.credits)) bits.push(`${Math.round(+bak.credits).toLocaleString()}c`);
+    return bits.join(", ") || "empty save";
+  },
+  // True when the backup holds Workshop / inventory progress the live save lacks.
+  corruptBackupIsRicher(bak = this.readCorruptBackup()) {
+    if (!bak || !this.state) return false;
+    const a = this._sliceCounts(bak), b = this._sliceCounts(this.state);
+    return a.items > b.items || a.queue > b.queue || a.recipes > b.recipes
+      || a.crafted > b.crafted || a.upgrades > b.upgrades || a.extractors > b.extractors;
+  },
+  // Merge missing client-owned Workshop / inventory slices from the backup into
+  // the live save (keeps current credits / server-ledger progress).
+  mergeCorruptClientSlices(bak = this.readCorruptBackup()) {
+    if (!bak || !this.state) return { ok: false, msg: "No wiped-save backup found in this browser." };
+    const s = this.state;
+    let added = 0;
+    s.items ||= {};
+    for (const [uid, it] of Object.entries(bak.items || {})) {
+      if (it && typeof it === "object" && !s.items[uid]) { s.items[uid] = it; added++; }
+    }
+    s.extractors ||= {};
+    for (const [uid, ex] of Object.entries(bak.extractors || {})) {
+      if (ex && typeof ex === "object" && !s.extractors[uid]) { s.extractors[uid] = ex; added++; }
+    }
+    s.components ||= {};
+    for (const [uid, c] of Object.entries(bak.components || {})) {
+      if (c && typeof c === "object" && !s.components[uid]) { s.components[uid] = c; added++; }
+    }
+    if (!s.workshop || typeof s.workshop !== "object") s.workshop = { upgrades: 0, queue: [] };
+    s.workshop.queue ||= [];
+    const haveJob = new Set(s.workshop.queue.map(j => j && j.id).filter(Boolean));
+    for (const j of (bak.workshop && bak.workshop.queue) || []) {
+      if (j && j.id && !haveJob.has(j.id)) { s.workshop.queue.push(j); haveJob.add(j.id); added++; }
+    }
+    const bakUp = (bak.workshop && bak.workshop.upgrades) | 0;
+    if (bakUp > (s.workshop.upgrades | 0)) { s.workshop.upgrades = bakUp; added++; }
+    s.knownRecipes ||= [];
+    for (const id of bak.knownRecipes || []) {
+      if (typeof id === "string" && !s.knownRecipes.includes(id)) { s.knownRecipes.push(id); added++; }
+    }
+    s.craftedOnce ||= [];
+    for (const id of bak.craftedOnce || []) {
+      if (typeof id === "string" && !s.craftedOnce.includes(id)) { s.craftedOnce.push(id); added++; }
+    }
+    if (!added) return { ok: false, msg: "Backup has nothing missing from this save." };
+    if (window.Economy) Economy.refreshNetWorth();
+    // Re-open cloud writes so the recovered client-owned slices can sync up
+    // (they may have been wiped server-side by a defaultState commit).
+    Store._cloudReady = true;
+    this.requestSave();
+    if (window.Cloud && Cloud.signedIn()) Store.flush(this.snapshot());
+    return { ok: true, added };
+  },
+  // Full replace from the backup (nuclear — use when soft-merge isn't enough).
+  async restoreCorruptBackup() {
+    const bak = this.readCorruptBackup();
+    if (!bak) return { ok: false, msg: "No wiped-save backup found in this browser." };
+    let next;
+    try { next = this.migrate(bak); }
+    catch (e) {
+      console.error("[Game] corrupt backup migrate failed:", e);
+      return { ok: false, msg: "Backup couldn't be read. It may be too damaged to restore." };
+    }
+    this.state = next;
+    Store._cloudReady = true;
+    this._noSave = false;
+    await Store.save(this.snapshot());
+    if (window.Cloud && Cloud.signedIn()) { try { await Store.flush(this.snapshot()); } catch (e) { /* best-effort */ } }
+    location.reload();
+    return { ok: true };
   },
 
   // Tiny opt-in audio (off by default). Resumes on first user gesture.
