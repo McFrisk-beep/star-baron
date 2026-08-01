@@ -225,13 +225,15 @@ Run in the **SQL Editor**:
 ```sql
 create table if not exists public.world_senate_result (
   bill_id    text primary key,         -- client bill id: 'wb' || world_senate.id, or a forced 'bill_<n>'
-  issue      text, type text, lean int,
+  issue      text, type text, lean numeric,  -- numeric: player ballots carry a fractional lean
   effect     jsonb,                     -- the edict effect (null for a repeal)
   title      text, blurb text,
   votes      text,                      -- per-senator vote string: a / n / x, indexed by senator
   result     jsonb,                     -- { aye, nay, abstain, wAye, wNay }
   status     text,                      -- passed | failed | repealed | expired
   repeal_of  text,                      -- target bill id, if this was a repeal
+  proposed_by    uuid references auth.users(id) on delete set null,  -- set when a player ballot (§1d)
+  proposed_label text,                  -- the author's public handle, for attribution
   votes_at   timestamptz, ends_at timestamptz,
   created_at timestamptz not null default now()
 );
@@ -267,11 +269,22 @@ in the SQL Editor after §1 (re-run to pick up fixes / new args).
   one day after the floor vote
 - `app_senate_ballot_bump(bill_id)` — pay to swap your ballot one slot earlier
   (row-locks both bills in id order)
+- Migrates `world_senate_result` (§1c) to a numeric `lean` and adds
+  `proposed_by` / `proposed_label` — **without this a passed ballot never
+  publishes**, so only its author sees the outcome (see below)
 - Until this SQL is applied, the Ballot tab still appears for eligible barons,
   but tabling/bumping toasts that the clerks aren't accepting ballots yet
 
 **If you already ran an older copy of this file**, re-run it — it drops the
-old 2-arg overload and installs the 4-arg function + bump RPC.
+old 2-arg overload, installs the 4-arg function + bump RPC, and applies the
+`world_senate_result` migration.
+
+> **Symptom this fixes:** your ballot passes for you, but other players never
+> see it. `world_senate_result.lean` was created as `int` in §1c while ballots
+> carry a fractional lean, so the admin client's publish was rejected and
+> silently warned — leaving every other client (which never re-votes a shared
+> bill) waiting on a result row that was never written. Re-run this file, then
+> re-resolve or re-table the bill.
 
 ## 2. That's it
 

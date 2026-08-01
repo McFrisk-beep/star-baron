@@ -86,15 +86,18 @@ const Game = {
     s.activeBoosts = s.activeBoosts.filter(b => b && typeof b.effectId === "string" && Number.isFinite(+b.expiresAt) && +b.expiresAt > Date.now());
     // Drop unknown/malformed recipe refs so a tampered or corrupt save can't
     // point at recipes that no longer exist (same treatment as activeBoosts above).
-    const knownRecipeIds = new Set(RECIPES.map(r => r.id));
+    // If the catalog itself is unavailable, keep every ref instead of filtering
+    // them all away — silently wiping real crafting progress is the worse failure.
+    const recipeIds = Array.isArray(window.RECIPES) ? new Set(window.RECIPES.map(r => r.id)) : null;
+    const knownRecipe = id => !recipeIds || recipeIds.has(id);
     if (!Array.isArray(s.knownRecipes)) s.knownRecipes = [];
-    s.knownRecipes = s.knownRecipes.filter(id => typeof id === "string" && knownRecipeIds.has(id));
+    s.knownRecipes = s.knownRecipes.filter(id => typeof id === "string" && knownRecipe(id));
     if (!Array.isArray(s.craftedOnce)) s.craftedOnce = [];
-    s.craftedOnce = s.craftedOnce.filter(id => typeof id === "string" && knownRecipeIds.has(id));
+    s.craftedOnce = s.craftedOnce.filter(id => typeof id === "string" && knownRecipe(id));
     if (!s.workshop || typeof s.workshop !== "object") s.workshop = { upgrades: 0, queue: [] };
     if (!Array.isArray(s.workshop.queue)) s.workshop.queue = [];
     s.workshop.queue = s.workshop.queue.filter(j => j && typeof j.id === "string"
-      && knownRecipeIds.has(j.recipeId) && Number.isFinite(+j.startedAt) && Number.isFinite(+j.readyAt)
+      && knownRecipe(j.recipeId) && Number.isFinite(+j.startedAt) && Number.isFinite(+j.readyAt)
       && (j.flavorId === null || typeof j.flavorId === "string"));
     s.workshop.upgrades = Math.max(0, s.workshop.upgrades | 0);
     // story flags / ephemeral survey threads — old saves lack the keys
