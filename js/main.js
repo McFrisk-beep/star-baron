@@ -182,7 +182,10 @@ const Game = {
         this.state = loaded ? this.migrate(loaded) : this.defaultState();
       } catch (e) {
         console.error("[Game] save migration failed — starting fresh:", e);
-        try { if (loaded) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
+        // Never clobber an existing backup: a bug that throws on every boot would
+        // otherwise overwrite the real save with the already-wiped one on reload #2.
+        // First failure wins — that's the copy still holding the player's progress.
+        try { if (loaded && !localStorage.getItem("starbaron.corrupt")) localStorage.setItem("starbaron.corrupt", JSON.stringify(loaded)); } catch (_) { /* best-effort backup */ }
         this.state = this.defaultState();
         this._corruptSaveReset = true;
       }
