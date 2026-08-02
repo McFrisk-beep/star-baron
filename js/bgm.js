@@ -9,7 +9,7 @@ const Bgm = {
   el: null,
   idx: 0,
   _armed: false,
-  _wantPlay: true,
+  _failStreak: 0,
 
   tracks() {
     const list = window.BGM_PLAYLIST;
@@ -29,10 +29,14 @@ const Bgm = {
     const a = document.createElement("audio");
     a.preload = "auto";
     a.setAttribute("playsinline", "");
-    a.addEventListener("ended", () => this.next());
+    a.addEventListener("ended", () => { this._failStreak = 0; this.next(); });
+    a.addEventListener("playing", () => { this._failStreak = 0; });
     a.addEventListener("error", () => {
-      // Skip a broken track rather than stalling the playlist.
-      if (this.tracks().length > 1) this.next();
+      // Bound consecutive failures so a dead bucket can't hammer the network.
+      this._failStreak++;
+      const n = Math.max(1, this.tracks().length);
+      if (this._failStreak >= n) { this.stop(); return; }
+      this.next();
     });
     this.el = a;
     return a;
@@ -44,14 +48,14 @@ const Bgm = {
     if (!tracks.length) { this.stop(); return; }
     this.idx = ((this.idx % tracks.length) + tracks.length) % tracks.length;
     this.applyVolume();
-    if (this._armed && this._wantPlay && !document.hidden) this.play(false);
+    if (this._armed && !document.hidden) this.play(false);
   },
 
   applyVolume() {
     const a = this.ensure();
     a.volume = this.volume();
     if (a.volume <= 0) { try { a.pause(); } catch (e) { /* ignore */ } }
-    else if (this._armed && this._wantPlay && !document.hidden && a.paused && this.tracks().length)
+    else if (this._armed && !document.hidden && a.paused && this.tracks().length)
       this.play(false);
   },
 
@@ -78,6 +82,7 @@ const Bgm = {
   },
 
   stop() {
+    this._failStreak = 0;
     if (!this.el) return;
     try { this.el.pause(); } catch (e) { /* ignore */ }
     this.el.removeAttribute("src");

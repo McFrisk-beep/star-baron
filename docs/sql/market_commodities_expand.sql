@@ -1,10 +1,16 @@
--- Expand market.commodity to the full COMMODITIES list in js/data.js.
+-- Expand market.commodity + event_slot pools to match js/data.js COMMODITIES.
 -- Required after the crafting-phase commodity expansion: without this, signed-in
--- trade / routes / industry return "Unknown commodity" for new resources
--- (e.g. Exotic Pelts). Safe to re-run. Guests are unaffected (client-side prices).
+-- trade / routes return "Unknown commodity", and galactic/local event slots
+-- disagree with the client (~30–40% of slots pick a single commodity).
+--
+-- Canonical copy lives in docs/sql/market_price.sql — keep this patch in sync
+-- when editing that file. Safe to re-run. Guests are unaffected.
 --
 -- Supabase → SQL Editor → paste & Run.
+-- Also re-paste docs/sql/phase3_pull_prestige.sql (app.gen_extractor) and
+-- docs/sql/senate_ballot.sql if those are already installed — same stale 12-id lists.
 
+-- ── commodity lookup (all 45) ──────────────────────────────────────────────
 create or replace function market.commodity(p_id text)
 returns table(id text, cat text, base double precision, vol double precision)
 language sql immutable as $$
@@ -62,4 +68,77 @@ language sql immutable as $$
     ('cipher_shard',       'illicit', 950,       0.21)
   ) as c(id, cat, base, vol)
   where c.id = p_id;
+$$;
+
+-- ── event slots (41 tradeable ids — exclude craftOnly) ─────────────────────
+create or replace function market.event_slot(p_kind text, p_slot bigint)
+returns table(target text, mult double precision)
+language plpgsql immutable strict as $$
+declare
+  seed_base text := 'cosmocrat-market-v1';
+  s bigint := market.seed_hash(seed_base, p_kind, 'slot', p_slot::text);
+  cats text[] := array['mineral','gas','agri','tech','luxury','illicit'];
+  comms text[] := array[
+    'iron_ore','silicon','rare_earths','titanium_ore','cobalt_ore','graphene_lattice','pulsar_shard',
+    'hydrogen','helium3','water_ice','plasma_gas','methane_slurry','xenon_gas','cryo_vapor',
+    'foodstuffs','synthsilk','grain','protein_stock','hydro_greens','algae_paste','biofiber',
+    'nectar_extract','medicinal_herbs','spore_culture',
+    'nanochips','antimatter','fusion_cell','sensor_array','neural_processor','quantum_core',
+    'spice','gemstones','vintage_wine','perfume_essence','fine_art','exotic_pelts',
+    'contraband','narcotics','forged_credentials','weapons_cache','bio_toxin'
+  ];
+  n int := array_length(comms, 1);
+  pick_cat boolean;
+  up boolean;
+  tgt text;
+  m double precision;
+begin
+  pick_cat := market.u01(s, 0) < 0.7;
+  if pick_cat then
+    tgt := cats[1 + floor(market.u01(s, 1) * 6)::int % 6];
+  else
+    tgt := comms[1 + floor(market.u01(s, 1) * n)::int % n];
+  end if;
+  up := market.u01(s, 2) < 0.55;
+  if up then m := 1.15 + market.u01(s, 3) * 0.55;
+  else m := 0.55 + market.u01(s, 3) * 0.30;
+  end if;
+  return query select tgt, m;
+end;
+$$;
+
+create or replace function market.event_slot_local(p_system text, p_slot bigint)
+returns table(target text, mult double precision)
+language plpgsql immutable strict as $$
+declare
+  seed_base text := 'cosmocrat-market-v1';
+  s bigint := market.seed_hash(seed_base, 'local', p_system, 'slot', p_slot::text);
+  cats text[] := array['mineral','gas','agri','tech','luxury','illicit'];
+  comms text[] := array[
+    'iron_ore','silicon','rare_earths','titanium_ore','cobalt_ore','graphene_lattice','pulsar_shard',
+    'hydrogen','helium3','water_ice','plasma_gas','methane_slurry','xenon_gas','cryo_vapor',
+    'foodstuffs','synthsilk','grain','protein_stock','hydro_greens','algae_paste','biofiber',
+    'nectar_extract','medicinal_herbs','spore_culture',
+    'nanochips','antimatter','fusion_cell','sensor_array','neural_processor','quantum_core',
+    'spice','gemstones','vintage_wine','perfume_essence','fine_art','exotic_pelts',
+    'contraband','narcotics','forged_credentials','weapons_cache','bio_toxin'
+  ];
+  n int := array_length(comms, 1);
+  pick_cat boolean;
+  up boolean;
+  tgt text;
+  m double precision;
+begin
+  pick_cat := market.u01(s, 0) < 0.6;
+  if pick_cat then
+    tgt := cats[1 + floor(market.u01(s, 1) * 6)::int % 6];
+  else
+    tgt := comms[1 + floor(market.u01(s, 1) * n)::int % n];
+  end if;
+  up := market.u01(s, 2) < 0.5;
+  if up then m := 1.2 + market.u01(s, 3) * 0.5;
+  else m := 0.5 + market.u01(s, 3) * 0.35;
+  end if;
+  return query select tgt, m;
+end;
 $$;

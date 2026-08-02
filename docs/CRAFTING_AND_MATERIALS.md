@@ -11,7 +11,9 @@ story chain). Remaining work is playtest tuning of §5 knobs.
 
 > **Server note:** after expanding `COMMODITIES`, re-run
 > [`docs/sql/market_commodities_expand.sql`](sql/market_commodities_expand.sql)
-> (or the updated `market_price.sql`) in Supabase. Without it, signed-in
+> (commodity lookup + event slots). Also re-paste `phase3_pull_prestige.sql`
+> (`app.gen_extractor`) and `senate_ballot.sql` if those are installed — they
+> had the same stale 12-id lists. Without the market patch, signed-in
 > trade/routes return **Unknown commodity** for new resources like Exotic Pelts.
 
 Station-level resource exclusivity is **shelved** — exclusivity is handled via

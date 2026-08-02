@@ -57,14 +57,17 @@ const Routes = {
   // Estimate for a not-yet-created route (the setup modal).
   preview(shipUids, comm, from, to) { return this.estimate({ comm, from, to, shipUids }); },
 
-  // Best unlocked buy→sell pair for a commodity (largest positive spread).
-  bestPair(comm, unlocked) {
+  // Best unlocked buy→sell pair for a commodity — max spread/hour (matches the
+  // modal's ¢/h line; raw spread would favour far legs that take longer).
+  bestPair(comm, unlocked, shipUids = []) {
     const u = unlocked || [];
-    let best = null, bestSpread = -Infinity;
+    let best = null, bestScore = -Infinity;
     for (const from of u) for (const to of u) {
       if (from === to) continue;
-      const spread = Market.routePrice(comm, to) - Market.routePrice(comm, from);
-      if (spread > bestSpread) { bestSpread = spread; best = { from, to, spread }; }
+      const e = this.preview(shipUids, comm, from, to);
+      if (!(e.spread > 0) || !(e.cycleMs > 0)) continue;
+      const score = e.spread / e.cycleMs;   // unit-cargo ¢/ms ≡ rank by ¢/h
+      if (score > bestScore) { bestScore = score; best = { from, to, spread: e.spread }; }
     }
     return best;
   },

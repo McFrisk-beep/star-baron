@@ -67,6 +67,10 @@ const Game = {
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
+    // Pre-BGM saves have no `volume` key and defaulted muted:true — unmute so
+    // existing players hear the playlist without hunting for the icon.
+    if (loaded.settings && loaded.settings.volume === undefined && loaded.settings.muted === true)
+      s.settings.muted = false;
     if (s.settings.volume == null || !Number.isFinite(+s.settings.volume)) s.settings.volume = 0.25;
     s.settings.volume = Util.clamp(+s.settings.volume, 0, 1);
     s.settings.muted = !!s.settings.muted;

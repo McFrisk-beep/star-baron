@@ -909,7 +909,8 @@ const UI = {
     const opts = (list, val) => list.map(o => `<option value="${o.id}"${o.id === val ? " selected" : ""}>${o.name}</option>`).join("");
     const tradeable = Market.tradeable();
     const comm0 = tradeable[0].id;
-    const best = Routes.bestPair(comm0, unlocked.map(s => s.id));
+    const seedShips = shipUid ? [shipUid] : [];
+    const best = Routes.bestPair(comm0, unlocked.map(s => s.id), seedShips);
     const from0 = (best && best.from) || unlocked[0].id;
     const to0 = (best && best.to) || unlocked[1].id;
     const shipRows = idle.map(sh => { const st = Fleet.stats(sh);
@@ -935,11 +936,11 @@ const UI = {
     const q = id => (this.refs.rtBody.querySelector(id) || {}).value;
     return { comm: q("#rt-comm"), from: q("#rt-from"), to: q("#rt-to") };
   },
-  // When the commodity changes, snap Buy/Sell to the unlocked pair with the best spread.
+  // When the commodity changes, snap Buy/Sell to the unlocked pair with the best ¢/h.
   _routePickBestPair() {
     const { comm } = this._routeSel(); if (!comm) return;
     const unlocked = SYSTEMS.filter(s => this.s().unlockedSystems.includes(s.id)).map(s => s.id);
-    const best = Routes.bestPair(comm, unlocked); if (!best) return;
+    const best = Routes.bestPair(comm, unlocked, this.selectedRouteShips()); if (!best) return;
     const from = this.refs.rtBody.querySelector("#rt-from");
     const to = this.refs.rtBody.querySelector("#rt-to");
     if (from) from.value = best.from;
@@ -2592,6 +2593,7 @@ const UI = {
         : (window.I18n ? I18n.t("btn.audioOff") : "Audio off");
       this.refs.btnMute.title = tip;
       this.refs.btnMute.setAttribute("aria-label", tip);
+      this.refs.btnMute.setAttribute("aria-pressed", on ? "false" : "true");
       this.refs.btnMute.classList.toggle("is-muted", !on);
     }
     if (this.refs.setFastNews) this.refs.setFastNews.checked = !!CONFIG.fastNews;

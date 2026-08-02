@@ -1094,8 +1094,17 @@ language plpgsql immutable as $$
 declare
   s bigint := market.seed_hash('cosmocrat-market-v1', 'bazaar', 'ex', p_epoch::text, p_slot::text);
   cats text[] := array['mineral','gas','agri','tech','luxury','illicit'];
-  comms text[] := array['iron_ore','silicon','rare_earths','hydrogen','helium3','water_ice',
-                        'foodstuffs','synthsilk','nanochips','antimatter','spice','contraband'];
+  -- Non-craftOnly COMMODITIES (same order as Market.tradeable() / js/bazaar.js).
+  comms text[] := array[
+    'iron_ore','silicon','rare_earths','titanium_ore','cobalt_ore','graphene_lattice','pulsar_shard',
+    'hydrogen','helium3','water_ice','plasma_gas','methane_slurry','xenon_gas','cryo_vapor',
+    'foodstuffs','synthsilk','grain','protein_stock','hydro_greens','algae_paste','biofiber',
+    'nectar_extract','medicinal_herbs','spore_culture',
+    'nanochips','antimatter','fusion_cell','sensor_array','neural_processor','quantum_core',
+    'spice','gemstones','vintage_wine','perfume_essence','fine_art','exotic_pelts',
+    'contraband','narcotics','forged_credentials','weapons_cache','bio_toxin'
+  ];
+  n_comms int := array_length(comms, 1);
   r double precision := market.u01(s, 0);
   typ text;
   scope text;
@@ -1103,7 +1112,7 @@ declare
   nm text;
 begin
   if r < 0.45 then
-    typ := 'specialized'; scope := comms[1 + (floor(market.u01(s, 1) * 12)::int % 12)]; price := 14000;
+    typ := 'specialized'; scope := comms[1 + (floor(market.u01(s, 1) * n_comms)::int % n_comms)]; price := 14000;
   elsif r < 0.80 then
     typ := 'semi'; scope := cats[1 + (floor(market.u01(s, 1) * 6)::int % 6)]; price := 9000;
   else
