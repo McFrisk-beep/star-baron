@@ -1683,12 +1683,12 @@ const UI = {
       }
       this.markUnaffordable(this.refs.workshopUpgrade);
       const btn = this.refs.workshopUpgrade.querySelector("#ws-buy-slot");
-      if (btn) btn.onclick = () => {
-        const r = Workshop.buySlot();
-        if (!r.ok) return this.toast(r.msg, "warn");
+      // buySlot is a promise on the server ledger, plain object for guests.
+      if (btn) btn.onclick = () => Promise.resolve(Workshop.buySlot()).then(r => {
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't expand the Workshop.", "warn");
         this.toast(`Workshop expanded to ${r.slots} slots.`, "good");
         this.flashCredits(); window.Game.requestSave(); this.renderWorkshop();
-      };
+      });
     }
     if (this.refs.workshopTabs) {
       for (const t of this.refs.workshopTabs.querySelectorAll("[data-ws]")) {
@@ -1751,10 +1751,13 @@ const UI = {
       const id = btn.dataset.craft;
       const sel = this.refs.workshopRecipes.querySelector(`select[data-flavor-for="${id}"]`);
       const flavorId = sel ? sel.value : null;
-      const r = Workshop.craft(id, flavorId);
-      if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast(`Crafting ${r.recipe.name}…`, "good");
-      this.flashCredits(); window.Game.requestSave(); this.renderWorkshop(); this.updateHeader();
+      if (btn.disabled) return;
+      btn.disabled = true;   // the RPC round-trip is not instant — no double-craft
+      Promise.resolve(Workshop.craft(id, flavorId)).then(r => {
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't start that craft.", "warn");
+        this.toast(`Crafting ${r.recipe ? r.recipe.name : "job"}…`, "good");
+        this.flashCredits(); window.Game.requestSave(); this.updateHeader();
+      }).finally(() => this.renderWorkshop());
     };
   },
 
@@ -2706,6 +2709,14 @@ const UI = {
       if (window.Feed) Feed.emit(`word is a baron's ${cn.toLowerCase()} convoy ${msg}`, { kind: "reaction" });
       if (this.page === "fleet") this.renderFleet();
       this.updateHeader(); this.audioSafe(ev.good ? "good" : "news");
+    });
+    // Server-side craft delivery lands asynchronously (Workshop.claimDue), so
+    // the goods announce themselves instead of appearing during a render.
+    Bus.on("crafted", done => {
+      for (const d of done) this.toast(`Workshop finished ${d.name}.`, "good", 5000);
+      this.updateHeader();
+      if (this.page === "workshop") this.renderWorkshop();
+      if (this.page === "fleet") this.renderInventory();
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });

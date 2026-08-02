@@ -16,6 +16,11 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
 5. **`docs/sql/equip_persist.sql`** ← required, and must come **after** step 4
    (it replaces `app_commit` so ship accessories persist — see
    [Equip persistence](#equip-persistence-fitment-survives-a-reload))
+6. **`docs/sql/workshop_craft.sql`** ← required, and must come **after** step 5.
+   Puts the Workshop craft queue on the ledger; without it a crafted item is
+   deleted by the next `app_commit` (it rewrites `items` from the server pool).
+   Replaces `app_commit` + `app.result_slice` again, carrying step 5's fitment
+   merge forward — see [`docs/WORKSHOP_CRAFT_SETUP.md`](WORKSHOP_CRAFT_SETUP.md).
 
 ## Trust model
 

@@ -134,6 +134,12 @@ const Economy = {
     if (r.listings) s.listings = r.listings;
     if (r.extractors) s.extractors = r.extractors;
     if (r.components) s.components = r.components;
+    // Workshop queue/upgrades are server-owned once docs/sql/workshop_craft.sql
+    // is applied; knownRecipes/craftedOnce still come back so a burned unique
+    // blueprint sticks after a claim.
+    if (r.workshop) s.workshop = r.workshop;
+    if (r.knownRecipes) s.knownRecipes = r.knownRecipes;
+    if (r.craftedOnce) s.craftedOnce = r.craftedOnce;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
     this.repairCosmeticNames();
@@ -220,6 +226,9 @@ const Economy = {
     if (st.listings) s.listings = st.listings;
     if (st.extractors) s.extractors = st.extractors;
     if (st.components) s.components = st.components;
+    // app_commit forces the workshop slice from the server row, so the queue the
+    // client just sent is echoed back authoritative (a forged job is gone here).
+    if (st.workshop) s.workshop = st.workshop;
     if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
     if (st.stats) {
       if (st.stats.peakNetWorth != null) s.stats.peakNetWorth = st.stats.peakNetWorth;

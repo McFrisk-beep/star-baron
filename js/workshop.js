@@ -27,7 +27,12 @@ const Workshop = {
     const lvl = this.meta().upgrades || 0;
     return Math.round(WORKSHOPCFG.slotUpgradeBase * Math.pow(1.65, lvl));
   },
-  buySlot() {
+  // True once crafting is on the server ledger (docs/sql/workshop_craft.sql).
+  // Everything below keeps a local twin for guests and for projects that
+  // haven't applied that file yet.
+  authoritative() { return !!(window.Cloud && Cloud.craftReady && Cloud.craftReady()); },
+
+  _buySlotLocal() {
     const s = this.s();
     this.meta();
     if (this.slots() >= WORKSHOPCFG.maxSlots) return { ok: false, msg: "Workshop is fully expanded." };
@@ -37,6 +42,14 @@ const Workshop = {
     s.workshop.upgrades = (s.workshop.upgrades || 0) + 1;
     if (window.Economy) Economy.refreshNetWorth();
     return { ok: true, slots: this.slots(), cost };
+  },
+  buySlot() {
+    if (!this.authoritative()) return this._buySlotLocal();
+    return Economy._withRpc(
+      () => this._buySlotLocal(),
+      () => Cloud.craftSlot(),
+      "Couldn't reach the Workshop — try again."
+    );
   },
 
   baronTier() { return window.Economy ? Economy.tier() : ((this.s().prestige || {}).tier || 0); },
@@ -203,7 +216,7 @@ const Workshop = {
     return { ok: true, recipe, flavor };
   },
 
-  craft(recipeId, flavorId = null, now = Date.now()) {
+  _craftLocal(recipeId, flavorId = null, now = Date.now()) {
     const chk = this.canCraft(recipeId, flavorId);
     if (!chk.ok) return chk;
     const { recipe, flavor } = chk;
@@ -231,6 +244,18 @@ const Workshop = {
     this.meta().queue.push(job);
     if (window.Economy) Economy.refreshNetWorth();
     return { ok: true, job, recipe };
+  },
+
+  // The optimistic job (and its ingredient spend) is replaced by the server's
+  // queue in the result slice, so the job id / readyAt the player ends up with
+  // are the server's, not ours.
+  craft(recipeId, flavorId = null, now = Date.now()) {
+    if (!this.authoritative()) return this._craftLocal(recipeId, flavorId, now);
+    return Economy._withRpc(
+      () => this._craftLocal(recipeId, flavorId, now),
+      () => Cloud.craftStart(recipeId, flavorId),
+      "Couldn't reach the Workshop — try again."
+    );
   },
 
   _deliver(job) {
@@ -279,7 +304,7 @@ const Workshop = {
     return { recipeId: recipe.id, name: label, outputType: recipe.outputType };
   },
 
-  resolve(now = Date.now()) {
+  _resolveLocal(now = Date.now()) {
     this.meta();
     const q = this.meta().queue;
     const done = [];
@@ -295,6 +320,72 @@ const Workshop = {
     this.meta().queue = keep;
     if (done.length && window.Economy) Economy.refreshNetWorth();
     return done;
+  },
+
+  // resolve() has a dozen synchronous callers (boot catch-up, the tick, the
+  // Workshop render), so it stays synchronous. On the server ledger it must NOT
+  // mint locally — that item would only be deleted by the next app_commit, which
+  // is the bug this whole path exists to fix — so it kicks off a claim instead
+  // and the delivered goods arrive via the "crafted" event.
+  resolve(now = Date.now()) {
+    if (!this.authoritative()) return this._resolveLocal(now);
+    void this.claimDue(now);
+    return [];
+  },
+
+  _claiming: false,
+  dueCount(now = Date.now()) {
+    return (this.meta().queue || []).filter(j => j && now >= j.readyAt).length;
+  },
+  async claimDue(now = Date.now()) {
+    if (this._claiming || !this.authoritative() || !this.dueCount(now)) return [];
+    this._claiming = true;
+    try {
+      const r = await Cloud.craftClaim();
+      if (!r || !r.ok) return [];
+      Economy._applyServerSlice(r);
+      Economy.refreshNetWorth();
+      const done = r.delivered || [];
+      if (done.length) {
+        window.Game.requestSave();
+        Bus.emit("crafted", done);
+      }
+      return done;
+    } catch (e) {
+      console.warn("[Workshop] claim failed:", e);
+      return [];
+    } finally { this._claiming = false; }
+  },
+
+  // Handoff of pre-ledger Workshop state (queue, slot upgrades, and the crafted
+  // items that only ever existed in this browser) to the server pool. Called on
+  // the first authoritative boot, and again after a wipe-backup restore puts
+  // more items back — the server allows a few calls for exactly that reason and
+  // answers "adopt limit reached" once the budget is spent.
+  async adoptLocal(force = false) {
+    if (!this.authoritative()) return null;
+    const s = this.s();
+    if (!force && s.workshopAdopt) return null;
+    try {
+      const r = await Cloud.craftAdopt(s.workshop || { upgrades: 0, queue: [] }, s.items || {});
+      if (!r) return null;                       // SQL not applied — stay local
+      if (r.ok) {
+        Economy._applyServerSlice(r);
+        Economy.refreshNetWorth();
+        s.workshopAdopt = r.workshopAdopt || { calls: 1, items: 0, at: Date.now() };
+        window.Game.requestSave();
+        if (r.adoptedItems || r.adoptedJobs) {
+          console.log(`[Workshop] adopted ${r.adoptedItems} item(s), ${r.adoptedJobs} job(s) into the server ledger`);
+        }
+        return r;
+      }
+      // Budget spent (or another device got there first) — stop asking.
+      if (r.state && r.state.workshopAdopt) s.workshopAdopt = r.state.workshopAdopt;
+      return r;
+    } catch (e) {
+      console.warn("[Workshop] adopt failed:", e);
+      return null;
+    }
   },
 
   // Blueprints eligible for bazaar / expedition / mission RNG drops.
