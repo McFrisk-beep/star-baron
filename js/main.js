@@ -229,6 +229,10 @@ const Game = {
     // If Phase 3 SQL isn't pasted yet, fall back to the local resolvers.
     let usedPull = false;
     if (window.Economy && Economy.authoritative()) {
+      // Hand pre-ledger Workshop state to the server BEFORE anything commits:
+      // app_commit forces the workshop slice from the server row, so a queue
+      // that hasn't been adopted yet would be erased by the first sync.
+      if (window.Workshop) await Workshop.adoptLocal();
       const pulled = await this.pullCatchUp();
       if (pulled) {
         usedPull = true;
@@ -845,6 +849,10 @@ const Game = {
     this._noSave = false;
     this.state.lastSeenAt = Date.now();
     Store.save(this.state);
+    // Crafted gear recovered from the backup is client-only until the server
+    // adopts it — otherwise the next app_commit rewrites `items` from the
+    // server pool and the item disappears all over again.
+    if (window.Workshop && Workshop.adoptLocal) void Workshop.adoptLocal(true);
     return { ok: true, added };
   },
   // Full replace from the backup (nuclear — use when soft-merge isn't enough).
@@ -860,6 +868,9 @@ const Game = {
     // Keep the backup's market/galaxy — snapshot() would re-serialize the live
     // modules hydrated from the wiped save and discard them before reload.
     next.lastSeenAt = Date.now();
+    // Let the boot after this reload re-offer the restored Workshop gear to the
+    // server (app_craft_adopt keeps its own 3-call budget, so this can't loop).
+    delete next.workshopAdopt;
     this._noSave = false;
     Store.localSave(Store._stampOwner(next));
     // Only re-open cloud writes when WE gated them for a corrupt-save reset.

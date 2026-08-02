@@ -185,6 +185,7 @@ const Cloud = {
       this._user = null; this._pendingRecovery = false;
       this._username = null; this._joinN = null;
       this.playersReady = false; this.pullReady = false; this.pullMissing = false;
+      this.craftMissing = false;
     }
   },
 
@@ -232,6 +233,33 @@ const Cloud = {
   // protects travel and (Phase 2) ships/missions/items/inventory.
   async commit(state) {
     return this.rpc("app_commit", { p_state: state });
+  },
+
+  // Workshop — server-authoritative crafting (docs/sql/workshop_craft.sql).
+  // craftMissing latches when that file hasn't been applied yet, so a project
+  // running older SQL keeps the local craft path instead of erroring on every
+  // click. Crafted gear won't survive a commit there — the same as before.
+  craftMissing: false,
+  async _craftRpc(name, args) {
+    if (this.craftMissing) return null;
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.craftMissing = true;
+        console.warn("[Cloud] " + name + " missing — local crafting (docs/sql/workshop_craft.sql)");
+        return null;
+      }
+      throw e;
+    }
+  },
+  craftReady() { return this.authoritative() && !this.craftMissing; },
+  async craftStart(recipeId, flavorId) {
+    return this._craftRpc("app_craft_start", { p_recipe_id: recipeId, p_flavor_id: flavorId || null });
+  },
+  async craftClaim() { return this._craftRpc("app_craft_claim"); },
+  async craftSlot() { return this._craftRpc("app_craft_slot"); },
+  async craftAdopt(workshop, items) {
+    return this._craftRpc("app_craft_adopt", { p_workshop: workshop || {}, p_items: items || {} });
   },
 
   // Phase 2 — missions & bazaar
