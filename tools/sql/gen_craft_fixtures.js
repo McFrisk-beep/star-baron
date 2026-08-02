@@ -2,9 +2,14 @@
 /* gen_craft_fixtures.js — print the server-side crafting fixtures (recipe table,
    blackbox table, hull table) for the CURRENT js/data.js.
 
-   The generator is AdminUI.craftSQL() — the same code behind the admin console's
-   🔧 Crafting → Server SQL tab — so what an admin pastes into Supabase after
-   editing recipes and what lives in docs/sql/*.sql can't drift apart.
+   ⚠ THIS FILE IS A NODE SCRIPT, NOT SQL. Pasting it into the Supabase SQL editor
+   fails on line 1 ("syntax error at or near #!"). Run it and paste what it
+   PRINTS — or skip the terminal entirely and use Admin → 🔧 Crafting → Server
+   SQL → Copy SQL, which runs the same generator inside the game.
+
+   The generator is AdminUI.craftSQL() — the same code behind that tab — so what
+   an admin pastes into Supabase after editing recipes and what lives in
+   docs/sql/*.sql can't drift apart.
 
    Use:  node tools/sql/gen_craft_fixtures.js            # everything
          node tools/sql/gen_craft_fixtures.js recipe     # one function only

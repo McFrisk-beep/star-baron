@@ -43,8 +43,16 @@ Prereqs (all already required by Phase 3):
 ## Changing recipes later
 
 The recipe/blackbox/hull tables live in **two** places — `js/data.js` for the
-client, and these SQL fixtures for the server — so they are generated from one
-source and pinned by a check:
+client, and these SQL fixtures for the server — so both are generated from one
+source and pinned by a check.
+
+**If you edited recipes in the game** (Admin → 🔧 Crafting), that changes only
+the client half. Open that tab's **Server SQL** pane → **Copy SQL** → paste into
+the Supabase **SQL Editor** → Run. No terminal involved. Until you run it, guests
+see the new recipe and signed-in players get "Unknown recipe."
+
+**If you edited `js/data.js`**, regenerate the checked-in SQL and paste the file
+you changed:
 
 ```
 node tools/sql/gen_craft_fixtures.js            # everything, to stdout
@@ -55,10 +63,11 @@ node tools/sql/gen_craft_fixtures.js slots      # → docs/sql/equip_persist.sql
 node tools/check_craft_parity.js                # confirms the SQL matches data.js
 ```
 
-Editing recipes **in the game** instead (Admin → 🔧 Crafting) changes only the
-client half: the same generator is behind that tab's **Server SQL** pane, so
-paste that into the Supabase SQL editor to bring the server along. Until you do,
-guests see the new recipe and signed-in players get "Unknown recipe."
+> `gen_craft_fixtures.js` is a **Node script, not SQL** — it *prints* the
+> fixtures. Pasting the script itself into the Supabase SQL editor fails with
+> `syntax error at or near "#!"`. Paste its output, or paste the regenerated
+> `docs/sql/*.sql` file. Both routes run the same generator as the Server SQL
+> pane, so the two copies can't drift.
 
 ## What it creates
 
