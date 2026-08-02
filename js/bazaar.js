@@ -178,10 +178,11 @@ const Bazaar = {
   genSeededExtractor(epoch, slot) {
     const s = this._seed(["ex", String(epoch), String(slot)]);
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
-    const comms = COMMODITIES.map(c => c.id);
+    // Non-craftOnly pool — must match app.gen_extractor (phase3_pull_prestige.sql).
+    const tradeable = COMMODITIES.filter(c => !c.craftOnly);
     const r = this._u01(s, 0);
     let type, scope, price;
-    if (r < 0.45) { type = "specialized"; scope = comms[Math.floor(this._u01(s, 1) * 12) % 12]; price = EXTRACTORCFG.types.specialized.price; }
+    if (r < 0.45) { type = "specialized"; scope = tradeable[Math.floor(this._u01(s, 1) * tradeable.length) % tradeable.length].id; price = EXTRACTORCFG.types.specialized.price; }
     else if (r < 0.80) { type = "semi"; scope = cats[Math.floor(this._u01(s, 1) * 6) % 6]; price = EXTRACTORCFG.types.semi.price; }
     else { type = "jack"; scope = "all"; price = EXTRACTORCFG.types.jack.price; }
     // flavor name (e.g. "Volkov Iron Borer") — cosmetic, mirrors Extractors.name, seeded

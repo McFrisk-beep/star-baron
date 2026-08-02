@@ -59,8 +59,9 @@ const Content = {
   ],
   // Non-collection keys that are also persisted in the content table but have a
   // dedicated editor, so they're kept out of the generic JSON dropdown:
-  //   ASSET_OVERRIDES → image manager; STORY_CUSTOM / STORY_OVERRIDES → Missions.
-  EXTRA_KEYS: ["ASSET_OVERRIDES", "STORY_CUSTOM", "STORY_OVERRIDES"],
+  //   ASSET_OVERRIDES → image manager; BGM_PLAYLIST → Music tab;
+  //   STORY_CUSTOM / STORY_OVERRIDES → Missions.
+  EXTRA_KEYS: ["ASSET_OVERRIDES", "BGM_PLAYLIST", "STORY_CUSTOM", "STORY_OVERRIDES"],
   _defaults: {},
   _snapped: false,
   loaded: false,
@@ -96,7 +97,9 @@ const Content = {
     const target = window[key];
     if (target === undefined || value == null) return false;
     if (Array.isArray(target) && Array.isArray(value)) {
-      target.length = 0; target.push(...value); return true;
+      target.length = 0; target.push(...value);
+      if (key === "BGM_PLAYLIST" && window.Bgm) Bgm.sync();
+      return true;
     }
     if (target && typeof target === "object" && !Array.isArray(target)
         && typeof value === "object" && !Array.isArray(value)) {

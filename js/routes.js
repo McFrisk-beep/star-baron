@@ -45,8 +45,10 @@ const Routes = {
   // route just earns ~nothing rather than draining credits.
   estimate(route) {
     const cargo = this.cargoOf(route);
-    const buy = Market.systemPrice(route.comm, route.from);
-    const sell = Market.systemPrice(route.comm, route.to);
+    // routePrice (not systemPrice): rare-stock exchange premium is for docked
+    // trades only — applying it here made many rare-commodity routes look worthless.
+    const buy = Market.routePrice(route.comm, route.from);
+    const sell = Market.routePrice(route.comm, route.to);
     const spread = Math.max(0, sell - buy);
     const cycleMs = this.cycleMsFor(route);
     const profit = Math.round(spread * cargo * ROUTECFG.margin);
@@ -54,6 +56,21 @@ const Routes = {
   },
   // Estimate for a not-yet-created route (the setup modal).
   preview(shipUids, comm, from, to) { return this.estimate({ comm, from, to, shipUids }); },
+
+  // Best unlocked buy→sell pair for a commodity — max spread/hour (matches the
+  // modal's ¢/h line; raw spread would favour far legs that take longer).
+  bestPair(comm, unlocked, shipUids = []) {
+    const u = unlocked || [];
+    let best = null, bestScore = -Infinity;
+    for (const from of u) for (const to of u) {
+      if (from === to) continue;
+      const e = this.preview(shipUids, comm, from, to);
+      if (!(e.spread > 0) || !(e.cycleMs > 0)) continue;
+      const score = e.spread / e.cycleMs;   // unit-cargo ¢/ms ≡ rank by ¢/h
+      if (score > bestScore) { bestScore = score; best = { from, to, spread: e.spread }; }
+    }
+    return best;
+  },
 
   _startLocal(shipUids, comm, from, to, now = Date.now()) {
     const ships = (shipUids || []).map(u => Fleet.ship(u)).filter(Boolean);

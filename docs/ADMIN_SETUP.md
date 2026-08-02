@@ -80,10 +80,11 @@ top bar, and the dev toggles inside **⚙ Settings**.
 
 ---
 
-## 3b. Storage bucket for sprite uploads (for the Images tab)
+## 3b. Storage bucket for sprite / music uploads (Images + Music tabs)
 
-To replace character/ship/planet sprites from the admin panel, create a public
-**`sprites`** bucket and let admins write to it. In **SQL Editor**:
+To replace character/ship/planet sprites **or** upload background music from the
+admin panel, create a public **`sprites`** bucket and let admins write to it
+(music files land under `sprites/bgm/`). In **SQL Editor**:
 
 ```sql
 -- public bucket (or create it in Dashboard → Storage → New bucket, name "sprites", Public)
@@ -188,6 +189,13 @@ A gallery of every sprite slot — portraits, ship hulls, race ships, planets, s
 stations, commodities, nebulae, broadcast screens. **Upload** (or **Replace**) a
 PNG/JPG; it's stored in your `sprites` bucket and the game points at it. **Reset**
 reverts a slot to the built-in art. Changes show on **reload**.
+
+### 🎵 Music
+Shared background playlist for **every player**. **+ Add song** uploads an
+MP3/OGG/WAV/WEBM into `sprites/bgm/` and appends it to content key `BGM_PLAYLIST`.
+Tracks play in order and loop when the list ends. Rename / reorder / remove from
+the same tab. Players control mute (top-bar icon next to Settings) and volume
+(Settings, default 25%).
 
 **Single slots vs pools.** Most categories take one image. The ones marked
 *(pools)* take **as many as you like** per entry, and each individual thing in

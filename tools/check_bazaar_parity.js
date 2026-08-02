@@ -117,13 +117,22 @@ function sqlContract(epoch, slot, tier) {
   };
 }
 
-const EX_COMMS = ["iron_ore", "silicon", "rare_earths", "hydrogen", "helium3", "water_ice",
-  "foodstuffs", "synthsilk", "nanochips", "antimatter", "spice", "contraband"];
+// Non-craftOnly COMMODITIES — mirrors app.gen_extractor + Bazaar.genSeededExtractor.
+const EX_COMMS = [
+  "iron_ore", "silicon", "rare_earths", "titanium_ore", "cobalt_ore", "graphene_lattice", "pulsar_shard",
+  "hydrogen", "helium3", "water_ice", "plasma_gas", "methane_slurry", "xenon_gas", "cryo_vapor",
+  "foodstuffs", "synthsilk", "grain", "protein_stock", "hydro_greens", "algae_paste", "biofiber",
+  "nectar_extract", "medicinal_herbs", "spore_culture",
+  "nanochips", "antimatter", "fusion_cell", "sensor_array", "neural_processor", "quantum_core",
+  "spice", "gemstones", "vintage_wine", "perfume_essence", "fine_art", "exotic_pelts",
+  "contraband", "narcotics", "forged_credentials", "weapons_cache", "bio_toxin",
+];
 const EX_CATS = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
 function sqlExtractor(epoch, slot) {
   const s = seed(["ex", String(epoch), String(slot)]);
   const r = u01(s, 0);
-  if (r < 0.45) return { uid: `ex${epoch}x${slot}`, type: "specialized", scope: EX_COMMS[Math.floor(u01(s, 1) * 12) % 12], price: 14000 };
+  const n = EX_COMMS.length;
+  if (r < 0.45) return { uid: `ex${epoch}x${slot}`, type: "specialized", scope: EX_COMMS[Math.floor(u01(s, 1) * n) % n], price: 14000 };
   if (r < 0.80) return { uid: `ex${epoch}x${slot}`, type: "semi", scope: EX_CATS[Math.floor(u01(s, 1) * 6) % 6], price: 9000 };
   return { uid: `ex${epoch}x${slot}`, type: "jack", scope: "all", price: 5000 };
 }

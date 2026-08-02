@@ -43,7 +43,7 @@ There are **no modules/imports**. Files communicate via:
 come first; runtime-only references can come later):**
 ```
 supabase CDN → data.js → flavor.js → cloud-config.js → store.js → cloud.js →
-username.js → content.js → market.js → galaxy.js → items.js → fleet.js → economy.js →
+username.js → content.js → bgm.js → market.js → galaxy.js → items.js → fleet.js → economy.js →
 reputation.js → rivals.js → missions.js → routes.js → incidents.js → orders.js →
 extractors.js → industries.js → workshop.js → bazaar.js → feed.js → broadcast.js → wars.js →
 worldfeed.js → ui.js → auth-ui.js → admin-ui.js → planetview.js → starmap.js →
@@ -52,7 +52,8 @@ main.js
 (`extractors.js` before `industries.js`; `workshop.js` before `bazaar.js`;
 `planetview.js` before `starmap.js`; `wars.js` after `broadcast.js` because
 `Wars.start` uses `Broadcast.announce`.)
-(`username.js` after `cloud.js` — Account handle validation + `Cloud.displayName`.)
+(`username.js` after `cloud.js` — Account handle validation + `Cloud.displayName`.
+`bgm.js` after `content.js` — shared playlist overlay + player.)
 
 ### Decoupling
 - **`Bus`** (in `store.js`) is a tiny pub/sub (`Bus.on/emit`). Events include:

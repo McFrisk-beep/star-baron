@@ -43,6 +43,8 @@ const AdminUI = {
       vCraft: $("admin-view-craft"), cTabs: $("admin-craft-tabs"), cList: $("admin-craft-list"),
       cDetail: $("admin-craft-detail"), cStatus: $("admin-craft-status"), cNew: $("admin-craft-new"),
       cListActions: $("admin-craft-listactions"),
+      vMusic: $("admin-view-music"), musicList: $("admin-music-list"), musicStatus: $("admin-music-status"),
+      musicAdd: $("admin-music-add"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
       devTier: $("dev-tier"), devTierSet: $("dev-tier-set"),
@@ -111,6 +113,20 @@ const AdminUI = {
     if (this.r.devGlobalReset) this.r.devGlobalReset.onclick = () => this.issueGlobalReset();
     if (this.r.mNew) this.r.mNew.onclick = () => this.newMission();
     if (this.r.cNew) this.r.cNew.onclick = () => this.newCraft();
+    // Keep the file input attached (Images-tab pattern) — don't detach before the picker resolves.
+    if (this.r.musicAdd && this.r.vMusic) {
+      this._musicFile = this.el("input", {
+        type: "file", class: "hidden",
+        accept: "audio/mpeg,audio/mp3,audio/ogg,audio/wav,audio/webm,audio/*",
+      });
+      this._musicFile.onchange = () => {
+        const f = this._musicFile.files && this._musicFile.files[0];
+        this._musicFile.value = "";
+        if (f) this.uploadMusicTrack(f);
+      };
+      this.r.vMusic.append(this._musicFile);
+      this.r.musicAdd.onclick = () => { if (Cloud.isAdmin()) this._musicFile.click(); };
+    }
 
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
@@ -135,10 +151,12 @@ const AdminUI = {
     this.r.vImages.classList.toggle("hidden", view !== "images");
     if (this.r.vMissions) this.r.vMissions.classList.toggle("hidden", view !== "missions");
     if (this.r.vCraft) this.r.vCraft.classList.toggle("hidden", view !== "craft");
+    if (this.r.vMusic) this.r.vMusic.classList.toggle("hidden", view !== "music");
     if (this.r.vDev) this.r.vDev.classList.toggle("hidden", view !== "dev");
     if (view === "images") this.buildGallery();
     if (view === "missions") this.buildMissions();
     if (view === "craft") this.buildCraft();
+    if (view === "music") this.buildMusic();
     if (view === "dev") this.refreshSenateDev();
   },
 
@@ -628,6 +646,110 @@ const AdminUI = {
       this.buildGallery();
       if (cat === "pagebg" && window.UI && typeof UI.applyPageBg === "function") UI.applyPageBg();
     } catch (e) { UI.toast("Reset failed: " + ((e && e.message) || e), "warn"); }
+  },
+
+  // ===== background music ==================================================
+  MAX_BGM_BYTES: 8 * 1024 * 1024,   // 8 MB — keeps first-load playlist light
+  setMusicStatus(msg, kind) {
+    const e = this.r.musicStatus; if (!e) return;
+    e.textContent = msg || ""; e.className = "admin-status" + (kind ? " " + kind : "");
+  },
+  _musicList() {
+    if (!Array.isArray(window.BGM_PLAYLIST)) window.BGM_PLAYLIST = [];
+    return window.BGM_PLAYLIST;
+  },
+  buildMusic() {
+    const host = this.r.musicList; if (!host) return;
+    host.innerHTML = "";
+    const list = this._musicList();
+    if (!list.length) {
+      host.append(this.el("p", { class: "admin-mhint", text: "No songs yet — click “+ Add song” to upload one." }));
+      return;
+    }
+    list.forEach((track, i) => {
+      const name = this.el("input", {
+        class: "admin-music-name", type: "text", value: track.name || `Track ${i + 1}`,
+        onchange: () => this.renameMusicTrack(i, name.value),
+      });
+      const row = this.el("div", { class: "admin-music-row" }, [
+        this.el("span", { class: "admin-music-idx", text: String(i + 1) }),
+        name,
+        this.el("audio", { class: "admin-music-preview", controls: "controls", preload: "none", src: track.url || "" }),
+        this.el("button", { class: "btn btn-mini", text: "↑", title: "Move up",
+          onclick: () => this.moveMusicTrack(i, -1) }),
+        this.el("button", { class: "btn btn-mini", text: "↓", title: "Move down",
+          onclick: () => this.moveMusicTrack(i, 1) }),
+        this.el("button", { class: "btn btn-mini admin-card-reset", text: "✕",
+          onclick: () => this.removeMusicTrack(i) }),
+      ]);
+      host.append(row);
+    });
+  },
+  // Save a NEW array only — never mutate the live list before Content.save resolves.
+  // Content.apply (inside save) updates BGM_PLAYLIST + Bgm.sync().
+  async _saveMusic(next) {
+    await Content.save("BGM_PLAYLIST", next.slice());
+  },
+  async uploadMusicTrack(file) {
+    if (!Cloud.isAdmin()) return;
+    if (!(Cloud.client && Cloud.client.storage)) return this.setMusicStatus("Storage SDK unavailable.", "bad");
+    if (file.size > this.MAX_BGM_BYTES) return this.setMusicStatus("File too large (max 8 MB).", "bad");
+    this.setMusicStatus("Uploading…");
+    try {
+      const ext = (file.name.split(".").pop() || "mp3").toLowerCase().replace(/[^a-z0-9]/g, "") || "mp3";
+      const path = `bgm/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
+      const up = await Cloud.client.storage.from("sprites").upload(path, file, {
+        upsert: false, contentType: file.type || "audio/mpeg",
+      });
+      if (up.error) throw up.error;
+      const pub = Cloud.client.storage.from("sprites").getPublicUrl(path);
+      const url = pub.data.publicUrl + "?t=" + Date.now();
+      const name = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Track";
+      await this._saveMusic(this._musicList().concat([{ url, name }]));
+      this.setMusicStatus("Song added — all players will hear it.", "good");
+      this.buildMusic();
+    } catch (e) {
+      const msg = (e && e.message) || String(e);
+      this.setMusicStatus(/bucket|not found/i.test(msg)
+        ? "Create a public 'sprites' bucket first (see ADMIN_SETUP)."
+        : "Upload failed: " + msg, "bad");
+    }
+  },
+  async renameMusicTrack(index, name) {
+    if (!Cloud.isAdmin()) return;
+    const list = this._musicList();
+    if (index < 0 || index >= list.length) return;
+    const next = list.map((t, i) => i === index
+      ? { ...t, name: String(name || "").trim() || `Track ${index + 1}` } : t);
+    try {
+      await this._saveMusic(next);
+      this.setMusicStatus("Renamed.", "good");
+    } catch (e) { this.setMusicStatus("Save failed: " + ((e && e.message) || e), "bad"); this.buildMusic(); }
+  },
+  async moveMusicTrack(index, dir) {
+    if (!Cloud.isAdmin()) return;
+    const list = this._musicList();
+    const j = index + dir;
+    if (index < 0 || index >= list.length || j < 0 || j >= list.length) return;
+    const next = list.slice();
+    const tmp = next[index]; next[index] = next[j]; next[j] = tmp;
+    try {
+      await this._saveMusic(next);
+      this.buildMusic();
+      this.setMusicStatus("Order updated.", "good");
+    } catch (e) { this.setMusicStatus("Save failed: " + ((e && e.message) || e), "bad"); }
+  },
+  async removeMusicTrack(index) {
+    if (!Cloud.isAdmin()) return;
+    const list = this._musicList();
+    if (index < 0 || index >= list.length) return;
+    if (!confirm(`Remove “${list[index].name || "this track"}” from the playlist?`)) return;
+    const next = list.filter((_, i) => i !== index);
+    try {
+      await this._saveMusic(next);
+      this.buildMusic();
+      this.setMusicStatus("Removed.", "good");
+    } catch (e) { this.setMusicStatus("Remove failed: " + ((e && e.message) || e), "bad"); }
   },
 
   // ===== missions editor ===================================================

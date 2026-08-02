@@ -239,12 +239,14 @@ const Market = {
     return 1 + (raw - 1) * MARKETCFG.modCompression;
   },
   // Spot at a system EXCLUDING your own pressure (mods + seeded local + overlays).
-  spot(id, systemId, now = Date.now()) {
+  // `rare: false` skips the rare-stock exchange premium (used by trade routes —
+  // the server has no premium, and routes abstract capital).
+  spot(id, systemId, now = Date.now(), { rare = true } = {}) {
     const c = this.byId(id);
     let p = this.prices[id] * this._mod(c.cat, systemId)
       * this.localEventMult(c, systemId, now) * this.localMult(c, systemId, now);
     // Rare scarcity: when a rare good is stocked here, buy/sell marks higher.
-    if ((c.rarity || "common") === "rare" && this.stocks(id, systemId)) {
+    if (rare && (c.rarity || "common") === "rare" && this.stocks(id, systemId)) {
       p *= (MARKETCFG.rareStockPremium || 1.35);
     }
     return p;
@@ -333,6 +335,12 @@ const Market = {
 
   systemPrice(id, systemId, now = Date.now()) {
     return this.spot(id, systemId, now) * (1 + this.impactAt(id, systemId, now));
+  },
+
+  // Route pricing = systemPrice without the rare-stock exchange premium.
+  // Matches server market.price_system (no premium) so the modal ¢/h matches payouts.
+  routePrice(id, systemId, now = Date.now()) {
+    return this.spot(id, systemId, now, { rare: false }) * (1 + this.impactAt(id, systemId, now));
   },
 
   history(id) { return this.hist[id] || []; },
