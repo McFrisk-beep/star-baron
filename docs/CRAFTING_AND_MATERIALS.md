@@ -9,6 +9,11 @@ Status: **Implemented** on branch `claude/game-crafting-brainstorm-2q6nx9`
 blueprints/recipes, Senate Fabrication Rights + craft discounts, Last Aegis
 story chain). Remaining work is playtest tuning of §5 knobs.
 
+> **Server note:** after expanding `COMMODITIES`, re-run
+> [`docs/sql/market_commodities_expand.sql`](sql/market_commodities_expand.sql)
+> (or the updated `market_price.sql`) in Supabase. Without it, signed-in
+> trade/routes return **Unknown commodity** for new resources like Exotic Pelts.
+
 Station-level resource exclusivity is **shelved** — exclusivity is handled via
 a `rarity` tag on each commodity (see below), not a station/module system.
 

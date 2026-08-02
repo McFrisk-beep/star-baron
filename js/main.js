@@ -41,7 +41,7 @@ const Game = {
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
       story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
-      settings: { muted: true, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
+      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
@@ -67,6 +67,9 @@ const Game = {
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
+    if (s.settings.volume == null || !Number.isFinite(+s.settings.volume)) s.settings.volume = 0.25;
+    s.settings.volume = Util.clamp(+s.settings.volume, 0, 1);
+    s.settings.muted = !!s.settings.muted;
     if (window.Senate) {
       const ls = loaded.senate || {};
       s.senate = Object.assign(Senate.defaultState(), ls);
@@ -292,6 +295,7 @@ const Game = {
     }
     if (window.AuthUI) AuthUI.init();
     if (window.AdminUI) AdminUI.init();
+    if (window.Bgm) Bgm.init();
     StarMap.init();
     if (window.Senate) Senate.init();
     if (window.Story) Story.init();
@@ -483,6 +487,7 @@ const Game = {
     if (window.SenateWorld) SenateWorld.stop();
     if (window.StarMap) StarMap.suspend();
     if (window.Senate) Senate.suspend();
+    if (window.Bgm) Bgm.pause();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
   resume() {
@@ -506,6 +511,7 @@ const Game = {
         UI.tick(); UI.renderNewswire();
         if (window.StarMap) StarMap.resume();
         if (window.Senate) Senate.resume();
+        if (window.Bgm) Bgm.applyVolume();
       };
       if (window.Economy && Economy.authoritative()) {
         void this.pullCatchUp().then(away => {
@@ -547,6 +553,7 @@ const Game = {
     UI.tick(); UI.renderNewswire();
     if (window.StarMap) StarMap.resume();
     if (window.Senate) Senate.resume();
+    if (window.Bgm) Bgm.applyVolume();
   },
 
   // Phase 3: bank soft income on the server. Returns the away recap blob or null
@@ -905,9 +912,12 @@ const Game = {
     return { ok: true };
   },
 
-  // Tiny opt-in audio (off by default). Resumes on first user gesture.
+  // Tiny UI beeps — respect mute + volume (default 25%). Resumes on first gesture.
   audio(type) {
-    if (this.state.settings.muted) return;
+    const set = this.state.settings || {};
+    if (set.muted) return;
+    const vol = Util.clamp(set.volume == null ? 0.25 : +set.volume, 0, 1);
+    if (!(vol > 0)) return;
     try {
       this._audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
       const ctx = this._audioCtx;
@@ -915,7 +925,7 @@ const Game = {
       const o = ctx.createOscillator(), g = ctx.createGain();
       const freq = type === "news" ? 220 : type === "good" ? 660 : 440;
       o.frequency.value = freq; o.type = "sine";
-      g.gain.value = 0.05;
+      g.gain.value = 0.05 * vol;
       o.connect(g); g.connect(ctx.destination);
       o.start();
       g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (type === "news" ? 0.5 : 0.15));

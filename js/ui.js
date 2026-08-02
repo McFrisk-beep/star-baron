@@ -64,7 +64,7 @@ const UI = {
       commsBadge: $("tab-comms-badge"),
       dispatchBody: $("dispatch-body"),
       pendingBody: $("pending-body"),
-      btnPrestige: $("btn-prestige"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
+      btnPrestige: $("btn-prestige"), btnMute: $("btn-mute"), btnSettings: $("btn-settings"), btnHelp: $("btn-help"),
       topbar: document.querySelector(".topbar"), btnMenu: $("btn-menu"), topmenu: $("topmenu"),
       tutorial: $("tutorial-modal"), tutIcon: $("tut-icon"), tutTitle: $("tut-title"),
       tutBody: $("tut-body"), tutDots: $("tut-dots"), tutSkip: $("tut-skip"),
@@ -84,7 +84,8 @@ const UI = {
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
-      settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
+      settings: $("settings-modal"), setVolume: $("set-volume"), setVolumeVal: $("set-volume-val"),
+      setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
       setRestore: $("set-restore"), setRestoreNote: $("set-restore-note"),
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
@@ -906,20 +907,26 @@ const UI = {
       this.refs.rtStart.disabled = true; this.refs.route.classList.remove("hidden"); return;
     }
     const opts = (list, val) => list.map(o => `<option value="${o.id}"${o.id === val ? " selected" : ""}>${o.name}</option>`).join("");
-    const from0 = unlocked[0].id, to0 = unlocked[1].id;
+    const tradeable = Market.tradeable();
+    const comm0 = tradeable[0].id;
+    const best = Routes.bestPair(comm0, unlocked.map(s => s.id));
+    const from0 = (best && best.from) || unlocked[0].id;
+    const to0 = (best && best.to) || unlocked[1].id;
     const shipRows = idle.map(sh => { const st = Fleet.stats(sh);
       return `<label class="rt-ship"><input type="checkbox" data-rtship="${sh.uid}"${sh.uid === shipUid ? " checked" : ""}/> <b>${sh.name}</b> <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> ▣ ${st.cargo} » ${st.speed}</label>`;
     }).join("");
     this.refs.rtBody.innerHTML =
       `<div class="rt-form">
-         <label>Commodity <select id="rt-comm">${opts(Market.tradeable(), Market.tradeable()[0].id)}</select></label>
+         <label>Commodity <select id="rt-comm">${opts(tradeable, comm0)}</select></label>
          <label>Buy at <select id="rt-from">${opts(unlocked, from0)}</select></label>
          <label>Sell at <select id="rt-to">${opts(unlocked, to0)}</select></label>
        </div>
        <p class="muted-note">Pick the ships to run this loop — their cargo pools and they move at the slowest one's speed.</p>
        <div class="rt-ships">${shipRows}</div>
        <div class="mm-calc" id="rt-calc"></div>`;
-    this.refs.rtBody.querySelectorAll("select, input[data-rtship]").forEach(el => el.onchange = () => this.updateRouteCalc());
+    const commSel = this.refs.rtBody.querySelector("#rt-comm");
+    if (commSel) commSel.onchange = () => { this._routePickBestPair(); this.updateRouteCalc(); };
+    this.refs.rtBody.querySelectorAll("#rt-from, #rt-to, input[data-rtship]").forEach(el => el.onchange = () => this.updateRouteCalc());
     this.updateRouteCalc();
     this.refs.route.classList.remove("hidden");
   },
@@ -927,6 +934,16 @@ const UI = {
   _routeSel() {
     const q = id => (this.refs.rtBody.querySelector(id) || {}).value;
     return { comm: q("#rt-comm"), from: q("#rt-from"), to: q("#rt-to") };
+  },
+  // When the commodity changes, snap Buy/Sell to the unlocked pair with the best spread.
+  _routePickBestPair() {
+    const { comm } = this._routeSel(); if (!comm) return;
+    const unlocked = SYSTEMS.filter(s => this.s().unlockedSystems.includes(s.id)).map(s => s.id);
+    const best = Routes.bestPair(comm, unlocked); if (!best) return;
+    const from = this.refs.rtBody.querySelector("#rt-from");
+    const to = this.refs.rtBody.querySelector("#rt-to");
+    if (from) from.value = best.from;
+    if (to) to.value = best.to;
   },
   updateRouteCalc() {
     const calc = document.getElementById("rt-calc"); if (!calc) return;
@@ -2553,12 +2570,32 @@ const UI = {
   },
 
   // ===== settings ==========================================================
+  _volumePct() {
+    const v = this.s().settings.volume;
+    const n = v == null ? 0.25 : +v;
+    return Math.round(Util.clamp(Number.isFinite(n) ? n : 0.25, 0, 1) * 100);
+  },
   applySettings() {
     const set = this.s().settings;
+    if (set.volume == null || !Number.isFinite(+set.volume)) set.volume = 0.25;
+    set.volume = Util.clamp(+set.volume, 0, 1);
     document.body.classList.toggle("muted", !!set.muted);
     document.body.classList.toggle("reduced", !!set.reduced);
-    this.refs.setMute.checked = !!set.muted; this.refs.setReduced.checked = !!set.reduced;
-    this.refs.setFastNews.checked = !!CONFIG.fastNews; this.refs.setFast.checked = (window.Game.timeScale || 1) > 1;
+    if (this.refs.setReduced) this.refs.setReduced.checked = !!set.reduced;
+    if (this.refs.setVolume) this.refs.setVolume.value = String(this._volumePct());
+    if (this.refs.setVolumeVal) this.refs.setVolumeVal.textContent = `${this._volumePct()}%`;
+    if (this.refs.btnMute) {
+      const on = !set.muted;
+      this.refs.btnMute.textContent = on ? "🔊" : "🔇";
+      const tip = on
+        ? (window.I18n ? I18n.t("btn.audioOn") : "Audio on")
+        : (window.I18n ? I18n.t("btn.audioOff") : "Audio off");
+      this.refs.btnMute.title = tip;
+      this.refs.btnMute.setAttribute("aria-label", tip);
+      this.refs.btnMute.classList.toggle("is-muted", !on);
+    }
+    if (this.refs.setFastNews) this.refs.setFastNews.checked = !!CONFIG.fastNews;
+    if (this.refs.setFast) this.refs.setFast.checked = (window.Game.timeScale || 1) > 1;
     if (this.refs.langToggle) {
       const lang = window.I18n ? I18n.lang : (set.lang || "en");
       for (const b of this.refs.langToggle.querySelectorAll(".lang-btn")) b.classList.toggle("active", b.dataset.lang === lang);
@@ -2567,6 +2604,7 @@ const UI = {
     const hasBak = !!(window.Game && Game.hasCorruptBackup && Game.hasCorruptBackup());
     if (this.refs.setRestore) this.refs.setRestore.classList.toggle("hidden", !hasBak);
     if (this.refs.setRestoreNote) this.refs.setRestoreNote.classList.toggle("hidden", !hasBak);
+    if (window.Bgm) Bgm.applyVolume();
   },
 
   // Refresh JS-generated labels after a language switch (static HTML is handled
@@ -2623,6 +2661,10 @@ const UI = {
     }
     r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
     r.setClose.onclick = () => r.settings.classList.add("hidden");
+    if (r.btnMute) r.btnMute.onclick = () => {
+      this.s().settings.muted = !this.s().settings.muted;
+      this.applySettings(); window.Game.requestSave();
+    };
     r.btnHelp.onclick = () => this.openTutorial();
     r.tutNext.onclick = () => this.tutorialNext();
     r.tutBack.onclick = () => this.tutorialBack();
@@ -2668,7 +2710,17 @@ const UI = {
       const b = e.target.closest(".lang-btn"); if (!b || !window.I18n) return;
       I18n.set(b.dataset.lang); window.Game.requestSave();
     };
-    r.setMute.onchange = () => { this.s().settings.muted = r.setMute.checked; this.applySettings(); window.Game.requestSave(); };
+    if (r.setVolume) {
+      const applyVol = () => {
+        const pct = Util.clamp(+r.setVolume.value || 0, 0, 100);
+        this.s().settings.volume = pct / 100;
+        // Dragging volume up while muted is a clear intent to hear sound again.
+        if (pct > 0 && this.s().settings.muted) this.s().settings.muted = false;
+        this.applySettings(); window.Game.requestSave();
+      };
+      r.setVolume.oninput = applyVol;
+      r.setVolume.onchange = applyVol;
+    }
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };

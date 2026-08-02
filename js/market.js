@@ -335,6 +335,15 @@ const Market = {
     return this.spot(id, systemId, now) * (1 + this.impactAt(id, systemId, now));
   },
 
+  // Route pricing skips the rare-stock exchange premium — routes abstract capital
+  // and that premium was zeroing spreads (Start disabled) on many rare goods.
+  routePrice(id, systemId, now = Date.now()) {
+    const c = this.byId(id); if (!c) return 0;
+    const p = this.prices[id] * this._mod(c.cat, systemId)
+      * this.localEventMult(c, systemId, now) * this.localMult(c, systemId, now);
+    return p * (1 + this.impactAt(id, systemId, now));
+  },
+
   history(id) { return this.hist[id] || []; },
 
   changePct(id) {
