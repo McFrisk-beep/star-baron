@@ -86,6 +86,7 @@ const UI = {
       workshopTabs: $("workshop-tabs"),
       settings: $("settings-modal"), setMute: $("set-mute"), setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
+      setRestore: $("set-restore"), setRestoreNote: $("set-restore-note"),
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
     if (window.I18n) I18n.init();
@@ -2523,6 +2524,10 @@ const UI = {
       const lang = window.I18n ? I18n.lang : (set.lang || "en");
       for (const b of this.refs.langToggle.querySelectorAll(".lang-btn")) b.classList.toggle("active", b.dataset.lang === lang);
     }
+    // Wiped-save backup — presence check only (don't JSON.parse on every fullRender).
+    const hasBak = !!(window.Game && Game.hasCorruptBackup && Game.hasCorruptBackup());
+    if (this.refs.setRestore) this.refs.setRestore.classList.toggle("hidden", !hasBak);
+    if (this.refs.setRestoreNote) this.refs.setRestoreNote.classList.toggle("hidden", !hasBak);
   },
 
   // Refresh JS-generated labels after a language switch (static HTML is handled
@@ -2629,6 +2634,25 @@ const UI = {
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setReset.onclick = () => { if (confirm("Wipe your Cosmocrat save and start over?")) window.Game.reset(); };
+    if (r.setRestore) r.setRestore.onclick = () => {
+      const bak = window.Game && Game.readCorruptBackup && Game.readCorruptBackup();
+      if (!bak) return this.toast("No wiped-save backup in this browser.", "warn");
+      const summary = Game.corruptBackupSummary(bak);
+      const richer = Game.corruptBackupIsRicher(bak);
+      // Soft-merge recovers Workshop / inventory without discarding current progress.
+      // Full replace is offered when the backup isn't "richer" in those slices (or
+      // the player wants the whole old save back).
+      if (richer) {
+        if (!confirm(`Recover missing Workshop gear from the wipe backup?\n\nBackup has: ${summary}\n\nThis keeps your current credits and adds anything the backup still has that this save lost.`)) return;
+        const r0 = Game.mergeCorruptClientSlices(bak);
+        if (!r0.ok) return this.toast(r0.msg, "warn");
+        this.toast(`Recovered ${r0.added} missing piece${r0.added === 1 ? "" : "s"} from the wipe backup.`, "good", 6000);
+        this.applySettings(); this.fullRender(); this.updateHeader();
+        return;
+      }
+      if (!confirm(`Replace this save with the wipe backup?\n\nBackup has: ${summary}\n\nThis reloads the game from that backup.`)) return;
+      Game.restoreCorruptBackup().then(r0 => { if (r0 && !r0.ok) this.toast(r0.msg, "warn"); });
+    };
 
     r.btnPrestige.onclick = () => this.doAscend();
     if (r.lbPrev) r.lbPrev.onclick = () => this.lbPage(-1);
