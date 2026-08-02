@@ -32,6 +32,7 @@ This is the useful part — the hooks exist, they just aren't wired to a wallet.
 | Cyberpunk asset pack + one big CSS file | `css/style.css`, `Cyberpunk_UI_Asset_Pack_v1.3/` | UI themes (cheap: a body class, same pattern as `lang-jp`) |
 | Sprite manifest + admin image CMS | `sprite-manifest.js`, `admin-ui.js` | ship skins / hull paint with no engine work |
 | Named ship refits | `bazaar.js` | vanity ship naming |
+| Walkable station hub + full decor editor | `hub.js`, `hubedit.js`, `HUB_ROOMS` | **player-owned stations — see §2H; admin-only today** |
 | Senate, ballots, shared cron world | `senate.js`, `senateworld.js` | this is already a **season engine** |
 | Supabase accounts + RLS | `cloud.js`, `docs/CLOUD_SETUP.md` | entitlements table, extra save slots |
 
@@ -97,6 +98,61 @@ player's galaxy (`rivals.js` is data), or you name a system / commodity / NPC. C
 almost nothing to implement, delights the people who care most, will never be a
 revenue pillar. Cap the count so it stays meaningful.
 
+### H. **A player-owned space station — the strongest cosmetic vehicle here**
+
+Called out separately because it isn't a sixth option competing with the others;
+it's the *container* that makes the cosmetic line in B and C worth buying at all.
+
+**The hard part is already built, and it's admin-only.** `hub.js` is a walkable
+station: canvas tilemap, ASCII room grids in `HUB_ROOMS`, doors between rooms,
+props you walk up to that open the real feature panels via `UI.showPage()`.
+`hubedit.js` is a full visual editor on top of it — floor/wall/door painting,
+non-rectangular rooms, room add/rename/resize, per-room backgrounds, and a decor
+system with drag, resize, free or snapped placement, solidity, and z-layering.
+That is a station-decorating game. It ships today. The only reason players can't
+use it is that it's gated to admins and writes one global map to the `content`
+table.
+
+**The gap is scoping, not rendering.**
+
+- Per-player station data — a `stations` table (`user_id` PK, RLS: read any,
+  write own) instead of the admin `content` override. A room grid plus a `deco`
+  array is a few KB; storage is a non-issue.
+- A restricted brush set for players — decor placement and backgrounds yes, wall
+  painting probably yes, prop placement no (props are the nav registry; letting
+  players delete their own Exchange is a support ticket).
+- A decor catalog with entitlement or credit gates, instead of the free-for-all
+  sprite palette admins get.
+
+**Why this specifically, and not more ship skins.** Cosmetics only convert when
+they are *seen*. Ship skins in this game are a few pixels drifting across the star
+map — nobody, including the owner, really looks at them. A station is a room you
+stand in every session, and the hub is already the default landing page. Add
+read-only visiting (walk another baron's station from the Baron Board — the board
+already has the identity and the ranking) and cosmetics go from "1% of players buy
+a thing nobody sees" to the anchor of the whole line. That single feature is worth
+more than the entire skin catalog.
+
+**It's also a display case for progression, which is what idle players actually
+pay for.** Everything the game already tracks has an obvious physical form: a
+trophy wall for `achievements`, your Baron Board title on a plaque, mounted models
+of hulls you've owned, faction banners that reflect standing, a case for legendary
+accessories. None of it needs new systems — it's a read of state you already keep,
+rendered as decor. This is the cheapest possible content pipeline: art drops into
+`assets/hub/<id>.png` and the admin Images CMS already uploads it.
+
+**Keep it cosmetic.** Station *upgrades* are the obvious next thought — extra
+storage, module slots, docking fees from NPCs, passive income — and that's where it
+turns into a power purchase against the shared Baron Board (§3), on top of directly
+competing with industries/extractors, which already occupy the passive-income slot.
+If station power ever ships it should be credits-only and server-authoritative.
+Decoration is the part that's free, safe, and already written.
+
+**Watch out for:** moderation once stations are visitable — a fixed decor catalog
+is safe, free text is not (the `username.js` blocklist is the existing precedent);
+and the fact that there are four rooms today, so a catalog needs enough art to make
+customization feel like a choice rather than a menu.
+
 ## 3. What not to sell
 
 - **Nothing that moves you up the Baron Board.** `barons.js` publishes a
@@ -144,6 +200,9 @@ revenue pillar. Cap the count so it stays meaningful.
    problem to solve.
 2. **Then:** one-time Charter unlock, cosmetics + QoL only, via LemonSqueezy →
    Supabase entitlement. Low risk, tests willingness to pay, no live-ops debt.
+   The cosmetics worth putting in it are **station decor (§2H)**, not ship skins —
+   scope `hubedit.js` to a per-player station first and the unlock has something
+   to sell that players will actually look at.
 3. **If retention holds:** rewarded video for the free tier, capped, opt-in.
 4. **If there's a real audience:** Senate seasons with a free/premium track — the
    engine is already there.
