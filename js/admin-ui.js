@@ -362,6 +362,10 @@ const AdminUI = {
     const nebulae = [...new Set(SECTORS.map(s => s.nebula))];
     const range = n => Array.from({ length: n }, (_, i) => String(i));
     const escorts = (SHIP_CATALOG.escort || []).map(s => s.id);
+    // Every fleet hull the player can end up owning (bought, hired or crafted) —
+    // mains have their own "Ship hulls" slot and never appear in the yard.
+    const yardHulls = [...(SHIP_CATALOG.transport || []), ...(SHIP_CATALOG.escort || []),
+      ...(SHIP_CATALOG.survey || [])].map(s => s.id);
     return [
       { group: "Character portraits", cat: "portrait", items: range(CONFIG.portraitCount), url: i => ASSET.portrait(+i) },
       { group: "Ship hulls", cat: "ship", items: ["shuttle", "hauler", "freighter", "leviathan"], url: s => ASSET.ship(s) },
@@ -384,6 +388,18 @@ const AdminUI = {
       { group: "Gear kinds (pools)", cat: "accessory", items: Object.keys(ACCESSORY_KINDS),
         url: k => ASSET.accessory(k, "preview"), pool: true,
         hint: "Each reactor/shield/… rolls a random PNG from its pool." },
+      { group: "Ships (pools)", cat: "shipart", items: yardHulls,
+        url: id => ASSET.shipArt(id, "preview"), pool: true,
+        label: id => ((window.ALL_SHIPS || []).find(s => s.id === id) || {}).name || id,
+        hint: "Per-hull art for the Bazaar shelf and the Fleet card. Each ship on the shelf picks one image from its hull's pool and keeps it after you buy it. Empty pool = the shared class sprite, as before." },
+      { group: "Blackboxes (pools)", cat: "blackbox", items: (window.BLACKBOX_EFFECTS || []).map(e => e.id),
+        url: id => ASSET.blackbox(id, "preview"), pool: true,
+        label: id => ((window.BLACKBOX_EFFECTS || []).find(e => e.id === id) || {}).name || id,
+        hint: "One pool per blackbox effect — shown in the Bazaar and in Inventory. Empty pool falls back to the shared Gear-kind 'blackbox' art." },
+      { group: "Blueprints (pools)", cat: "blueprint", items: (window.BLUEPRINTS || []).map(b => b.id),
+        url: id => ASSET.blueprint(id, "preview"), pool: true,
+        label: id => ((window.BLUEPRINTS || []).find(b => b.id === id) || {}).name || id,
+        hint: "One pool per blueprint. Empty pool falls back to the shared Gear-kind 'blueprint' art." },
       { group: "Extractors (pools)", cat: "extractor", items: Object.keys(EXTRACTORCFG.types),
         url: t => ASSET.extractor(t, "preview"), pool: true },
       { group: "Components (pools)", cat: "component", items: Object.keys(COMPONENTCFG.kinds),
@@ -461,10 +477,11 @@ const AdminUI = {
     const grid = this.el("div", { class: "admin-grid admin-pool-grid" + (slot.flavored ? " admin-pool-flavored" : "") });
     for (const item of slot.items) {
       const key = `${slot.cat}:${item}`;
+      const name = slot.label ? slot.label(item) : String(item);
       const entries = this._poolEntries(key);
       const thumbs = this.el("div", { class: "admin-pool-thumbs" });
       if (!entries.length) {
-        const ph = this.el("div", { class: "admin-thumb tintbox", text: String(item).slice(0, 2) });
+        const ph = this.el("div", { class: "admin-thumb tintbox", text: name.slice(0, 2) });
         thumbs.append(ph);
       } else {
         entries.forEach((entry, i) => {
@@ -498,7 +515,7 @@ const AdminUI = {
       file.onchange = () => { if (file.files && file.files.length) this.uploadPool(slot.cat, item, file.files); };
       const card = this.el("div", { class: "admin-card admin-pool-card" + (entries.length ? " custom" : "") }, [
         thumbs,
-        this.el("div", { class: "admin-card-name", text: `${item} (${entries.length} in pool)` }),
+        this.el("div", { class: "admin-card-name", text: `${name} (${entries.length} in pool)` }),
         this.el("button", { class: "btn btn-mini", text: slot.flavored ? "Add image" : "Add PNG", onclick: () => file.click() }),
       ]);
       if (entries.length) card.append(this.el("button", { class: "btn btn-mini admin-card-reset", text: "Clear pool", onclick: () => this.resetSlot(slot.cat, item) }));

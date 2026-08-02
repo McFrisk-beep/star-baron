@@ -68,6 +68,17 @@ const Bazaar = {
     return { id: `ac-${epoch}-${slot}`, item, price };
   },
 
+  // Blackboxes and blueprints run on their OWN, much slower clock (24h by
+  // default). They're permanent power — a blueprint unlocks a recipe forever and
+  // a blackbox is a stacked timed buff — so churning them on the 60s board epoch
+  // meant a player with credits could refresh their way through the whole pool in
+  // an afternoon. One day's stock, and a bought slot stays bought (bazaarBought
+  // keys off the offer id, which now only changes once a day).
+  slowEpochMs() { return BAZAARCFG.slowRotationMs || 24 * 60 * 60 * 1000; },
+  slowEpoch(now = Date.now()) { return Math.floor(now / this.slowEpochMs()); },
+  // ms until the next blackbox/blueprint restock — shown on the Gear tab.
+  slowRestockMs(now = Date.now()) { return (this.slowEpoch(now) + 1) * this.slowEpochMs() - now; },
+
   // Rare rotating blackbox offers (soft/local — like dossiers; not server ledger).
   genSeededBlackbox(epoch, slot) {
     const s = this._seed(["bb", String(epoch), String(slot)]);
@@ -82,10 +93,6 @@ const Bazaar = {
     const price = Math.round(item.value * (1.05 + this._u01(s, 1) * 0.35));
     return { id: `bb-${epoch}-${slot}`, item, price };
   },
-  genBlackbox() {
-    const item = Items.genBlackbox();
-    return { id: "bb" + (++this.s().seq), item, price: Math.round(item.value * Util.randFloat(1.05, 1.4)) };
-  },
 
   // Rotating blueprint offers (bazaar-source recipes the player doesn't know yet).
   genSeededBlueprint(epoch, slot) {
@@ -96,12 +103,75 @@ const Bazaar = {
     const price = Math.round(12000 * (0.9 + this._u01(s, 1) * 0.8) * (bp.destroyOnUse ? 4 : 1));
     return { id: `bp-${epoch}-${slot}`, blueprintId: bp.id, name: bp.name, outputType: bp.outputType, price };
   },
-  genBlueprint() {
-    const pool = window.Workshop ? Workshop.dropPool("bazaar") : [];
+
+  // The day's blackbox + blueprint shelf. Shared by the seeded (signed-in) and
+  // local (guest) boards — both are soft/local content, so there's one code path
+  // and one clock. Anything already bought this epoch stays off the shelf.
+  fillSlowStock(now = Date.now()) {
+    const b = this.bz(), bought = this._boughtSet(), epoch = this.slowEpoch(now);
+    b.blackboxes = [];
+    for (let i = 0; i < (BAZAARCFG.blackboxSlots || 0); i++) {
+      const o = this.genSeededBlackbox(epoch, i);
+      if (o && !bought.has(o.id)) b.blackboxes.push(o);
+    }
+    b.blueprints = [];
+    for (let i = 0; i < (BAZAARCFG.blueprintSlots || 0); i++) {
+      const o = this.genSeededBlueprint(epoch, i);
+      if (o && !bought.has(o.id)) b.blueprints.push(o);
+    }
+  },
+
+  // ---- shipyard shelf -----------------------------------------------------
+  // Named, refitted hulls that rotate as a set every BAZAARCFG.yardRotationMs.
+  // Seeded off the epoch so every client (and a reload) shows the same shelf.
+  //
+  // Price is the plain catalog price: app_buy_ship charges from the SQL catalog
+  // and knows nothing about refits, so a variant-adjusted sticker would bill the
+  // player for credits the server never took. That's also why SHIP_VARIANTS are
+  // all trade-offs — see the note there before adding a strictly-better refit.
+  yardEpochMs() { return BAZAARCFG.yardRotationMs || 5 * 60 * 1000; },
+  yardEpoch(now = Date.now()) { return Math.floor(now / this.yardEpochMs()); },
+  yardRestockMs(now = Date.now()) { return (this.yardEpoch(now) + 1) * this.yardEpochMs() - now; },
+  // Hulls the yard may stock: everything sellable that isn't blueprint-gated.
+  yardPool() {
+    return [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || [])]
+      .filter(d => !d.craftOnly && d.price > 0);
+  },
+  genSeededYardShip(epoch, slot) {
+    const s = this._seed(["yard", String(epoch), String(slot)]);
+    const pool = this.yardPool();
     if (!pool.length) return null;
-    const bp = Util.pick(pool);
-    return { id: "bp" + (++this.s().seq), blueprintId: bp.id, name: bp.name, outputType: bp.outputType,
-      price: Math.round(Util.randInt(10000, 22000) * (bp.destroyOnUse ? 4 : 1)) };
+    const def = pool[Math.floor(this._u01(s, 0) * pool.length) % pool.length];
+    const variants = Fleet.variantsFor(def.cls);
+    // An admin can edit SHIP_VARIANTS to empty via the content CMS — fall back to
+    // an unrefitted hull rather than putting an undefined refit on the shelf.
+    const variant = variants.length
+      ? variants[Math.floor(this._u01(s, 1) * variants.length) % variants.length]
+      : { id: "stock" };
+    return {
+      id: `sy-${epoch}-${slot}`,
+      shipType: def.id,
+      variantId: variant.id,
+      // Pre-named so the shelf reads as individual second-hand ships, not a
+      // catalog. The name follows the ship into the fleet (Fleet.setVariant).
+      name: `${this._pick(s, 10, SHIP_NAME_A)} ${this._pick(s, 11, SHIP_NAME_B)}`,
+      price: def.price,
+    };
+  },
+  // The whole shelf, minus anything already bought this rotation. Two slots that
+  // roll the same hull AND the same refit are the same ship twice, which just
+  // reads as a bug — drop the repeat and let the shelf run a little short.
+  fillYard(now = Date.now()) {
+    const b = this.bz(), bought = this._boughtSet(), seen = new Set();
+    b.yard = [];
+    for (let i = 0; i < (BAZAARCFG.yardSlots || 8); i++) {
+      const o = this.genSeededYardShip(this.yardEpoch(now), i);
+      if (!o || bought.has(o.id)) continue;
+      const key = `${o.shipType}:${o.variantId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      b.yard.push(o);
+    }
   },
 
   // Seeded extractor offer — mirrors app.gen_extractor in phase3 SQL.
@@ -250,16 +320,8 @@ const Bazaar = {
       const o = this.genSeededAccessory(epoch, i);
       if (!bought.has(o.id)) b.accessories.push(o);
     }
-    b.blackboxes = [];
-    for (let i = 0; i < (BAZAARCFG.blackboxSlots || 0); i++) {
-      const o = this.genSeededBlackbox(epoch, i);
-      if (o && !bought.has(o.id)) b.blackboxes.push(o);
-    }
-    b.blueprints = [];
-    for (let i = 0; i < (BAZAARCFG.blueprintSlots || 0); i++) {
-      const o = this.genSeededBlueprint(epoch, i);
-      if (o && !bought.has(o.id)) b.blueprints.push(o);
-    }
+    this.fillSlowStock(now);   // blackboxes + blueprints, on the 24h clock
+    this.fillYard(now);        // named/refitted hulls, on the 5min clock
     b.contracts = [];
     for (let i = 0; i < BAZAARCFG.contractSlots; i++) {
       const o = this.genSeededContract(epoch, i, tier);
@@ -391,10 +453,8 @@ const Bazaar = {
     b.extractors ||= []; b.components ||= []; b.flagships ||= [];
     while (b.mercs.length < BAZAARCFG.mercSlots) b.mercs.push(this.genMerc(now));
     while (b.accessories.length < BAZAARCFG.accessorySlots) b.accessories.push(this.genAccessory());
-    while (b.blackboxes.length < (BAZAARCFG.blackboxSlots || 0)) b.blackboxes.push(this.genBlackbox());
-    while (b.blueprints.length < (BAZAARCFG.blueprintSlots || 0)) {
-      const o = this.genBlueprint(); if (!o) break; b.blueprints.push(o);
-    }
+    this.fillSlowStock(now);   // blackboxes + blueprints, same 24h shelf as signed-in play
+    this.fillYard(now);        // shipyard shelf, same 5min rotation as signed-in play
     while (b.extractors.length < EXTRACTORCFG.bazaarSlots) b.extractors.push(this.genExtractor());
     while (b.components.length < COMPONENTCFG.bazaarSlots) b.components.push(this.genComponent());
     while (b.flagships.length < (BAZAARCFG.flagshipSlots || 4)) {
@@ -437,8 +497,8 @@ const Bazaar = {
     b.mercs = b.mercs.filter(m => m.availUntil > now);
     // accessories + extractors occasionally get bought by NPCs
     b.accessories = b.accessories.filter(a => Math.random() > 0.06);
-    b.blackboxes = (b.blackboxes || []).filter(a => Math.random() > 0.08);
-    b.blueprints = (b.blueprints || []).filter(a => Math.random() > 0.07);
+    // NOT blackboxes/blueprints — they're on the 24h shelf now (fillSlowStock),
+    // and NPC churn would hand the player a free reroll of the day's stock.
     b.extractors = (b.extractors || []).filter(a => Math.random() > 0.04);
     b.components = (b.components || []).filter(a => Math.random() > 0.05);
     b.flagships = (b.flagships || []).filter(a => Math.random() > 0.08);
@@ -471,26 +531,63 @@ const Bazaar = {
   },
 
   // ---- purchases ----------------------------------------------------------
-  _buyShipLocal(catalogId) {
+  // `offer` is a shipyard shelf entry (name + refit) when the buy came from the
+  // rotating yard; the free starter hull passes none.
+  _buyShipLocal(catalogId, offer) {
     const def = Fleet.shipDef(catalogId); const s = this.s();
     if (!def || def.cls === "main") return { ok: false, msg: "Unknown ship." };
+    if (def.craftOnly) return { ok: false, msg: "Blueprint-only hull — build it in the Workshop." };
     const cap = window.Economy ? Economy.fleetCap() : 99;
     if ((s.ships || []).length >= cap) return { ok: false, msg: `Fleet at capacity (${cap}) — ascend a Baron Tier to command more.` };
     const price = Math.round(def.price * (1 - Rep.discount()));
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
-    s.ships.push(Fleet.makeShip(catalogId));
+    s.ships.push(Fleet.makeShip(catalogId, offer ? { name: offer.name } : {}));
     Economy.refreshNetWorth(); Economy.checkAchievements();
     Bus.emit("shipBuy", { type: catalogId });
     return { ok: true };
   },
-  buyShip(catalogId) {
-    if (!this.authoritative()) return this._buyShipLocal(catalogId);
+  buyShip(catalogId, offer) {
+    if (!this.authoritative()) {
+      const before = this._shipUids();
+      const r = this._buyShipLocal(catalogId, offer);
+      if (r.ok) this._adoptYardShip(catalogId, offer, before);
+      return r;
+    }
+    const before = this._shipUids();
     return Economy._withRpc(
-      () => this._buyShipLocal(catalogId),
+      () => this._buyShipLocal(catalogId, offer),
       () => Cloud.buyShip(catalogId),
       "Couldn't reach the bazaar — try again."
-    );
+    ).then(r => { if (r && r.ok) this._adoptYardShip(catalogId, offer, before); return r; });
+  },
+
+  // Buy a specific hull off the shipyard shelf (the normal path — only the free
+  // starter hull is bought by catalog id).
+  buyYardShip(offerId) {
+    const offer = (this.bz().yard || []).find(o => o.id === offerId);
+    if (!offer) return { ok: false, msg: "That ship just sold." };
+    return this.buyShip(offer.shipType, offer);
+  },
+
+  _shipUids() { return new Set((this.s().ships || []).map(sh => sh.uid)); },
+  // Pin the offer's refit + name onto the hull that just landed in the fleet.
+  //
+  // We can't do this inside _buyShipLocal: when the server owns the fleet, the
+  // optimistic ship is thrown away and app_buy_ship's reply supplies the real
+  // roster with a SERVER-assigned uid. So diff the roster around the purchase
+  // and claim whichever hull of this type is new. If several arrive at once
+  // (shouldn't happen — Economy serialises RPCs), take the last, which is the
+  // one app_buy_ship appended.
+  _adoptYardShip(catalogId, offer, before) {
+    if (!offer) return;
+    const added = (this.s().ships || []).filter(sh => sh && sh.type === catalogId && !before.has(sh.uid));
+    const sh = added[added.length - 1];
+    if (!sh) return;
+    Fleet.setVariant(sh.uid, offer.variantId, offer.name);
+    sh.name = offer.name;
+    this.bz().yard = (this.bz().yard || []).filter(o => o.id !== offer.id);
+    this._markBought(offer.id);
   },
 
   // Resale value of an owned ship: a fraction of its catalog price (the free
@@ -516,6 +613,7 @@ const Bazaar = {
     for (const itemUid of sh.accessories || []) delete s.items[itemUid];  // installed gear goes with the ship
     s.ships = s.ships.filter(x => x.uid !== uid);
     s.credits += credits;
+    Fleet.pruneVariants();     // the refit record goes with the hull
     Economy.refreshNetWorth();
     return { ok: true, credits, soldGear };
   },

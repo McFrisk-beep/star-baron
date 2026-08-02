@@ -25,7 +25,8 @@ const Game = {
       craftedOnce: [],    // one-of-a-kind recipes already completed
       workshop: { upgrades: 0, queue: [] },
       inventory: { capacity: 6, upgrades: 0 },
-      bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], blueprints: [], extractors: [], components: [], flagships: [] },
+      bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], blueprints: [], extractors: [], components: [], flagships: [], yard: [] },
+      shipVariants: {},   // ship uid → { v: SHIP_VARIANTS id, name } — the yard refit a hull was bought with
       pendingContracts: [],
       bazaarBought: [],
       travel: null,
@@ -113,9 +114,28 @@ const Game = {
     }
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
+    // Yard refits (state.shipVariants) are a CLIENT-owned slice — app_commit
+    // passes the key through untouched, which is the only reason a refit
+    // survives the server rebuilding `ships`. That also makes it save data we
+    // don't trust: drop entries for hulls that no longer exist, unknown variant
+    // ids, and anything that isn't the { v, name } shape, so a tampered or stale
+    // save can't invent a refit or a 4KB ship name.
+    if (!s.shipVariants || typeof s.shipVariants !== "object" || Array.isArray(s.shipVariants)) s.shipVariants = {};
+    {
+      const variantIds = Array.isArray(window.SHIP_VARIANTS) ? new Set(SHIP_VARIANTS.map(v => v.id)) : null;
+      const hulls = new Set(s.ships.map(sh => sh && sh.uid));
+      const clean = {};
+      for (const [uid, rec] of Object.entries(s.shipVariants)) {
+        if (!hulls.has(uid) || !rec || typeof rec !== "object") continue;
+        if (typeof rec.v !== "string" || (variantIds && !variantIds.has(rec.v))) continue;
+        clean[uid] = typeof rec.name === "string" && rec.name
+          ? { v: rec.v, name: rec.name.slice(0, 40) } : { v: rec.v };
+      }
+      s.shipVariants = clean;
+    }
     s.inventory ||= def.inventory; s.bazaar ||= def.bazaar; s.mainShip ||= def.mainShip;
     s.bazaar.mercs ||= []; s.bazaar.contracts ||= []; s.bazaar.accessories ||= []; s.bazaar.blackboxes ||= [];
-    s.bazaar.blueprints ||= [];
+    s.bazaar.blueprints ||= []; s.bazaar.yard ||= [];
     s.bazaar.extractors ||= []; s.bazaar.components ||= []; s.bazaar.flagships ||= [];
     // Pass `s` — Game.state isn't assigned yet during migrate. A throw here used
     // to trip init's migrate catch and wipe the whole save (tutorialSeen, Exchange

@@ -189,6 +189,28 @@ stations, commodities, nebulae, broadcast screens. **Upload** (or **Replace**) a
 PNG/JPG; it's stored in your `sprites` bucket and the game points at it. **Reset**
 reverts a slot to the built-in art. Changes show on **reload**.
 
+**Single slots vs pools.** Most categories take one image. The ones marked
+*(pools)* take **as many as you like** per entry, and each individual thing in
+the game picks one from the pool and keeps it — so a category of gear or ships
+doesn't look like the same picture repeated down the page:
+
+| Pool | One pool per… | Where it shows |
+|---|---|---|
+| Gear kinds | accessory kind (reactor, shield, …) | Bazaar gear market + Inventory |
+| **Ships** | **hull** (Lane Clipper, Battleship, …) | **Bazaar shipyard, Fleet card, mission icons** |
+| **Blackboxes** | **effect** (Overclock Core, Tax Ghost, …) | **Bazaar gear tab + Inventory** |
+| **Blueprints** | **blueprint** | **Bazaar gear tab** |
+| Extractors / Components | type / kind | Bazaar extractors tab |
+| Mercenaries | escort hull | Bazaar mercenaries tab |
+| Broadcast screens | channel | Comms → Broadcast (GIFs animate) |
+
+The pick is deterministic, not random per render: a ship on the shipyard shelf
+picks from its hull's pool by offer id, and once bought it picks by the ship's
+uid — so **the picture a player bought is the picture they keep**. An empty pool
+falls back to what that thing looked like before (the shared class sprite for
+ships, the generic `blackbox` / `blueprint` gear art for the other two), so you
+can fill pools in gradually without anything looking half-finished.
+
 ## Notes & limits
 
 - Content & sprites are shared by **all** players (your canonical game content), so

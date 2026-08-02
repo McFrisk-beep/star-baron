@@ -30,6 +30,40 @@ assert.ok(!/jsonb_set\(merged, '\{ships\}', coalesce\(server->'ships'/.test(sql)
 assert.match(sql, /app\._merge_ships\(\s*coalesce\(server->'ships'[^)]*\),\s*coalesce\(p_state->'ships'[^)]*\),\s*coalesce\(server->'items'/,
   "_merge_ships is called with (server ships, client ships, SERVER items)");
 
+// ---- 1b) every app_commit applied AFTER this file keeps the merge -----------
+// The fitment bug has come back twice, both times the same way: a later SQL file
+// re-declared app_commit (to carry a new slice) by copying phase3's body, whose
+// `ships` line predates the merge. Whichever copy the admin pastes LAST wins, so
+// every copy from equip_persist.sql onward has to be correct — assert it here
+// rather than hope a reviewer spots it.
+//
+// APPLY_ORDER mirrors the header of docs/sql/repair_equip.sql. A new SQL file
+// that declares app_commit and isn't listed here fails the check below, which is
+// the point: adding one is exactly when this invariant needs re-checking.
+const APPLY_ORDER = [
+  "phase1_players.sql", "phase2_missions_bazaar.sql", "phase2b_cancel.sql",
+  "phase2c_launch_claim.sql", "phase3_pull_prestige.sql", "equip_persist.sql",
+  "workshop_craft.sql", "repair_equip.sql",
+];
+const COMMIT_RE = /create or replace function public\.app_commit\b[\s\S]*?\n\$\$;/g;
+const declaresCommit = f => COMMIT_RE.test(fs.readFileSync(path.join(root, "docs/sql", f), "utf8"));
+for (const f of fs.readdirSync(path.join(root, "docs/sql")).filter(n => n.endsWith(".sql"))) {
+  COMMIT_RE.lastIndex = 0;
+  assert.ok(APPLY_ORDER.includes(f) || !declaresCommit(f),
+    `${f} declares app_commit but isn't in APPLY_ORDER — add it (and mind the merge)`);
+}
+let checked = 0;
+for (const f of APPLY_ORDER.slice(APPLY_ORDER.indexOf("equip_persist.sql"))) {
+  const text = fs.readFileSync(path.join(root, "docs/sql", f), "utf8");
+  for (const m of text.match(COMMIT_RE) || []) {
+    assert.match(m, /jsonb_set\(merged, '\{ships\}', app\._merge_ships\(/,
+      `${f}: this copy of app_commit drops ship fitment — it must call app._merge_ships`);
+    checked++;
+  }
+}
+assert.ok(checked >= 2, "found the post-equip_persist app_commit copies to check");
+console.log(`ok: all ${checked} app_commit copies applied after equip_persist.sql keep the fitment merge`);
+
 // ---- 2) slot table parity with js/data.js ----------------------------------
 const ctx = vm.createContext({ console, Math, Date });
 ctx.window = ctx;
