@@ -2524,8 +2524,8 @@ const UI = {
       const lang = window.I18n ? I18n.lang : (set.lang || "en");
       for (const b of this.refs.langToggle.querySelectorAll(".lang-btn")) b.classList.toggle("active", b.dataset.lang === lang);
     }
-    // Wiped-save backup (starbaron.corrupt) — only offer restore when one exists.
-    const hasBak = !!(window.Game && Game.readCorruptBackup && Game.readCorruptBackup());
+    // Wiped-save backup — presence check only (don't JSON.parse on every fullRender).
+    const hasBak = !!(window.Game && Game.hasCorruptBackup && Game.hasCorruptBackup());
     if (this.refs.setRestore) this.refs.setRestore.classList.toggle("hidden", !hasBak);
     if (this.refs.setRestoreNote) this.refs.setRestoreNote.classList.toggle("hidden", !hasBak);
   },

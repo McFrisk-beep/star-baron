@@ -529,6 +529,10 @@ const Game = {
   // (null = missing RPC / failure — caller should local-fallback).
   async pullCatchUp() {
     if (!(window.Economy && Economy.authoritative() && window.Cloud)) return null;
+    // Cloud.commit bypasses Store._cloudReady — honor the gate here so a
+    // corrupt-save / failed-load boot can't push defaultState (1,500c) before
+    // the player ever reaches Settings → Restore backup.
+    if (!Store._cloudReady) return null;
     try {
       // Soft-sync setup (new routes/industries/expeditions) before pull so the
       // server sees them; credits only decrease (spends), never mint via commit.
@@ -676,6 +680,11 @@ const Game = {
   // client-owned slices app_commit will accept from the client, so a defaultState
   // upload during the wipe could erase them server-side even when credits/items
   // (server-protected) survived. The backup is how those slices come back.
+  //
+  // Never lift Store._cloudReady or flush from these paths when the gate was set
+  // for a reason (#84): a merge into defaultState + flush would commit 1,500c and
+  // empty story/achievements (app_commit takes lower credits; client-owned slices
+  // pass through verbatim). Local save only; cloud sync resumes on a clean boot.
   readCorruptBackup() {
     try {
       const raw = localStorage.getItem("starbaron.corrupt");
@@ -683,6 +692,75 @@ const Game = {
       const bak = JSON.parse(raw);
       return bak && typeof bak === "object" ? bak : null;
     } catch (e) { return null; }
+  },
+  hasCorruptBackup() {
+    try { return !!localStorage.getItem("starbaron.corrupt"); }
+    catch (e) { return false; }
+  },
+  _cloneSave(st) {
+    try {
+      if (typeof structuredClone === "function") return structuredClone(st);
+    } catch (e) { /* fall through — e.g. unexpected non-cloneable */ }
+    return JSON.parse(JSON.stringify(st));
+  },
+  _recipeIdSet() {
+    return Array.isArray(window.RECIPES) ? new Set(window.RECIPES.map(r => r.id)) : null;
+  },
+  _knownRecipeId(id, recipeIds = this._recipeIdSet()) {
+    return typeof id === "string" && (!recipeIds || recipeIds.has(id));
+  },
+  // Same filters migrate() applies to Workshop / inventory slices — used when
+  // migrate itself still throws on the backup (player hasn't picked up the fix).
+  _sanitizeCorruptSlices(bak) {
+    const recipeIds = this._recipeIdSet();
+    const known = id => this._knownRecipeId(id, recipeIds);
+    const items = {};
+    if (bak.items && typeof bak.items === "object") {
+      for (const [uid, it] of Object.entries(bak.items)) {
+        if (!it || typeof it !== "object") continue;
+        if (typeof uid !== "string" || typeof it.uid !== "string" || it.uid !== uid) continue;
+        if (typeof it.kind !== "string") continue;
+        items[uid] = it;
+      }
+    }
+    const extractors = {};
+    if (bak.extractors && typeof bak.extractors === "object") {
+      for (const [uid, ex] of Object.entries(bak.extractors)) {
+        if (!ex || typeof ex !== "object") continue;
+        if (typeof uid !== "string" || typeof ex.uid !== "string" || ex.uid !== uid) continue;
+        if (typeof ex.type !== "string") continue;
+        extractors[uid] = ex;
+      }
+    }
+    const components = {};
+    if (bak.components && typeof bak.components === "object") {
+      for (const [uid, c] of Object.entries(bak.components)) {
+        if (!c || typeof c !== "object") continue;
+        if (typeof uid !== "string" || typeof c.uid !== "string" || c.uid !== uid) continue;
+        if (typeof c.kind !== "string") continue;
+        components[uid] = c;
+      }
+    }
+    const rawQ = (bak.workshop && Array.isArray(bak.workshop.queue)) ? bak.workshop.queue : [];
+    const queue = rawQ.filter(j => j && typeof j.id === "string"
+      && known(j.recipeId) && Number.isFinite(+j.startedAt) && Number.isFinite(+j.readyAt)
+      && +j.readyAt >= +j.startedAt
+      && (j.flavorId === null || typeof j.flavorId === "string"));
+    const upgrades = Math.max(0, (bak.workshop && bak.workshop.upgrades) | 0);
+    const knownRecipes = Array.isArray(bak.knownRecipes)
+      ? bak.knownRecipes.filter(id => known(id)) : [];
+    const craftedOnce = Array.isArray(bak.craftedOnce)
+      ? bak.craftedOnce.filter(id => known(id)) : [];
+    return { items, extractors, components, workshop: { upgrades, queue }, knownRecipes, craftedOnce };
+  },
+  // Prefer migrate() (full trust-boundary validation). Fall back to the slice
+  // sanitizer when migrate still throws — that's why the merge path exists.
+  _validatedCorruptSource(bak) {
+    try { return this.migrate(this._cloneSave(bak)); }
+    catch (e) {
+      console.warn("[Game] corrupt backup migrate failed — using sanitized slices:", e);
+      return this._sanitizeCorruptSlices(bak);
+    }
   },
   _sliceCounts(st) {
     if (!st || typeof st !== "object") return { items: 0, queue: 0, recipes: 0, crafted: 0, upgrades: 0, extractors: 0 };
@@ -699,12 +777,12 @@ const Game = {
     if (!bak) return "";
     const c = this._sliceCounts(bak);
     const bits = [];
-    if (c.items) bits.push(`${c.items} inventor${c.items === 1 ? "y item" : "y items"}`);
+    if (c.items) bits.push(`${c.items} inventory item${c.items === 1 ? "" : "s"}`);
     if (c.queue) bits.push(`${c.queue} craft${c.queue === 1 ? "" : "s"} in queue`);
     if (c.recipes) bits.push(`${c.recipes} blueprint${c.recipes === 1 ? "" : "s"}`);
     if (c.upgrades) bits.push(`Workshop +${c.upgrades} slot upgrade${c.upgrades === 1 ? "" : "s"}`);
     if (c.extractors) bits.push(`${c.extractors} extractor${c.extractors === 1 ? "" : "s"}`);
-    if (Number.isFinite(+bak.credits)) bits.push(`${Math.round(+bak.credits).toLocaleString()}c`);
+    if (bak.credits != null && Number.isFinite(+bak.credits)) bits.push(`${Math.round(+bak.credits).toLocaleString()}c`);
     return bits.join(", ") || "empty save";
   },
   // True when the backup holds Workshop / inventory progress the live save lacks.
@@ -718,43 +796,55 @@ const Game = {
   // the live save (keeps current credits / server-ledger progress).
   mergeCorruptClientSlices(bak = this.readCorruptBackup()) {
     if (!bak || !this.state) return { ok: false, msg: "No wiped-save backup found in this browser." };
+    const src = this._validatedCorruptSource(bak);
     const s = this.state;
     let added = 0;
     s.items ||= {};
-    for (const [uid, it] of Object.entries(bak.items || {})) {
-      if (it && typeof it === "object" && !s.items[uid]) { s.items[uid] = it; added++; }
+    for (const [uid, it] of Object.entries(src.items || {})) {
+      if (it && typeof it === "object" && typeof uid === "string" && !s.items[uid]) { s.items[uid] = it; added++; }
     }
     s.extractors ||= {};
-    for (const [uid, ex] of Object.entries(bak.extractors || {})) {
-      if (ex && typeof ex === "object" && !s.extractors[uid]) { s.extractors[uid] = ex; added++; }
+    for (const [uid, ex] of Object.entries(src.extractors || {})) {
+      if (ex && typeof ex === "object" && typeof uid === "string" && !s.extractors[uid]) { s.extractors[uid] = ex; added++; }
     }
     s.components ||= {};
-    for (const [uid, c] of Object.entries(bak.components || {})) {
-      if (c && typeof c === "object" && !s.components[uid]) { s.components[uid] = c; added++; }
+    for (const [uid, c] of Object.entries(src.components || {})) {
+      if (c && typeof c === "object" && typeof uid === "string" && !s.components[uid]) { s.components[uid] = c; added++; }
     }
     if (!s.workshop || typeof s.workshop !== "object") s.workshop = { upgrades: 0, queue: [] };
     s.workshop.queue ||= [];
+    const recipeIds = this._recipeIdSet();
     const haveJob = new Set(s.workshop.queue.map(j => j && j.id).filter(Boolean));
-    for (const j of (bak.workshop && bak.workshop.queue) || []) {
-      if (j && j.id && !haveJob.has(j.id)) { s.workshop.queue.push(j); haveJob.add(j.id); added++; }
+    for (const j of (src.workshop && src.workshop.queue) || []) {
+      // Re-check the migrate filters — sanitized/migrated src should already
+      // satisfy these; refuse readyAt: NaN/0-shaped junk that would deliver instantly.
+      if (!(j && typeof j.id === "string" && !haveJob.has(j.id))) continue;
+      if (!this._knownRecipeId(j.recipeId, recipeIds)) continue;
+      if (!Number.isFinite(+j.startedAt) || !Number.isFinite(+j.readyAt)) continue;
+      if (+j.readyAt < +j.startedAt) continue;   // readyAt: 0/NaN-shaped junk delivers instantly
+      if (!(j.flavorId === null || typeof j.flavorId === "string")) continue;
+      s.workshop.queue.push(j); haveJob.add(j.id); added++;
     }
-    const bakUp = (bak.workshop && bak.workshop.upgrades) | 0;
+    const bakUp = (src.workshop && src.workshop.upgrades) | 0;
     if (bakUp > (s.workshop.upgrades | 0)) { s.workshop.upgrades = bakUp; added++; }
     s.knownRecipes ||= [];
-    for (const id of bak.knownRecipes || []) {
-      if (typeof id === "string" && !s.knownRecipes.includes(id)) { s.knownRecipes.push(id); added++; }
+    for (const id of src.knownRecipes || []) {
+      if (this._knownRecipeId(id, recipeIds) && !s.knownRecipes.includes(id)) { s.knownRecipes.push(id); added++; }
     }
     s.craftedOnce ||= [];
-    for (const id of bak.craftedOnce || []) {
-      if (typeof id === "string" && !s.craftedOnce.includes(id)) { s.craftedOnce.push(id); added++; }
+    for (const id of src.craftedOnce || []) {
+      if (this._knownRecipeId(id, recipeIds) && !s.craftedOnce.includes(id)) { s.craftedOnce.push(id); added++; }
     }
     if (!added) return { ok: false, msg: "Backup has nothing missing from this save." };
     if (window.Economy) Economy.refreshNetWorth();
-    // Re-open cloud writes so the recovered client-owned slices can sync up
-    // (they may have been wiped server-side by a defaultState commit).
-    Store._cloudReady = true;
-    this.requestSave();
-    if (window.Cloud && Cloud.signedIn()) Store.flush(this.snapshot());
+    // Persist via Store.save, which still no-ops the cloud side while
+    // _cloudReady is false. Do NOT lift that gate or flush — merging into a
+    // defaultState() boot and uploading would destroy server credits / story /
+    // achievements (see gate at init's migrate catch). When the gate is already
+    // open for a good reason, the queued cloud write syncs the recovered slices.
+    this._noSave = false;
+    this.state.lastSeenAt = Date.now();
+    Store.save(this.state);
     return { ok: true, added };
   },
   // Full replace from the backup (nuclear — use when soft-merge isn't enough).
@@ -762,16 +852,24 @@ const Game = {
     const bak = this.readCorruptBackup();
     if (!bak) return { ok: false, msg: "No wiped-save backup found in this browser." };
     let next;
-    try { next = this.migrate(bak); }
+    try { next = this.migrate(this._cloneSave(bak)); }
     catch (e) {
       console.error("[Game] corrupt backup migrate failed:", e);
-      return { ok: false, msg: "Backup couldn't be read. It may be too damaged to restore." };
+      return { ok: false, msg: "This version of the game still can't read that backup — reload to get the latest fix and try again." };
     }
-    this.state = next;
-    Store._cloudReady = true;
+    // Keep the backup's market/galaxy — snapshot() would re-serialize the live
+    // modules hydrated from the wiped save and discard them before reload.
+    next.lastSeenAt = Date.now();
     this._noSave = false;
-    await Store.save(this.snapshot());
-    if (window.Cloud && Cloud.signedIn()) { try { await Store.flush(this.snapshot()); } catch (e) { /* best-effort */ } }
+    Store.localSave(Store._stampOwner(next));
+    // Only re-open cloud writes when WE gated them for a corrupt-save reset.
+    // Never clear a failed-cloud-load gate (unknown remote must stay protected).
+    // Flush the migrated backup (not defaultState) so client-owned slices sync;
+    // app_commit still rejects credit increases.
+    if (this._corruptSaveReset) {
+      Store._cloudReady = true;
+      try { await Store.flush(next); } catch (e) { /* best-effort */ }
+    }
     location.reload();
     return { ok: true };
   },
