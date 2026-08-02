@@ -97,7 +97,7 @@ be **overridden live** (see §6 Content CMS).
 | `worldfeed.js` | `WorldFeed` — reads the **shared** Supabase world (chat + news). |
 | `ui.js` | `UI` — all DOM rendering (tabbed pages, sidebar, modals incl. **While You Were Away**), toasts. Largest file. |
 | `auth-ui.js` | `AuthUI` — account button + register/login modal + login save-sync. |
-| `admin-ui.js` | `AdminUI` — admin gate, content/image CMS, and the **🧪 Dev view** (fast-news/fast-time toggles + a credits cheat — admin-only; moved out of Settings). |
+| `admin-ui.js` | `AdminUI` — admin gate, content/image/mission/**crafting** CMS, and the **🧪 Dev view** (fast-news/fast-time toggles + a credits cheat — admin-only; moved out of Settings). |
 | `planetview.js` | `PlanetView` — the planet popup: animated canvas planet, **About** lore tab, **Industries** tab (permit/extractor/component UI). |
 | `starmap.js` | `StarMap` — galaxy SVG view + animated canvas system view; planet rows open `PlanetView`. |
 | `main.js` | `Game` — boot, single in-memory `state`, the loop, schedulers, suspend/resume, offline catch-up, `awayRecap`, save. |
@@ -178,6 +178,15 @@ prestige. On top of that:
   Unique ship **The Last Aegis** is story-chain only (`last_aegis` in
   `story.js`) and burns after one craft. `craftOnly` stock cannot be sold on
   the Exchange.
+  - 42 recipes / 15 blackbox effects, including craft-only **transport** and
+    **survey** hulls (§6 of the doc). Craft-only hulls never reach the shipyard
+    or the mercenary roster (`Bazaar.mercPool()`).
+  - Recipes / blueprints / blackbox effects are admin-editable content
+    (Admin → 🔧 Crafting). Crafting is server-authoritative, so that tab also
+    regenerates the DB fixtures — same generator as
+    `tools/sql/gen_craft_fixtures.js`, pinned by `check_craft_parity`.
+  - A job whose recipe or hull can't be resolved is **parked, not dropped** (its
+    ingredients are already spent) — client and server both.
 
 **Welcome-back recap (`Game.awayRecap` + `UI.showWYWA`).** After an absence the
 "While You Were Away" modal summarizes net worth then→now, an ongoing/ended war,
@@ -248,6 +257,13 @@ table been created?" toast means `saves` is missing.
   **mutates the in-memory globals in place** (flavor edits live; rule edits on
   reload). Malformed overrides are ignored (defaults win) → a bad edit can't
   brick the game. `Content.rederive()` rebuilds `ALL_SHIPS` after ship edits.
+- **Crafting (`🔧 Crafting`):** shape-aware editor for `RECIPES` / `BLUEPRINTS` /
+  `BLACKBOX_EFFECTS` (same collections the Content tab exposes as raw tables).
+  Every reference is a picker and `_validateCraft` refuses dangling ids, so a
+  save can't point at a commodity/hull/effect that doesn't exist. The **Server
+  SQL** pane is `AdminUI.craftSQL()` — the DB fixtures rebuilt from the live
+  tables — because crafting is server-authoritative
+  (`docs/WORKSHOP_CRAFT_SETUP.md`). Checked by `tools/check_admin_crafting.js`.
 - **Images:** `🖼 Images` → upload to the `sprites` bucket; `ASSET_OVERRIDES`
   redirects `ASSET.*` to the uploaded URL.
 - **Missions (`📨 Missions`):** a visual editor for Dispatches storylines

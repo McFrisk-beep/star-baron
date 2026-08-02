@@ -45,6 +45,13 @@ const Content = {
     { key: "MARKETCFG",       label: "Market depth & travel", group: "data" },
     { key: "RARITIES",        label: "Item rarities",         group: "data" },
     { key: "ACCESSORY_KINDS", label: "Accessory kinds",       group: "data" },
+    // Crafting — also editable with the friendlier 🔧 Crafting tab.
+    { key: "RECIPES",         label: "Workshop recipes",      group: "data" },
+    { key: "BLUEPRINTS",      label: "Workshop blueprints",   group: "data" },
+    { key: "BLACKBOX_EFFECTS", label: "Blackbox effects",     group: "data" },
+    { key: "WORKSHOPCFG",     label: "Workshop settings",     group: "data" },
+    { key: "EXTRACTORCFG",    label: "Extractor types",       group: "data" },
+    { key: "COMPONENTCFG",    label: "Extractor components",  group: "data" },
     { key: "HUB_ROOMS",       label: "Hub map (rooms)",       group: "data" },
     { key: "HUB_PROPS",       label: "Hub stations",          group: "data" },
     { key: "HUBCFG",          label: "Hub settings",          group: "data" },

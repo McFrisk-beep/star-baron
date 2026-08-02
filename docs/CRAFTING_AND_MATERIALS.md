@@ -326,3 +326,72 @@ repeatable grind.
   (0 = Baron for plating/jack; 1 = Magnate for auto blackbox recipes).
 - Blueprint drop rates: expedition 6%/14%, mission 12% on high/extreme;
   **Last Aegis** excluded from RNG pools (Dispatches arc `last_aegis` only).
+
+
+---
+
+## 6. Second wave — more hulls, more gear, more boxes
+
+Everything below is live in `js/data.js` (and mirrored into the SQL fixtures).
+Ships marked *one-of-a-kind* burn their blueprint on delivery, like the Last
+Aegis.
+
+**Craft-only hulls** — never sold in the Bazaar, never offered as mercenaries.
+
+| hull | class | notes | recipe | blueprint |
+|---|---|---|---|---|
+| Yard Courier | transport | 30 cargo, fast | `ship_courier` | Bazaar |
+| Yard Freighter | transport | 150 cargo | `ship_freighter` | Bazaar |
+| Void Caravan | transport | 470 cargo | `ship_void_caravan` | Mission |
+| **The Argent Ark** | transport | 760 cargo, 5 slots, *one-of-a-kind* | `ship_argent_ark` | Mission |
+| Yard Frigate | escort | fills the corvette→cruiser gap | `ship_frigate` | Survey |
+| Yard Probe | survey | scan 4 / endure 2 | `ship_probe` | Auto (Tier 2) |
+| Pathfinder Cutter | survey | scan 6 / endure 4 | `ship_pathfinder` | Survey |
+| **The Oracle Lens** | survey | scan 11 / endure 7, *one-of-a-kind* | `ship_oracle_lens` | Mission |
+
+**Gear** — the kinds §3.4 never covered (cargo pods, engines, survey rigs) plus
+a wider rarity spread: `gear_hold_common`, `gear_engine_uncommon`,
+`gear_probe_uncommon`, `gear_plating_rare`, `gear_survey_shield_rare`,
+`gear_cannon_epic`, `gear_engine_epic`, `gear_shield_legend`.
+
+**Blackboxes** — eight more effects, all on stats the game already reads, except
+`surveyScan` which is added straight to a survey choice's odds in
+`Expeditions.choiceChance`:
+
+| effect | does | duration |
+|---|---|---|
+| Foundry Blitz | −55% craft time | 1 h |
+| Bulk Yield Injector | +45% extractor yield | 1 h |
+| Iron Ledger | −75% industry tax | 2 h |
+| Ghost Manifest | −80% customs seizure odds | 90 min |
+| Hard Bargain | +35% contract reward | 90 min |
+| Aegis Field | −60% mission hull damage | 90 min |
+| Long Haul Protocol | −35% mission transit | 2 h |
+| Deep Lens | +10pp survey success odds | 3 h |
+
+Exotic `craftOnly` materials (voidstone, quantum foam, AI matrix, cipher shard)
+are the sink for the top tier — the uniques and the legendary gear cost them by
+the dozen, which is what keeps surveys worth flying.
+
+---
+
+## 7. Editing all of this in-game (Admin → 🔧 Crafting)
+
+Recipes, their blueprints, and blackbox effects are admin-editable data, saved to
+the shared `content` table like every other collection (`docs/ADMIN_SETUP.md`):
+
+- **Recipes** — add / edit / delete, with pickers for ingredients, output and the
+  paired blueprint (how players get it, Baron-Tier floor, one-of-a-kind).
+  Deleting a recipe deletes its blueprint too.
+- **Blackboxes** — add / edit / delete effects. The stat list is exactly what
+  `Boosts.mag` is read for, so a saved effect always does something. An effect a
+  recipe still crafts can't be deleted.
+- **Server SQL** — crafting is server-authoritative, so the database keeps its
+  own copy of these tables. This pane regenerates them from your edits; paste it
+  into the Supabase SQL editor. Skipping it means guests see the change and
+  signed-in players get "Unknown recipe."
+
+New *hulls* are added in Content → Ships (`SHIP_CATALOG`); mark them
+`craftOnly: true` so they stay out of the shipyard and the mercenary roster, then
+point a ship recipe at the id and re-run the Server SQL (it carries the hull
+stats and fitment tables too).

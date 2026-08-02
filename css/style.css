@@ -634,6 +634,15 @@ body.reduced .tt-dot { animation: none; }
 .admin-choice { border: 1px dashed var(--line); border-radius: 6px; padding: 8px; }
 .admin-choice-head { display: flex; align-items: center; justify-content: space-between; }
 .admin-mprev-text { font-size: 12px; color: var(--ink); margin: 4px 0; }
+/* crafting editor — ingredient rows (commodity · qty · [category] · remove) */
+.admin-ings { display: flex; flex-direction: column; gap: 6px; background: #0c1020;
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+.admin-ing { display: flex; gap: 6px; align-items: center; }
+.admin-ing select, .admin-ing input {
+  background: #0c1020; border: 1px solid var(--line); color: var(--ink); border-radius: 5px;
+  padding: 5px 7px; font-family: var(--mono); font-size: 12px; }
+.admin-ing select { flex: 1; min-width: 120px; }
+.admin-ing input { width: 80px; }
 
 /* ===== responsive ===== */
 /* On narrow screens the fixed app-shell is dropped: the page scrolls normally,

@@ -10,6 +10,9 @@ create schema if not exists app;
 
 -- ---------------------------------------------------------------------------
 -- Ship catalog — keep in sync with SHIP_CATALOG in js/data.js
+-- (regenerate with `node tools/sql/gen_craft_fixtures.js ship`, pinned by
+--  tools/check_craft_parity.js). Craft-only hulls belong here too: a finished
+-- Workshop ship job builds through app.make_ship, which needs the def.
 -- ---------------------------------------------------------------------------
 create or replace function app.ship_def(p_id text)
 returns table(
@@ -17,41 +20,51 @@ returns table(
   cargo double precision, hull double precision, speed double precision
 )
 language sql immutable as $$
-  -- Keep in lockstep with SHIP_CATALOG in js/data.js (speed = travelSpeed for mains).
   select * from (values
-    ('mule',            'transport', 0::float8,      1::float8,  12::float8, 40::float8,  1.5::float8),
-    ('clipper',         'transport', 2800,           2,          22,          55,          1.7),
-    ('drift',           'transport', 4200,           2,          40,          80,          1.2),
-    ('tanker',          'transport', 9000,           2,          70,          110,         1.05),
-    ('bulk',            'transport', 16000,          3,          120,         160,         1.0),
-    ('ore_mule',        'transport', 28000,          4,          180,         200,         0.9),
-    ('leviathan',       'transport', 60000,          5,          400,         320,         0.8),
-    ('gunboat',         'escort',    7000,           18,         2,           90,          2.0),
-    ('corvette',        'escort',    11000,          25,         4,           120,         1.8),
-    ('destroyer',       'escort',    20000,          40,         6,           180,         1.65),
-    ('frigate',         'escort',    32000,          55,         8,           240,         1.5),
-    ('cruiser',         'escort',    95000,          120,        14,          480,         1.2),
-    ('carrier',         'escort',    120000,         90,         18,          520,         1.1),
-    ('battleship',      'escort',    270000,         260,        20,          900,         1.0),
-    ('probe_skiff',     'survey',    6500,           1,          2,           45,          2.2),
-    ('survey_cutter',   'survey',    14000,          2,          4,           70,          1.9),
-    ('deep_mapper',     'survey',    32000,          3,          6,           110,         1.6),
-    ('void_cartograph', 'survey',    72000,          4,          8,           160,         1.4),
-    ('pinnace',         'main',      0,              0,          0,           200,         1.0),
-    ('lane_runner',     'main',      12000,          0,          0,           220,         1.4),
-    ('ore_throne',      'main',      18000,          0,          0,           260,         1.1),
-    ('quiet_keel',      'main',      16000,          0,          0,           240,         1.2),
-    ('yacht',           'main',      24000,          0,          0,           320,         1.6),
-    ('harvest_seat',    'main',      38000,          0,          0,           340,         1.3),
-    ('chart_crown',     'main',      36000,          0,          0,           300,         1.5),
-    ('escort_pulpit',   'main',      42000,          0,          0,           380,         1.4),
-    ('flagship',        'main',      140000,         0,          0,           640,         2.2),
-    ('foundry_ark',     'main',      160000,         0,          0,           700,         1.8),
-    ('lens_of_sable',   'main',      155000,         0,          0,           560,         2.0),
-    ('magnate_spire',   'main',      320000,         0,          0,           900,         2.4),
-    ('ghost_cathedral', 'main',      340000,         0,          0,           820,         2.6),
-    ('dreadnought',     'main',      650000,         0,          0,           1300,        3.0),
-    ('cosmocrat_seat',  'main',      800000,         0,          0,           1400,        3.2)
+    ('mule', 'transport', 0::float8, 1::float8, 12::float8, 40::float8, 1.5::float8),
+    ('clipper', 'transport', 2800, 2, 22, 55, 1.7),
+    ('drift', 'transport', 4200, 2, 40, 80, 1.2),
+    ('tanker', 'transport', 9000, 2, 70, 110, 1.05),
+    ('bulk', 'transport', 16000, 3, 120, 160, 1),
+    ('ore_mule', 'transport', 28000, 4, 180, 200, 0.9),
+    ('leviathan', 'transport', 60000, 5, 400, 320, 0.8),
+    ('craft_courier', 'transport', 0, 4, 30, 95, 1.9),
+    ('craft_freighter', 'transport', 0, 6, 150, 230, 1.05),
+    ('void_caravan', 'transport', 0, 9, 470, 390, 0.9),
+    ('argent_ark', 'transport', 0, 22, 760, 640, 1),
+    ('gunboat', 'escort', 7000, 18, 2, 90, 2),
+    ('corvette', 'escort', 11000, 25, 4, 120, 1.8),
+    ('destroyer', 'escort', 20000, 40, 6, 180, 1.65),
+    ('frigate', 'escort', 32000, 55, 8, 240, 1.5),
+    ('cruiser', 'escort', 95000, 120, 14, 480, 1.2),
+    ('carrier', 'escort', 120000, 90, 18, 520, 1.1),
+    ('battleship', 'escort', 270000, 260, 20, 900, 1),
+    ('craft_corvette', 'escort', 0, 32, 5, 145, 1.85),
+    ('craft_frigate', 'escort', 0, 68, 9, 275, 1.5),
+    ('craft_cruiser', 'escort', 0, 150, 16, 560, 1.25),
+    ('last_aegis', 'escort', 0, 340, 24, 1100, 1.15),
+    ('probe_skiff', 'survey', 6500, 1, 2, 45, 2.2),
+    ('survey_cutter', 'survey', 14000, 2, 4, 70, 1.9),
+    ('deep_mapper', 'survey', 32000, 3, 6, 110, 1.6),
+    ('void_cartograph', 'survey', 72000, 4, 8, 160, 1.4),
+    ('craft_probe', 'survey', 0, 2, 3, 85, 2.1),
+    ('craft_pathfinder', 'survey', 0, 4, 6, 150, 1.7),
+    ('oracle_lens', 'survey', 0, 7, 10, 250, 1.6),
+    ('pinnace', 'main', 0, 0, 0, 200, 1),
+    ('lane_runner', 'main', 12000, 0, 0, 220, 1.4),
+    ('ore_throne', 'main', 18000, 0, 0, 260, 1.1),
+    ('quiet_keel', 'main', 16000, 0, 0, 240, 1.2),
+    ('yacht', 'main', 24000, 0, 0, 320, 1.6),
+    ('harvest_seat', 'main', 38000, 0, 0, 340, 1.3),
+    ('chart_crown', 'main', 36000, 0, 0, 300, 1.5),
+    ('escort_pulpit', 'main', 42000, 0, 0, 380, 1.4),
+    ('flagship', 'main', 140000, 0, 0, 640, 2.2),
+    ('foundry_ark', 'main', 160000, 0, 0, 700, 1.8),
+    ('lens_of_sable', 'main', 155000, 0, 0, 560, 2),
+    ('magnate_spire', 'main', 320000, 0, 0, 900, 2.4),
+    ('ghost_cathedral', 'main', 340000, 0, 0, 820, 2.6),
+    ('dreadnought', 'main', 650000, 0, 0, 1300, 3),
+    ('cosmocrat_seat', 'main', 800000, 0, 0, 1400, 3.2)
   ) as s(id, cls, price, firepower, cargo, hull, speed)
   where s.id = p_id;
 $$;

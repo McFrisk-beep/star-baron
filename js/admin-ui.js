@@ -40,6 +40,9 @@ const AdminUI = {
       gallery: $("admin-gallery"), imgNote: $("admin-img-note"), imgTabs: $("admin-imgtabs"),
       vMissions: $("admin-view-missions"), mList: $("admin-mission-list"), mDetail: $("admin-mission-detail"),
       mStatus: $("admin-mission-status"), mNew: $("admin-mission-new"), mListActions: $("admin-mission-listactions"),
+      vCraft: $("admin-view-craft"), cTabs: $("admin-craft-tabs"), cList: $("admin-craft-list"),
+      cDetail: $("admin-craft-detail"), cStatus: $("admin-craft-status"), cNew: $("admin-craft-new"),
+      cListActions: $("admin-craft-listactions"),
       vDev: $("admin-view-dev"),
       devCredits: $("dev-credits"), devSet: $("dev-credits-set"), dev10k: $("dev-credits-10k"), dev1m: $("dev-credits-1m"),
       devTier: $("dev-tier"), devTierSet: $("dev-tier-set"),
@@ -107,6 +110,7 @@ const AdminUI = {
     if (this.r.devSenateVote) this.r.devSenateVote.onclick = () => this.forceSenateVote();
     if (this.r.devGlobalReset) this.r.devGlobalReset.onclick = () => this.issueGlobalReset();
     if (this.r.mNew) this.r.mNew.onclick = () => this.newMission();
+    if (this.r.cNew) this.r.cNew.onclick = () => this.newCraft();
 
     if (window.Bus) Bus.on("auth", () => this.refresh());
     this.populate();
@@ -130,9 +134,11 @@ const AdminUI = {
     this.r.vContent.classList.toggle("hidden", view !== "content");
     this.r.vImages.classList.toggle("hidden", view !== "images");
     if (this.r.vMissions) this.r.vMissions.classList.toggle("hidden", view !== "missions");
+    if (this.r.vCraft) this.r.vCraft.classList.toggle("hidden", view !== "craft");
     if (this.r.vDev) this.r.vDev.classList.toggle("hidden", view !== "dev");
     if (view === "images") this.buildGallery();
     if (view === "missions") this.buildMissions();
+    if (view === "craft") this.buildCraft();
     if (view === "dev") this.refreshSenateDev();
   },
 
@@ -980,6 +986,470 @@ const AdminUI = {
     box.append(this.el("div", { class: "admin-mfield admin-mfield-wide" }, [this.el("span", { class: "admin-mlabel", text: "Reward:" }), this._rewardEditor(c.reward)]));
     box.append(this._chk(c, "end", "End the storyline after this choice"));
     return box;
+  },
+
+  // ===== crafting editor ===================================================
+  // Recipes, their blueprints, and blackbox effects — saved as data (Content →
+  // Supabase → every player). The generic Content tab can edit the same keys as
+  // raw tables; this view knows the shapes, so ids and references stay valid.
+  // Crafting is server-authoritative, hence the Server SQL tab (craftSQL()).
+  craftTab: "recipes",
+  CRAFT_TABS: [["recipes", "Recipes"], ["blackboxes", "Blackboxes"], ["sql", "Server SQL"]],
+  CRAFT_SOURCES: [["auto", "Auto-unlock (Baron Tier)"], ["bazaar", "Bazaar stock"],
+                  ["expedition", "Survey drop"], ["mission", "Mission reward"]],
+  // Stats the game actually reads off an active boost (Boosts.mag) — anything
+  // else would be a blackbox that does nothing.
+  BOOST_STATS: [
+    ["industryYield", "Extractor yield"], ["industryTax", "Industry tax"],
+    ["customsSeize", "Customs seizure odds"], ["missionTransit", "Mission transit time"],
+    ["missionDamage", "Mission hull damage"], ["contractReward", "Contract reward"],
+    ["craftTime", "Workshop craft time"], ["surveyScan", "Survey success odds"],
+  ],
+
+  _recipes() { if (!Array.isArray(window.RECIPES)) window.RECIPES = []; return window.RECIPES; },
+  _blueprints() { if (!Array.isArray(window.BLUEPRINTS)) window.BLUEPRINTS = []; return window.BLUEPRINTS; },
+  _boxes() { if (!Array.isArray(window.BLACKBOX_EFFECTS)) window.BLACKBOX_EFFECTS = []; return window.BLACKBOX_EFFECTS; },
+  _bpFor(recipeId) { return this._blueprints().find(b => b.recipeId === recipeId) || null; },
+  setCStatus(msg, kind) { const e = this.r.cStatus; if (!e) return; e.textContent = msg; e.className = "admin-status" + (kind ? " " + kind : ""); },
+
+  // Craftable hulls only: a Workshop job pushes onto the fleet, and a flagship
+  // ("main") isn't a fleet ship.
+  _craftShipOpts() {
+    const sc = window.SHIP_CATALOG || {};
+    return [].concat(sc.transport || [], sc.escort || [], sc.survey || [])
+      .map(s => [s.id, `${s.name} (${s.cls}${s.craftOnly ? ", craft-only" : ""})`]);
+  },
+  _commodityOpts() { return (window.COMMODITIES || []).map(c => [c.id, `${c.name} (${c.cat})`]); },
+  _catOpts() { return [...new Set((window.COMMODITIES || []).map(c => c.cat))].map(c => [c, c]); },
+
+  buildCraft() { this.cDraft = null; this.bDraft = null; this._showCraftList(); },
+
+  _showCraftList() {
+    if (!this.r.cList || !this.r.cDetail || !this.r.cTabs) return;
+    this.cDraft = null; this.bDraft = null;
+    this.r.cDetail.classList.add("hidden"); this.r.cDetail.innerHTML = "";
+    this.r.cList.classList.remove("hidden");
+    this.setCStatus("", "");
+    this.r.cTabs.innerHTML = "";
+    for (const [id, label] of this.CRAFT_TABS) {
+      this.r.cTabs.append(this.el("button", {
+        class: "admin-imgtab" + (id === this.craftTab ? " active" : ""),
+        text: label, onclick: () => { this.craftTab = id; this._showCraftList(); },
+      }));
+    }
+    if (this.r.cListActions) this.r.cListActions.classList.remove("hidden");
+    if (this.r.cNew) this.r.cNew.classList.toggle("hidden", this.craftTab === "sql");
+    const list = this.r.cList; list.innerHTML = "";
+    if (this.craftTab === "sql") return list.append(this._sqlPane());
+    if (this.craftTab === "blackboxes") {
+      list.append(this.el("p", { class: "admin-mhint", text: "Consumables that push a timed modifier onto the player. A recipe with output type “blackbox” mints one." }));
+      this._boxes().forEach((e, i) => list.append(this._boxCard(e, i)));
+      return;
+    }
+    const types = ["gear", "extractor", "ship", "blackbox"];
+    const recipes = this._recipes();
+    for (const t of types) {
+      const rows = recipes.map((r, i) => ({ r, i })).filter(x => x.r.outputType === t);
+      if (!rows.length) continue;
+      list.append(this.el("h4", { class: "admin-subhead", text: t + ` (${rows.length})` }));
+      rows.forEach(x => list.append(this._recipeCard(x.r, x.i)));
+    }
+    if (!recipes.length) list.append(this.el("p", { class: "admin-mhint", text: "No recipes — click “+ New”." }));
+  },
+
+  _recipeCard(r, i) {
+    const bp = this._bpFor(r.id);
+    const ings = (r.ingredients || []).map(x => `${x.qty}× ${x.id}`).join(", ") || "no ingredients";
+    const mins = Math.round((r.craftMs || 0) / 60000);
+    const head = this.el("div", { class: "admin-mcard-head" }, [
+      this.el("span", { class: "admin-mbadge", text: (r.tier || r.outputType || "").slice(0, 10) }),
+      this.el("strong", { text: r.name || r.id }),
+      this.el("span", { class: "admin-mtag " + (bp && bp.destroyOnUse ? "is-custom" : "is-builtin"),
+        text: bp ? (bp.destroyOnUse ? "one-of-a-kind" : bp.source || "blueprint") : "no blueprint" }),
+    ]);
+    const meta = this.el("div", { class: "admin-mcard-meta",
+      text: `id: ${r.id} · ${mins} min${r.credits ? " · " + r.credits + "c" : ""} · ${ings}` });
+    const actions = this.el("div", { class: "admin-mcard-actions" }, [
+      this.el("button", { class: "btn btn-mini", text: "Edit", onclick: () => this.editRecipe(i) }),
+      this.el("button", { class: "btn btn-mini btn-danger", text: "Delete", onclick: () => this.deleteRecipe(i) }),
+    ]);
+    return this.el("div", { class: "admin-mission-card" }, [head, meta, actions]);
+  },
+  _boxCard(e, i) {
+    const head = this.el("div", { class: "admin-mcard-head" }, [
+      this.el("span", { class: "admin-mbadge", text: "BOX" }),
+      this.el("strong", { text: e.name || e.id }),
+    ]);
+    const meta = this.el("div", { class: "admin-mcard-meta",
+      text: `id: ${e.id} · ${e.stat} ${e.mag > 0 ? "+" : ""}${Math.round((e.mag || 0) * 100)}% · ${Math.round((e.durationMs || 0) / 60000)} min` });
+    const actions = this.el("div", { class: "admin-mcard-actions" }, [
+      this.el("button", { class: "btn btn-mini", text: "Edit", onclick: () => this.editBox(i) }),
+      this.el("button", { class: "btn btn-mini btn-danger", text: "Delete", onclick: () => this.deleteBox(i) }),
+    ]);
+    return this.el("div", { class: "admin-mission-card" }, [head, meta, actions]);
+  },
+
+  _openCraftEditor(render) {
+    this.r.cList.classList.add("hidden");
+    if (this.r.cListActions) this.r.cListActions.classList.add("hidden");
+    this.r.cDetail.classList.remove("hidden");
+    this.setCStatus("", "");
+    render();
+  },
+  newCraft() {
+    if (this.craftTab === "blackboxes") { this.bIndex = -1; this.bDraft = this._blankBox(); this._openCraftEditor(() => this.renderBoxEditor()); }
+    else { this.craftTab = "recipes"; this.cIndex = -1; this.cDraft = this._blankRecipe(); this._openCraftEditor(() => this.renderRecipeEditor()); }
+  },
+  editRecipe(i) { const r = this._recipes()[i]; if (!r) return; this.cIndex = i; this.cDraft = this._toRecipeDraft(r); this._openCraftEditor(() => this.renderRecipeEditor()); },
+  editBox(i) { const e = this._boxes()[i]; if (!e) return; this.bIndex = i; this.bDraft = JSON.parse(JSON.stringify(e)); this.bDraft.minutes = Math.round((e.durationMs || 0) / 60000); this._openCraftEditor(() => this.renderBoxEditor()); },
+
+  // ---- recipe draft -------------------------------------------------------
+  _blankRecipe() {
+    return { id: "", name: "", outputType: "gear", tier: "", minutes: 30, credits: 0,
+      ingredients: [{ id: (COMMODITIES[0] || {}).id || "", qty: 1 }], flavor: [],
+      out: { kind: Object.keys(ACCESSORY_KINDS)[0], rarity: "common", effectId: ((this._boxes()[0] || {}).id) || "",
+             extractorType: "jack", scope: "all", shipType: (this._craftShipOpts()[0] || [""])[0] },
+      bp: { id: "", name: "", source: "bazaar", minBaronTier: 0, destroyOnUse: false } };
+  },
+  _toRecipeDraft(r) {
+    const d = this._blankRecipe();
+    const src = JSON.parse(JSON.stringify(r));
+    d.id = src.id || ""; d.name = src.name || ""; d.outputType = src.outputType || "gear";
+    d.tier = src.tier || ""; d.minutes = Math.round((src.craftMs || 0) / 60000); d.credits = src.credits || 0;
+    d.ingredients = (src.ingredients || []).map(x => ({ id: x.id, qty: x.qty || 1 }));
+    if (!d.ingredients.length) d.ingredients.push({ id: (COMMODITIES[0] || {}).id || "", qty: 1 });
+    d.flavor = (src.flavor || []).map(x => ({ id: x.id, qty: x.qty || 1, scopeCat: x.scopeCat || "mineral" }));
+    Object.assign(d.out, src.output || {});
+    const bp = this._bpFor(src.id);
+    if (bp) d.bp = { id: bp.id, name: bp.name || "", source: bp.source || "bazaar",
+                     minBaronTier: bp.minBaronTier || 0, destroyOnUse: !!bp.destroyOnUse };
+    return d;
+  },
+  _normalizeRecipe() {
+    const d = this.cDraft;
+    const id = (d.id || "").trim();
+    const r = { id, name: (d.name || "").trim(), outputType: d.outputType,
+      tier: (d.tier || "").trim() || d.outputType,
+      ingredients: (d.ingredients || []).filter(x => x.id)
+        .map(x => ({ id: x.id, qty: Math.max(1, Math.round(+x.qty || 1)) })),
+      craftMs: Math.max(60000, Math.round((+d.minutes || 1) * 60000)),
+      blueprintId: (d.bp.id || "").trim() || ("bp_" + id) };
+    if (Math.round(+d.credits) > 0) r.credits = Math.round(+d.credits);
+    if (d.outputType === "gear") r.output = { kind: d.out.kind, rarity: d.out.rarity };
+    else if (d.outputType === "blackbox") r.output = { effectId: d.out.effectId };
+    else if (d.outputType === "ship") r.output = { shipType: d.out.shipType };
+    else {
+      r.output = d.out.extractorType === "specialized"
+        ? { extractorType: "specialized" }
+        : { extractorType: d.out.extractorType, scope: d.out.scope || "all" };
+      const fl = (d.flavor || []).filter(x => x.id)
+        .map(x => ({ id: x.id, qty: Math.max(1, Math.round(+x.qty || 1)), scopeCat: x.scopeCat }));
+      if (fl.length) r.flavor = fl;
+    }
+    const bp = { id: r.blueprintId, name: (d.bp.name || "").trim() || ("Blueprint: " + r.name),
+      recipeId: id, outputType: r.outputType, source: d.bp.source,
+      uses: d.bp.destroyOnUse ? 1 : Infinity, destroyOnUse: !!d.bp.destroyOnUse };
+    if (d.bp.source === "auto") bp.minBaronTier = Math.max(0, Math.round(+d.bp.minBaronTier || 0));
+    return { recipe: r, blueprint: bp };
+  },
+  _validateCraft(r, bp) {
+    const has = (arr, id) => arr.some(x => x.id === id);
+    if (!/^[a-z0-9_]+$/i.test(r.id)) return "Recipe id: letters, numbers and underscores only.";
+    if (this._recipes().some((x, i) => x.id === r.id && i !== this.cIndex)) return "Another recipe already uses that id.";
+    if (!r.name) return "Give the recipe a name.";
+    if (!(r.craftMs > 0)) return "Craft time must be at least a minute.";
+    if (!r.ingredients.length) return "Add at least one ingredient.";
+    for (const ing of r.ingredients) if (!has(COMMODITIES, ing.id)) return `Unknown commodity “${ing.id}”.`;
+    if (r.outputType === "gear") {
+      if (!ACCESSORY_KINDS[r.output.kind]) return "Pick a gear kind.";
+      if (!has(RARITIES, r.output.rarity)) return "Pick a rarity.";
+    } else if (r.outputType === "blackbox") {
+      if (!has(this._boxes(), r.output.effectId)) return "Pick a blackbox effect (add one on the Blackboxes tab first).";
+    } else if (r.outputType === "ship") {
+      if (!(window.ALL_SHIPS || []).some(s => s.id === r.output.shipType)) return "Pick a hull (add hulls in Content → Ships).";
+    } else {
+      if (!EXTRACTORCFG.types[r.output.extractorType]) return "Pick an extractor type.";
+      if (r.output.extractorType === "specialized" && !(r.flavor || []).length) {
+        return "A specialized extractor needs at least one category-flavor ingredient.";
+      }
+      for (const f of r.flavor || []) if (!has(COMMODITIES, f.id)) return `Unknown flavor commodity “${f.id}”.`;
+    }
+    if (!/^[a-z0-9_]+$/i.test(bp.id)) return "Blueprint id: letters, numbers and underscores only.";
+    if (this._blueprints().some(x => x.id === bp.id && x.recipeId !== r.id)) return "Another blueprint already uses that id.";
+    return null;
+  },
+
+  async saveRecipe() {
+    const { recipe, blueprint } = this._normalizeRecipe();
+    const err = this._validateCraft(recipe, blueprint);
+    if (err) return this.setCStatus("✗ " + err, "bad");
+    const recipes = this._recipes();
+    const oldId = this.cIndex >= 0 ? recipes[this.cIndex].id : null;
+    const nextR = this.cIndex >= 0 ? recipes.map((x, i) => i === this.cIndex ? recipe : x) : recipes.concat([recipe]);
+    const nextB = this._blueprints().filter(b => b.recipeId !== recipe.id && b.recipeId !== oldId).concat([blueprint]);
+    this.setCStatus("Saving…", "");
+    try {
+      await Content.save("RECIPES", nextR);
+      await Content.save("BLUEPRINTS", nextB);
+      if (window.UI) UI.toast(`Recipe “${recipe.name}” saved.`, "good");
+      this._showCraftList();
+      this.setCStatus("✓ Saved. Run Server SQL in Supabase so signed-in players can craft it.", "good");
+    } catch (e) { this.setCStatus("✗ " + ((e && e.message) || e) + " — press Save again (recipes and blueprints save as two writes).", "bad"); }
+  },
+  async deleteRecipe(i) {
+    const r = this._recipes()[i]; if (!r) return;
+    if (!confirm(`Delete recipe “${r.name || r.id}”? It disappears from every player's Workshop; crafts already queued for it stay parked until you restore the id.`)) return;
+    try {
+      await Content.save("RECIPES", this._recipes().filter((_, j) => j !== i));
+      await Content.save("BLUEPRINTS", this._blueprints().filter(b => b.recipeId !== r.id));
+      if (window.UI) UI.toast("Recipe deleted.", "good");
+      this._showCraftList();
+      this.setCStatus("✓ Deleted. Run Server SQL in Supabase to match.", "good");
+    } catch (e) { this.setCStatus("✗ " + ((e && e.message) || e), "bad"); }
+  },
+
+  renderRecipeEditor() {
+    const d = this.cDraft, host = this.r.cDetail; host.innerHTML = "";
+    const redraw = () => this.renderRecipeEditor();
+    host.append(this.el("div", { class: "admin-mission-toolbar" }, [
+      this.el("button", { class: "btn btn-mini", text: "← Back", onclick: () => this._showCraftList() }),
+      this.el("strong", { text: this.cIndex >= 0 ? "Edit recipe" : "New recipe" }),
+    ]));
+    if (this.cIndex >= 0) host.append(this.el("p", { class: "admin-mhint",
+      text: "Changing the id retires the old recipe: players who already earned its blueprint have to earn the new one, and crafts queued under the old id stay parked until it exists again." }));
+    host.append(this.el("div", { class: "admin-mtop" }, [
+      this.el("label", { class: "admin-mfield" }, ["Id (unique)", this._txt(d, "id", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Name", this._txt(d, "name", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Output", this._sel(d, "outputType",
+        [["gear", "Gear"], ["extractor", "Extractor"], ["ship", "Ship"], ["blackbox", "Blackbox"]], redraw)]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Tier label", this._txt(d, "tier", {})]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Craft time (min)", this._num(d, "minutes", { min: "1" })]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Credits", this._num(d, "credits", { min: "0" })]),
+    ]));
+
+    // output
+    const out = this.el("div", { class: "admin-mtop" });
+    if (d.outputType === "gear") {
+      out.append(this.el("label", { class: "admin-mfield" }, ["Gear kind",
+        this._sel(d.out, "kind", Object.keys(ACCESSORY_KINDS).map(k => [k, ACCESSORY_KINDS[k].label || k]))]));
+      out.append(this.el("label", { class: "admin-mfield" }, ["Rarity",
+        this._sel(d.out, "rarity", RARITIES.map(r => [r.id, r.label || r.id]))]));
+    } else if (d.outputType === "blackbox") {
+      out.append(this.el("label", { class: "admin-mfield" }, ["Effect",
+        this._sel(d.out, "effectId", this._boxes().map(e => [e.id, e.name || e.id]))]));
+    } else if (d.outputType === "ship") {
+      out.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Hull",
+        this._sel(d.out, "shipType", this._craftShipOpts())]));
+    } else {
+      out.append(this.el("label", { class: "admin-mfield" }, ["Extractor type",
+        this._sel(d.out, "extractorType", Object.keys(EXTRACTORCFG.types).map(t => [t, t]), redraw)]));
+      if (d.out.extractorType !== "specialized") {
+        out.append(this.el("label", { class: "admin-mfield" }, ["Scope",
+          this._sel(d.out, "scope", [["all", "all"]].concat(this._catOpts()))]));
+      }
+    }
+    host.append(this.el("div", { class: "admin-mfield admin-mfield-wide" },
+      [this.el("span", { class: "admin-mlabel", text: "Produces:" }), out]));
+
+    host.append(this._ingredientBlock("Ingredients (spent on craft)", d.ingredients, false, redraw));
+    if (d.outputType === "extractor" && d.out.extractorType === "specialized") {
+      host.append(this._ingredientBlock("Category flavor — one is spent, and picks what the extractor mines", d.flavor, true, redraw));
+    }
+
+    // blueprint
+    const bp = this.el("div", { class: "admin-mtop" }, [
+      this.el("label", { class: "admin-mfield" }, ["Blueprint id", this._txt(d.bp, "id", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Blueprint name", this._txt(d.bp, "name", {})]),
+      this.el("label", { class: "admin-mfield" }, ["How players get it", this._sel(d.bp, "source", this.CRAFT_SOURCES, redraw)]),
+    ]);
+    if (d.bp.source === "auto") bp.append(this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Baron Tier floor", this._num(d.bp, "minBaronTier", { min: "0" })]));
+    bp.append(this._chk(d.bp, "destroyOnUse", "One-of-a-kind (blueprint burns on delivery)"));
+    host.append(this.el("div", { class: "admin-mfield admin-mfield-wide" },
+      [this.el("span", { class: "admin-mlabel", text: "Blueprint (leave id blank for bp_<recipe id>):" }), bp]));
+
+    host.append(this.el("div", { class: "settings-actions" }, [
+      this.el("button", { class: "btn btn-go", text: "Save recipe", onclick: () => this.saveRecipe() }),
+      this.el("button", { class: "btn", text: "Cancel", onclick: () => this._showCraftList() }),
+    ]));
+  },
+  _ingredientBlock(label, rows, withScope, redraw) {
+    const wrap = this.el("div", { class: "admin-ings" });
+    rows.forEach((row, i) => {
+      const line = this.el("div", { class: "admin-ing" }, [
+        this._sel(row, "id", this._commodityOpts()),
+        this._num(row, "qty", { min: "1", class: "admin-cond-val" }),
+      ]);
+      if (withScope) line.append(this._sel(row, "scopeCat", this._catOpts()));
+      line.append(this.el("button", { class: "admin-x", text: "✕", onclick: () => { rows.splice(i, 1); redraw(); } }));
+      wrap.append(line);
+    });
+    wrap.append(this.el("button", { class: "btn btn-mini", text: "+ ingredient", onclick: () => {
+      rows.push({ id: (COMMODITIES[0] || {}).id || "", qty: 1, scopeCat: (this._catOpts()[0] || [""])[0] });
+      redraw();
+    } }));
+    return this.el("div", { class: "admin-mfield admin-mfield-wide" },
+      [this.el("span", { class: "admin-mlabel", text: label }), wrap]);
+  },
+
+  // ---- blackbox effects ---------------------------------------------------
+  _blankBox() { return { id: "", name: "", desc: "", stat: "industryYield", mag: 0.25, minutes: 120 }; },
+  renderBoxEditor() {
+    const d = this.bDraft, host = this.r.cDetail; host.innerHTML = "";
+    host.append(this.el("div", { class: "admin-mission-toolbar" }, [
+      this.el("button", { class: "btn btn-mini", text: "← Back", onclick: () => this._showCraftList() }),
+      this.el("strong", { text: this.bIndex >= 0 ? "Edit blackbox effect" : "New blackbox effect" }),
+    ]));
+    host.append(this.el("p", { class: "admin-mhint", text: "Magnitude is a fraction: 0.25 = +25%, -0.5 = −50%. Item value is derived from magnitude × duration." }));
+    host.append(this.el("div", { class: "admin-mtop" }, [
+      this.el("label", { class: "admin-mfield" }, ["Id (unique)", this._txt(d, "id", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Name", this._txt(d, "name", {})]),
+      this.el("label", { class: "admin-mfield" }, ["Affects", this._sel(d, "stat", this.BOOST_STATS)]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Magnitude", this._num(d, "mag", { step: "0.05" })]),
+      this.el("label", { class: "admin-mfield admin-mfield-sm" }, ["Duration (min)", this._num(d, "minutes", { min: "1" })]),
+    ]));
+    host.append(this.el("label", { class: "admin-mfield admin-mfield-wide" }, ["Description shown to players", this._txt(d, "desc", {})]));
+    host.append(this.el("div", { class: "settings-actions" }, [
+      this.el("button", { class: "btn btn-go", text: "Save effect", onclick: () => this.saveBox() }),
+      this.el("button", { class: "btn", text: "Cancel", onclick: () => this._showCraftList() }),
+    ]));
+  },
+  async saveBox() {
+    const d = this.bDraft;
+    const e = { id: (d.id || "").trim(), name: (d.name || "").trim(), desc: (d.desc || "").trim(),
+      stat: d.stat, mag: +d.mag || 0, durationMs: Math.max(60000, Math.round((+d.minutes || 1) * 60000)) };
+    if (!/^[a-z0-9_]+$/i.test(e.id)) return this.setCStatus("✗ Id: letters, numbers and underscores only.", "bad");
+    if (this._boxes().some((x, i) => x.id === e.id && i !== this.bIndex)) return this.setCStatus("✗ Another effect already uses that id.", "bad");
+    if (!e.name) return this.setCStatus("✗ Give the effect a name.", "bad");
+    if (!e.mag) return this.setCStatus("✗ Magnitude 0 would do nothing.", "bad");
+    if (!this.BOOST_STATS.some(([s]) => s === e.stat)) return this.setCStatus("✗ Unknown stat.", "bad");
+    const next = this.bIndex >= 0 ? this._boxes().map((x, i) => i === this.bIndex ? e : x) : this._boxes().concat([e]);
+    this.setCStatus("Saving…", "");
+    try {
+      await Content.save("BLACKBOX_EFFECTS", next);
+      if (window.UI) UI.toast(`Blackbox “${e.name}” saved.`, "good");
+      this._showCraftList();
+      this.setCStatus("✓ Saved. Run Server SQL in Supabase to match.", "good");
+    } catch (err) { this.setCStatus("✗ " + ((err && err.message) || err), "bad"); }
+  },
+  async deleteBox(i) {
+    const e = this._boxes()[i]; if (!e) return;
+    const used = this._recipes().filter(r => r.outputType === "blackbox" && (r.output || {}).effectId === e.id);
+    if (used.length) return this.setCStatus(`✗ ${used.map(r => r.name).join(", ")} still crafts this effect — delete or repoint the recipe first.`, "bad");
+    if (!confirm(`Delete blackbox effect “${e.name || e.id}”? Boxes players already hold stop working.`)) return;
+    try {
+      await Content.save("BLACKBOX_EFFECTS", this._boxes().filter((_, j) => j !== i));
+      this._showCraftList();
+      this.setCStatus("✓ Deleted. Run Server SQL in Supabase to match.", "good");
+    } catch (err) { this.setCStatus("✗ " + ((err && err.message) || err), "bad"); }
+  },
+
+  // ---- server fixture SQL -------------------------------------------------
+  _sqlPane() {
+    const wrap = this.el("div", { class: "admin-lines-wrap" });
+    wrap.append(this.el("p", { class: "admin-mhint", text: "Crafting is server-authoritative: the database keeps its own copy of the recipe, blackbox and hull tables (docs/sql/workshop_craft.sql). Paste this into the Supabase SQL editor and run it after changing recipes, blackboxes or ships — otherwise signed-in players get “Unknown recipe.” Guests already use the edits above." }));
+    const ta = this.el("textarea", { class: "admin-json", spellcheck: "false", rows: 18, value: this.craftSQL() });
+    wrap.append(ta);
+    wrap.append(this.el("div", { class: "settings-actions" }, [
+      this.el("button", { class: "btn btn-go", text: "Copy SQL", onclick: () => {
+        ta.select();
+        const done = () => { if (window.UI) UI.toast("SQL copied — paste it into the Supabase SQL editor.", "good", 5000); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value).then(done, () => document.execCommand("copy") && done());
+        else if (document.execCommand("copy")) done();
+      } }),
+    ]));
+    return wrap;
+  },
+  _sqs(v) { return "'" + String(v == null ? "" : v).replace(/'/g, "''") + "'"; },
+  _sqj(v) { return "'" + JSON.stringify(v).replace(/'/g, "''") + "'::jsonb"; },
+
+  // The DB fixtures, rebuilt from the live (admin-edited) tables. Same layout as
+  // docs/sql/workshop_craft.sql so tools/check_craft_parity.js can read it back.
+  craftSQL() {
+    const R = this._recipes(), BB = this._boxes();
+    const shipDef = id => (window.ALL_SHIPS || []).find(s => s.id === id) || null;
+    const rrows = R.map(r => {
+      const bp = this._bpFor(r.id) || {};
+      const autoTier = bp.source === "auto" ? (bp.minBaronTier || 0) : null;
+      const def = r.outputType === "ship" ? shipDef((r.output || {}).shipType) : null;
+      const lines = [
+        `    (${this._sqs(r.id)}, jsonb_build_object(`,
+        `      'id',${this._sqs(r.id)},'name',${this._sqs(r.name)},'outputType',${this._sqs(r.outputType)},`,
+        `      'craftMs', ${Math.round(r.craftMs || 0)}::bigint, 'credits', ${Math.round(r.credits || 0)},`,
+        `      'ingredients', ${this._sqj(r.ingredients || [])},`,
+      ];
+      if (r.flavor && r.flavor.length) lines.push(`      'flavor', ${this._sqj(r.flavor)},`);
+      lines.push(`      'output', ${this._sqj(r.output || {})},`);
+      lines.push(`      'autoTier', ${autoTier == null ? "null" : autoTier}, 'destroyOnUse', ${!!bp.destroyOnUse}, 'unique', ${!!(def && def.unique)}))`);
+      return lines.join("\n");
+    }).join(",\n");
+    const brows = BB.map(e =>
+      `    (${this._sqs(e.id)}, jsonb_build_object('id',${this._sqs(e.id)},'name',${this._sqs(e.name)},`
+      + `'stat',${this._sqs(e.stat)},'mag',${+e.mag || 0},'durationMs',${Math.round(e.durationMs || 0)}::bigint))`
+    ).join(",\n");
+    const sc = window.SHIP_CATALOG || {};
+    const fleet = [].concat(...["transport", "escort", "survey"].map(k => sc[k] || []));
+    const all = fleet.concat(sc.main || []);
+    // Fitment table — mains never carry accessories, so fleet hulls only.
+    const slotRows = [];
+    for (let i = 0; i < fleet.length; i += 5) {
+      slotRows.push("      " + fleet.slice(i, i + 5).map(s => `(${this._sqs(s.id)}, ${s.slots || 2})`).join(", "));
+    }
+    const srows = all.map((s, i) => {
+      const main = s.cls === "main";
+      const c = i === 0 ? "::float8" : "";
+      return `    (${this._sqs(s.id)}, ${this._sqs(s.cls)}, ${s.price || 0}${c}, ${main ? 0 : (s.firepower || 0)}${c}, `
+        + `${main ? 0 : (s.cargo || 0)}${c}, ${s.hull || 0}${c}, ${main ? (s.travelSpeed || 1) : (s.speed || 1)}${c})`;
+    }).join(",\n");
+    return [
+      "-- GENERATED by the Cosmocrat admin console (Admin → 🔧 Crafting → Server SQL).",
+      "-- Replaces the fixtures in docs/sql/workshop_craft.sql + phase2_missions_bazaar.sql",
+      "-- with your edited tables. Safe to re-run.",
+      "",
+      "create or replace function app.craft_recipe(p_id text)",
+      "returns jsonb",
+      "language sql immutable as $$",
+      "  select r.row from (values",
+      rrows,
+      "  ) as r(id, row)",
+      "  where r.id = p_id;",
+      "$$;",
+      "",
+      "create or replace function app.craft_blackbox(p_id text)",
+      "returns jsonb",
+      "language sql immutable as $$",
+      "  select b.row from (values",
+      brows,
+      "  ) as b(id, row)",
+      "  where b.id = p_id;",
+      "$$;",
+      "",
+      "-- Hull stats (SHIP_CATALOG). Craft-only hulls must be here or a finished",
+      "-- ship job has nothing to build.",
+      "create or replace function app.ship_def(p_id text)",
+      "returns table(",
+      "  id text, cls text, price double precision, firepower double precision,",
+      "  cargo double precision, hull double precision, speed double precision",
+      ")",
+      "language sql immutable as $$",
+      "  select * from (values",
+      srows,
+      "  ) as s(id, cls, price, firepower, cargo, hull, speed)",
+      "  where s.id = p_id;",
+      "$$;",
+      "",
+      "-- Accessory slots per fleet hull. A hull missing here silently drops to 2",
+      "-- slots, truncating everything fitted above that on the next commit.",
+      "create or replace function app._ship_slots(p_type text)",
+      "returns int",
+      "language sql immutable as $$",
+      "  select coalesce((",
+      "    select t.slots from (values",
+      slotRows.join(",\n"),
+      "    ) as t(id, slots) where t.id = p_type",
+      "  ), 2);",
+      "$$;",
+      "",
+    ].join("\n");
   },
 
   // ---- small two-way-bound controls (mutate the draft object directly) ----

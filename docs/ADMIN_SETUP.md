@@ -139,7 +139,7 @@ create policy "admin writes world_reset" on public.world_reset
 
 ## Using the admin panel
 
-**🛠 Admin** opens two tabs:
+**🛠 Admin** opens these tabs:
 
 ### 📝 Content
 Pick a collection. Most are shown as a **friendly editor**, no JSON needed:
@@ -159,6 +159,29 @@ Then **Validate** → **Save**.
 - **Reset to default** removes your override.
 - Malformed or wrong-typed overrides are ignored at boot (the built-in default is
   used), so a bad edit **can't brick the game**.
+
+### 🔧 Crafting
+A shape-aware editor for the Workshop, so recipes don't have to be hand-written
+JSON. Three tabs:
+
+- **Recipes** — add / edit / delete. Ingredients, output (gear kind + rarity,
+  blackbox effect, extractor type, or hull) and the paired **blueprint** (how
+  players get it — auto-unlock at a Baron Tier, Bazaar stock, survey drop, or
+  mission reward — plus the one-of-a-kind flag) are all pickers, so ids stay
+  valid. Deleting a recipe deletes its blueprint too.
+- **Blackboxes** — add / edit / delete consumable effects. The "Affects" list is
+  exactly the stats the game reads, so an effect always does something. An effect
+  a recipe still crafts is refused until you repoint or delete that recipe.
+- **Server SQL** — crafting is **server-authoritative**: the database keeps its
+  own copy of the recipe, blackbox and hull tables. This pane regenerates them
+  from your live edits — copy it into the Supabase **SQL Editor** and run it.
+  Until you do, guests see your new recipes and signed-in players get
+  "Unknown recipe."
+
+New *hulls* go in **Content → Ships**; set `craftOnly` to `true` so they stay out
+of the shipyard and the mercenary roster, then point a ship recipe at the id and
+re-run the Server SQL (it carries hull stats and accessory slots too). Details in
+`docs/CRAFTING_AND_MATERIALS.md` §7 and `docs/WORKSHOP_CRAFT_SETUP.md`.
 
 ### 🖼 Images
 A gallery of every sprite slot — portraits, ship hulls, race ships, planets, stars,
