@@ -534,10 +534,12 @@ body.reduced .tt-dot { animation: none; }
    .modal.admin-panel beats the .modal-wide cap this panel also carries. */
 .modal.admin-panel { max-width: min(1180px, 96vw); max-height: 90vh; display: flex; flex-direction: column; }
 .admin-panel > h3 { flex: none; }
-#admin-view-content, #admin-view-images, #admin-view-missions { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+#admin-view-content, #admin-view-images, #admin-view-missions, #admin-view-craft { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .admin-row, .admin-status, .admin-panel .settings-actions, #admin-img-note, .admin-imgtabs { flex: none; }
-#admin-mission-list, #admin-mission-detail { flex: 1; min-height: 0; overflow-y: auto; padding-right: 3px; }
-#admin-mission-note, #admin-mission-status, #admin-mission-listactions { flex: none; }
+#admin-mission-list, #admin-mission-detail,
+#admin-craft-list, #admin-craft-detail { flex: 1; min-height: 0; overflow-y: auto; padding-right: 3px; }
+#admin-mission-note, #admin-mission-status, #admin-mission-listactions,
+#admin-view-craft > .muted-note, #admin-craft-status, #admin-craft-listactions { flex: none; }
 .admin-nav { display: flex; gap: 6px; margin-bottom: 12px; flex: none; }
 .admin-navbtn { background: #131826; border: 1px solid var(--line); color: var(--ink-dim);
   padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; font-family: var(--sans); }
