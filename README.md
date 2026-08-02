@@ -41,12 +41,19 @@ pattern.
   mission wears the fleet — couriers graze asteroids, smugglers get chased,
   battle lines come home shot up (and rarely, destroyed — likelier when the odds
   are long). Damaged hulls fight and fly worse until **repaired for credits**.
-- **The Bazaar** — buy transports & permanent **escort warships**, upgrade your
+- **The Bazaar** — a **rotating shipyard** of named, one-off hulls: every
+  transport, escort and survey ship on the shelf is a specific second-hand
+  refit that traded one stat for another (a *Wide-Belly* hauler with +30% hold
+  and −15% speed, a *Blockade* runner the other way round), and the shelf turns
+  over every **5 minutes**, so you never see the whole catalog at once. The
+  refit and the ship's name follow it into your fleet. Also: upgrade your
   flagship, **hire time-limited mercenaries**, work a live **contract board**
   (jobs + insider tips; listings expire or get taken by NPCs), and trade a
   **procedural accessory market** (thousands of varied names/stats, rarity tiers
-  up to legendary). Plus an upgradable **inventory** — sell items now, or list
-  them and wait for an NPC buyer (cancellable).
+  up to legendary). **Blackboxes and blueprints restock once every 24 hours** —
+  permanent power isn't something you can buy out in one sitting. Plus an
+  upgradable **inventory** — sell items now, or list them and wait for an NPC
+  buyer (cancellable).
 - **Timed docking** — moving between systems takes real time, set by your
   flagship's speed; the exchange opens when you arrive. **Offline catch-up**
   resolves missions, market drift, and listing sales into a "While You Were

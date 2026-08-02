@@ -213,6 +213,34 @@ const SHIP_CATALOG = {
 };
 const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...SHIP_CATALOG.main];
 
+/* ---- SHIP VARIANTS --------------------------------------------------------
+   Every hull the Bazaar shipyard puts on the shelf is a specific, pre-named
+   second-hand ship rather than a catalog entry: a yard refit that traded one
+   stat away for another. `mods` are percentages applied to the hull's base
+   stats in Fleet.stats(); `cls` (optional) limits a refit to those hull
+   classes.
+
+   HARD RULE — every variant must be a TRADE-OFF, never a free upgrade. The
+   sale price is the plain catalog price, because that's what the server charges
+   in app_buy_ship: a variant that was strictly better would be free power, and
+   a variant that cost more would bill the player for something the server never
+   collected. Keep the pluses and minuses roughly balanced, and if you ever want
+   price to vary, teach app_buy_ship about the offer first.                     */
+const SHIP_VARIANTS = [
+  { id: "stock",     name: "Stock",       tag: "factory refit",   mods: {} },
+  { id: "widebelly", name: "Wide-Belly",  tag: "hauler refit",    mods: { cargo: 0.30, speed: -0.15 } },
+  { id: "runner",    name: "Blockade",    tag: "runner refit",    mods: { speed: 0.25, cargo: -0.20 } },
+  { id: "ironclad",  name: "Ironclad",    tag: "armour refit",    mods: { armor: 0.35, hull: 0.15, speed: -0.12 } },
+  { id: "uparmed",   name: "Up-Gunned",   tag: "weapons refit",   mods: { firepower: 0.40, cargo: -0.15, speed: -0.05 } },
+  { id: "stripped",  name: "Stripped",    tag: "lightened",       mods: { speed: 0.20, armor: -0.25, shields: -0.25 } },
+  { id: "shielded",  name: "Bulwark",     tag: "shield refit",    mods: { shields: 0.45, firepower: -0.15 } },
+  { id: "veteran",   name: "Veteran",     tag: "well-used",       mods: { firepower: 0.15, hull: -0.12, armor: -0.10 } },
+  { id: "longhaul",  name: "Long-Haul",   tag: "endurance refit", mods: { cargo: 0.18, hull: 0.18, firepower: -0.25 } },
+  // survey-only refits
+  { id: "farsight",  name: "Farsight",    tag: "sensor refit",    cls: ["survey"], mods: { scan: 0.35, hull: -0.15 } },
+  { id: "hardened",  name: "Hardened",    tag: "deep-void refit", cls: ["survey"], mods: { endure: 0.40, speed: -0.15 } },
+];
+
 // Labels for flagship effect types (UI + tooltips).
 const FLAGSHIP_EFFECTS = {
   firepower: { label: "Fleet firepower" },
@@ -264,7 +292,16 @@ const BAZAARCFG = {
   accessorySlots: 18,      // how many accessories for sale
   blackboxSlots: 2,        // rare rotating consumable blackboxes on the Gear tab
   blueprintSlots: 2,       // rare rotating recipe blueprints on the Gear tab
+  // Blackboxes + blueprints restock on their OWN slow clock, not the 60s board
+  // epoch: both are permanent-ish power (a recipe unlocked forever, a stacked
+  // timed buff), so a fast rotation let anyone with credits buy out the pool in
+  // one sitting. One shelf per day; sold-out slots stay sold out until it turns.
+  slowRotationMs: 24 * 60 * 60 * 1000,
   flagshipSlots: 4,        // rotating flagship offers (current flagship is always shown separately)
+  // Shipyard: named, refitted hulls that rotate as a set. You never see the whole
+  // catalog at once — waiting for the hull/refit you want is the point.
+  yardSlots: 8,            // how many ships are on the shelf at a time
+  yardRotationMs: 5 * 60 * 1000,   // the shelf turns over this often
   mercTickMs: 90 * 1000,   // how often merc offers churn
   accessoryTickMs: 45 * 1000, // how often an accessory may sell / refresh
   contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this
@@ -1058,6 +1095,30 @@ const ASSET = {
   // Per-tab page backgrounds (admin Images → Page backgrounds). Empty default = no image.
   // Cover+center stage behind page UI — mobile crops left/right (see .page-bg).
   pageBg: id => _asset(`pagebg:${id}`, ""),
+  // Per-hull art pools. Admins upload N images against a catalog hull id and
+  // each individual ship picks one deterministically from `salt` — the shipyard
+  // offer id on the shelf, then the ship's uid once it's bought, so the picture
+  // a player bought is the picture they keep. Falls back to the shared class
+  // sprite (assets/ships / assets/raceships) when the pool is empty, which is
+  // what every hull looked like before.
+  shipArt: (typeId, salt = "") => {
+    const pooled = _assetPool(`shipart:${typeId}`, salt, "");
+    if (pooled) return pooled;
+    const def = (typeof ALL_SHIPS !== "undefined" ? ALL_SHIPS : []).find(x => x.id === typeId);
+    if (!def) return `assets/ships/shuttle.png`;
+    return def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
+  },
+  // Blackbox art per EFFECT and blueprint art per BLUEPRINT, each a pool. Both
+  // fall back to the generic accessory pools they used to share, so an admin who
+  // uploads nothing sees no change.
+  blackbox: (effectId, salt = "") => {
+    const pooled = _assetPool(`blackbox:${effectId}`, salt, "");
+    return pooled || ASSET.accessory("blackbox", salt);
+  },
+  blueprint: (blueprintId, salt = "") => {
+    const pooled = _assetPool(`blueprint:${blueprintId}`, salt, "");
+    return pooled || ASSET.accessory("blueprint", salt);
+  },
   // Bazaar / inventory art — admin can set a single PNG or a pool per key.
   accessory: (kind, salt = "") => _assetPool(`accessory:${kind}`, salt, `assets/accessories/${kind}.png`),
   extractor: (type, salt = "") => _assetPool(`extractor:${type}`, salt, `assets/extractors/${type}.png`),
@@ -1191,9 +1252,10 @@ const HUB_ROOMS = {
     spawn: [2, 4],
     doors: [{ tx: 0, ty: 4, to: "atrium", spawn: [11, 4] }],
     props: [
-      { id: "fleet",   tx: 3, ty: 2 },
-      { id: "starmap", tx: 6, ty: 2 },
-      { id: "systems", tx: 8, ty: 5 },
+      { id: "fleet",    tx: 3, ty: 2 },
+      { id: "starmap",  tx: 6, ty: 2 },
+      { id: "systems",  tx: 8, ty: 5 },
+      { id: "workshop", tx: 5, ty: 5 },
     ],
     signs: [{ tx: 0, ty: 3, text: "◂ Concourse" }],
   },
@@ -1227,6 +1289,7 @@ window.CONFIG = CONFIG;
 window.COMMODITIES = COMMODITIES;
 window.SYSTEMS = SYSTEMS;
 window.SHIP_CATALOG = SHIP_CATALOG;
+window.SHIP_VARIANTS = SHIP_VARIANTS;
 window.ALL_SHIPS = ALL_SHIPS;
 window.FLAGSHIP_EFFECTS = FLAGSHIP_EFFECTS;
 window.ACCESSORY_KINDS = ACCESSORY_KINDS;

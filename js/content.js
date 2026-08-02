@@ -37,6 +37,7 @@ const Content = {
     { key: "SENATE_TALK",     label: "Senate conversations",  group: "data" },
     { key: "COMMODITIES",     label: "Commodities (items)",   group: "data" },
     { key: "SHIP_CATALOG",    label: "Ships (transport/escort/flagship)", group: "data" },
+    { key: "SHIP_VARIANTS",   label: "Shipyard refits (stat trade-offs)", group: "data" },
     { key: "CONTRACT_TEMPLATES", label: "Contract templates", group: "data" },
     { key: "DANGER",          label: "Danger tiers",          group: "data" },
     { key: "DMGCFG",          label: "Battle damage",         group: "data" },

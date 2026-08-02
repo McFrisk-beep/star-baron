@@ -127,7 +127,27 @@ assert(s.positions.food === 42, "returning save keeps Exchange positions");
 assert(s.prestige.tier === 3, "returning save keeps Baron Tier");
 assert(s.workshop.upgrades === 2, "returning save keeps Workshop slots");
 
-// 8) …and it got there cleanly. migrate() wraps its module calls so a throw can't
+// 8) Yard refits (state.shipVariants). This is a CLIENT-owned slice — app_commit
+//    passes it through untouched, which is what lets a refit survive the server
+//    rebuilding `ships`, and also what makes it untrusted save data.
+s = migrate({
+  v: 2, ships: [{ uid: "s1", type: "bulk", cls: "transport", status: "idle", accessories: [] }],
+  shipVariants: {
+    s1: { v: "widebelly", name: "Iron Widow" },   // real ship, real refit → keep
+    ghost: { v: "runner", name: "Nope" },          // no such ship
+    s1x: { v: "forged_variant" },                  // not in SHIP_VARIANTS
+  },
+});
+assert(Object.keys(s.shipVariants).join() === "s1", "orphan + forged refits are dropped on load");
+assert(s.shipVariants.s1.name === "Iron Widow", "a real refit survives the reload");
+assert(s.ships[0].name === "Iron Widow",
+  "…and repairCosmeticNames restores the yard name over the server's stub (during migrate, with no Game.state)");
+assert(migrate({ v: 2, shipVariants: "junk" }).shipVariants
+  && Object.keys(migrate({ v: 2, shipVariants: "junk" }).shipVariants).length === 0,
+  "shipVariants:string → empty object");
+assert(Object.keys(migrate({ v: 2 }).shipVariants).length === 0, "pre-feature saves get an empty refit map");
+
+// 9) …and it got there cleanly. migrate() wraps its module calls so a throw can't
 //    brick persistence, which means a reintroduced bug would be swallowed and every
 //    assertion above would still pass. Fail loudly if a guard had to catch anything.
 assert(!trapped, "no module read Game.state during migrate" + (trapped ? " — " + trapped.message : ""));

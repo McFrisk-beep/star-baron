@@ -185,7 +185,7 @@ const Cloud = {
       this._user = null; this._pendingRecovery = false;
       this._username = null; this._joinN = null;
       this.playersReady = false; this.pullReady = false; this.pullMissing = false;
-      this.craftMissing = false;
+      this.craftMissing = false; this._rpcMissing = {};
     }
   },
 
@@ -260,6 +260,35 @@ const Cloud = {
   async craftSlot() { return this._craftRpc("app_craft_slot"); },
   async craftAdopt(workshop, items) {
     return this._craftRpc("app_craft_adopt", { p_workshop: workshop || {}, p_items: items || {} });
+  },
+
+  // Repair / equip — server-authoritative (docs/sql/repair_equip.sql).
+  // Both used to be client-only mutations of state.ships, which app_commit then
+  // overwrote from the server row (repair) or filtered against the server items
+  // pool (equip). `_optional` latches a missing RPC the same way craftMissing
+  // does, so a project running older SQL falls back to the old local behaviour
+  // instead of erroring on every click. shipRpcReady() is what the client checks
+  // BEFORE the optimistic mutation, so a fallback never costs a round trip.
+  _rpcMissing: {},
+  async _optional(name, args) {
+    if (this._rpcMissing[name]) return null;
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this._rpcMissing[name] = true;
+        console.warn("[Cloud] " + name + " missing — local fallback (docs/sql/repair_equip.sql)");
+        return null;
+      }
+      throw e;
+    }
+  },
+  shipRpcReady(name) { return this.authoritative() && !this._rpcMissing[name]; },
+  async repairShip(uid) { return this._optional("app_repair_ship", { p_uid: uid }); },
+  async equipItem(shipUid, itemUid) {
+    return this._optional("app_equip_item", { p_ship_uid: shipUid, p_item_uid: itemUid });
+  },
+  async unequipItem(shipUid, itemUid) {
+    return this._optional("app_unequip_item", { p_ship_uid: shipUid, p_item_uid: itemUid });
   },
 
   // Phase 2 — missions & bazaar

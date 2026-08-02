@@ -21,6 +21,10 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
    deleted by the next `app_commit` (it rewrites `items` from the server pool).
    Replaces `app_commit` + `app.result_slice` again, carrying step 5's fitment
    merge forward — see [`docs/WORKSHOP_CRAFT_SETUP.md`](WORKSHOP_CRAFT_SETUP.md).
+7. **`docs/sql/repair_equip.sql`** ← required, and must come **after** steps 5–6.
+   Adds `app_repair_ship` / `app_equip_item` / `app_unequip_item`; without it
+   repairs are silently undone by the next autosave — see
+   [Repair & equip are RPCs](#repair--equip-are-rpcs).
 
 ## Trust model
 
@@ -102,6 +106,35 @@ a busy ship buys no advantage, and gating it would wipe gear mid-mission.
 `tools/check_equip_persist.js` asserts the two stay in lockstep, so adding or
 retuning a hull fails the check rather than silently truncating fitment.
 
+### Repair & equip are RPCs
+
+`docs/sql/repair_equip.sql` closes the last two economy actions that had no RPC
+and therefore could not survive an autosave:
+
+- **Repair.** `Fleet.repair` used to just set `ship.dmg = 0` and subtract the
+  bill locally. `app_commit` takes the client's credits when they're *lower*
+  (that's how spends work) but rebuilds `ships` from the server row — and
+  `app._merge_ships` keeps the server's `dmg`. Net effect: **the player paid and
+  the damage came back** on the next save. `app_repair_ship` now charges and
+  clears the hull server-side, pricing off the server catalog and the server's
+  own damage value.
+- **Equip.** The fitment merge only re-accepts uids present in the **server's**
+  item pool. Gear that only ever existed client-side — most often something
+  crafted while `workshop_craft.sql` wasn't applied — was dropped on the next
+  commit, so the equip "worked" until the save and then popped off.
+  `app_equip_item` writes the fitment authoritatively and returns a real error
+  ("that item isn't on your server ledger yet") instead of reverting in silence.
+
+Both re-check every rule server-side: idle ship, owned item, no blackboxes, no
+item fitted to two hulls, and the hull's `app._ship_slots` cap.
+
+If the file isn't applied, `Cloud._optional` latches the missing RPC on the
+first click and the client falls back to the old local behaviour — buttons keep
+working, they just aren't durable. `tools/check_repair_equip.js` covers both
+paths, and `tools/check_equip_persist.js` now fails if **any** `app_commit`
+declared at or after `equip_persist.sql` stops calling `app._merge_ships` (that
+regression is how this bug returned twice).
+
 ### Simplifications (ponytail)
 
 - Route cargo/speed uses **catalog** ship stats (accessories ignored).
@@ -127,13 +160,16 @@ for f in js/*.js; do node --check "$f"; done
 node tools/check_phase3_pull_prestige.js
 node tools/check_equip_persist.js
 node tools/check_equip_sync.js
+node tools/check_repair_equip.js
 ```
 
 In the app: equip an accessory to a ship, hard-refresh, and confirm it's still
-fitted (the ship's slot count stays `1/4`, not `0/4`).
+fitted (the ship's slot count stays `1/4`, not `0/4`). Then repair a damaged
+hull, wait past one autosave, and confirm the hull % stays at 100.
 
 ## Re-paste note
 
 Safe to re-run. Replaces `app_commit`, `app.result_slice`, and adds
 `app_pull` / `app_prestige`. `equip_persist.sql` replaces `app_commit` again, so
-always paste it **after** `phase3_pull_prestige.sql`.
+always paste it **after** `phase3_pull_prestige.sql`, and `repair_equip.sql`
+last of all (it needs `app._ship_slots` and `app.result_slice`).

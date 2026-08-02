@@ -151,7 +151,7 @@ const Economy = {
   repairCosmeticNames(state) {
     const s = state || this.s(); if (!s) return;
     if (window.Fleet) for (const sh of s.ships || []) {
-      if (Fleet.isStubName(sh)) sh.name = Fleet.nameFromUid(sh.uid, sh.type, sh.mercenary);
+      if (Fleet.isStubName(sh)) sh.name = Fleet.nameFromUid(sh.uid, sh.type, sh.mercenary, s);
     }
     if (window.Items) for (const it of Object.values(s.items || {})) {
       if (Items.isStubName(it)) it.name = Items.nameFromUid(it);

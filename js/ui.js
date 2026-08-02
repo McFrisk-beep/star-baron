@@ -988,7 +988,10 @@ const UI = {
     const hullPct = Math.round((1 - dmg) * 100);
     if (dmg) status += ` <span class="badge ${hullPct < 40 ? "bad" : "merc"}" title="damaged — firepower & speed suffer until repaired">hull ${hullPct}%</span>`;
     const merc = sh.mercenary ? `<span class="badge merc">merc · ${Util.duration((sh.expiresAt || 0) - Date.now())}</span>` : "";
-    const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite);
+    const sprite = ASSET.shipArt(sh.type, sh.uid);
+    const variant = Fleet.variantFor(sh);
+    const refit = variant && variant.id !== "stock"
+      ? ` · <span class="bc-variant">${variant.name} <span class="muted-note">${Fleet.variantEffects(variant)}</span></span>` : "";
     const equipBtn = sh.status === "idle" && used < slots
       ? `<button class="btn btn-mini" data-equip-ship="${sh.uid}">+ Equip</button>` : "";
     // idle, owned ships can be put on a trade route or sold (mercs are rented;
@@ -1003,20 +1006,29 @@ const UI = {
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
-        <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}</div>
+        <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}${refit}</div>
         <div class="statline">${this.statChips(st, def.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo", "firepower"] : undefined)}</div>
         <div class="acc-row">${acc}${equipBtn}${repairBtn}${routeBtn}${sellBtn}</div>
       </div></div>`;
   },
 
-  onFleetClick(e) {
+  // Repair / equip / unequip are RPCs when the server owns the fleet, so every
+  // one of these is awaited — a sync read of the result would show `undefined`
+  // for .ok and swallow the server's error message.
+  async onFleetClick(e) {
     const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]");
     const rt = e.target.closest("[data-retrieve]"); const sl = e.target.closest("[data-sellship]");
     const ro = e.target.closest("[data-route-ship]"); const rp = e.target.closest("[data-repair]");
-    if (un) { const [shipU, itemU] = un.dataset.unequip.split(":"); Fleet.unequip(shipU, itemU); window.Game.requestSave(); this.renderFleet(); }
+    if ((un || rp) && Economy.busy()) return;
+    if (un) {
+      const [shipU, itemU] = un.dataset.unequip.split(":");
+      const r = await Fleet.unequip(shipU, itemU);
+      if (r && !r.ok && r.msg) return this.toast(r.msg, "warn");
+      window.Game.requestSave(); this.renderFleet();
+    }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
     else if (ro) { this.openRoute(ro.dataset.routeShip); }
-    else if (rp) { const r = Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+    else if (rp) { const r = await Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader(); }
     else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (sl) {
       void this._sellShipClick(sl.dataset.sellship);
@@ -1051,7 +1063,7 @@ const UI = {
       html += `<div class="buy-grid">` + [...inv].sort(this.invSorter(this.fleetSort.inv)).map(it => {
         const box = Items.isBlackbox(it);
         const kind = ACCESSORY_KINDS[it.kind], letter = box ? "B" : ((kind && kind.label) || it.kind || "?");
-        const art = box ? this._art(ASSET.accessory("blackbox", it.uid), letter)
+        const art = box ? this._art(ASSET.blackbox(it.effectId, it.uid), letter)
           : this._art(ASSET.accessory(it.kind, it.uid), letter);
         const rarLabel = box ? "consumable" : ((Items.rarity(it.rarity) || {}).label || "");
         const act = box
@@ -1117,7 +1129,7 @@ const UI = {
     this._missionSig = sig;
     if (!ms.length) { this.refs.fleetMissions.innerHTML = `<p class="muted-note">No active missions. Take a contract in the Bazaar.</p>`; return; }
     this.refs.fleetMissions.innerHTML = ms.map(m => {
-      const icons = m.shipUids.map(u => { const sh = Fleet.ship(u); if (!sh) return ""; const def = Fleet.shipDef(sh.type); const sprite = def.cls === "escort" ? ASSET.raceship(def.sprite) : ASSET.ship(def.sprite); return `<img class="mi" src="${sprite}" alt="" title="${sh.name}" onerror="this.style.display='none'"/>`; }).join("");
+      const icons = m.shipUids.map(u => { const sh = Fleet.ship(u); if (!sh) return ""; const sprite = ASSET.shipArt(sh.type, sh.uid); return `<img class="mi" src="${sprite}" alt="" title="${sh.name}" onerror="this.style.display='none'"/>`; }).join("");
       return `<div class="mission" data-m="${m.uid}">
         <div class="m-head"><b>${m.title}</b><span class="m-chance">${(m.successChance * 100).toFixed(0)}% success</span></div>
         <div class="m-ships">${icons}</div>
@@ -1242,8 +1254,9 @@ const UI = {
         ? cands.map(sh => `<button class="btn eq-pick" data-ship="${sh.uid}">${sh.name} <span class="cls-tag">${Fleet.shipDef(sh.type).cls}</span> (${(sh.accessories || []).length}/${Fleet.shipDef(sh.type).slots} slots)</button>`).join("")
         : `<p class="down">No idle ship with a free slot.</p>`)
       : "";
-    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = () => {
-      const r = Fleet.equip(b.dataset.ship, itemUid);
+    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = async () => {
+      if (Economy.busy()) return;
+      const r = await Fleet.equip(b.dataset.ship, itemUid);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast("Equipped.", "good"); this.refs.equip.classList.add("hidden");
       window.Game.requestSave(); this.renderFleet();
@@ -1256,8 +1269,9 @@ const UI = {
     this.refs.eqBody.innerHTML = inv.length
       ? inv.map(it => `<button class="btn eq-pick" data-item="${it.uid}" style="border-left:3px solid ${this.rarityColor(it.rarity)}">${it.name} — ${Items.label(it)}</button>`).join("")
       : `<p class="muted-note">No accessories in inventory. Buy some in the Bazaar.</p>`;
-    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = () => {
-      const r = Fleet.equip(shipUid, b.dataset.item);
+    this.refs.eqBody.querySelectorAll(".eq-pick").forEach(b => b.onclick = async () => {
+      if (Economy.busy()) return;
+      const r = await Fleet.equip(shipUid, b.dataset.item);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast("Equipped.", "good"); this.refs.equip.classList.add("hidden");
       window.Game.requestSave(); this.renderFleet();
@@ -1269,27 +1283,43 @@ const UI = {
   renderBazaar() {
     if (this.page !== "bazaar") return;
     const b = this.s().bazaar;
-    const shipCardBuy = (def, sprite) => `<div class="buy-card">
-      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
-      <div class="bc-name">${def.name} <span class="cls-tag">${def.cls}</span></div>
-      <div class="statline bc-statline">${this.statChips(def)}</div>
-      <button class="btn btn-go" data-buyship="${def.id}" data-cost="${Math.round((def.price || 0) * (1 - Rep.discount()))}">${def.price ? Util.credits(def.price) + "c" : "Free"}</button></div>`;
-
-    // The free starter ship only shows when the player has no ships at all
-    // (the flagship doesn't count).
+    // The shipyard is a rotating shelf of named, refitted second-hand hulls —
+    // not the catalog. The free starter ship is the one exception: it's shown
+    // whenever the player has no ships at all (the flagship doesn't count), so a
+    // wiped-out player is never stranded waiting for the shelf to turn.
     const noShips = this.s().ships.length === 0;
-    const yardDefs = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || [])];
-    const yard = yardDefs
-      .filter(d => !d.craftOnly && (d.price > 0 || noShips))
-      .map(d => {
-        const sprite = d.cls === "escort" ? ASSET.raceship(d.sprite) : ASSET.ship(d.sprite);
-        const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"] : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
-        return `<div class="buy-card">
-      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${d.name[0]}'}))"/>
-      <div class="bc-name">${d.name} <span class="cls-tag">${d.cls}</span></div>
-      <div class="statline bc-statline">${this.statChips(d, keys)}</div>
-      <button class="btn btn-go" data-buyship="${d.id}" data-cost="${Math.round((d.price || 0) * (1 - Rep.discount()))}">${d.price ? Util.credits(d.price) + "c" : "Free"}</button></div>`;
-      }).join("");
+    const starterDef = SHIP_CATALOG.transport.find(d => d.price === 0 && !d.craftOnly);
+    const starter = (noShips && starterDef) ? `<div class="buy-card">
+      <img src="${ASSET.ship(starterDef.sprite)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${starterDef.name[0]}'}))"/>
+      <div class="bc-name">${starterDef.name} <span class="cls-tag">${starterDef.cls}</span></div>
+      <div class="bc-variant">yard loaner · always available</div>
+      <div class="statline bc-statline">${this.statChips(starterDef, ["firepower", "hull", "armor", "shields", "cargo", "speed"])}</div>
+      <button class="btn btn-go" data-buyship="${starterDef.id}" data-cost="0">Free</button></div>` : "";
+    const yardOffers = (b.yard || []).map(o => {
+      const d = Fleet.shipDef(o.shipType); if (!d) return "";
+      const v = Fleet.variantDef(o.variantId);
+      const sprite = ASSET.shipArt(o.shipType, o.id);
+      const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"] : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
+      // Preview the refitted numbers, not the catalog ones — otherwise the card
+      // advertises stats the ship won't have once it's in the fleet.
+      const st = {};
+      for (const k of keys.concat(["slots"])) {
+        const base = d[k] || 0, mod = (v && v.mods[k]) || 0;
+        st[k] = k === "speed" ? +(base * (1 + mod)).toFixed(2)
+          : k === "scan" || k === "endure" ? +(base * (1 + mod)).toFixed(1)
+            : Math.round(base * (1 + mod));
+      }
+      const cost = Math.round((d.price || 0) * (1 - Rep.discount()));
+      return `<div class="buy-card">
+      <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${o.name[0]}'}))"/>
+      <div class="bc-name">${o.name} <span class="cls-tag">${d.cls}</span></div>
+      <div class="bc-variant">${d.name}${v && v.id !== "stock" ? ` · <b>${v.name}</b> ${v.tag}` : ` · ${v ? v.tag : "stock"}`}</div>
+      <div class="statline bc-statline">${this.statChips(st, keys)}</div>
+      <div class="muted-note">${Fleet.variantEffects(v)} · ${d.slots} slot${d.slots === 1 ? "" : "s"}</div>
+      <button class="btn btn-go" data-buyyard="${o.id}" data-cost="${cost}">${Util.credits(cost)}c</button></div>`;
+    }).join("");
+    const yard = starter + (yardOffers
+      || `<p class="muted-note">The yard is between deliveries — check back shortly.</p>`);
 
     // Flagships: CURRENT always first (compare), then rotating bazaar offers.
     const curMain = Fleet.mainDef();
@@ -1433,7 +1463,7 @@ const UI = {
       const it = a.item, price = Math.round(a.price * (1 - Rep.discount()));
       const e = BLACKBOX_EFFECTS.find(x => x.id === it.effectId);
       return `<div class="item buy" style="border-left-color:${this.rarityColor(it.rarity)}">
-        ${this._art(ASSET.accessory("blackbox", it.uid), "B")}
+        ${this._art(ASSET.blackbox(it.effectId, it.uid), "B")}
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">blackbox</span></div>
         <div class="item-stat">${e ? e.desc : Items.label(it)} · ${e ? Util.duration(e.durationMs) : ""}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
@@ -1443,7 +1473,7 @@ const UI = {
     const bps = (b.blueprints || []).map(a => {
       const price = Math.round(a.price * (1 - Rep.discount()));
       return `<div class="item buy" style="border-left-color:#5aa9ff">
-        ${this._art(ASSET.accessory("blueprint", a.id), "P")}
+        ${this._art(ASSET.blueprint(a.blueprintId, a.id), "P")}
         <div class="item-top"><b>${a.name}</b><span class="rar" style="color:#5aa9ff">${a.outputType}</span></div>
         <div class="item-stat">Unlocks a Workshop recipe permanently</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
@@ -1481,17 +1511,22 @@ const UI = {
 
     const invCost = Bazaar.upgradeInventoryCost();
     const openContracts = (b.contracts || []).filter(c => c.status === "open").length;
+    // Blackboxes/blueprints are one shelf per day — say so, or an empty grid just
+    // looks broken to someone who bought both slots this morning.
+    const restockNote = `<p class="muted-note">Restocks in <b>${Util.duration(Bazaar.slowRestockMs())}</b> — one shelf per day.</p>`;
 
     // Each Bazaar area is its own sub-tab so the page never grows past one screen.
     const sections = {
-      shipyard: `<div class="panel"><h2>Shipyard <small>transports, escorts & survey hulls</small></h2><div class="buy-grid">${yard}</div></div>`,
+      shipyard: `<div class="panel"><h2>Shipyard <small>named hulls, each with its own yard refit</small></h2>
+             <p class="muted-note">Every ship on the shelf is a one-off refit — a hauler that traded speed for hold space, a runner that traded hold space for speed. The shelf turns over in <b>${Util.duration(Bazaar.yardRestockMs())}</b>; what you see now won't be here after that.</p>
+             <div class="buy-grid">${yard}</div></div>`,
       flagships: `<div class="panel"><h2>Flagships <small>current ship pinned · offers rotate</small></h2><div class="buy-grid">${mains}</div></div>`,
       mercs: `<div class="panel"><h2>Mercenaries <small>rented firepower, time-limited</small></h2>${mercTools}<div class="buy-grid">${mercs}</div></div>`,
       contracts: `<div class="panel"><h2>Contract Board</h2>${contractTools}<div class="contract-list">${contracts}</div></div>`
         + `<div class="panel"><h2>Senator Dossiers <small>unlock hidden stances &amp; voting records</small></h2><div class="contract-list">${dossiers}</div></div>`,
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
-             <div class="panel"><h2>Blackboxes <small>consumable timed buffs — Use from Inventory</small></h2><div class="item-grid">${boxes}</div></div>
-             <div class="panel"><h2>Blueprints <small>unlock Workshop recipes</small></h2><div class="item-grid">${bps}</div></div>
+             <div class="panel"><h2>Blackboxes <small>consumable timed buffs — Use from Inventory</small></h2>${restockNote}<div class="item-grid">${boxes}</div></div>
+             <div class="panel"><h2>Blueprints <small>unlock Workshop recipes</small></h2>${restockNote}<div class="item-grid">${bps}</div></div>
              <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv" data-cost="${invCost}">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
@@ -1541,7 +1576,8 @@ const UI = {
       this.toast("Flagship acquired.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.renderFleet(); this.updateHeader();
       return;
     }
-    const map = [["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
+    const map = [["buyyard", id => Bazaar.buyYardShip(id), "Ship purchased — find it in your Fleet."],
+      ["buyship", id => Bazaar.buyShip(id), "Ship purchased."],
       ["hire", id => Bazaar.hireMerc(id), "Mercenary hired."],
       ["buyacc", id => Bazaar.buyAccessory(id), "Accessory bought."],
       ["buyblackbox", id => Bazaar.buyBlackbox(id), "Blackbox acquired — Use it from Inventory."],

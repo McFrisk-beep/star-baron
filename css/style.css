@@ -959,21 +959,22 @@ body.starmap-open .tab.active:not([data-page="starmap"]) .tab-ico { filter: brig
   padding: 6px 11px 5px; border-radius: 8px; cursor: pointer; font-size: 9.5px; font-weight: 700;
   letter-spacing: .7px; text-transform: uppercase;
   font-family: var(--sans); transition: color .18s ease; }
-/* every tab's icon is a neon tile; unmapped tabs keep their glyph over the empty frame */
-.tab .tab-ico { font-size: 0; line-height: 30px; width: 52px; height: 30px;
-  background: center / contain no-repeat; text-align: center;
+/* Every tab's icon is a neon tile. The DEFAULT is the empty frame with the
+   button's emoji glyph drawn on top, so a tab with no bespoke tile is still
+   legible — a new tab added to index.html can never render blank (that's how
+   Workshop shipped as an empty slot). Tabs WITH a tile hide the glyph. */
+.tab .tab-ico { font-size: 14px; line-height: 30px; width: 52px; height: 30px;
+  background: center / contain no-repeat url("../assets/ui/nav_frame.png"); text-align: center;
   filter: brightness(.5) saturate(.7); transition: filter .18s ease; }
-.tab[data-page="exchange"]   .tab-ico { background-image: url("../assets/ui/nav_exchange.png"); }
-.tab[data-page="hub"]        .tab-ico { background-image: url("../assets/ui/nav_frame.png"); font-size: 14px; }
-.tab[data-page="fleet"]      .tab-ico { background-image: url("../assets/ui/nav_fleet.png"); }
-.tab[data-page="starmap"]    .tab-ico { background-image: url("../assets/ui/nav_starmap.png"); }
-.tab[data-page="systems"]    .tab-ico { background-image: url("../assets/ui/nav_systems.png"); }
-.tab[data-page="bazaar"]     .tab-ico { background-image: url("../assets/ui/nav_bazaar.png"); }
-.tab[data-page="industries"] .tab-ico { background-image: url("../assets/ui/nav_industries.png"); }
-.tab[data-page="senate"]     .tab-ico { background-image: url("../assets/ui/nav_senate.png"); }
-.tab[data-page="barons"]     .tab-ico { background-image: url("../assets/ui/nav_barons.png"); }
-.tab[data-page="ach"] .tab-ico, .tab[data-page="comms"] .tab-ico {
-  background-image: url("../assets/ui/nav_frame.png"); font-size: 14px; }
+.tab[data-page="exchange"]   .tab-ico { background-image: url("../assets/ui/nav_exchange.png"); font-size: 0; }
+.tab[data-page="fleet"]      .tab-ico { background-image: url("../assets/ui/nav_fleet.png"); font-size: 0; }
+.tab[data-page="starmap"]    .tab-ico { background-image: url("../assets/ui/nav_starmap.png"); font-size: 0; }
+.tab[data-page="systems"]    .tab-ico { background-image: url("../assets/ui/nav_systems.png"); font-size: 0; }
+.tab[data-page="bazaar"]     .tab-ico { background-image: url("../assets/ui/nav_bazaar.png"); font-size: 0; }
+.tab[data-page="industries"] .tab-ico { background-image: url("../assets/ui/nav_industries.png"); font-size: 0; }
+.tab[data-page="workshop"]   .tab-ico { background-image: url("../assets/ui/nav_workshop.png"); font-size: 0; }
+.tab[data-page="senate"]     .tab-ico { background-image: url("../assets/ui/nav_senate.png"); font-size: 0; }
+.tab[data-page="barons"]     .tab-ico { background-image: url("../assets/ui/nav_barons.png"); font-size: 0; }
 .tab:hover { color: var(--ink-dim); }
 .tab:hover .tab-ico { filter: brightness(.85) saturate(.9); }
 .tab.active { color: var(--accent); text-shadow: 0 0 8px rgba(63,227,255,.5); }
@@ -1143,6 +1144,10 @@ body.reduced .floatnav-indicator { transition: none; }
 .buy-card img, .buy-card .tintbox { width: 52px; height: 40px; object-fit: contain; margin: 0 auto 4px; }
 .bc-name { font-weight: 700; font-size: 12.5px; }
 .bc-stats { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); margin: 4px 0 8px; }
+/* "Bulk Freighter · Wide-Belly hauler refit" — the hull + its yard refit, under
+   the ship's own name. Also reused inline on the Fleet card. */
+.bc-variant { font-size: 11px; color: var(--ink-dim); margin: 2px 0 0; }
+.bc-variant b { color: var(--accent2); }
 /* labeled stat chips inside a buy card: centered + a touch tighter than the fleet list */
 .bc-statline { justify-content: center; margin: 6px 0 8px; }
 .bc-statline .sc { font-size: 10px; padding: 1px 5px; }

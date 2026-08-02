@@ -21,6 +21,7 @@ JOBS = [
     ("02_Interactive_Buttons/Menu_Button/menu_button_03.png",   "nav_industries.png", 96),
     ("02_Interactive_Buttons/Menu_Button/menu_button_05.png",   "nav_senate.png",     96),
     ("02_Interactive_Buttons/Menu_Button/menu_button_02.png",   "nav_barons.png",     96),
+    ("02_Interactive_Buttons/Menu_Button/menu_button_setting.png", "nav_workshop.png", 96),
     ("02_Interactive_Buttons/Menu_Button/menu_button01.png",    "nav_frame.png",      96),
     # primary CTA button states (display ~34px tall → export ~4x for wide stretch)
     ("02_Interactive_Buttons/Primary_Button/Btn_Primary_Normal.png",  "btn_primary.png",         148),
