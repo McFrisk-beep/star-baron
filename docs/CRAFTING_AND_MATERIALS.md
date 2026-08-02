@@ -9,12 +9,17 @@ Status: **Implemented** on branch `claude/game-crafting-brainstorm-2q6nx9`
 blueprints/recipes, Senate Fabrication Rights + craft discounts, Last Aegis
 story chain). Remaining work is playtest tuning of §5 knobs.
 
-> **Server note:** after expanding `COMMODITIES`, re-run
-> [`docs/sql/market_commodities_expand.sql`](sql/market_commodities_expand.sql)
-> (commodity lookup + event slots). Also re-paste `phase3_pull_prestige.sql`
-> (`app.gen_extractor`) and `senate_ballot.sql` if those are installed — they
-> had the same stale 12-id lists. Without the market patch, signed-in
-> trade/routes return **Unknown commodity** for new resources like Exotic Pelts.
+> **Server note:** after expanding `COMMODITIES`, run these in Supabase if the
+> matching phase is already live:
+> 1. [`docs/sql/market_commodities_expand.sql`](sql/market_commodities_expand.sql)
+>    — commodity lookup + event slots. Without it, signed-in trade/routes return
+>    **Unknown commodity** for new resources like Exotic Pelts.
+> 2. Re-paste [`phase3_pull_prestige.sql`](sql/phase3_pull_prestige.sql)
+>    (`app.gen_extractor`) — **this rerolls every seeded extractor offer currently
+>    on the Bazaar board.** Owned extractors keep their granted scope; only live
+>    offers shift.
+> 3. Re-paste [`senate_ballot.sql`](sql/senate_ballot.sql) if the ballot RPC is
+>    installed (same stale 12-id list).
 
 Station-level resource exclusivity is **shelved** — exclusivity is handled via
 a `rarity` tag on each commodity (see below), not a station/module system.

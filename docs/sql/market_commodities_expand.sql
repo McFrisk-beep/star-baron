@@ -4,11 +4,16 @@
 -- disagree with the client (~30–40% of slots pick a single commodity).
 --
 -- Canonical copy lives in docs/sql/market_price.sql — keep this patch in sync
--- when editing that file. Safe to re-run. Guests are unaffected.
+-- when editing that file (enforced by tools/check_sql_patch_sync.js). Safe to
+-- re-run. Guests are unaffected.
 --
 -- Supabase → SQL Editor → paste & Run.
--- Also re-paste docs/sql/phase3_pull_prestige.sql (app.gen_extractor) and
--- docs/sql/senate_ballot.sql if those are already installed — same stale 12-id lists.
+--
+-- If Phase 3 / ballot are already installed, also re-paste:
+--   • docs/sql/phase3_pull_prestige.sql (app.gen_extractor) — THIS REROLLS every
+--     seeded extractor offer currently on the Bazaar board. Owned extractors
+--     keep their granted scope; only live offers shift.
+--   • docs/sql/senate_ballot.sql — same stale 12-id commodity list.
 
 -- ── commodity lookup (all 45) ──────────────────────────────────────────────
 create or replace function market.commodity(p_id text)
