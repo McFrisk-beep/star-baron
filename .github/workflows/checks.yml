@@ -27,7 +27,12 @@ jobs:
           # Quarantined: failing on main before this workflow existed. Each needs a
           # domain call (is the JS or the SQL right?), not a CI change. Delete the
           # line as each is fixed — the list should only ever get shorter.
-          #   check_bazaar_parity  — merc roster drifted from the SQL fixture
+          #   check_bazaar_parity  — the crafting expansion grew COMMODITIES from 12
+          #     to 45, but app.gen_extractor (phase3_pull_prestige.sql) still picks a
+          #     specialized extractor's scope from the original 12. The client shows
+          #     one commodity and app_buy_extractor grants another. Fix is a domain
+          #     call: pin the client back to the 12, or widen the SQL array and
+          #     re-paste phase 3 (which rerolls every seeded extractor offer).
           #   check_market_depth   — repeated buying pumps a price above spot
           #   check_market_parity  — JS/SQL prices differ ~1e-10 (tolerance too tight)
           SKIP="check_bazaar_parity check_market_depth check_market_parity"
