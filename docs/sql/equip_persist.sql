@@ -21,6 +21,8 @@
 
 -- Accessory slots per hull. Keep in lockstep with SHIP_CATALOG in js/data.js —
 -- tools/check_equip_persist.js asserts this table matches the catalog exactly.
+-- Regenerate with `node tools/sql/gen_craft_fixtures.js slots`. A hull missing
+-- here silently falls back to 2 slots and truncates its fitment on commit.
 -- Mains (s.mainShip) never carry accessories, so only fleet hulls are listed;
 -- the fallback of 2 mirrors the client's `def.slots || 2`.
 create or replace function app._ship_slots(p_type text)
@@ -29,15 +31,11 @@ language sql immutable as $$
   select coalesce((
     select t.slots from (values
       ('mule', 2), ('clipper', 2), ('drift', 2), ('tanker', 3), ('bulk', 3),
-      ('ore_mule', 3), ('leviathan', 3),
-      ('gunboat', 2), ('corvette', 2), ('destroyer', 3), ('frigate', 3),
-      ('cruiser', 4), ('carrier', 4), ('battleship', 4),
-      ('probe_skiff', 3), ('survey_cutter', 3), ('deep_mapper', 4),
-      ('void_cartograph', 4),
-      -- Workshop-crafted hulls (craftOnly in SHIP_CATALOG). They are never sold,
-      -- but they carry more slots than the fallback of 2, so leaving them out
-      -- silently truncated their fitment on every commit.
-      ('craft_corvette', 3), ('craft_cruiser', 4), ('last_aegis', 5)
+      ('ore_mule', 3), ('leviathan', 3), ('craft_courier', 3), ('craft_freighter', 4), ('void_caravan', 4),
+      ('argent_ark', 5), ('gunboat', 2), ('corvette', 2), ('destroyer', 3), ('frigate', 3),
+      ('cruiser', 4), ('carrier', 4), ('battleship', 4), ('craft_corvette', 3), ('craft_frigate', 3),
+      ('craft_cruiser', 4), ('last_aegis', 5), ('probe_skiff', 3), ('survey_cutter', 3), ('deep_mapper', 4),
+      ('void_cartograph', 4), ('craft_probe', 3), ('craft_pathfinder', 4), ('oracle_lens', 5)
     ) as t(id, slots) where t.id = p_type
   ), 2);
 $$;

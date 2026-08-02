@@ -291,6 +291,8 @@ const Workshop = {
       Extractors.acquire(ex);
       label = ex.name;
     } else if (recipe.outputType === "ship" && window.Fleet) {
+      // Hull missing from SHIP_CATALOG (admin edit) — keep the job, don't throw.
+      if (!Fleet.shipDef(out.shipType)) return null;
       const sh = Fleet.makeShip(out.shipType);
       s.ships.push(sh);
       label = sh.name;
@@ -313,8 +315,9 @@ const Workshop = {
     for (const job of q) {
       if (n < WORKSHOPCFG.maxResolvePerCatchup && now >= job.readyAt) {
         const d = this._deliver(job);
-        if (d) done.push(d);
-        n++;
+        // No output (recipe id renamed/removed by an admin edit) — keep the job
+        // queued rather than silently eating the ingredients it already cost.
+        if (d) { done.push(d); n++; } else keep.push(job);
       } else keep.push(job);
     }
     this.meta().queue = keep;

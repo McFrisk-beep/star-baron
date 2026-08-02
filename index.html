@@ -531,6 +531,7 @@
       <div class="admin-nav">
         <button class="admin-navbtn active" data-view="content">📝 Content</button>
         <button class="admin-navbtn" data-view="missions">📨 Missions</button>
+        <button class="admin-navbtn" data-view="craft">🔧 Crafting</button>
         <button class="admin-navbtn" data-view="images">🖼 Images</button>
         <button class="admin-navbtn" data-view="dev">🧪 Dev</button>
       </div>
@@ -558,6 +559,18 @@
         <p class="admin-status" id="admin-mission-status"></p>
         <div class="settings-actions" id="admin-mission-listactions">
           <button class="btn btn-go" id="admin-mission-new">+ New mission</button>
+          <button class="btn admin-close">Close</button>
+        </div>
+      </div>
+
+      <div id="admin-view-craft" class="hidden">
+        <p class="muted-note">Workshop recipes, blueprints and blackbox effects. Saves to the cloud for every player. Crafting is <b>server-authoritative</b> — after changing recipes, open <b>Server SQL</b> and run it in Supabase, or signed-in players get “Unknown recipe.”</p>
+        <div class="admin-imgtabs" id="admin-craft-tabs"></div>
+        <div id="admin-craft-list"></div>
+        <div id="admin-craft-detail" class="hidden"></div>
+        <p class="admin-status" id="admin-craft-status"></p>
+        <div class="settings-actions" id="admin-craft-listactions">
+          <button class="btn btn-go" id="admin-craft-new">+ New</button>
           <button class="btn admin-close">Close</button>
         </div>
       </div>

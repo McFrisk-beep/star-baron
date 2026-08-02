@@ -20,9 +20,13 @@ const Bazaar = {
   // clients/reloads (unlike Util.pick, which is random). Use a fresh index `n`.
   _pick(seed, n, arr) { return arr[Math.floor(this._u01(seed, n) * arr.length) % arr.length]; },
 
+  // Hireable escorts. Workshop-only hulls (craftOnly) are never on the roster —
+  // the server's merc fixture rolls from the sellable escorts only.
+  mercPool() { return SHIP_CATALOG.escort.filter(e => !e.craftOnly); },
+
   genSeededMerc(epoch, slot) {
     const s = this._seed(["merc", String(epoch), String(slot)]);
-    const escorts = SHIP_CATALOG.escort;
+    const escorts = this.mercPool();
     const esc = escorts[Math.floor(this._u01(s, 0) * escorts.length) % escorts.length];
     return {
       id: `mc-${epoch}-${slot}`,
@@ -299,7 +303,7 @@ const Bazaar = {
 
   // ---- generators ---------------------------------------------------------
   genMerc(now) {
-    const esc = Util.pick(SHIP_CATALOG.escort);
+    const esc = Util.pick(this.mercPool());
     return {
       id: "mc" + (++this.s().seq), shipType: esc.id,
       name: `${Util.pick(MERC_PREFIX)} ${Util.pick(MERC_UNIT)}`,

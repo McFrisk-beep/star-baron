@@ -49,6 +49,7 @@ const Expeditions = {
     let c = base + scan * 0.06 - danger * 0.28;
     if (hazardish) c += endure * 0.04;
     if (window.Fleet) c += Fleet.mainBonus("survey") * 0.5;
+    if (window.Boosts) c += Boosts.mag("surveyScan");   // Deep Lens blackbox
     return Util.clamp(c, 0.05, 0.95);
   },
   scanPower(shipUid) {

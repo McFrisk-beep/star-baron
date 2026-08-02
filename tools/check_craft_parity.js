@@ -20,6 +20,7 @@ const fs = require("fs"), path = require("path"), vm = require("vm"), assert = r
 
 const root = path.join(__dirname, "..");
 const sql = fs.readFileSync(path.join(root, "docs/sql/workshop_craft.sql"), "utf8");
+const bazaarSql = fs.readFileSync(path.join(root, "docs/sql/phase2_missions_bazaar.sql"), "utf8");
 
 const ctx = vm.createContext({ console, Math, Date });
 ctx.window = ctx;
@@ -30,10 +31,10 @@ for (const f of ["store.js", "data.js"]) {
 // as a difference — round-trip them into this realm before comparing.
 const here = v => JSON.parse(JSON.stringify(v));
 const { RECIPES, BLUEPRINTS, BLACKBOX_EFFECTS, COMMODITIES, WORKSHOPCFG,
-        ACCESSORY_KINDS, RARITIES } = here({
+        ACCESSORY_KINDS, RARITIES, ALL_SHIPS } = here({
   RECIPES: ctx.RECIPES, BLUEPRINTS: ctx.BLUEPRINTS, BLACKBOX_EFFECTS: ctx.BLACKBOX_EFFECTS,
   COMMODITIES: ctx.COMMODITIES, WORKSHOPCFG: ctx.WORKSHOPCFG,
-  ACCESSORY_KINDS: ctx.ACCESSORY_KINDS, RARITIES: ctx.RARITIES,
+  ACCESSORY_KINDS: ctx.ACCESSORY_KINDS, RARITIES: ctx.RARITIES, ALL_SHIPS: ctx.ALL_SHIPS,
 });
 
 const fn = name => {
@@ -185,4 +186,43 @@ assert.match(fn("public\\.app_craft_claim"), new RegExp(`n >= ${WORKSHOPCFG.maxR
 assert.match(adopt, new RegExp(`least\\(${WORKSHOPCFG.maxSlots - WORKSHOPCFG.baseSlots}, greatest\\(0`),
   "adopt caps slot upgrades at maxSlots - baseSlots");
 
-console.log(`All craft-parity checks passed (${RECIPES.length} recipes, ${BLACKBOX_EFFECTS.length} blackboxes).`);
+// ---- 4) hulls ---------------------------------------------------------------
+// app_craft_claim builds a finished ship with app.make_ship, which returns null
+// when app.ship_def has no row — the job would deliver nothing. So every hull a
+// recipe can produce must be in the SQL catalog, with the stats js/data.js has.
+const shipFn = (() => {
+  const m = /create or replace function app\.ship_def\b[\s\S]*?\n\$\$;/.exec(bazaarSql);
+  assert.ok(m, "app.ship_def is defined in phase2_missions_bazaar.sql");
+  return m[0];
+})();
+const sqlShips = {};
+for (const m of shipFn.matchAll(/\n {4}\('([a-z_0-9]+)',\s*'([a-z]+)',([^\n]*?)\),?\s*$/gm)) {
+  const nums = m[3].split(",").map(s => parseFloat(s.replace(/::float8/g, "").trim()));
+  sqlShips[m[1]] = { cls: m[2], price: nums[0], firepower: nums[1], cargo: nums[2], hull: nums[3], speed: nums[4] };
+}
+assert.ok(Object.keys(sqlShips).length, "app.ship_def has fixture rows");
+for (const def of ALL_SHIPS) {
+  const got = sqlShips[def.id];
+  assert.ok(got, `ship ${def.id} is in app.ship_def`);
+  const main = def.cls === "main";
+  assert.deepStrictEqual(got, {
+    cls: def.cls, price: def.price || 0,
+    firepower: main ? 0 : (def.firepower || 0), cargo: main ? 0 : (def.cargo || 0),
+    hull: def.hull || 0, speed: main ? (def.travelSpeed || 1) : (def.speed || 1),
+  }, `ship ${def.id}: stats match SHIP_CATALOG`);
+}
+assert.deepStrictEqual(Object.keys(sqlShips).sort(), ALL_SHIPS.map(s => s.id).sort(),
+  "app.ship_def covers exactly SHIP_CATALOG");
+for (const r of RECIPES.filter(x => x.outputType === "ship")) {
+  assert.ok(sqlShips[(r.output || {}).shipType],
+    `recipe ${r.id}: its hull ${(r.output || {}).shipType} exists in app.ship_def`);
+}
+// The one-of-a-kind flag on a hull is what stops a second copy being queued.
+for (const r of RECIPES.filter(x => x.outputType === "ship")) {
+  const def = ALL_SHIPS.find(s => s.id === (r.output || {}).shipType);
+  const b = rows[r.id];
+  assert.strictEqual(bool(b, "unique"), !!def.unique, `recipe ${r.id}: unique flag`);
+}
+
+console.log(`All craft-parity checks passed (${RECIPES.length} recipes, `
+  + `${BLACKBOX_EFFECTS.length} blackboxes, ${ALL_SHIPS.length} hulls).`);

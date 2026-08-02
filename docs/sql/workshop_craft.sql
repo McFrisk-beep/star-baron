@@ -36,10 +36,15 @@
 -- Requires: phase1_players.sql, phase2_missions_bazaar.sql, phase3_pull_prestige.sql
 --           (app._lock_state / app._write_state / app._now_ms / app.item_value /
 --            app.make_ship / app.fleet_cap / market.seed_hash / market.u01).
+--           Apply/re-apply phase2_missions_bazaar.sql FIRST: its app.ship_def is
+--           where craft-only hulls live, and a ship job can't build without one.
 -- Apply: paste into the Supabase SQL editor and run once. Safe to re-run.
 
 -- ===========================================================================
 -- Fixtures — keep in lockstep with js/data.js (tools/check_craft_parity.js)
+--
+-- Generated: `node tools/sql/gen_craft_fixtures.js` (the same generator behind
+-- Admin → 🔧 Crafting → Server SQL). Edit js/data.js, regenerate, paste here.
 -- ===========================================================================
 
 -- Recipe catalog. `auto_tier` is the BLUEPRINTS source:"auto" minBaronTier
@@ -94,12 +99,7 @@ language sql immutable as $$
       'id','ex_specialized','name','Specialized Extractor','outputType','extractor',
       'craftMs', 36000000::bigint, 'credits', 0,
       'ingredients', '[{"id":"titanium_ore","qty":12},{"id":"nanochips","qty":10},{"id":"quantum_core","qty":4}]'::jsonb,
-      'flavor', '[{"id":"pulsar_shard","qty":1,"scopeCat":"mineral"},
-                  {"id":"plasma_gas","qty":1,"scopeCat":"gas"},
-                  {"id":"spore_culture","qty":1,"scopeCat":"agri"},
-                  {"id":"neural_processor","qty":1,"scopeCat":"tech"},
-                  {"id":"fine_art","qty":1,"scopeCat":"luxury"},
-                  {"id":"bio_toxin","qty":1,"scopeCat":"illicit"}]'::jsonb,
+      'flavor', '[{"id":"pulsar_shard","qty":1,"scopeCat":"mineral"},{"id":"plasma_gas","qty":1,"scopeCat":"gas"},{"id":"spore_culture","qty":1,"scopeCat":"agri"},{"id":"neural_processor","qty":1,"scopeCat":"tech"},{"id":"fine_art","qty":1,"scopeCat":"luxury"},{"id":"bio_toxin","qty":1,"scopeCat":"illicit"}]'::jsonb,
       'output', '{"extractorType":"specialized"}'::jsonb,
       'autoTier', null, 'destroyOnUse', false, 'unique', false)),
     ('ship_corvette', jsonb_build_object(
@@ -161,6 +161,150 @@ language sql immutable as $$
       'craftMs', 2100000::bigint, 'credits', 0,
       'ingredients', '[{"id":"nanochips","qty":5},{"id":"graphene_lattice","qty":3},{"id":"fusion_cell","qty":2}]'::jsonb,
       'output', '{"effectId":"fabricators_boon"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_hold_common', jsonb_build_object(
+      'id','gear_hold_common','name','Common Cargo Pod','outputType','gear',
+      'craftMs', 1500000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"iron_ore","qty":8},{"id":"synthsilk","qty":4}]'::jsonb,
+      'output', '{"kind":"hold","rarity":"common"}'::jsonb,
+      'autoTier', 0, 'destroyOnUse', false, 'unique', false)),
+    ('gear_engine_uncommon', jsonb_build_object(
+      'id','gear_engine_uncommon','name','Uncommon Engine','outputType','gear',
+      'craftMs', 4200000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"cobalt_ore","qty":6},{"id":"fusion_cell","qty":5},{"id":"xenon_gas","qty":3}]'::jsonb,
+      'output', '{"kind":"engine","rarity":"uncommon"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_probe_uncommon', jsonb_build_object(
+      'id','gear_probe_uncommon','name','Uncommon Probe Rack','outputType','gear',
+      'craftMs', 4800000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"sensor_array","qty":5},{"id":"silicon","qty":4},{"id":"xenon_gas","qty":2}]'::jsonb,
+      'output', '{"kind":"probe","rarity":"uncommon"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_plating_rare', jsonb_build_object(
+      'id','gear_plating_rare','name','Rare Plating','outputType','gear',
+      'craftMs', 9000000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"titanium_ore","qty":12},{"id":"graphene_lattice","qty":6},{"id":"cobalt_ore","qty":4}]'::jsonb,
+      'output', '{"kind":"plating","rarity":"rare"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_survey_shield_rare', jsonb_build_object(
+      'id','gear_survey_shield_rare','name','Rare Survey Shield','outputType','gear',
+      'craftMs', 10800000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"graphene_lattice","qty":6},{"id":"sensor_array","qty":4},{"id":"cryo_vapor","qty":3}]'::jsonb,
+      'output', '{"kind":"survey_shield","rarity":"rare"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_cannon_epic', jsonb_build_object(
+      'id','gear_cannon_epic','name','Epic Cannon','outputType','gear',
+      'craftMs', 18000000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"titanium_ore","qty":10},{"id":"pulsar_shard","qty":5},{"id":"antimatter","qty":3}]'::jsonb,
+      'output', '{"kind":"cannon","rarity":"epic"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_engine_epic', jsonb_build_object(
+      'id','gear_engine_epic','name','Epic Engine','outputType','gear',
+      'craftMs', 18000000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"pulsar_shard","qty":6},{"id":"xenon_gas","qty":5},{"id":"neural_processor","qty":4}]'::jsonb,
+      'output', '{"kind":"engine","rarity":"epic"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('gear_shield_legend', jsonb_build_object(
+      'id','gear_shield_legend','name','Legendary Shield','outputType','gear',
+      'craftMs', 32400000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"ai_matrix","qty":3},{"id":"voidstone","qty":2},{"id":"quantum_foam","qty":4}]'::jsonb,
+      'output', '{"kind":"shield","rarity":"legendary"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_courier', jsonb_build_object(
+      'id','ship_courier','name','Yard Courier','outputType','ship',
+      'craftMs', 43200000::bigint, 'credits', 6000,
+      'ingredients', '[{"id":"titanium_ore","qty":25},{"id":"nanochips","qty":12},{"id":"plasma_gas","qty":8}]'::jsonb,
+      'output', '{"shipType":"craft_courier"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_freighter', jsonb_build_object(
+      'id','ship_freighter','name','Yard Freighter','outputType','ship',
+      'craftMs', 108000000::bigint, 'credits', 25000,
+      'ingredients', '[{"id":"iron_ore","qty":60},{"id":"titanium_ore","qty":30},{"id":"nanochips","qty":18}]'::jsonb,
+      'output', '{"shipType":"craft_freighter"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_void_caravan', jsonb_build_object(
+      'id','ship_void_caravan','name','Void Caravan','outputType','ship',
+      'craftMs', 216000000::bigint, 'credits', 90000,
+      'ingredients', '[{"id":"titanium_ore","qty":120},{"id":"graphene_lattice","qty":60},{"id":"quantum_core","qty":30},{"id":"fusion_cell","qty":20}]'::jsonb,
+      'output', '{"shipType":"void_caravan"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_argent_ark', jsonb_build_object(
+      'id','ship_argent_ark','name','The Argent Ark','outputType','ship',
+      'craftMs', 345600000::bigint, 'credits', 200000,
+      'ingredients', '[{"id":"voidstone","qty":25},{"id":"ai_matrix","qty":15},{"id":"quantum_core","qty":30},{"id":"quantum_foam","qty":20}]'::jsonb,
+      'output', '{"shipType":"argent_ark"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', true, 'unique', true)),
+    ('ship_frigate', jsonb_build_object(
+      'id','ship_frigate','name','Yard Frigate','outputType','ship',
+      'craftMs', 129600000::bigint, 'credits', 22000,
+      'ingredients', '[{"id":"titanium_ore","qty":55},{"id":"nanochips","qty":28},{"id":"fusion_cell","qty":12}]'::jsonb,
+      'output', '{"shipType":"craft_frigate"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_probe', jsonb_build_object(
+      'id','ship_probe','name','Yard Probe','outputType','ship',
+      'craftMs', 50400000::bigint, 'credits', 8000,
+      'ingredients', '[{"id":"silicon","qty":30},{"id":"sensor_array","qty":14},{"id":"xenon_gas","qty":10}]'::jsonb,
+      'output', '{"shipType":"craft_probe"}'::jsonb,
+      'autoTier', 1, 'destroyOnUse', false, 'unique', false)),
+    ('ship_pathfinder', jsonb_build_object(
+      'id','ship_pathfinder','name','Pathfinder Cutter','outputType','ship',
+      'craftMs', 144000000::bigint, 'credits', 30000,
+      'ingredients', '[{"id":"titanium_ore","qty":40},{"id":"sensor_array","qty":25},{"id":"cryo_vapor","qty":10},{"id":"neural_processor","qty":6}]'::jsonb,
+      'output', '{"shipType":"craft_pathfinder"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('ship_oracle_lens', jsonb_build_object(
+      'id','ship_oracle_lens','name','The Oracle Lens','outputType','ship',
+      'craftMs', 302400000::bigint, 'credits', 180000,
+      'ingredients', '[{"id":"voidstone","qty":20},{"id":"ai_matrix","qty":18},{"id":"neural_processor","qty":25},{"id":"quantum_foam","qty":15}]'::jsonb,
+      'output', '{"shipType":"oracle_lens"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', true, 'unique', true)),
+    ('bb_foundry_blitz', jsonb_build_object(
+      'id','bb_foundry_blitz','name','Foundry Blitz (box)','outputType','blackbox',
+      'craftMs', 2400000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"nanochips","qty":6},{"id":"graphene_lattice","qty":4},{"id":"antimatter","qty":3}]'::jsonb,
+      'output', '{"effectId":"foundry_blitz"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_bulk_yield', jsonb_build_object(
+      'id','bb_bulk_yield','name','Bulk Yield Injector (box)','outputType','blackbox',
+      'craftMs', 2700000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"quantum_core","qty":5},{"id":"pulsar_shard","qty":4},{"id":"methane_slurry","qty":3}]'::jsonb,
+      'output', '{"effectId":"bulk_yield"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_iron_ledger', jsonb_build_object(
+      'id','bb_iron_ledger','name','Iron Ledger (box)','outputType','blackbox',
+      'craftMs', 4200000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"forged_credentials","qty":5},{"id":"cipher_shard","qty":4},{"id":"fine_art","qty":2}]'::jsonb,
+      'output', '{"effectId":"iron_ledger"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_ghost_manifest', jsonb_build_object(
+      'id','bb_ghost_manifest','name','Ghost Manifest (box)','outputType','blackbox',
+      'craftMs', 3300000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"forged_credentials","qty":6},{"id":"narcotics","qty":4},{"id":"cipher_shard","qty":3}]'::jsonb,
+      'output', '{"effectId":"ghost_manifest"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_hard_bargain', jsonb_build_object(
+      'id','bb_hard_bargain','name','Hard Bargain (box)','outputType','blackbox',
+      'craftMs', 3000000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"vintage_wine","qty":5},{"id":"perfume_essence","qty":4},{"id":"exotic_pelts","qty":3}]'::jsonb,
+      'output', '{"effectId":"hard_bargain"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_aegis_field', jsonb_build_object(
+      'id','bb_aegis_field','name','Aegis Field (box)','outputType','blackbox',
+      'craftMs', 3000000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"graphene_lattice","qty":6},{"id":"biofiber","qty":4},{"id":"cryo_vapor","qty":3}]'::jsonb,
+      'output', '{"effectId":"aegis_field"}'::jsonb,
+      'autoTier', null, 'destroyOnUse', false, 'unique', false)),
+    ('bb_long_haul', jsonb_build_object(
+      'id','bb_long_haul','name','Long Haul Protocol (box)','outputType','blackbox',
+      'craftMs', 2700000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"sensor_array","qty":5},{"id":"fusion_cell","qty":4},{"id":"xenon_gas","qty":3}]'::jsonb,
+      'output', '{"effectId":"long_haul"}'::jsonb,
+      'autoTier', 2, 'destroyOnUse', false, 'unique', false)),
+    ('bb_deep_lens', jsonb_build_object(
+      'id','bb_deep_lens','name','Deep Lens (box)','outputType','blackbox',
+      'craftMs', 3600000::bigint, 'credits', 0,
+      'ingredients', '[{"id":"neural_processor","qty":4},{"id":"sensor_array","qty":3},{"id":"spore_culture","qty":2}]'::jsonb,
+      'output', '{"effectId":"deep_lens"}'::jsonb,
       'autoTier', null, 'destroyOnUse', false, 'unique', false))
   ) as r(id, row)
   where r.id = p_id;
@@ -172,13 +316,21 @@ create or replace function app.craft_blackbox(p_id text)
 returns jsonb
 language sql immutable as $$
   select b.row from (values
-    ('overclock_core',  jsonb_build_object('id','overclock_core','name','Overclock Core','stat','industryYield','mag',0.25,'durationMs',7200000::bigint)),
-    ('smugglers_veil',  jsonb_build_object('id','smugglers_veil','name','Smuggler''s Veil','stat','customsSeize','mag',-0.50,'durationMs',10800000::bigint)),
-    ('autopilot_surge', jsonb_build_object('id','autopilot_surge','name','Autopilot Surge','stat','missionTransit','mag',-0.20,'durationMs',14400000::bigint)),
-    ('silver_tongue',   jsonb_build_object('id','silver_tongue','name','Silver Tongue','stat','contractReward','mag',0.15,'durationMs',10800000::bigint)),
-    ('void_shield',     jsonb_build_object('id','void_shield','name','Void Shield','stat','missionDamage','mag',-0.30,'durationMs',7200000::bigint)),
-    ('tax_ghost',       jsonb_build_object('id','tax_ghost','name','Tax Ghost','stat','industryTax','mag',-0.50,'durationMs',14400000::bigint)),
-    ('fabricators_boon',jsonb_build_object('id','fabricators_boon','name','Fabricator''s Boon','stat','craftTime','mag',-0.30,'durationMs',10800000::bigint))
+    ('overclock_core', jsonb_build_object('id','overclock_core','name','Overclock Core','stat','industryYield','mag',0.25,'durationMs',7200000::bigint)),
+    ('smugglers_veil', jsonb_build_object('id','smugglers_veil','name','Smuggler''s Veil','stat','customsSeize','mag',-0.5,'durationMs',10800000::bigint)),
+    ('autopilot_surge', jsonb_build_object('id','autopilot_surge','name','Autopilot Surge','stat','missionTransit','mag',-0.2,'durationMs',14400000::bigint)),
+    ('silver_tongue', jsonb_build_object('id','silver_tongue','name','Silver Tongue','stat','contractReward','mag',0.15,'durationMs',10800000::bigint)),
+    ('void_shield', jsonb_build_object('id','void_shield','name','Void Shield','stat','missionDamage','mag',-0.3,'durationMs',7200000::bigint)),
+    ('tax_ghost', jsonb_build_object('id','tax_ghost','name','Tax Ghost','stat','industryTax','mag',-0.5,'durationMs',14400000::bigint)),
+    ('fabricators_boon', jsonb_build_object('id','fabricators_boon','name','Fabricator''s Boon','stat','craftTime','mag',-0.3,'durationMs',10800000::bigint)),
+    ('foundry_blitz', jsonb_build_object('id','foundry_blitz','name','Foundry Blitz','stat','craftTime','mag',-0.55,'durationMs',3600000::bigint)),
+    ('bulk_yield', jsonb_build_object('id','bulk_yield','name','Bulk Yield Injector','stat','industryYield','mag',0.45,'durationMs',3600000::bigint)),
+    ('iron_ledger', jsonb_build_object('id','iron_ledger','name','Iron Ledger','stat','industryTax','mag',-0.75,'durationMs',7200000::bigint)),
+    ('ghost_manifest', jsonb_build_object('id','ghost_manifest','name','Ghost Manifest','stat','customsSeize','mag',-0.8,'durationMs',5400000::bigint)),
+    ('hard_bargain', jsonb_build_object('id','hard_bargain','name','Hard Bargain','stat','contractReward','mag',0.35,'durationMs',5400000::bigint)),
+    ('aegis_field', jsonb_build_object('id','aegis_field','name','Aegis Field','stat','missionDamage','mag',-0.6,'durationMs',5400000::bigint)),
+    ('long_haul', jsonb_build_object('id','long_haul','name','Long Haul Protocol','stat','missionTransit','mag',-0.35,'durationMs',7200000::bigint)),
+    ('deep_lens', jsonb_build_object('id','deep_lens','name','Deep Lens','stat','surveyScan','mag',0.1,'durationMs',10800000::bigint))
   ) as b(id, row)
   where b.id = p_id;
 $$;
@@ -547,7 +699,11 @@ begin
     recipe := app.craft_recipe(job->>'recipeId');
     -- WORKSHOPCFG.maxResolvePerCatchup = 12 per call; the rest stay queued.
     if recipe is null then
-      continue;   -- unknown recipe: drop the job (Workshop._deliver returns null)
+      -- Unknown recipe (an admin renamed or removed it): park the job. The
+      -- ingredients were already charged, so dropping it would destroy them —
+      -- restoring the recipe id lets it finish. Matches Workshop._resolveLocal.
+      keep := keep || jsonb_build_array(job);
+      continue;
     elsif n >= 12 or coalesce((job->>'readyAt')::bigint, 0) > now_ms then
       keep := keep || jsonb_build_array(job);
       continue;
@@ -579,6 +735,11 @@ begin
     elsif recipe->>'outputType' = 'ship' then
       sh := app.make_ship(seq, recipe->'output'->>'shipType', null, false, null);
       if sh is null then
+        -- Hull missing from app.ship_def (re-apply phase2_missions_bazaar.sql).
+        -- Park the job instead of dropping it: the ingredients are already spent,
+        -- so a silent drop would destroy them. It builds once the def exists.
+        keep := keep || jsonb_build_array(job);
+        n := n - 1;
         continue;
       end if;
       ships := ships || jsonb_build_array(sh);

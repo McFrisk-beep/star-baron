@@ -33,6 +33,42 @@ Prereqs (all already required by Phase 3):
 > `app_commit` and `app.result_slice`, so re-running an earlier file afterwards
 > would drop the workshop slice back out of both.
 
+> **Re-apply `phase2_missions_bazaar.sql` and `equip_persist.sql` too** if your
+> database predates the craft-only transport/survey hulls. `app.ship_def` (phase
+> 2) is where hull stats live and `app._ship_slots` (equip_persist) is where
+> fitment size lives — a hull missing from the first means a finished ship job
+> has nothing to build, and one missing from the second silently truncates that
+> ship's accessories to two slots on the next commit.
+
+## Changing recipes later
+
+The recipe/blackbox/hull tables live in **two** places — `js/data.js` for the
+client, and these SQL fixtures for the server — so both are generated from one
+source and pinned by a check.
+
+**If you edited recipes in the game** (Admin → 🔧 Crafting), that changes only
+the client half. Open that tab's **Server SQL** pane → **Copy SQL** → paste into
+the Supabase **SQL Editor** → Run. No terminal involved. Until you run it, guests
+see the new recipe and signed-in players get "Unknown recipe."
+
+**If you edited `js/data.js`**, regenerate the checked-in SQL and paste the file
+you changed:
+
+```
+node tools/sql/gen_craft_fixtures.js            # everything, to stdout
+node tools/sql/gen_craft_fixtures.js recipe     # → docs/sql/workshop_craft.sql
+node tools/sql/gen_craft_fixtures.js blackbox   # → docs/sql/workshop_craft.sql
+node tools/sql/gen_craft_fixtures.js ship       # → docs/sql/phase2_missions_bazaar.sql
+node tools/sql/gen_craft_fixtures.js slots      # → docs/sql/equip_persist.sql
+node tools/check_craft_parity.js                # confirms the SQL matches data.js
+```
+
+> `gen_craft_fixtures.js` is a **Node script, not SQL** — it *prints* the
+> fixtures. Pasting the script itself into the Supabase SQL editor fails with
+> `syntax error at or near "#!"`. Paste its output, or paste the regenerated
+> `docs/sql/*.sql` file. Both routes run the same generator as the Server SQL
+> pane, so the two copies can't drift.
+
 ## What it creates
 
 | Object | Role |
@@ -68,6 +104,9 @@ ordinary item of that kind — never its numbers.
   Rights cost/time modifiers live in the client-side Senate bill model, so the
   server charges the base recipe cost and duration. Blackbox `craftTime` boosts
   (Fabricator's Boon) *are* honored — those are a 7-row fixture.
+- **A job whose recipe or hull the server can't resolve is parked, not dropped.**
+  Its ingredients were already charged, so it stays in the queue (holding a slot)
+  until the recipe id or `app.ship_def` row comes back. Same rule client-side.
 - **`knownRecipes` / `craftedOnce` stay client-owned.** Blueprints drop from the
   bazaar, expeditions, missions, story and Senate edicts, none of which have
   RPCs. This is the status quo; a forged blueprint still can't mint anything for
@@ -78,6 +117,8 @@ ordinary item of that kind — never its numbers.
 ```
 node tools/check_craft_parity.js    # SQL fixtures vs js/data.js  (runs in CI)
 node tools/check_craft_client.js    # client routing + no local mint (runs in CI)
+node tools/check_admin_crafting.js  # admin recipe editor round-trip + SQL (CI)
+node tools/check_equip_persist.js   # hull fitment table vs SHIP_CATALOG (CI)
 ```
 
 The SQL logic itself needs a real Postgres, which CI doesn't have:
