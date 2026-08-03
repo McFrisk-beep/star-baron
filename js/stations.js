@@ -60,6 +60,8 @@ const Stations = {
       prodComm: null,           // assigned Production Hub commodity
       bays: [],                 // [{lesseeId, extractorId}]
       hall: [],                 // Exchange Hall listings
+      contracts: [],            // Contract Office haul posts
+      contractStats: { filled: 0, expired: 0 },
       upkeepPaidThrough: 0,
       cooldownUntil: 0,
       refitUntil: 0,
@@ -218,6 +220,10 @@ const Stations = {
       for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
       st.hall = [];
     }
+    if (moduleId === "contract_office") {
+      for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
+      st.contracts = (st.contracts || []).filter(x => x.status === "active");
+    }
     Game.state.credits += refund;
     st.status = "refit";
     st.refitUntil = Date.now() + STATIONCFG.refitMs;
@@ -308,8 +314,19 @@ const Stations = {
     return n;
   },
 
+  contractEscrowValue(pid = this.playerId()) {
+    let n = 0;
+    for (const st of this.list()) {
+      if (st.ownerId !== pid) continue;
+      for (const c of st.contracts || []) {
+        if (c.status === "open" || c.status === "active") n += c.escrow | 0;
+      }
+    }
+    return n;
+  },
+
   escrowForNetWorth(pid = this.playerId()) {
-    return this.escrowTotal(pid) + this.hallEscrowValue(pid);
+    return this.escrowTotal(pid) + this.hallEscrowValue(pid) + this.contractEscrowValue(pid);
   },
 
   _takeListable(kind, ref) {
@@ -545,6 +562,232 @@ const Stations = {
     }
     st.hall = keep;
     return sold;
+  },
+
+  // ---- Contract Office (docs/STATIONS.md §11) -----------------------------
+  hasContractOffice(st) {
+    return !!(st && (st.modules.contract_office | 0) && st.status === "owned");
+  },
+
+  ownerHandle(st) {
+    if (st && st.ownerId && st.ownerId !== "player" && st.ownerId !== this.playerId())
+      return String(st.ownerId).slice(0, 16);
+    if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.user) {
+      const u = Cloud.user.user_metadata && Cloud.user.user_metadata.username;
+      if (u) return u;
+    }
+    return "Baron";
+  },
+
+  reliability(st) {
+    const stats = (st && st.contractStats) || { filled: 0, expired: 0 };
+    const tot = (stats.filled | 0) + (stats.expired | 0);
+    if (!tot) return null;
+    return (stats.filled | 0) / tot;
+  },
+
+  findHaul(contractId) {
+    for (const st of this.list()) {
+      const c = (st.contracts || []).find(x => x.id === contractId);
+      if (c) return { st, contract: c };
+    }
+    return null;
+  },
+
+  _toBoardJob(st, c) {
+    const comm = COMMODITIES.find(x => x.id === c.commId);
+    const sec = Galaxy.sector(st.sectorId);
+    const cap = sec && Galaxy.get(sec.capital);
+    const handle = this.ownerHandle(st);
+    const rel = this.reliability(st);
+    const relTxt = rel == null ? "unrated" : `${Math.round(rel * 100)}% reliable`;
+    return {
+      id: c.id,
+      kind: "job",
+      type: "transport",
+      source: "station",
+      stationId: st.systemId,
+      stationName: st.name,
+      ownerId: st.ownerId,
+      ownerHandle: handle,
+      commId: c.commId,
+      qty: c.qty,
+      rate: c.rate,
+      escrow: c.escrow,
+      title: `Haul ${c.qty} ${comm ? comm.name : c.commId}`,
+      desc: `From ${st.name} → ${cap ? cap.name : "sector capital"}. ${c.rate}c/u escrowed. Posted by ${handle} · ${relTxt}.`,
+      sysName: cap ? cap.name : st.name,
+      destSysId: sec ? sec.capital : null,
+      danger: "low",
+      faction: (comm && CATEGORY_FACTION[comm.cat]) || null,
+      stakeTier: 0,
+      minFirepower: Math.max(4, Math.round(c.qty / 40)),
+      cargoRequired: c.qty,
+      durationMs: (STATIONCFG.contractDurBaseMs || 25 * 60 * 1000)
+        + c.qty * (STATIONCFG.contractDurPerUnitMs || 8000),
+      impound: false,
+      reward: { credits: c.escrow, itemChance: 0, stockChance: 0 },
+      createdAt: c.createdAt,
+      expiresAt: c.expiresAt,
+      status: "open",
+    };
+  },
+
+  boardContracts(now = Date.now()) {
+    const out = [];
+    for (const st of this.list()) {
+      if (!this.hasContractOffice(st)) continue;
+      for (const c of st.contracts || []) {
+        if (c.status !== "open") continue;
+        if (now >= c.expiresAt) continue;
+        out.push(this._toBoardJob(st, c));
+      }
+    }
+    return out;
+  },
+
+  postHaul(systemId, commId, qty, rate) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId() || st.status !== "owned")
+      return { ok: false, msg: "Not your station." };
+    if (!this.hasContractOffice(st)) return { ok: false, msg: "Install a Contract Office first." };
+    if (st.status === "refit") return { ok: false, msg: "Station is in refit." };
+    const comm = COMMODITIES.find(c => c.id === commId);
+    if (!comm || comm.craftOnly) return { ok: false, msg: "Unknown commodity." };
+    qty = Math.floor(+qty || 0);
+    rate = Math.floor(+rate || 0);
+    if (qty < 1) return { ok: false, msg: "Need at least 1 unit." };
+    if (rate < (STATIONCFG.contractMinRate || 5))
+      return { ok: false, msg: `Rate at least ${STATIONCFG.contractMinRate}c/unit.` };
+    const have = st.hold[commId] | 0;
+    if (qty > have) return { ok: false, msg: `Only ${have} in station hold.` };
+    const escrow = qty * rate;
+    const fee = Math.floor(escrow * Util.clamp(STATIONCFG.contractPostFeeBps | 0, 0, 2000) / 10000);
+    const s = Game.state;
+    if (s.credits < escrow + fee) return { ok: false, msg: `Need ${Util.credits(escrow + fee)} (bounty + ${fee}c fee).` };
+    st.hold[commId] = have - qty;
+    s.credits -= escrow + fee;
+    if (!Array.isArray(st.contracts)) st.contracts = [];
+    const now = Date.now();
+    const contract = {
+      id: "sc" + (++s.seq),
+      commId, qty, rate, escrow, fee,
+      status: "open",
+      createdAt: now,
+      expiresAt: now + (STATIONCFG.contractListMs || 36 * 3600 * 1000),
+    };
+    st.contracts.push(contract);
+    st.contractStats = st.contractStats || { filled: 0, expired: 0 };
+    this._ledger(st, -escrow, "haul_post", `${qty}× ${commId} @ ${rate}`);
+    if (fee > 0) this._ledger(st, -fee, "haul_fee", "faction posting fee");
+    if (window.Game) Game.requestSave();
+    return { ok: true, contract, fee };
+  },
+
+  cancelHaul(systemId, contractId) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    const idx = (st.contracts || []).findIndex(c => c.id === contractId);
+    if (idx < 0) return { ok: false, msg: "Posting gone." };
+    const c = st.contracts[idx];
+    if (c.status !== "open") return { ok: false, msg: "Already in flight." };
+    st.contracts.splice(idx, 1);
+    this._refundHaul(st, c);
+    if (window.Game) Game.requestSave();
+    return { ok: true };
+  },
+
+  _refundHaul(st, c) {
+    if (!c) return;
+    st.hold[c.commId] = (st.hold[c.commId] | 0) + (c.qty | 0);
+    if (st.ownerId === this.playerId()) Game.state.credits += c.escrow | 0;
+    else {
+      st.pendingPayouts = st.pendingPayouts || {};
+      st.pendingPayouts[st.ownerId] = (st.pendingPayouts[st.ownerId] | 0) + (c.escrow | 0);
+    }
+    this._ledger(st, c.escrow | 0, "haul_refund", c.id);
+  },
+
+  claimHaulForLaunch(contractId) {
+    const found = this.findHaul(contractId);
+    if (!found || found.contract.status !== "open")
+      return { ok: false, msg: "Haul no longer available." };
+    const { st, contract } = found;
+    if (!this.hasContractOffice(st) && st.status !== "owned")
+      return { ok: false, msg: "Haul no longer available." };
+    if (st.ownerId === this.playerId())
+      return { ok: false, msg: "Can't fly your own station haul." };
+    contract.status = "active";
+    contract.takenAt = Date.now();
+    contract.takenBy = this.playerId();
+    const job = this._toBoardJob(st, contract);
+    job.status = "taken";
+    if (window.Game) Game.requestSave();
+    return { ok: true, contract: job };
+  },
+
+  // Mission success / fail / abandon → deliver goods or refund bounty.
+  settleHaul(contractId, outcome) {
+    const found = this.findHaul(contractId);
+    if (!found) return { ok: false, msg: "Haul gone." };
+    const { st, contract } = found;
+    if (contract.status !== "active" && contract.status !== "open") return { ok: false, msg: "Already settled." };
+    st.contractStats = st.contractStats || { filled: 0, expired: 0 };
+    const idx = st.contracts.indexOf(contract);
+    if (outcome === "success") {
+      Stock.put(st.sectorId, contract.commId, contract.qty);
+      st.delivered = (st.delivered | 0) + (contract.qty | 0);
+      st.contractStats.filled = (st.contractStats.filled | 0) + 1;
+      this._ledger(st, 0, "haul_filled", `${contract.qty}× ${contract.commId}`);
+      // Escrow already paid to hauler via Missions reward.
+    } else if (outcome === "fail" || outcome === "abandon") {
+      this._refundHaul(st, contract);
+    } else if (outcome === "expire") {
+      this._refundHaul(st, contract);
+      st.contractStats.expired = (st.contractStats.expired | 0) + 1;
+    }
+    if (idx >= 0) st.contracts.splice(idx, 1);
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return { ok: true };
+  },
+
+  _expireHauls(st, now = Date.now()) {
+    if (!Array.isArray(st.contracts) || !st.contracts.length) return [];
+    const kept = [], expired = [];
+    for (const c of st.contracts) {
+      if (c.status === "open" && now >= c.expiresAt) {
+        this._refundHaul(st, c);
+        st.contractStats = st.contractStats || { filled: 0, expired: 0 };
+        st.contractStats.expired = (st.contractStats.expired | 0) + 1;
+        expired.push(c);
+      } else kept.push(c);
+    }
+    st.contracts = kept;
+    return expired;
+  },
+
+  _npcFillHauls(st, hourIndex) {
+    if (!Array.isArray(st.contracts) || !st.contracts.length) return [];
+    const chance = STATIONCFG.contractNpcFillChance || 0.08;
+    const after = STATIONCFG.contractNpcFillAfterMs || 4 * 3600 * 1000;
+    const now = Date.now();
+    const kept = [], filled = [];
+    for (let i = 0; i < st.contracts.length; i++) {
+      const c = st.contracts[i];
+      if (c.status !== "open" || now - c.createdAt < after) { kept.push(c); continue; }
+      const s = Market._seed([st.systemId, "haul", c.id, String(hourIndex)]);
+      if (Market._u01(s, 0) >= chance) { kept.push(c); continue; }
+      Stock.put(st.sectorId, c.commId, c.qty);
+      st.delivered = (st.delivered | 0) + (c.qty | 0);
+      st.contractStats = st.contractStats || { filled: 0, expired: 0 };
+      st.contractStats.filled = (st.contractStats.filled | 0) + 1;
+      this._ledger(st, 0, "haul_npc", `${c.qty}× ${c.commId}`);
+      // Escrow consumed by NPC hauler (leaves the economy).
+      filled.push(c);
+    }
+    st.contracts = kept;
+    return filled;
   },
 
   setScrutiny(systemId, pct) {
@@ -1003,6 +1246,12 @@ const Stations = {
         if (sold.length && window.Economy) Economy.refreshNetWorth();
       }
 
+      // Contract Office: expire open hauls + slow NPC fill.
+      if (this.hasContractOffice(st) || (st.contracts || []).length) {
+        this._expireHauls(st, now);
+        if (this.hasContractOffice(st)) this._npcFillHauls(st, hourIndex);
+      }
+
       if (st.status !== "owned") continue;
 
       // Suspend standing decay during declared refit (open question → yes).
@@ -1066,7 +1315,10 @@ const Stations = {
     chance = Util.clamp(chance, 0, 0.35);
     const s = Market._seed([st.systemId, "revolt", String(hourIndex)]);
     if (Market._u01(s, 0) > chance) return;
-    // Revolt!
+    // Revolt! Refund open-haul escrow to the owner before wiping identity/hold.
+    // Goods reserved in the post return to hold briefly, then the hold is seized.
+    for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
+    st.contracts = (st.contracts || []).filter(x => x.status === "active");
     st.ownerId = null;
     st.status = "cooldown";
     st.cooldownUntil = Date.now() + STATIONCFG.cooldownMs;
@@ -1155,6 +1407,16 @@ const Stations = {
       st.hold = (st.hold && typeof st.hold === "object") ? st.hold : {};
       st.bays = Array.isArray(st.bays) ? st.bays : [];
       st.hall = Array.isArray(st.hall) ? st.hall : [];
+      st.contracts = Array.isArray(st.contracts) ? st.contracts.filter(c => c && c.id && c.commId) : [];
+      for (const c of st.contracts) {
+        c.qty = Math.max(0, Math.floor(+c.qty || 0));
+        c.rate = Math.max(0, Math.floor(+c.rate || 0));
+        c.escrow = Math.max(0, Math.floor(+c.escrow || c.qty * c.rate));
+        if (!["open", "active"].includes(c.status)) c.status = "open";
+      }
+      st.contractStats = (st.contractStats && typeof st.contractStats === "object")
+        ? { filled: Math.max(0, st.contractStats.filled | 0), expired: Math.max(0, st.contractStats.expired | 0) }
+        : { filled: 0, expired: 0 };
       st.pendingPayouts = (st.pendingPayouts && typeof st.pendingPayouts === "object") ? st.pendingPayouts : {};
       st.reactorLevel = Util.clamp(st.reactorLevel | 0, 0, 5);
       this.syncBays(st);

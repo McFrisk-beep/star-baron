@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook + Exchange Hall §9); server RPCs stubbed in `docs/sql/sector_stock.sql`
+**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook + Exchange Hall §9 + Contract Office §11); server RPCs stubbed in `docs/sql/sector_stock.sql`
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -404,6 +404,8 @@ Option 3 is the one that feels best in play and holds the "no decimals" rule.
 ---
 
 ## 11. Contract Office
+
+**Client status:** live in guest mode (`Stations.postHaul` / `claimHaulForLaunch` / `settleHaul` / `_npcFillHauls`). Owners post from the Stations tab (hold → escrowed bounty). Jobs inject onto the Bazaar Contracts board (`Bazaar._injectStationContracts`), fly through existing `Missions`, and settle goods into sector stock at the capital. Owners cannot fly their own hauls. NPC haulers fill slowly after a delay. Reliability = filled / (filled + expired), shown on the map tip and board copy.
 
 The owner deposits credits into a **bounty pool** and posts haul orders: *deliver 200 Helium-3 to Korray Waystation, 210c/unit*. Payouts are escrowed at post time, so a broke owner cannot stiff a hauler and posting decoy contracts locks up real credits.
 

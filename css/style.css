@@ -1203,6 +1203,8 @@ body.reduced .floatnav-indicator { transition: none; }
 .rep-mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.25); z-index: 1; }
 .rep-fill { display: block; height: 100%; border-radius: 5px; transition: width .5s; }
 .c-spon { font-size: 10px; font-weight: 700; }
+.c-station { font-size: 10px; font-weight: 700; color: var(--accent, #5fd7ff); }
+.contract-station { border-left: 2px solid var(--accent, #5fd7ff); }
 .c-stand { font-size: 9px; text-transform: uppercase; letter-spacing: .5px; }
 .rep-bonus { color: var(--gold); font-size: 10px; }
 /* standing: tier legend + per-faction effect summary */

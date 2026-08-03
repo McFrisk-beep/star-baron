@@ -348,6 +348,18 @@ const Bazaar = {
     while (window.Senate && b.dossiers.length < SENATECFG.dossierSlots) {
       const d = this.genDossier(now); if (!d) break; b.dossiers.push(d);
     }
+    this._injectStationContracts(now);
+  },
+
+  // Station Contract Office hauls ride the same board (docs/STATIONS.md §11).
+  _injectStationContracts(now = Date.now()) {
+    if (!window.Stations || !Stations.boardContracts) return;
+    const b = this.bz();
+    b.contracts ||= [];
+    const have = new Set(b.contracts.map(c => c.id));
+    for (const c of Stations.boardContracts(now)) {
+      if (!have.has(c.id)) b.contracts.push(c);
+    }
   },
 
   // ---- inventory helpers --------------------------------------------------
@@ -469,6 +481,7 @@ const Bazaar = {
       const c = this.genContract(now);
       if (c) b.contracts.push(c);
     }
+    this._injectStationContracts(now);
   },
 
   tick(now = Date.now()) {
@@ -504,8 +517,10 @@ const Bazaar = {
     b.components = (b.components || []).filter(a => Math.random() > 0.05);
     b.flagships = (b.flagships || []).filter(a => Math.random() > 0.08);
     b.dossiers = (b.dossiers || []).filter(d => d.expiresAt > now && !(window.Senate && Senate.revealed(d.senatorId)));
-    // contracts: expire, get taken by NPCs, and clear after lingering
+    // contracts: expire, get taken by NPCs, and clear after lingering.
+    // Station hauls expire/fill via Stations — don't NPC-snatch them here.
     for (const c of b.contracts) {
+      if (c.source === "station") continue;
       if (c.status === "open") {
         if (now > c.expiresAt) c.status = "expired";
         else if (c.kind === "job" && now - c.createdAt > BAZAARCFG.contractNpcTakeMs && Math.random() < 0.04) {
@@ -515,7 +530,8 @@ const Bazaar = {
         c.status = "gone";
       }
     }
-    b.contracts = b.contracts.filter(c => c.status === "open" || c.status === "taken_npc");
+    b.contracts = b.contracts.filter(c =>
+      c.status === "open" || c.status === "taken_npc" || (c.source === "station" && c.status === "open"));
     // your market listings sell to NPCs after the hidden delay
     const sold = [];
     this.s().listings = this.s().listings.filter(l => {
@@ -825,6 +841,15 @@ const Bazaar = {
     const pending = s.pendingContracts || [];
     const held = pending.find(c => c.id === id);
     if (held) return { ok: true, contract: held, fromPending: true };
+    // Station Contract Office hauls — claim on the station ledger, not bought-set.
+    if ((contract && contract.source === "station") || (id && String(id).startsWith("sc"))) {
+      if (!window.Stations) return { ok: false, msg: "Contract no longer available." };
+      const r = Stations.claimHaulForLaunch(id);
+      if (!r.ok) return r;
+      const b = this.bz();
+      b.contracts = (b.contracts || []).filter(x => x.id !== id);
+      return { ok: true, contract: r.contract, fromPending: false };
+    }
     const b = this.bz();
     const onBoard = (b.contracts || []).find(x => x.id === id && x.status === "open" && x.kind !== "tip");
     if (!onBoard) return { ok: false, msg: "Contract no longer available." };

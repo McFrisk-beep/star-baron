@@ -1383,14 +1383,17 @@ const UI = {
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
-      return `<div class="contract">${this._art(ASSET.contract(c.type), (c.type || "C")[0])}
+      const stationTag = c.source === "station"
+        ? `<span class="c-station" title="Station haul">◈ ${c.stationName || "Station"} · ${c.ownerHandle || "Baron"}</span>`
+        : "";
+      return `<div class="contract${c.source === "station" ? " contract-station" : ""}">${this._art(ASSET.contract(c.type), (c.type || "C")[0])}
         <div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
         <div class="c-desc">${c.desc}</div>
-        <div class="c-tags">${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
+        <div class="c-tags">${stationTag}${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
           ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
           ${c.cargoRequired ? `<span>▣ ${c.cargoRequired}</span>` : ""}
           <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
-          <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
+          <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 && c.source !== "station" ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
           <button class="btn btn-go" data-view="${c.id}">${this.t("comms.viewContract", "View Contract")}</button></div></div>`;
     };
@@ -2088,7 +2091,8 @@ const UI = {
           <p class="muted-note">Uninstall refunds 50% of component cost and starts a 6h refit (no production).</p>
         </section>
       </div>
-      ${this._renderHallPanel(st)}`;
+      ${this._renderHallPanel(st)}
+      ${this._renderContractOfficePanel(st)}`;
 
     body.querySelector("#st-set-prod")?.addEventListener("click", () => {
       const id = body.querySelector("#st-prod")?.value;
@@ -2148,6 +2152,68 @@ const UI = {
       };
     });
     this._wireHallPanel(body, st);
+    this._wireContractOfficePanel(body, st);
+  },
+
+  _renderContractOfficePanel(st) {
+    if (!(st.modules.contract_office | 0)) {
+      return `<div class="panel" style="margin-top:14px"><h3>Contract Office</h3>
+        <p class="muted-note">Install a Contract Office to post escrowed haul jobs from your station hold onto the Bazaar board. NPC haulers fill slowly; players clear them faster.</p></div>`;
+    }
+    const rel = Stations.reliability(st);
+    const relTxt = rel == null ? "unrated" : `${Math.round(rel * 100)}% fulfilled`;
+    const holdIds = Object.keys(st.hold || {}).filter(id => (st.hold[id] | 0) > 0);
+    const opts = holdIds.map(id => {
+      const c = COMMODITIES.find(x => x.id === id);
+      return `<option value="${id}">${c ? c.name : id} (${st.hold[id]})</option>`;
+    }).join("") || `<option value="">Hold empty</option>`;
+    const rows = (st.contracts || []).map(c => {
+      const comm = COMMODITIES.find(x => x.id === c.commId);
+      const left = Math.max(0, c.expiresAt - Date.now());
+      return `<tr>
+        <td>${c.qty}× ${comm ? comm.name : c.commId}<div class="tip-dim">${c.status} · ${c.rate}c/u · ${Util.duration(left)}</div></td>
+        <td class="num">${Util.credits(c.escrow)}</td>
+        <td class="actions">${c.status === "open"
+          ? `<button class="btn btn-mini" data-st-haul-cancel="${c.id}">Cancel</button>`
+          : `<span class="tip-dim">in flight</span>`}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">No haul postings — escrow a bounty from the hold.</td></tr>`;
+    const feePct = ((STATIONCFG.contractPostFeeBps || 0) / 100).toFixed(0);
+    return `<div class="panel st-haul" style="margin-top:14px">
+      <h3>Contract Office <small>${relTxt}</small></h3>
+      <p class="muted-note">Post haul orders to the Bazaar Contracts board. Bounty is escrowed at post (${feePct}% faction fee). Goods leave the hold until filled, expired, or cancelled.</p>
+      <div class="st-hall-list" style="margin-top:10px">
+        <select id="st-haul-comm">${opts}</select>
+        <input type="number" id="st-haul-qty" min="1" value="20" aria-label="quantity">
+        <input type="number" id="st-haul-rate" min="${STATIONCFG.contractMinRate || 5}" value="40" aria-label="credits per unit">
+        <button class="btn btn-go" id="st-haul-post">Post haul</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Posting</th><th class="num">Escrow</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  },
+
+  _wireContractOfficePanel(body, st) {
+    body.querySelector("#st-haul-post")?.addEventListener("click", () => {
+      const commId = body.querySelector("#st-haul-comm")?.value;
+      const qty = +body.querySelector("#st-haul-qty")?.value || 0;
+      const rate = +body.querySelector("#st-haul-rate")?.value || 0;
+      const r = Stations.postHaul(st.systemId, commId, qty, rate);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Haul posted — escrowed ${Util.credits(r.contract.escrow)} (+${Util.credits(r.fee)} fee).`, "good");
+      this.flashCredits(); this.renderStations(); this.updateHeader();
+      if (this.page === "bazaar") this.renderBazaar();
+    });
+    body.querySelectorAll("[data-st-haul-cancel]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Haul cancelled — goods and bounty returned.", "info");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
   },
 
   _renderHallPanel(st) {

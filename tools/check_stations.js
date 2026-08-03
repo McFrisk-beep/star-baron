@@ -243,6 +243,74 @@ const bbBlock = Stations.listHallItem(target.systemId, "blackbox", "bb1", 200);
 assert.ok(!bbBlock.ok, "customs without black market blocks blackboxes");
 delete target.modules.customs_house;
 
+// ---- Contract Office (§11) ------------------------------------------------
+delete target.modules.exchange_hall;
+target.modules.contract_office = 0;
+target.reactorLevel = 3;
+ctx.Game.state.credits = 5_000_000;
+const coInst = Stations.install(target.systemId, "contract_office");
+assert.ok(coInst.ok, coInst.msg);
+assert.ok(Stations.hasContractOffice(target), "contract office installed");
+
+const haulComm = pool[0].id;
+target.hold[haulComm] = 100;
+const stockCapBefore = Stock.available(target.sectorId, haulComm);
+const credPost = ctx.Game.state.credits;
+const posted = Stations.postHaul(target.systemId, haulComm, 40, 50);
+assert.ok(posted.ok, posted.msg);
+assert.strictEqual(target.hold[haulComm], 60, "post reserves hold goods");
+const escrow = 40 * 50;
+const fee = Math.floor(escrow * STATIONCFG.contractPostFeeBps / 10000);
+assert.strictEqual(ctx.Game.state.credits, credPost - escrow - fee, "escrow + fee deducted");
+assert.ok(Stations.contractEscrowValue() >= escrow, "haul escrow in net worth");
+assert.ok(Stations.boardContracts().some(c => c.id === posted.contract.id), "board lists haul");
+
+// Owner cannot fly own haul
+const selfFly = Stations.claimHaulForLaunch(posted.contract.id);
+assert.ok(!selfFly.ok, "owner blocked from own haul");
+
+// Cancel refunds
+assert.ok(Stations.cancelHaul(target.systemId, posted.contract.id).ok);
+assert.strictEqual(target.hold[haulComm], 100, "cancel restores hold");
+assert.strictEqual(ctx.Game.state.credits, credPost - fee, "cancel refunds escrow not fee");
+
+// NPC fill delivers to sector stock
+target.hold[haulComm] = 80;
+ctx.Game.state.credits = 5_000_000;
+const posted2 = Stations.postHaul(target.systemId, haulComm, 20, 30);
+assert.ok(posted2.ok, posted2.msg);
+posted2.contract.createdAt = T - (STATIONCFG.contractNpcFillAfterMs + 1000);
+const origFill = STATIONCFG.contractNpcFillChance;
+STATIONCFG.contractNpcFillChance = 1;
+const npcFilled = Stations._npcFillHauls(target, 99);
+STATIONCFG.contractNpcFillChance = origFill;
+assert.strictEqual(npcFilled.length, 1, "NPC fills haul");
+assert.ok(Stock.available(target.sectorId, haulComm) >= stockCapBefore + 20, "NPC haul restocks sector");
+assert.strictEqual(Stations.reliability(target), 1, "reliability 100% after fill");
+
+// Player settle success (mission path stub): goods → stock, no escrow refund
+target.hold[haulComm] = 40;
+ctx.Game.state.credits = 5_000_000;
+const posted3 = Stations.postHaul(target.systemId, haulComm, 15, 25);
+assert.ok(posted3.ok, posted3.msg);
+posted3.contract.status = "active";
+const stockMid = Stock.available(target.sectorId, haulComm);
+const settle = Stations.settleHaul(posted3.contract.id, "success");
+assert.ok(settle.ok, settle.msg);
+assert.ok(Stock.available(target.sectorId, haulComm) >= stockMid + 15, "mission success restocks");
+assert.ok(!(target.contracts || []).some(c => c.id === posted3.contract.id), "settled haul removed");
+
+// Expiry refunds + reliability hit
+target.hold[haulComm] = 50;
+ctx.Game.state.credits = 5_000_000;
+const posted4 = Stations.postHaul(target.systemId, haulComm, 10, 20);
+assert.ok(posted4.ok, posted4.msg);
+posted4.contract.expiresAt = T - 1;
+const haulExp = Stations._expireHauls(target, T);
+assert.strictEqual(haulExp.length, 1);
+assert.strictEqual(target.hold[haulComm], 50, "expiry restores hold");
+assert.ok(Stations.reliability(target) < 1, "expiry lowers reliability");
+
 ctx.Game.state.currentSystem = visitorDock;
 
 console.log("OK check_stations");

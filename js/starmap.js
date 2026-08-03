@@ -297,10 +297,14 @@ const StarMap = {
         const sent = window.Stock ? Stock.sentiment[st.sectorId] : null;
         const band = sent == null ? "" : sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
         const hallN = (st.modules.exchange_hall | 0) ? (st.hall || []).length : -1;
+        const office = (st.modules.contract_office | 0);
+        const rel = office ? Stations.reliability(st) : null;
+        const officeTxt = !office ? "" : ` · Contract Office${rel == null ? "" : ` ${Math.round(rel * 100)}%`}`;
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
           (st.status === "owned" ? " · owned" : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
+          officeTxt +
           `</span>`;
       }
     }

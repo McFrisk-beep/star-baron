@@ -883,6 +883,14 @@ const STATIONCFG = {
   hallListMs: 48 * 60 * 60 * 1000,  // listing expiry window
   hallNpcBuyChance: 0.12,         // per listing per hourly tick (guest liquidity)
   hallMinPrice: 50,
+  // Contract Office (docs/STATIONS.md §11)
+  contractListMs: 36 * 60 * 60 * 1000, // haul posting window
+  contractPostFeeBps: 500,             // 5% posting fee → faction sink (anti-alt)
+  contractMinRate: 5,                  // credits per unit floor
+  contractNpcFillChance: 0.08,       // per open haul per hourly tick
+  contractNpcFillAfterMs: 4 * 60 * 60 * 1000, // NPC won't snatch brand-new posts
+  contractDurBaseMs: 25 * 60 * 1000,
+  contractDurPerUnitMs: 8 * 1000,
   reactor: [
     { power: 2,  upkeep: 1200 },
     { power: 4,  upkeep: 3000 },
