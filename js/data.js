@@ -879,6 +879,10 @@ const STATIONCFG = {
   // Vacant-bay NPC tenants (guest economy): fill chance falls as lease tax rises.
   npcLeaseChanceMax: 0.50,
   npcLeaseLeaveMult: 0.35,       // leave chance ≈ taxFrac × this
+  // Exchange Hall (docs/STATIONS.md §9)
+  hallListMs: 48 * 60 * 60 * 1000,  // listing expiry window
+  hallNpcBuyChance: 0.12,         // per listing per hourly tick (guest liquidity)
+  hallMinPrice: 50,
   reactor: [
     { power: 2,  upkeep: 1200 },
     { power: 4,  upkeep: 3000 },

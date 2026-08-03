@@ -2087,7 +2087,8 @@ const UI = {
           <tbody>${modRows}</tbody></table></div>
           <p class="muted-note">Uninstall refunds 50% of component cost and starts a 6h refit (no production).</p>
         </section>
-      </div>`;
+      </div>
+      ${this._renderHallPanel(st)}`;
 
     body.querySelector("#st-set-prod")?.addEventListener("click", () => {
       const id = body.querySelector("#st-prod")?.value;
@@ -2143,6 +2144,90 @@ const UI = {
         const r = Stations.uninstall(st.systemId, btn.dataset.stUninstall);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+    this._wireHallPanel(body, st);
+  },
+
+  _renderHallPanel(st) {
+    if (!(st.modules.exchange_hall | 0)) {
+      return `<div class="panel" style="margin-top:14px"><h3>Exchange Hall</h3>
+        <p class="muted-note">Install an Exchange Hall to open a player marketplace for gear, ships, extractors, components, blackboxes, and blueprints (not commodities).</p></div>`;
+    }
+    const listings = Stations.hallListings(st.systemId);
+    const inv = (window.Bazaar ? Bazaar.inventoryItems() : []).map(it => {
+      const kind = window.Items && Items.isBlackbox(it) ? "blackbox" : "gear";
+      return `<option value="${kind}:${it.uid}">${it.name} (${kind})</option>`;
+    });
+    const exs = (window.Extractors ? Extractors.unequipped() : []).map(ex =>
+      `<option value="extractor:${ex.uid}">${ex.name}</option>`);
+    const comps = (window.Components ? Components.unequipped() : []).map(c =>
+      `<option value="component:${c.uid}">${c.name || c.uid}</option>`);
+    const ships = (this.s().ships || []).filter(sh => sh.status === "idle" && !sh.mercenary).map(sh =>
+      `<option value="ship:${sh.uid}">${sh.name || sh.type}</option>`);
+    const bps = (this.s().knownRecipes || []).map(id => {
+      const r = (typeof RECIPES !== "undefined" ? RECIPES : []).find(x => x.id === id);
+      return r ? `<option value="blueprint:${id}">${r.name} Blueprint</option>` : "";
+    }).filter(Boolean);
+    const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
+    const rows = listings.map(l => {
+      const mine = l.sellerId === Stations.playerId();
+      const left = Math.max(0, l.expiresAt - Date.now());
+      return `<tr>
+        <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)} left</div></td>
+        <td class="num">${Util.credits(l.price)}</td>
+        <td class="actions">${mine
+          ? `<button class="btn btn-mini" data-hall-cancel="${l.id}">Cancel</button>`
+          : `<button class="btn btn-mini btn-go" data-hall-buy="${l.id}" data-cost="${l.price}">Buy</button>`}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">No listings — be the first stall.</td></tr>`;
+    return `<div class="panel st-hall" style="margin-top:14px">
+      <h3>Exchange Hall <small>sale tariff ${((st.saleTariffBps || 0) / 100).toFixed(0)}%</small></h3>
+      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must be in-sector (docked at the capital). NPC traders sometimes clear stalls in guest mode.</p>
+      <label>Tariff % <input type="number" id="st-tariff" min="0" max="15" value="${((st.saleTariffBps || 0) / 100).toFixed(0)}"></label>
+      <button class="btn btn-mini" id="st-set-tariff">Set</button>
+      <div class="st-hall-list" style="margin-top:10px">
+        <select id="st-hall-item">${opts}</select>
+        <input type="number" id="st-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500" aria-label="list price">
+        <button class="btn btn-go" id="st-hall-list">List</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Listing</th><th class="num">Price</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  },
+
+  _wireHallPanel(body, st) {
+    body.querySelector("#st-set-tariff")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-tariff")?.value || 0;
+      Stations.setSaleTariff(st.systemId, pct * 100);
+      this.toast(`Sale tariff set to ${pct}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("#st-hall-list")?.addEventListener("click", () => {
+      const raw = body.querySelector("#st-hall-item")?.value || "";
+      const price = +body.querySelector("#st-hall-price")?.value || 0;
+      const [kind, ref] = raw.split(":");
+      if (!kind || !ref) return this.toast("Pick something to list.", "warn");
+      const r = Stations.listHallItem(st.systemId, kind, ref, price);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
+      this.renderStations(); this.updateHeader();
+    });
+    body.querySelectorAll("[data-hall-cancel]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.cancelHallListing(st.systemId, btn.dataset.hallCancel);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Listing cancelled — item returned.", "info");
+        this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-hall-buy]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.buyHallListing(st.systemId, btn.dataset.hallBuy);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader();
       };
     });

@@ -35,7 +35,13 @@ ctx.Game = {
 };
 ctx.Rep = { edgeForCategory: () => 0, onTrade() {}, get: () => 0 };
 ctx.Fleet = { fleetValue: () => 0, dockTravelMs: () => 1000, mainDef: () => ({ travelSpeed: 1 }) };
-ctx.Bazaar = { itemsValue: () => 0 };
+ctx.Bazaar = {
+  itemsValue: () => 0,
+  equippedSet: () => new Set(),
+  inventoryItems: () => Object.values(ctx.Game.state.items || {}),
+  inventoryUsed() { return this.inventoryItems().length; },
+  capacity: () => 40,
+};
 ctx.Bus = { emit() {} };
 ctx.UI = { toast() {} };
 
@@ -164,5 +170,79 @@ const other = Stations.list().find(st => st.systemId !== target.systemId);
 ctx.Game.state.credits = 5_000_000;
 const r2 = Stations.openAuction(other.systemId, Stations.openingBid(other));
 assert.ok(!r2.ok, "cap blocks opening a second auction while owning 1");
+
+// ---- Exchange Hall (§9) ---------------------------------------------------
+Stations.vacateBay(target.systemId, 0);
+target.modules = { production_hub: 1 };
+target.reactorLevel = 2; // budget covers hub(4) + hall(4)
+ctx.Game.state.credits = 5_000_000;
+const hallInst = Stations.install(target.systemId, "exchange_hall");
+assert.ok(hallInst.ok, hallInst.msg);
+assert.ok(Stations.hasHall(target), "hall installed");
+
+// Access: owner always; visitor needs sector capital dock
+assert.ok(Stations.canUseHall(target.systemId).ok, "owner can use hall");
+const visitorDock = ctx.Game.state.currentSystem;
+ctx.Game.state.currentSystem = "navos"; // may or may not be this sector's capital
+const secHall = Galaxy.sector(target.sectorId);
+// Simulate non-owner access via capital
+const ownerSave = target.ownerId;
+target.ownerId = "alice";
+ctx.Game.state.currentSystem = secHall.capital;
+assert.ok(Stations.canUseHall(target.systemId).ok, "capital dock unlocks visitor hall");
+// Wrong capital: dock at another sector's hub
+const otherCap = Galaxy.list.find(s => s.capital && s.id !== secHall.capital);
+assert.ok(otherCap, "another capital exists");
+ctx.Game.state.currentSystem = otherCap.id;
+assert.ok(!Stations.canUseHall(target.systemId).ok, "wrong capital blocks visitor hall");
+target.ownerId = ownerSave;
+ctx.Game.state.currentSystem = secHall.capital;
+
+// List / cancel extractor
+const hallEx = { uid: "exHall1", type: "jack", scope: "all", name: "Hall Jack", components: [] };
+Extractors.acquire(hallEx);
+const listed = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 900);
+assert.ok(listed.ok, listed.msg);
+assert.ok(!Extractors.get(hallEx.uid), "listing escrows extractor");
+assert.ok(Stations.hallEscrowValue() > 0, "hall escrow in net worth");
+assert.ok(Stations.cancelHallListing(target.systemId, listed.listing.id).ok);
+assert.ok(Extractors.get(hallEx.uid), "cancel restores extractor");
+
+// Tariff on NPC buy
+Stations.setSaleTariff(target.systemId, 1000); // 10%
+assert.strictEqual(target.saleTariffBps, 1000);
+Extractors.acquire(hallEx);
+const listed2 = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 1000);
+assert.ok(listed2.ok, listed2.msg);
+const credBefore = ctx.Game.state.credits;
+const treasBefore = target.treasury | 0;
+const origChance = STATIONCFG.hallNpcBuyChance;
+STATIONCFG.hallNpcBuyChance = 1;
+const sold = Stations._npcBuyHall(target, 42);
+STATIONCFG.hallNpcBuyChance = origChance;
+assert.strictEqual(sold.length, 1, "NPC clears listing");
+assert.strictEqual(ctx.Game.state.credits, credBefore + 900, "seller nets price − 10% tariff");
+assert.strictEqual(target.treasury, treasBefore + 100, "tariff → treasury");
+assert.ok(!Extractors.get(hallEx.uid), "NPC sale consumes goods");
+
+// Expiry returns goods
+Extractors.acquire(hallEx);
+const listed3 = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 500);
+assert.ok(listed3.ok, listed3.msg);
+listed3.listing.expiresAt = T - 1;
+const expired = Stations._expireHall(target, T);
+assert.strictEqual(expired.length, 1);
+assert.ok(Extractors.get(hallEx.uid), "expiry restores seller goods");
+
+// Customs House blocks blackbox without Black Market
+target.modules.customs_house = 1;
+target.modules.black_market = 0;
+ctx.Game.state.items = { bb1: { uid: "bb1", name: "Hot Box", consumable: true, effectId: "smuggle", value: 200 } };
+ctx.Items = { isBlackbox: it => !!(it && it.effectId) };
+const bbBlock = Stations.listHallItem(target.systemId, "blackbox", "bb1", 200);
+assert.ok(!bbBlock.ok, "customs without black market blocks blackboxes");
+delete target.modules.customs_house;
+
+ctx.Game.state.currentSystem = visitorDock;
 
 console.log("OK check_stations");

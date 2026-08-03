@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook); server RPCs stubbed in `docs/sql/sector_stock.sql`
+**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook + Exchange Hall §9); server RPCs stubbed in `docs/sql/sector_stock.sql`
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -352,6 +352,8 @@ Lease tax above a fair-rate threshold feeds the Station Standing penalty (§6.2)
 ---
 
 ## 9. Exchange Hall — the player marketplace
+
+**Client status:** live in guest mode (`Stations.listHallItem` / `buyHallListing` / `_npcBuyHall`). Owners manage via the Stations tab; visitors use the Star Map system panel while docked at the sector capital (non-capital docking lands with Customs/Free Port). NPC buyers (`hallNpcBuyChance`) clear stalls so guest solo play has liquidity. Customs House without Black Market blocks blackbox listings.
 
 Stations do **not** trade commodities. The Exchange Hall trades everything else: gear, accessories, crafted ships, extractors, components, blackboxes, blueprints.
 

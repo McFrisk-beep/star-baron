@@ -296,9 +296,12 @@ const StarMap = {
         const auc = Stations.getAuction(sys.id);
         const sent = window.Stock ? Stock.sentiment[st.sectorId] : null;
         const band = sent == null ? "" : sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
+        const hallN = (st.modules.exchange_hall | 0) ? (st.hall || []).length : -1;
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
           (st.status === "owned" ? " · owned" : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
-          (band ? ` · ${band}` : "") + `</span>`;
+          (band ? ` · ${band}` : "") +
+          (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
+          `</span>`;
       }
     }
     this.refs.tip.innerHTML =
@@ -374,6 +377,51 @@ const StarMap = {
             <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button></div>`;
         } else if (st.status === "cooldown") {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}</div>`;
+        }
+        // Exchange Hall: visitors use capital-dock access; owners manage via Stations tab.
+        const hallAccess = Stations.canUseHall(sys.id);
+        if (hallAccess.ok && st.ownerId !== Stations.playerId()) {
+          const listings = Stations.hallListings(sys.id);
+          const tariff = ((st.saleTariffBps || 0) / 100).toFixed(0);
+          const rows = listings.map(l => {
+            const left = Math.max(0, l.expiresAt - Date.now());
+            const mine = l.sellerId === Stations.playerId();
+            return `<tr>
+              <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)}</div></td>
+              <td class="num">${Util.credits(l.price)}</td>
+              <td>${mine
+                ? `<button class="btn btn-mini" data-sm-hall-cancel="${l.id}">Cancel</button>`
+                : `<button class="btn btn-mini btn-go" data-sm-hall-buy="${l.id}">Buy</button>`}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="3" class="tip-dim">No listings</td></tr>`;
+          const inv = (window.Bazaar ? Bazaar.inventoryItems() : []).map(it => {
+            const kind = window.Items && Items.isBlackbox(it) ? "blackbox" : "gear";
+            return `<option value="${kind}:${it.uid}">${it.name}</option>`;
+          });
+          const exs = (window.Extractors ? Extractors.unequipped() : []).map(ex =>
+            `<option value="extractor:${ex.uid}">${ex.name}</option>`);
+          const comps = (window.Components ? Components.unequipped() : []).map(c =>
+            `<option value="component:${c.uid}">${c.name || c.uid}</option>`);
+          const ships = (this.s().ships || []).filter(sh => sh.status === "idle" && !sh.mercenary).map(sh =>
+            `<option value="ship:${sh.uid}">${sh.name || sh.type}</option>`);
+          const bps = (this.s().knownRecipes || []).map(id => {
+            const r = (typeof RECIPES !== "undefined" ? RECIPES : []).find(x => x.id === id);
+            return r ? `<option value="blueprint:${id}">${r.name} Blueprint</option>` : "";
+          }).filter(Boolean);
+          const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
+          stationBlock += `<div class="si-station si-hall"><b>Exchange Hall</b> · tariff ${tariff}%
+            <div class="tip-dim">Crafted goods only · docked at sector capital</div>
+            <div class="st-hall-list" style="margin-top:6px">
+              <select id="sm-hall-item">${opts}</select>
+              <input type="number" id="sm-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500" aria-label="list price">
+              <button class="btn btn-mini btn-go" id="sm-hall-list">List</button>
+            </div>
+            <div class="table-wrap" style="margin-top:6px"><table class="market">
+              <thead><tr><th>Listing</th><th class="num">Price</th><th></th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div></div>`;
+        } else if ((st.modules.exchange_hall | 0) && !hallAccess.ok && st.ownerId !== Stations.playerId()) {
+          stationBlock += `<div class="si-station si-hall tip-dim">Exchange Hall — ${hallAccess.msg}</div>`;
         }
       }
     }
@@ -451,6 +499,34 @@ const StarMap = {
     };
     const stManage = document.getElementById("sm-st-manage");
     if (stManage) stManage.onclick = () => { this.close(); UI.showPage("stations"); };
+
+    const smHallList = document.getElementById("sm-hall-list");
+    if (smHallList) smHallList.onclick = () => {
+      const raw = document.getElementById("sm-hall-item")?.value || "";
+      const price = +document.getElementById("sm-hall-price")?.value || 0;
+      const [kind, ref] = raw.split(":");
+      if (!kind || !ref) return UI.toast("Pick something to list.", "warn");
+      const r = Stations.listHallItem(sys.id, kind, ref, price);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
+      window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
+    };
+    document.querySelectorAll("[data-sm-hall-cancel]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.cancelHallListing(sys.id, btn.dataset.smHallCancel);
+        if (!r.ok) return UI.toast(r.msg, "warn");
+        UI.toast("Listing cancelled — item returned.", "info");
+        this.renderInfo(sys); UI.updateHeader();
+      };
+    });
+    document.querySelectorAll("[data-sm-hall-buy]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
+        if (!r.ok) return UI.toast(r.msg, "warn");
+        UI.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
+        UI.flashCredits(); this.renderInfo(sys); UI.updateHeader();
+      };
+    });
 
     // admin-only: upload a custom space background for this system
     if (isAdmin) {

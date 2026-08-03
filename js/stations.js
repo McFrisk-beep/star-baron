@@ -59,6 +59,7 @@ const Stations = {
       hold: {},                 // owner production awaiting haul
       prodComm: null,           // assigned Production Hub commodity
       bays: [],                 // [{lesseeId, extractorId}]
+      hall: [],                 // Exchange Hall listings
       upkeepPaidThrough: 0,
       cooldownUntil: 0,
       refitUntil: 0,
@@ -213,6 +214,10 @@ const Stations = {
     } else if ((st.modules.production_hub | 0) < 2) {
       delete st.modules.refinery;
     }
+    if (moduleId === "exchange_hall") {
+      for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
+      st.hall = [];
+    }
     Game.state.credits += refund;
     st.status = "refit";
     st.refitUntil = Date.now() + STATIONCFG.refitMs;
@@ -254,6 +259,292 @@ const Stations = {
     st.saleTariffBps = Util.clamp(Math.round(+bps || 0), 0, 1500);
     if (window.Game) Game.requestSave();
     return { ok: true, saleTariffBps: st.saleTariffBps };
+  },
+
+  // ---- Exchange Hall (docs/STATIONS.md §9) --------------------------------
+  hasHall(st) {
+    return !!(st && (st.modules.exchange_hall | 0) && st.status === "owned");
+  },
+
+  // Guest constraint: no non-capital docking yet — hall is usable when docked
+  // at the sector capital (in-sector) or when you own the station.
+  canUseHall(systemId) {
+    const st = this.get(systemId);
+    if (!this.hasHall(st)) return { ok: false, msg: "No Exchange Hall here." };
+    if (st.status === "refit") return { ok: false, msg: "Station is in refit." };
+    const s = window.Game && Game.state;
+    if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
+    if (st.ownerId === this.playerId()) return { ok: true, st };
+    const sec = Galaxy.sector(st.sectorId);
+    if (sec && s.currentSystem === sec.capital) return { ok: true, st };
+    return { ok: false, msg: "Dock at the sector capital to use this Exchange Hall." };
+  },
+
+  hallListings(systemId) {
+    const st = this.get(systemId);
+    return (st && Array.isArray(st.hall)) ? st.hall : [];
+  },
+
+  _listingValue(listing) {
+    if (!listing) return 0;
+    if (listing.value != null) return +listing.value || 0;
+    const p = listing.payload;
+    if (!p) return 0;
+    if (p.value != null) return +p.value || 0;
+    if (listing.kind === "ship" && window.Fleet) {
+      const def = Fleet.shipDef(p.type); return def ? def.price : 0;
+    }
+    if (listing.kind === "extractor" && window.Extractors) return Extractors.price(p) || 0;
+    if (listing.kind === "component" && window.Components) return Components.price(p);
+    return 0;
+  },
+
+  // Escrowed hall goods still count toward net worth (like auction bids).
+  hallEscrowValue(pid = this.playerId()) {
+    let n = 0;
+    for (const st of this.list()) {
+      for (const l of st.hall || []) if (l.sellerId === pid) n += this._listingValue(l);
+    }
+    return n;
+  },
+
+  escrowForNetWorth(pid = this.playerId()) {
+    return this.escrowTotal(pid) + this.hallEscrowValue(pid);
+  },
+
+  _takeListable(kind, ref) {
+    const s = Game.state;
+    if (kind === "gear" || kind === "blackbox") {
+      const it = s.items[ref]; if (!it) return { ok: false, msg: "Item not found." };
+      if (window.Bazaar && Bazaar.equippedSet().has(ref)) return { ok: false, msg: "Unequip it first." };
+      if (kind === "blackbox" && !(window.Items && Items.isBlackbox(it))) return { ok: false, msg: "Not a blackbox." };
+      if (kind === "gear" && window.Items && Items.isBlackbox(it)) return { ok: false, msg: "List blackboxes as blackbox." };
+      delete s.items[ref];
+      return { ok: true, name: it.name, value: it.value || 0, payload: it };
+    }
+    if (kind === "extractor") {
+      const ex = window.Extractors && Extractors.get(ref);
+      if (!ex) return { ok: false, msg: "Extractor not found." };
+      if (Extractors.installedSet().has(ref)) return { ok: false, msg: "Uninstall the extractor first." };
+      const payload = JSON.parse(JSON.stringify(ex));
+      delete Extractors.pool()[ref];
+      return { ok: true, name: payload.name, value: Extractors.price(payload) || 0, payload };
+    }
+    if (kind === "component") {
+      const c = window.Components && Components.get(ref);
+      if (!c) return { ok: false, msg: "Component not found." };
+      if (Components.installedSet().has(ref)) return { ok: false, msg: "Detach the component first." };
+      const payload = JSON.parse(JSON.stringify(c));
+      delete Components.pool()[ref];
+      return { ok: true, name: payload.name || Components.nameFromUid(payload), value: Components.price(payload), payload };
+    }
+    if (kind === "ship") {
+      const sh = (s.ships || []).find(x => x.uid === ref);
+      if (!sh) return { ok: false, msg: "Ship not found." };
+      if (sh.status !== "idle") return { ok: false, msg: "Ship must be idle." };
+      if (sh.mercenary) return { ok: false, msg: "Can't list a mercenary." };
+      const payload = JSON.parse(JSON.stringify(sh));
+      s.ships = s.ships.filter(x => x.uid !== ref);
+      const def = window.Fleet && Fleet.shipDef(payload.type);
+      return { ok: true, name: payload.name || payload.type, value: def ? def.price : 0, payload };
+    }
+    if (kind === "blueprint") {
+      const recipes = s.knownRecipes || [];
+      if (!recipes.includes(ref)) return { ok: false, msg: "Blueprint not unlocked." };
+      const recipe = (typeof RECIPES !== "undefined" ? RECIPES : []).find(r => r.id === ref);
+      if (!recipe) return { ok: false, msg: "Unknown recipe." };
+      s.knownRecipes = recipes.filter(id => id !== ref);
+      return { ok: true, name: `${recipe.name} Blueprint`, value: 8000, payload: { recipeId: ref } };
+    }
+    return { ok: false, msg: "Unsupported listing type." };
+  },
+
+  _restoreListable(listing, toPid) {
+    if (!listing || !listing.payload) return;
+    // Guest: only the local player has inventory to restore into.
+    if (toPid && toPid !== this.playerId()) return;
+    const s = Game.state;
+    const p = listing.payload;
+    if (listing.kind === "gear" || listing.kind === "blackbox") {
+      s.items[p.uid] = p;
+    } else if (listing.kind === "extractor" && window.Extractors) {
+      Extractors.pool()[p.uid] = p;
+    } else if (listing.kind === "component" && window.Components) {
+      Components.pool()[p.uid] = p;
+    } else if (listing.kind === "ship") {
+      s.ships = s.ships || [];
+      if (!s.ships.some(x => x.uid === p.uid)) s.ships.push(p);
+    } else if (listing.kind === "blueprint") {
+      s.knownRecipes = s.knownRecipes || [];
+      if (p.recipeId && !s.knownRecipes.includes(p.recipeId)) s.knownRecipes.push(p.recipeId);
+    }
+  },
+
+  _deliverListable(listing, buyerPid) {
+    if (!listing || !listing.payload) return { ok: false, msg: "Empty listing." };
+    if (buyerPid !== this.playerId()) return { ok: false, msg: "Buyer unavailable." };
+    const s = Game.state;
+    const p = listing.payload;
+    if (listing.kind === "gear" || listing.kind === "blackbox") {
+      if (window.Bazaar && Bazaar.inventoryUsed() >= Bazaar.capacity())
+        return { ok: false, msg: "Inventory full." };
+      s.items[p.uid] = p;
+      return { ok: true };
+    }
+    if (listing.kind === "extractor" && window.Extractors) {
+      Extractors.pool()[p.uid] = p;
+      return { ok: true };
+    }
+    if (listing.kind === "component" && window.Components) {
+      Components.pool()[p.uid] = p;
+      return { ok: true };
+    }
+    if (listing.kind === "ship") {
+      const cap = window.Economy ? Economy.fleetCap() : 99;
+      if ((s.ships || []).length >= cap) return { ok: false, msg: "Fleet at capacity." };
+      s.ships = s.ships || [];
+      s.ships.push(p);
+      return { ok: true };
+    }
+    if (listing.kind === "blueprint") {
+      s.knownRecipes = s.knownRecipes || [];
+      if (p.recipeId && !s.knownRecipes.includes(p.recipeId)) s.knownRecipes.push(p.recipeId);
+      return { ok: true };
+    }
+    return { ok: false, msg: "Unsupported listing type." };
+  },
+
+  listHallItem(systemId, kind, ref, price) {
+    const access = this.canUseHall(systemId);
+    if (!access.ok) return access;
+    const st = access.st;
+    // Black Market unlocks illicit-adjacent goods; without it, block blackboxes
+    // when the station runs a Customs House (clean port fantasy).
+    if (kind === "blackbox" && (st.modules.customs_house | 0) && !(st.modules.black_market | 0))
+      return { ok: false, msg: "Customs House — blackboxes need a Black Market." };
+    price = Math.floor(+price || 0);
+    if (price < (STATIONCFG.hallMinPrice || 50)) return { ok: false, msg: `Price at least ${STATIONCFG.hallMinPrice}c.` };
+    const taken = this._takeListable(kind, ref);
+    if (!taken.ok) return taken;
+    if (!Array.isArray(st.hall)) st.hall = [];
+    const now = Date.now();
+    const listing = {
+      id: "hl" + (++Game.state.seq),
+      sellerId: this.playerId(),
+      kind,
+      name: taken.name,
+      price,
+      value: taken.value,
+      payload: taken.payload,
+      listedAt: now,
+      expiresAt: now + (STATIONCFG.hallListMs || 48 * 3600 * 1000),
+    };
+    st.hall.push(listing);
+    this._ledger(st, 0, "hall_list", `${listing.name} @ ${price}`);
+    if (window.Game) Game.requestSave();
+    return { ok: true, listing };
+  },
+
+  cancelHallListing(systemId, listingId) {
+    const st = this.get(systemId);
+    if (!st || !Array.isArray(st.hall)) return { ok: false, msg: "No listing." };
+    const idx = st.hall.findIndex(l => l.id === listingId);
+    if (idx < 0) return { ok: false, msg: "Listing gone." };
+    const listing = st.hall[idx];
+    if (listing.sellerId !== this.playerId() && st.ownerId !== this.playerId())
+      return { ok: false, msg: "Not your listing." };
+    st.hall.splice(idx, 1);
+    this._restoreListable(listing, listing.sellerId);
+    if (window.Game) Game.requestSave();
+    return { ok: true };
+  },
+
+  buyHallListing(systemId, listingId) {
+    const access = this.canUseHall(systemId);
+    if (!access.ok) return access;
+    const st = access.st;
+    const idx = (st.hall || []).findIndex(l => l.id === listingId);
+    if (idx < 0) return { ok: false, msg: "Listing gone." };
+    const listing = st.hall[idx];
+    const pid = this.playerId();
+    if (listing.sellerId === pid) return { ok: false, msg: "That's your listing." };
+    const s = Game.state;
+    if (s.credits < listing.price) return { ok: false, msg: "Not enough credits." };
+    s.credits -= listing.price;
+    const delivered = this._deliverListable(listing, pid);
+    if (!delivered.ok) {
+      s.credits += listing.price;
+      return delivered;
+    }
+    const tariff = Math.floor(listing.price * Util.clamp(st.saleTariffBps | 0, 0, 1500) / 10000);
+    const sellerGets = listing.price - tariff;
+    if (tariff > 0) {
+      st.treasury += tariff;
+      this._ledger(st, tariff, "hall_tariff", listing.name);
+    }
+    // Seller proceeds: mailbox until claimed (server authority will settle live).
+    st.pendingPayouts = st.pendingPayouts || {};
+    st.pendingPayouts[listing.sellerId] = (st.pendingPayouts[listing.sellerId] | 0) + sellerGets;
+    this.claimHallPayouts();
+    st.hall.splice(idx, 1);
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return { ok: true, listing, tariff, paid: listing.price };
+  },
+
+  // Claim any pending sale proceeds (multiplayer / identity handoff).
+  claimHallPayouts() {
+    const stList = this.list();
+    const pid = this.playerId();
+    let got = 0;
+    for (const st of stList) {
+      if (!st.pendingPayouts || !st.pendingPayouts[pid]) continue;
+      const n = st.pendingPayouts[pid] | 0;
+      if (n <= 0) continue;
+      Game.state.credits += n;
+      got += n;
+      delete st.pendingPayouts[pid];
+      this._ledger(st, n, "hall_payout", "sale proceeds");
+    }
+    if (got && window.Game) Game.requestSave();
+    return { ok: true, amount: got };
+  },
+
+  _expireHall(st, now = Date.now()) {
+    if (!Array.isArray(st.hall) || !st.hall.length) return [];
+    const kept = [], returned = [];
+    for (const l of st.hall) {
+      if (now >= l.expiresAt) {
+        this._restoreListable(l, l.sellerId);
+        returned.push(l);
+      } else kept.push(l);
+    }
+    st.hall = kept;
+    return returned;
+  },
+
+  _npcBuyHall(st, hourIndex) {
+    if (!Array.isArray(st.hall) || !st.hall.length) return [];
+    const sold = [];
+    const chance = STATIONCFG.hallNpcBuyChance || 0.12;
+    const keep = [];
+    for (let i = 0; i < st.hall.length; i++) {
+      const l = st.hall[i];
+      const s = Market._seed([st.systemId, "hall", l.id, String(hourIndex)]);
+      if (Market._u01(s, 0) >= chance) { keep.push(l); continue; }
+      const tariff = Math.floor(l.price * Util.clamp(st.saleTariffBps | 0, 0, 1500) / 10000);
+      const sellerGets = l.price - tariff;
+      if (l.sellerId === this.playerId()) Game.state.credits += sellerGets;
+      else {
+        st.pendingPayouts = st.pendingPayouts || {};
+        st.pendingPayouts[l.sellerId] = (st.pendingPayouts[l.sellerId] | 0) + sellerGets;
+      }
+      if (tariff > 0) { st.treasury += tariff; this._ledger(st, tariff, "hall_tariff", `NPC · ${l.name}`); }
+      sold.push(l);
+      if (window.Bus) Bus.emit("listingSold", { name: l.name, price: l.price, hall: true });
+    }
+    st.hall = keep;
+    return sold;
   },
 
   setScrutiny(systemId, pct) {
@@ -598,8 +889,6 @@ const Stations = {
   },
 
   // Credits currently locked in bids — counted in net worth.
-  escrowForNetWorth(pid = this.playerId()) { return this.escrowTotal(pid); },
-
   _closeAuction(systemId, now = Date.now()) {
     const auc = this.auctions[systemId];
     if (!auc || auc.status !== "open") return;
@@ -707,6 +996,13 @@ const Stations = {
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
       if (st.status === "cooldown" && now >= st.cooldownUntil) st.status = "npc";
 
+      // Exchange Hall: expiry + guest NPC buyers (liquidity until real P2P).
+      if (this.hasHall(st)) {
+        this._expireHall(st, now);
+        const sold = this._npcBuyHall(st, hourIndex);
+        if (sold.length && window.Economy) Economy.refreshNetWorth();
+      }
+
       if (st.status !== "owned") continue;
 
       // Suspend standing decay during declared refit (open question → yes).
@@ -781,6 +1077,9 @@ const Stations = {
     // Clear bays — player extractors return to storage (not seized).
     this.syncBays(st);
     for (const bay of st.bays || []) this._clearBay(st, bay);
+    // Hall listings return to sellers (not seized with the landlord).
+    for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
+    st.hall = [];
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
@@ -819,7 +1118,9 @@ const Stations = {
     for (const st of this.list()) {
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
       if (st.status === "cooldown" && now >= st.cooldownUntil) st.status = "npc";
+      if (st.hall && st.hall.length) this._expireHall(st, now);
     }
+    this.claimHallPayouts();
   },
 
   _ledger(st, amount, kind, note) {
@@ -853,6 +1154,8 @@ const Stations = {
       st.modules = (st.modules && typeof st.modules === "object") ? st.modules : {};
       st.hold = (st.hold && typeof st.hold === "object") ? st.hold : {};
       st.bays = Array.isArray(st.bays) ? st.bays : [];
+      st.hall = Array.isArray(st.hall) ? st.hall : [];
+      st.pendingPayouts = (st.pendingPayouts && typeof st.pendingPayouts === "object") ? st.pendingPayouts : {};
       st.reactorLevel = Util.clamp(st.reactorLevel | 0, 0, 5);
       this.syncBays(st);
       st.standing = Util.clamp(+st.standing || STATIONCFG.standingStart, 0, 100);
