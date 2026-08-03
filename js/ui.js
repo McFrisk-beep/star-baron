@@ -3244,7 +3244,16 @@ const UI = {
       if (this.page === "fleet") this.renderInventory();
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
-    Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
+    Bus.on("dock", d => {
+      if (!d.arrived) return;
+      let msg = `Docked at ${this.sysName(d.sysId)}.`;
+      if (d.leaseClaim) {
+        const n = Object.values(d.leaseClaim).reduce((a, q) => a + (q | 0), 0);
+        if (n > 0) msg += ` Claimed ${n} leased units.`;
+      }
+      this.toast(msg, "good");
+      this.updateExchange(); this.updateHeader(); this.renderSystems();
+    });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
       const where = this.sysName(ev.sysId);

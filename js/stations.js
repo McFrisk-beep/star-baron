@@ -730,6 +730,7 @@ const Stations = {
     const contract = {
       id: "sc" + (++s.seq),
       commId, qty, rate, escrow, fee,
+      ownerId: this.playerId(), // station owner at post — survives revolt for refunds
       status: "open",
       createdAt: now,
       expiresAt: now + (STATIONCFG.contractListMs || 36 * 3600 * 1000),
@@ -758,11 +759,13 @@ const Stations = {
   _refundHaul(st, c) {
     if (!c) return;
     st.hold[c.commId] = (st.hold[c.commId] | 0) + (c.qty | 0);
-    if (st.ownerId === this.playerId()) Game.state.credits += c.escrow | 0;
-    else {
+    const payTo = c.ownerId || st.ownerId;
+    if (payTo === this.playerId()) Game.state.credits += c.escrow | 0;
+    else if (payTo) {
       st.pendingPayouts = st.pendingPayouts || {};
-      st.pendingPayouts[st.ownerId] = (st.pendingPayouts[st.ownerId] | 0) + (c.escrow | 0);
+      st.pendingPayouts[payTo] = (st.pendingPayouts[payTo] | 0) + (c.escrow | 0);
     }
+    // ponytail: if payTo is missing (legacy save), escrow is burned — better than pendingPayouts[null]
     this._ledger(st, c.escrow | 0, "haul_refund", c.id);
   },
 
@@ -931,6 +934,9 @@ const Stations = {
     if (st.ownerId === pid) return { ok: false, msg: "You own this station — occupy a bay instead." };
     if (!(st.modules.production_hub | 0) || !st.prodComm)
       return { ok: false, msg: "No Production Hub commodity assigned." };
+    const s = window.Game && Game.state;
+    if (!s || s.travel) return { ok: false, msg: "Can't lease in transit." };
+    if (s.currentSystem !== systemId) return { ok: false, msg: "Dock at this station to lease a bay." };
     this.syncBays(st);
     const bay = st.bays[bayIndex];
     if (!bay) return { ok: false, msg: "No such bay." };
@@ -946,6 +952,37 @@ const Stations = {
     bay.npc = false;
     if (window.Game) Game.requestSave();
     return { ok: true, bay };
+  },
+
+  // Vacant leaseable bays at a station (visitor UI).
+  leaseableBays(systemId) {
+    const st = this.get(systemId);
+    if (!st || st.status !== "owned" || !(st.modules.production_hub | 0) || !st.prodComm) return [];
+    this.syncBays(st);
+    return (st.bays || []).map((b, i) => ({ index: i, bay: b }))
+      .filter(x => !x.bay.lesseeId);
+  },
+
+  // Credit leased keep-cargo parked while the lessee was offline / remote.
+  claimPendingCargo(systemId) {
+    const st = this.get(systemId);
+    if (!st || !st.pendingCargo) return { ok: true, claimed: {} };
+    const pid = this.playerId();
+    const bag = st.pendingCargo[pid];
+    if (!bag || typeof bag !== "object") return { ok: true, claimed: {} };
+    const s = Game.state;
+    const claimed = {};
+    for (const [commId, qty] of Object.entries(bag)) {
+      const n = Math.floor(+qty || 0);
+      if (n <= 0) continue;
+      const held = s.positions[commId] || 0;
+      s.positions[commId] = held + n;
+      s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + n) : 0;
+      claimed[commId] = n;
+    }
+    delete st.pendingCargo[pid];
+    if (window.Game) Game.requestSave();
+    return { ok: true, claimed };
   },
 
   vacateBay(systemId, bayIndex) {
@@ -1014,6 +1051,7 @@ const Stations = {
     const taxBps = Util.clamp(st.leaseTaxBps | 0, 0, 4000);
     let total = 0;
     let ownerStaffed = 0;
+    const pid = this.playerId();
     for (const bay of st.bays) {
       if (!bay.lesseeId) continue;
       const gross = this._bayGross(st, bay);
@@ -1023,21 +1061,24 @@ const Stations = {
       if (isOwner) {
         ownerStaffed++;
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
-      } else if (bay.npc) {
-        // Tax only into station hold; NPC keeps the rest off-map.
-        const taxQty = Math.floor(gross * taxBps / 10000);
-        if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
-      } else if (bay.lesseeId === this.playerId() && window.Game) {
-        const taxQty = Math.floor(gross * taxBps / 10000);
-        const keep = gross - taxQty;
-        if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
-        if (keep > 0) {
-          const s = Game.state;
-          const held = s.positions[st.prodComm] || 0;
-          s.positions[st.prodComm] = held + keep;
-          // Soft income at zero cost basis (same as industry minting).
-          s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
-        }
+        continue;
+      }
+      const taxQty = Math.floor(gross * taxBps / 10000);
+      const keep = gross - taxQty;
+      if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
+      if (keep <= 0) continue;
+      if (bay.npc) continue; // NPC keeps residual off-map
+      if (bay.lesseeId === pid && window.Game) {
+        const s = Game.state;
+        const held = s.positions[st.prodComm] || 0;
+        s.positions[st.prodComm] = held + keep;
+        // Soft income at zero cost basis (same as industry minting).
+        s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
+      } else {
+        // Remote / third-party lessee — park keep until they claim.
+        if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
+        const bag = st.pendingCargo[bay.lesseeId] || (st.pendingCargo[bay.lesseeId] = {});
+        bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;
       }
     }
     // Expected deliveries scale with hub level and how many owner bays are staffed.
@@ -1601,6 +1642,7 @@ const Stations = {
       st.impoundClaims = Array.isArray(st.impoundClaims)
         ? st.impoundClaims.filter(c => c && c.id && c.commId && (c.qty | 0) > 0)
         : [];
+      st.pendingCargo = (st.pendingCargo && typeof st.pendingCargo === "object") ? st.pendingCargo : {};
       st.pendingPayouts = (st.pendingPayouts && typeof st.pendingPayouts === "object") ? st.pendingPayouts : {};
       st.reactorLevel = Util.clamp(st.reactorLevel | 0, 0, 5);
       this.syncBays(st);

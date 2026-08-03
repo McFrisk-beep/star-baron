@@ -737,8 +737,14 @@ const Economy = {
       const to = s.travel.to;
       s.currentSystem = to; s.travel = null;
       const customs = this.customsScan(to);       // gate scan before the exchange opens
-      Bus.emit("dock", { sysId: to, arrived: true });
-      return { to, customs };
+      // Claim any parked lease output waiting at this station.
+      let leaseClaim = null;
+      if (window.Stations && Stations.claimPendingCargo) {
+        const r = Stations.claimPendingCargo(to);
+        if (r && r.claimed && Object.keys(r.claimed).length) leaseClaim = r.claimed;
+      }
+      Bus.emit("dock", { sysId: to, arrived: true, leaseClaim });
+      return { to, customs, leaseClaim };
     }
     return null;
   },

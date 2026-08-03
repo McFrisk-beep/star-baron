@@ -120,7 +120,7 @@ assert.ok(Stock.available(target.sectorId, pool[0].id) >= stockBefore, "delivery
 assert.ok(Stations.vacateBay(target.systemId, 0).ok);
 assert.ok(Extractors.unequipped().some(e => e.uid === ex.uid), "vacated extractor free again");
 
-// Lease path: another owner's hub, local player leases
+// Lease path: another owner's hub, local player leases (must be docked there)
 const otherHub = Stations.list().find(st => st.systemId !== target.systemId);
 otherHub.ownerId = "alice";
 otherHub.status = "owned";
@@ -129,8 +129,11 @@ otherHub.prodComm = pool[0].id;
 otherHub.leaseTaxBps = 1000; // 10%
 otherHub.hold = {};
 Stations.syncBays(otherHub);
+assert.ok(!Stations.leaseBay(otherHub.systemId, 0, ex.uid).ok, "lease requires docking");
+ctx.Game.state.currentSystem = otherHub.systemId;
 const lease = Stations.leaseBay(otherHub.systemId, 0, ex.uid);
 assert.ok(lease.ok, lease.msg);
+assert.ok(Stations.leaseableBays(otherHub.systemId).every(x => x.index !== 0), "leased bay not listed vacant");
 ctx.Game.state.positions = {};
 const leased = Stations._playerProduce(otherHub, 2);
 assert.ok(leased > 0, "lessee bay produces");
@@ -138,8 +141,31 @@ const tax = Math.floor(leased * 0.10);
 const keep = leased - tax;
 assert.strictEqual(otherHub.hold[pool[0].id] | 0, tax, "lease tax → station hold");
 assert.strictEqual(ctx.Game.state.positions[pool[0].id] | 0, keep, "lessee keeps residual in cargo");
+
+// Third-party lessee: keep parks in pendingCargo (not dropped on the floor)
+Stations.vacateBay(otherHub.systemId, 0);
+Extractors.acquire(ex);
+otherHub.hold = {};
+otherHub.bays[0] = { lesseeId: "bob", extractorId: ex.uid, npc: false };
+// extractor must exist for _bayGross — bob's extractor on our save is fine for the harness
+const remote = Stations._playerProduce(otherHub, 3);
+assert.ok(remote > 0, "third-party bay produces");
+const rTax = Math.floor(remote * 0.10);
+const rKeep = remote - rTax;
+assert.strictEqual(otherHub.hold[pool[0].id] | 0, rTax, "third-party tax → hold");
+assert.strictEqual((otherHub.pendingCargo.bob || {})[pool[0].id] | 0, rKeep, "third-party keep → pendingCargo");
+// Claim as bob
+const realPid = Stations.playerId;
+Stations.playerId = () => "bob";
+ctx.Game.state.positions = {};
+const claimed = Stations.claimPendingCargo(otherHub.systemId);
+Stations.playerId = realPid;
+assert.strictEqual(claimed.claimed[pool[0].id] | 0, rKeep, "claimPendingCargo pays lessee");
+assert.strictEqual(ctx.Game.state.positions[pool[0].id] | 0, rKeep);
 Stations.vacateBay(otherHub.systemId, 0);
 otherHub.ownerId = null; otherHub.status = "npc"; otherHub.modules = {}; otherHub.bays = [];
+otherHub.pendingCargo = {};
+ctx.Game.state.currentSystem = sec.capital;
 
 // Re-occupy for strike test
 assert.ok(Stations.occupyBay(target.systemId, 0, ex.uid).ok);
