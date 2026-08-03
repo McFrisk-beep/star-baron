@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking); server RPCs stubbed in `docs/sql/sector_stock.sql`
+**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed.
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -456,6 +456,8 @@ Partner cannot withdraw, or co-ownership is a trust exercise with no recourse. C
 
 ## 14. Backend
 
+**Live (Phase 4 paste):** `docs/sql/phase4_sector_stock.sql` — `sector_stock` + RLS, `market.scarcity_mult` / baselines, replaced `app_trade` (stock lock + scarcity), `app_sector_stock`, optional `app_stock_tick` cron. Station tables partially created; `app_station_*` return not-implemented stubs.
+
 ```sql
 stations          system_id PK           -- one per system, enforced by schema
                   owner_id NULL, tier, power_used, reactor_level,
@@ -470,17 +472,17 @@ station_bays      station_id, bay_index, lessee_id, extractor_id, produced_units
 auctions          station_id, opens_at, closes_at, status
 auction_bids      auction_id, player_id, amount, placed_at, refunded_at
 
-sector_stock      sector_id, comm_id, units, updated_at
+sector_stock      sector_id, comm_id, units, updated_at   -- LIVE
 market_listings   station_id, seller_id, item jsonb, price, expires_at
 ```
 
-**RPCs:** `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`, `app_station_list_item`, `app_station_buy_item`.
+**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`; stubs: `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`, `app_station_list_item`, `app_station_buy_item`.
 
-**Cron (hourly):** consumption, NPC production with the elastic backstop, inter-sector trickle, sentiment and standing recalculation, revolt rolls, upkeep settlement, auction close, escrow refunds.
+**Cron (hourly):** `app_stock_tick` for consumption + NPC elastic backstop (optional). Full sentiment/revolt/auction close still client-side until station RPCs land.
 
-**RLS:** public read on `stations`, `sector_stock`, `auctions`, `market_listings` — everyone needs the map and the directory. Writes gated by owner/partner role checks, server-side.
+**RLS:** public read on `stations`, `sector_stock`. Writes gated by SECURITY DEFINER RPCs.
 
-**Critical:** stock decrements, tariff settlement and bid escrow must all live **inside** the authoritative trade path. `Cloud.trade` is already authoritative; extend it rather than adding a parallel client path, or the whole economy is trivially forged.
+**Critical:** stock decrements and scarcity pricing live **inside** `app_trade`. Do not fork a parallel client path for signed-in players.
 
 ---
 

@@ -290,7 +290,8 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    if (window.Stock) Stock.advance(elapsed, now);
+    // Phase 4: signed-in shelf is server-owned — skip local Stock.advance.
+    if (window.Stock && !(window.Economy && Economy.authoritative())) Stock.advance(elapsed, now);
     if (window.Stations) Stations.tick(now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
@@ -315,6 +316,8 @@ const Game = {
         offlineOrders = await Orders.process();
         if (window.Charters) Charters.reconcileShips();
       }
+      // Phase 4: hydrate shared sector shelf (no-op if SQL not pasted yet).
+      await this.syncSectorStock();
     }
     if (!usedPull) {
       // softIncomeLocal() is false for logged-in players until app_pull succeeds
@@ -602,6 +605,28 @@ const Game = {
     if (window.StarMap) StarMap.resume();
     if (window.Senate) Senate.resume();
     if (window.Bgm) Bgm.applyVolume();
+  },
+
+  // Phase 4: pull shared sector_stock into local Stock (for UI scarcity / Buy Max).
+  async syncSectorStock() {
+    if (!(window.Stock && window.Cloud && window.Economy && Economy.authoritative())) return false;
+    try {
+      const r = await Cloud.sectorStock();
+      if (!r || r.ok === false) {
+        if (r && r.missing) Stock.markServerShelf(false);
+        return false;
+      }
+      if (r.units) Stock.applyServerUnits(r.units, r.lastTickAt);
+      Stock.markServerShelf(true);
+      return true;
+    } catch (e) {
+      if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+        Stock.markServerShelf(false);
+        return false;
+      }
+      console.warn("[Game] sector stock sync failed:", e);
+      return false;
+    }
   },
 
   // Phase 3: bank soft income on the server. Returns the away recap blob or null

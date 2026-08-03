@@ -222,6 +222,14 @@ const Cloud = {
   async trade(action, commodity, qty) {
     return this.rpc("app_trade", { p_action: action, p_commodity: commodity, p_qty: qty | 0 });
   },
+  // Phase 4: shared sector shelf snapshot (docs/sql/phase4_sector_stock.sql).
+  async sectorStock() {
+    try { return await this.rpc("app_sector_stock"); }
+    catch (e) {
+      if (typeof this._isMissingRpc === "function" && this._isMissingRpc(e)) return { ok: false, missing: true };
+      throw e;
+    }
+  },
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

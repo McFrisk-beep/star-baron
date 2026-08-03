@@ -1,7 +1,7 @@
 /* stock.js — finite per-sector commodity stock (docs/STATIONS.md §2–4).
    Price scarcity rides on top of Market.anchor; buy/sell mutate units.
    Hourly tick: consumption → NPC production (+ elastic backstop) → trickle.
-   Guest / single-player first; server RPCs land with Phase 4 authority.       */
+   Guests tick locally; signed-in Phase 4 uses app_trade / app_sector_stock.   */
 
 const Stock = {
   units: {},          // sectorId -> { commId -> units }
@@ -9,6 +9,12 @@ const Stock = {
   sentiment: {},      // sectorId -> 0..100
   lastTickAt: 0,
   _baselines: {},     // sectorId -> { commId -> baseline } (cached)
+
+  // Phase 4: server owns the shelf only after app_sector_stock has succeeded
+  // this session (signed-in without the SQL paste keeps the local tick).
+  _serverShelf: false,
+  markServerShelf(on) { this._serverShelf = !!on; },
+  authoritative() { return !!(this._serverShelf && window.Economy && Economy.authoritative()); },
 
   tradeable() { return COMMODITIES.filter(c => !c.craftOnly && c.rarity !== "exotic"); },
 
@@ -222,8 +228,29 @@ const Stock = {
     return summary;
   },
 
+  // Apply a server shelf snapshot (app_sector_stock) or a single trade delta.
+  applyServerUnits(unitsBySector, lastTickAt) {
+    if (!unitsBySector || typeof unitsBySector !== "object") return;
+    for (const [sid, bag] of Object.entries(unitsBySector)) {
+      if (!bag || typeof bag !== "object") continue;
+      if (!this.units[sid]) this.units[sid] = {};
+      for (const [cid, u] of Object.entries(bag)) {
+        if (Number.isFinite(+u) && +u >= 0) this.units[sid][cid] = Math.floor(+u);
+      }
+    }
+    if (Number.isFinite(+lastTickAt)) this.lastTickAt = +lastTickAt;
+  },
+
+  applyTradeDelta(sectorId, commId, units) {
+    if (!sectorId || !commId || !Number.isFinite(+units)) return;
+    if (!this.units[sectorId]) this.units[sectorId] = {};
+    this.units[sectorId][commId] = Math.max(0, Math.floor(+units));
+  },
+
   // Advance any due hourly ticks (live loop + offline catch-up).
+  // Signed-in Phase 4: server cron / app_stock_tick owns the shelf — skip local.
   tick(now = Date.now()) {
+    if (this.authoritative()) return 0;
     if (!this.lastTickAt) this.lastTickAt = now;
     const ms = STOCKCFG.tickMs || 3600000;
     let n = 0;

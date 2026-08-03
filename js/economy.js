@@ -80,6 +80,8 @@ const Economy = {
       extractors: JSON.parse(JSON.stringify(s.extractors || {})),
       components: JSON.parse(JSON.stringify(s.components || {})),
       seq: s.seq,
+      // Phase 4: roll back optimistic Stock.take/put on failed app_trade.
+      stock: window.Stock ? JSON.parse(JSON.stringify(Stock.serialize())) : null,
     };
   },
   _restoreEconomy(snap) {
@@ -107,6 +109,7 @@ const Economy = {
     if (snap.extractors) s.extractors = snap.extractors;
     if (snap.components) s.components = snap.components;
     if (snap.seq != null) s.seq = snap.seq;
+    if (snap.stock && window.Stock) Stock.hydrate(snap.stock);
   },
   _applyServerSlice(r) {
     const s = this.s();
@@ -153,6 +156,11 @@ const Economy = {
     if (r.craftedOnce) s.craftedOnce = r.craftedOnce;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
+    // Phase 4: resync shelf from trade response (authoritative units).
+    if (window.Stock && r.sectorId && r.commodity != null && r.stockUnits != null)
+      Stock.applyTradeDelta(r.sectorId, r.commodity, r.stockUnits);
+    if (window.Stock && r.stockUnitsBySector)
+      Stock.applyServerUnits(r.stockUnitsBySector, r.stockLastTickAt);
     this.repairCosmeticNames();
     this._restoreEquip(equip);
     if (window.Charters) Charters.reconcileShips();
