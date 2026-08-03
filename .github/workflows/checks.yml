@@ -27,10 +27,10 @@ jobs:
           # Quarantined: failing on main before this workflow existed. Each needs a
           # domain call (is the JS or the SQL right?), not a CI change. Delete the
           # line as each is fixed — the list should only ever get shorter.
-          #   check_market_depth   — repeated buying pumps a price above spot
+          # (check_market_depth un-quarantined: rewrote for finite sector stock.)
           # (check_market_parity + check_bazaar_parity fixed: commodity/event pools
           #  and app.gen_extractor now track the full tradeable COMMODITIES list.)
-          SKIP="check_market_depth"
+          SKIP=""
           fail=0
           for f in tools/check_*.js; do
             name=$(basename "$f" .js)

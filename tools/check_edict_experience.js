@@ -31,7 +31,7 @@ ctx.Economy = null;
 ctx.Rivals = { rank() { return 1; } };
 ctx.Rep = { edgeForCategory() { return 0; }, onTrade() {}, get() { return 0; } };
 ctx.Market = {
-  spot() { return 50; }, impactAt() { return 0; }, addImpact() {},
+  spot() { return 50; }, systemPrice() { return 50; },
   systemPrice() { return 50; }, activeLocal() { return []; },
   stocks() { return true; },   // rarity stocking: this check trades pre-rarity staples
 };

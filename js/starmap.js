@@ -105,6 +105,12 @@ const StarMap = {
       const halo = document.createElementNS(ns, "circle");
       halo.setAttribute("cx", cx); halo.setAttribute("cy", cy); halo.setAttribute("r", 120);
       halo.setAttribute("class", "sector-halo"); halo.setAttribute("fill", RACES[sec.race].color);
+      // Sentiment tint: coarse public band (exact figures stay in Stations tab).
+      if (window.Stock && Stock.sentiment[sec.id] != null) {
+        const s = Stock.sentiment[sec.id];
+        halo.setAttribute("opacity", s >= 60 ? "0.18" : s >= 40 ? "0.28" : s >= 20 ? "0.38" : "0.48");
+        if (s < 40) halo.setAttribute("fill", s < 20 ? "#ff5d73" : "#ffc24b");
+      }
       svg.appendChild(halo);
       const lbl = document.createElementNS(ns, "text");
       lbl.setAttribute("x", cx); lbl.setAttribute("y", cy - 96);
@@ -126,7 +132,10 @@ const StarMap = {
     this._nodeEls = {};
     for (const sys of Galaxy.list) {
       const g = document.createElementNS(ns, "g");
-      g.setAttribute("class", "node" + (sys.capital ? " cap" : ""));
+      const st = (!sys.capital && window.Stations) ? Stations.get(sys.id) : null;
+      const owned = st && st.status === "owned";
+      const auction = st && window.Stations && Stations.getAuction(sys.id);
+      g.setAttribute("class", "node" + (sys.capital ? " cap" : "") + (owned ? " st-owned" : "") + (auction && auction.status === "open" ? " st-auction" : ""));
       g.setAttribute("transform", `translate(${X(sys.pos.x)},${Y(sys.pos.y)})`);
       g.style.cursor = "pointer";
 
@@ -280,10 +289,22 @@ const StarMap = {
     const sec = Galaxy.sector(sys.sectorId);
     const evt = Market.activeLocal(sys.id);
     const dirTxt = idx > 0.06 ? `<span class="up">▲ rising</span>` : idx < -0.06 ? `<span class="down">▼ falling</span>` : "stable";
+    let extra = "";
+    if (!sys.capital && window.Stations) {
+      const st = Stations.get(sys.id);
+      if (st) {
+        const auc = Stations.getAuction(sys.id);
+        const sent = window.Stock ? Stock.sentiment[st.sectorId] : null;
+        const band = sent == null ? "" : sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
+        extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
+          (st.status === "owned" ? " · owned" : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
+          (band ? ` · ${band}` : "") + `</span>`;
+      }
+    }
     this.refs.tip.innerHTML =
       `<b>${sys.name}</b> ${sys.capital ? '<span class="tip-cap">trade hub</span>' : ""}<br>` +
       `<span class="tip-dim">${sec.name} · ${RACES[sys.race].name}</span><br>` +
-      `market: ${dirTxt}` + (evt.length ? `<br><span class="warn">⚠ local event active</span>` : "");
+      `market: ${dirTxt}` + (evt.length ? `<br><span class="warn">⚠ local event active</span>` : "") + extra;
     this.refs.tip.style.display = "block";
     this.moveTip(e);
   },
@@ -332,6 +353,31 @@ const StarMap = {
       trade = `<span class="tip-dim">Not a trade hub · view-only outpost</span>`;
     }
 
+    // Claimable station / auction controls (non-capitals).
+    let stationBlock = "";
+    if (!sys.capital && window.Stations) {
+      const st = Stations.get(sys.id) || (Stations.ensure(), Stations.get(sys.id));
+      if (st) {
+        const auc = Stations.getAuction(sys.id);
+        const openMin = Stations.openingBid(st);
+        if (st.status === "owned" && st.ownerId === Stations.playerId()) {
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · yours · standing ${st.standing.toFixed(0)}
+            <button class="btn btn-mini" id="sm-st-manage">Manage</button></div>`;
+        } else if (auc && auc.status === "open") {
+          const left = Math.max(0, auc.closesAt - Date.now());
+          const min = auc.highBid + STATIONCFG.minBidIncrement;
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · auction
+            <div class="tip-dim">high ${Util.credits(auc.highBid)} · closes ${Util.duration(left)}</div>
+            <button class="btn btn-go" id="sm-st-bid" data-min="${min}">Bid ${Util.credits(min)}</button></div>`;
+        } else if (st.status === "npc" || (st.status === "cooldown" && Date.now() >= st.cooldownUntil)) {
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
+            <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button></div>`;
+        } else if (st.status === "cooldown") {
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}</div>`;
+        }
+      }
+    }
+
     const active = Market.activeLocal(sys.id).map(e => {
       const comm = COMMODITIES.find(c => c.id === e.target);
       const label = comm ? comm.name : e.target;
@@ -357,6 +403,7 @@ const StarMap = {
          <h3>${sys.name}</h3>
          <div class="si-sub" style="color:${race.color}">${sec.name} · ${race.name} space</div>
          <div class="si-trade">${trade}</div>
+         ${stationBlock}
          ${isAdmin ? `<div class="si-admin">
            <button class="btn btn-mini" id="sm-bg-upload" title="Upload PNG / JPG / GIF · suggested 1280×720 (16:9), GIFs animate">🖼 Set space background</button>
            ${hasBg ? `<button class="btn btn-mini admin-card-reset" id="sm-bg-reset">Reset</button>` : ""}
@@ -388,6 +435,22 @@ const StarMap = {
     };
     const survey = document.getElementById("sm-survey");
     if (survey) survey.onclick = () => UI.openSurvey(sys.id);
+
+    const stAuction = document.getElementById("sm-st-auction");
+    if (stAuction) stAuction.onclick = () => {
+      const r = Stations.openAuction(sys.id, +stAuction.dataset.min);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
+    };
+    const stBid = document.getElementById("sm-st-bid");
+    if (stBid) stBid.onclick = () => {
+      const r = Stations.bid(sys.id, +stBid.dataset.min);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Bid placed: ${Util.credits(r.auction.highBid)}`, "good");
+      UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
+    };
+    const stManage = document.getElementById("sm-st-manage");
+    if (stManage) stManage.onclick = () => { this.close(); UI.showPage("stations"); };
 
     // admin-only: upload a custom space background for this system
     if (isAdmin) {

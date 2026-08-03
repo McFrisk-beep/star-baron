@@ -408,3 +408,9 @@ catch-up + welcome-back recap cover every system. The biggest open work is an
 **server-authoritative/deterministic market** (design doc written, tabled).
 Verify the Supabase SQL in §5 is fully applied — that's the usual "cloud not
 working" surprise.
+
+**Stations & supply economy (in progress):** see `docs/STATIONS.md`. Client guest
+path is live — finite per-sector stock (`js/stock.js`), 78 NPC/claimable stations
+with auctions/modules/production/sentiment (`js/stations.js`), Stations tab.
+Server authority is stubbed in `docs/sql/sector_stock.sql`. Sanity:
+`tools/check_stock_economy.js`, `tools/check_stations.js`.

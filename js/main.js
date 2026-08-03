@@ -45,6 +45,8 @@ const Game = {
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
+      stock: null,
+      stations: null,
     };
   },
 
@@ -269,6 +271,13 @@ const Game = {
     // Build the (deterministic) galaxy, then restore its local-news history.
     Galaxy.build();
     Galaxy.hydrate(this.state.galaxy);
+    // Sector stock + claimable stations (docs/STATIONS.md). Order: Stock needs
+    // Galaxy sectors; Stations.ensure needs Galaxy.list; hydrate after ensure.
+    if (window.Stock) {
+      Stock.init(Date.now());
+      if (this.state.stock) Stock.hydrate(this.state.stock);
+    }
+    if (window.Stations) Stations.hydrate(this.state.stations);
     Bazaar.ensure();
     Rivals.ensure();
 
@@ -281,6 +290,8 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
+    if (window.Stock) Stock.advance(elapsed, now);
+    if (window.Stations) Stations.tick(now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
 
@@ -425,6 +436,8 @@ const Game = {
   loop() {
     const now = Date.now();
     Market.tick(now);
+    if (window.Stock) Stock.tick(now);
+    if (window.Stations) Stations.tick(now);
     this.detectMoves();
     if (window.Story) Story.check(now);   // drip storyline messages / pay out finished objectives
     Wars.tick(now);
@@ -533,6 +546,8 @@ const Game = {
     if (elapsed > CONFIG.marketTickMs) {
       this._booting = true;   // suppress catch-up chatter/toasts
       Market.advance(elapsed, now);
+      if (window.Stock) Stock.advance(elapsed, now);
+      if (window.Stations) Stations.tick(now);
       Economy.checkArrival(now);
       const finish = () => {
         Wars.tick(now);
@@ -719,6 +734,8 @@ const Game = {
     this.state.lastSeenAt = Date.now();
     this.state.market = Market.serialize();
     this.state.galaxy = Galaxy.serialize();
+    if (window.Stock) this.state.stock = Stock.serialize();
+    if (window.Stations) this.state.stations = Stations.serialize();
     return this.state;
   },
 
@@ -736,6 +753,8 @@ const Game = {
     if (this.state) this.state.newswire = [];
     Galaxy.localLog = {};
     Market.effects = []; Market.localEffects = [];
+    if (window.Stock) { Stock.units = {}; Stock.sentiment = {}; }
+    if (window.Stations) { Stations.byId = {}; Stations.auctions = {}; }
     location.reload();
   },
 

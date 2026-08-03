@@ -83,6 +83,7 @@ const UI = {
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
+      tabStations: $("tab-stations"), stationsTabs: $("stations-tabs"), stationsBody: $("stations-body"),
       settings: $("settings-modal"), setVolume: $("set-volume"), setVolumeVal: $("set-volume-val"),
       setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
@@ -124,6 +125,7 @@ const UI = {
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") { this.showIndustriesTab(this.industriesTab || "permits"); this.renderIndustries(); }
     else if (name === "workshop") this.renderWorkshop();
+    else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
     else if (name === "hub") this.renderBoostBar();
@@ -667,11 +669,11 @@ const UI = {
     this.refs.exchangeSub.textContent = `${pricesAt} · trade cap ${Util.credits(Economy.depth())}c/order`;
     const note = document.getElementById("exchange-note");
     if (note) note.innerHTML =
-      `<b>How trading works:</b> prices are local to each station — buy where a good is cheap, sell where it's dear. ` +
-      `But <b>large orders move the local price</b> (slippage), and the nudge <b>lingers</b>, so you can't dump unlimited volume — ` +
-      `splitting an order or hopping back and forth won't dodge it. Each order is capped at <b>${Util.credits(Economy.depth())}c</b> ` +
-      `(your <b>${Economy.tierTitle()}</b> tier; it rises as you ascend), and <b>Buy Max / Sell All</b> fill up to that cap. ` +
-      `Your quantity auto-adjusts to what you can afford, hold, and move.`;
+      `<b>How trading works:</b> each sector capital has a <b>finite stock</b> of commodities. ` +
+      `Buying depletes the shelf and scarcity pushes the price up; selling restocks it and eases the price. ` +
+      `Stations across the sector feed the capital — starve a region and sentiment collapses. ` +
+      `Each order is capped at <b>${Util.credits(Economy.depth())}c</b> ` +
+      `(your <b>${Economy.tierTitle()}</b> tier), and <b>Buy Max</b> also clamps to units on the shelf.`;
     // transit overlay
     if (this.s().travel) {
       const t = this.s().travel;
@@ -688,11 +690,13 @@ const UI = {
       const r = this.rows[c.id]; if (!r) continue;
       const q = this.s().positions[c.id] || 0;
       const stocked = Market.stocks(c.id, sys);
+      const shelf = window.Stock ? Stock.availableHere(sys, c.id) : null;
       // Hide unstocked rows unless you hold some (so you can still sell).
       r.tr.classList.toggle("hidden", !stocked && !q);
       if (!stocked && !q) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
+      if (shelf != null) r.price.title = `Sector stock: ${shelf} units`;
       if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
       this.lastPrice[c.id] = p;
       const pct = Market.changePct(c.id);
@@ -819,6 +823,12 @@ const UI = {
     const badge = this.refs.fleetBadge;
     if (missionsN + reportsN > 0) { badge.classList.remove("hidden"); badge.textContent = missionsN + reportsN; }
     else badge.classList.add("hidden");
+    // Stations tab appears once you own at least one (docs/STATIONS.md §5.3).
+    if (this.refs.tabStations && window.Stations) {
+      const n = Stations.ownedCount();
+      this.refs.tabStations.classList.toggle("hidden", n < 1);
+      if (n < 1 && this.page === "stations") this.showPage("hub");
+    }
     if (this.page === "fleet") this.updateNavIndicator();   // badge changes the active pill's width
   },
   flashCredits() { const e = this.refs.credits; e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); },
@@ -1970,6 +1980,128 @@ const UI = {
     }
   },
 
+  // ===== STATIONS ==========================================================
+  renderStations() {
+    const body = this.refs.stationsBody, tabs = this.refs.stationsTabs;
+    if (!body || !window.Stations) return;
+    const owned = Stations.ownedBy();
+    if (!owned.length) {
+      body.innerHTML = `<h2>Stations</h2><p class="muted-note">You don't own a station yet. Open a non-capital system on the Star Map and start an auction.</p>`;
+      if (tabs) tabs.innerHTML = "";
+      return;
+    }
+    if (!this.stationsTab || !owned.some(st => st.systemId === this.stationsTab))
+      this.stationsTab = owned[0].systemId;
+    if (tabs) {
+      tabs.innerHTML = owned.map(st =>
+        `<button type="button" class="subtab${st.systemId === this.stationsTab ? " active" : ""}" data-st="${st.systemId}" aria-current="${st.systemId === this.stationsTab ? "page" : "false"}">${st.name}</button>`
+      ).join("");
+      tabs.onclick = e => {
+        const b = e.target.closest("[data-st]"); if (!b) return;
+        this.stationsTab = b.dataset.st; this.renderStations();
+      };
+    }
+    const st = Stations.get(this.stationsTab); if (!st) return;
+    const sys = Galaxy.get(st.systemId);
+    const sent = (window.Stock && Stock.sentiment[st.sectorId]) ?? STATIONCFG.sentimentStart;
+    const free = Stations.powerFree(st), budget = Stations.powerBudget(st), used = Stations.powerUsed(st);
+    const upkeep = Stations.upkeepPerCycle(st);
+    const holdRows = Object.entries(st.hold || {}).filter(([, q]) => q > 0)
+      .map(([id, q]) => {
+        const c = COMMODITIES.find(x => x.id === id);
+        return `<li class="st-hold-row"><b>${c ? c.name : id}</b> ×${q}
+          <button class="btn btn-mini" data-st-deliver="${id}">Deliver all</button></li>`;
+      }).join("") || `<li class="muted-note">Hold empty — assign a Production Hub commodity.</li>`;
+
+    const modRows = Object.keys(STATION_MODULES).map(id => {
+      const def = STATION_MODULES[id];
+      const lvl = id === "reactor" ? (st.reactorLevel | 0) : (st.modules[id] | 0);
+      const check = Stations.canInstall(st, id);
+      const lvlTxt = lvl ? "I".repeat(lvl) : "—";
+      const installBtn = lvl < def.max
+        ? `<button class="btn btn-mini" data-st-install="${id}" ${check.ok ? "" : "disabled"} title="${check.msg || ""}">Install ${"I".repeat(lvl + 1)} · ${Util.credits(def.cost[lvl] || 0)}</button>`
+        : "";
+      const removeBtn = lvl > 0
+        ? `<button class="btn btn-mini btn-warn" data-st-uninstall="${id}">Uninstall</button>` : "";
+      return `<tr><td>${def.name}</td><td class="num">${lvlTxt}</td><td class="num">${id === "reactor" ? "+" + ((STATIONCFG.reactor[lvl - 1] || {}).power || 0) : (def.power[Math.max(0, lvl - 1)] || def.power[0] || 0)}pwr</td>
+        <td class="actions">${installBtn} ${removeBtn}</td></tr>`;
+    }).join("");
+
+    const prodOpts = Stations.produceable(st.systemId).map(c =>
+      `<option value="${c.id}" ${st.prodComm === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+
+    const band = sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
+    body.innerHTML = `
+      <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small></h2>
+      <div class="st-meters">
+        <div>Power <b>${used}/${budget}</b> <span class="muted-note">(${free} free)</span></div>
+        <div>Standing <b>${st.standing.toFixed(0)}</b>/100</div>
+        <div>Sector sentiment <b title="${sent.toFixed(1)}">${band}</b></div>
+        <div>Treasury <b>${Util.credits(st.treasury)}</b>
+          <button class="btn btn-mini" data-st-withdraw ${st.treasury < 1 ? "disabled" : ""}>Withdraw all</button></div>
+        <div>Upkeep <b>${Util.credits(upkeep)}</b>/cycle</div>
+      </div>
+      <div class="st-grid">
+        <section>
+          <h3>Production Hub</h3>
+          <p class="muted-note">Output lands in the station hold. Haul it to the sector capital and Deliver to feed the exchange (and your standing).</p>
+          <label>Commodity <select id="st-prod">${prodOpts || "<option value=''>—</option>"}</select></label>
+          <button class="btn btn-go" id="st-set-prod" ${(st.modules.production_hub | 0) ? "" : "disabled"}>Assign</button>
+          <label>Lease tax % <input type="number" id="st-lease" min="0" max="40" value="${((st.leaseTaxBps || 0) / 100).toFixed(0)}"></label>
+          <button class="btn btn-mini" id="st-set-lease">Set</button>
+          <ul class="st-hold">${holdRows}</ul>
+        </section>
+        <section>
+          <h3>Modules</h3>
+          <div class="table-wrap"><table class="market st-mods"><thead><tr><th>Module</th><th class="num">Lvl</th><th class="num">Power</th><th></th></tr></thead>
+          <tbody>${modRows}</tbody></table></div>
+          <p class="muted-note">Uninstall refunds 50% of component cost and starts a 6h refit (no production).</p>
+        </section>
+      </div>`;
+
+    body.querySelector("#st-set-prod")?.addEventListener("click", () => {
+      const id = body.querySelector("#st-prod")?.value;
+      const r = Stations.setProduction(st.systemId, id);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Production retooling…", "good"); this.renderStations(); this.updateHeader();
+    });
+    body.querySelector("#st-set-lease")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-lease")?.value || 0;
+      Stations.setLeaseTax(st.systemId, pct * 100);
+      this.toast(`Lease tax set to ${pct}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("[data-st-withdraw]")?.addEventListener("click", () => {
+      const r = Stations.withdraw(st.systemId, st.treasury);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Withdrew ${Util.credits(r.amount)}.`, "good"); this.flashCredits(); this.renderStations(); this.updateHeader();
+    });
+    body.querySelectorAll("[data-st-deliver]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.stDeliver;
+        const r = Stations.deliver(st.systemId, id, st.hold[id] | 0);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Delivered ${r.qty} for ${Util.credits(r.proceeds)}.`, "good");
+        this.flashCredits(); this.renderStations(); this.updateHeader(); this.updateExchange();
+      };
+    });
+    body.querySelectorAll("[data-st-install]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.install(st.systemId, btn.dataset.stInstall);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Installed. −${Util.credits(r.cost)}`, "good");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-st-uninstall]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.uninstall(st.systemId, btn.dataset.stUninstall);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+  },
+
   // ===== SENATE / space politics ===========================================
   issueLabel(key) { return (SENATE_ISSUES.find(i => i.key === key) || {}).label || key; },
 
@@ -2867,6 +2999,7 @@ const UI = {
     this.updateClock();
     if (this.page === "hub") this.renderBoostBar();
     if (this.page === "workshop") this.renderWorkshop();
+    if (this.page === "stations") this.renderStations();
     if (this.page === "fleet") { this.renderMissions(); this.renderCharters(); }
     if (this.commsTab === "pending" && this.page === "comms") this.renderPendingContracts();
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
@@ -2884,6 +3017,7 @@ const UI = {
     if (this.page === "bazaar") this.renderBazaar();
     if (this.page === "barons") this.renderLeaderboard();
     if (this.page === "senate") this.renderSenate();
+    if (this.page === "stations") this.renderStations();
   },
 };
 

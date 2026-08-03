@@ -64,6 +64,7 @@
           <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
             <button class="tab" data-page="industries"><span class="tab-ico" aria-hidden="true">🏭</span><span class="tab-label" data-i18n="nav.industries">Industries</span></button>
             <button class="tab" data-page="workshop"><span class="tab-ico" aria-hidden="true">🔧</span><span class="tab-label">Workshop</span></button>
+            <button class="tab hidden" id="tab-stations" data-page="stations"><span class="tab-ico" aria-hidden="true">🛰️</span><span class="tab-label" data-i18n="nav.stations">Stations</span></button>
             <button class="tab" data-page="senate"><span class="tab-ico" aria-hidden="true">🏛️</span><span class="tab-label" data-i18n="nav.senate">Senate</span></button>
             <button class="tab" data-page="barons"><span class="tab-ico" aria-hidden="true">👑</span><span class="tab-label" data-i18n="nav.barons">Barons</span></button>
             <button class="tab" data-page="ach"><span class="tab-ico" aria-hidden="true">🏆</span><span class="tab-label" data-i18n="nav.milestones">Milestones</span></button>
@@ -190,6 +191,15 @@
         </nav>
         <div class="panel">
           <div id="workshop-recipes" class="workshop-recipes"></div>
+        </div>
+      </section>
+
+      <!-- STATIONS — owned claimable stations (hidden until you own one) -->
+      <section class="page hidden" id="page-stations">
+        <nav class="subtabs" id="stations-tabs" aria-label="Owned stations"></nav>
+        <div class="panel" id="stations-body">
+          <h2>Stations <small>claimable outposts</small></h2>
+          <p class="sys-legend">Win a station at auction from the Star Map, then manage power, modules, and production here. Commodity trade stays at sector capitals — your station <b>feeds</b> them.</p>
         </div>
       </section>
 
@@ -682,6 +692,8 @@
   <script src="js/bgm.js"></script>
   <script src="js/market.js"></script>
   <script src="js/galaxy.js"></script>
+  <script src="js/stock.js"></script>
+  <script src="js/stations.js"></script>
   <script src="js/items.js"></script>
   <script src="js/fleet.js"></script>
   <script src="js/economy.js"></script>
