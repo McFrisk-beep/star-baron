@@ -685,11 +685,20 @@ const Economy = {
   },
 
   // Docking now takes time: it starts a transit driven by the main ship's speed.
+  // Capitals need unlock; claimable stations auto-unlock when Stations.canDock allows.
   _dockLocal(sysId) {
     const s = this.s();
-    if (!s.unlockedSystems.includes(sysId)) return { ok: false, msg: "System locked." };
     if (s.travel) return { ok: false, msg: "Already in transit." };
     if (sysId === s.currentSystem) return { ok: false, msg: "Already docked here." };
+    const gSys = window.Galaxy && Galaxy.get(sysId);
+    const isStation = !!(gSys && !gSys.capital && window.Stations && Stations.get(sysId));
+    if (isStation) {
+      const gate = Stations.canDock(sysId);
+      if (!gate.ok) return gate;
+      if (!s.unlockedSystems.includes(sysId)) s.unlockedSystems.push(sysId);
+    } else if (!s.unlockedSystems.includes(sysId)) {
+      return { ok: false, msg: "System locked." };
+    }
     const etaMs = Fleet.dockTravelMs(s.currentSystem, sysId);
     s.travel = { from: s.currentSystem, to: sysId, departedAt: Date.now(), etaMs };
     Bus.emit("travelStart", { to: sysId, etaMs });
@@ -729,27 +738,43 @@ const Economy = {
   // Customs scan on arrival: if you're carrying any illicit goods, roll a
   // seizure and confiscate a slice of one stack. Odds rise with Senate border
   // edicts and at low-tolerance systems, and fall with Syndicate standing.
+  // Station Customs House / Free Port override scrutiny (docs/STATIONS.md §12).
   // Returns the seizure event (also emitted on the bus) or null. Reused live + offline.
   customsScan(sysId) {
     const s = this.s();
     const illicit = COMMODITIES.filter(c => c.cat === "illicit" && (s.positions[c.id] || 0) > 0);
     if (!illicit.length) return null;
+    // Allied / owner walk through a Customs House unscanned.
+    if (window.Stations && Stations.customsExempt(sysId)) return null;
     const comm = Util.pick(illicit);
     const held = s.positions[comm.id] || 0;
-    const sys = SYSTEMS.find(x => x.id === sysId);
+    const sys = (window.Galaxy && Galaxy.get(sysId)) || SYSTEMS.find(x => x.id === sysId);
     const tol = (sys && sys.mods && sys.mods.illicit) || 1;
-    const scrutiny = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
-    const border = window.Senate ? Senate.smuggleFailAdd() : 0;
+    const baseline = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
+    let border = window.Senate ? Senate.smuggleFailAdd() : 0;
+    const st = window.Stations && Stations.get(sysId);
+    const stOverride = window.Stations ? Stations.scrutinyFor(sysId) : null;
+    if (st && (st.modules.free_port | 0))
+      border *= (STATIONCFG.freePortBorderMult != null ? STATIONCFG.freePortBorderMult : 0.4);
     const shield = Math.max(0, Rep.get("syndicate")) / 100 * CUSTOMS.repShield;
-    let chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
+    // Station dial/Free Port = absolute chance input; capitals keep × baseline.
+    let chance = stOverride != null
+      ? Util.clamp(stOverride + border * 0.5 - shield, 0, CUSTOMS.cap)
+      : Util.clamp((CUSTOMS.base + border) * baseline - shield, 0, CUSTOMS.cap);
     if (window.Boosts) chance = Util.clamp(chance * (1 + Boosts.mag("customsSeize")), 0, CUSTOMS.cap);
     if (Math.random() >= chance) return null;
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
-    const value = Math.round(qty * this.priceHere(comm.id));
+    const value = Math.round(qty * Market.systemPrice(comm.id, sysId));
     s.positions[comm.id] = held - qty;
     if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
+    let impoundedTo = null, claimId = null;
+    // Customs House: cargo enters station impound (not destroyed).
+    if (st && (st.modules.customs_house | 0) && st.status === "owned" && window.Stations) {
+      const r = Stations.impoundCargo(sysId, comm.id, qty, value, Stations.playerId());
+      if (r && r.ok) { impoundedTo = sysId; claimId = r.claimId; }
+    }
     this.refreshNetWorth();
-    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance };
+    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance, impoundedTo, claimId };
     Bus.emit("customs", ev);
     return ev;
   },

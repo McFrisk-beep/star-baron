@@ -217,10 +217,25 @@ const Fleet = {
 
   // Sector docking time (ms), driven by the main ship's travelSpeed.
   dockTravelMs(fromId, toId) {
+    // Capitals keep SYSTEMS.distance; claimable stations use galaxy map distance.
     const a = SYSTEMS.find(s => s.id === fromId), b = SYSTEMS.find(s => s.id === toId);
-    const dist = Math.max(1, Math.abs((a?.distance ?? 0) - (b?.distance ?? 0)));
+    let dist, k;
+    if (a && b) {
+      dist = Math.max(1, Math.abs((a.distance ?? 0) - (b.distance ?? 0)));
+      k = (window.MARKETCFG ? MARKETCFG.dockK : 12);
+    } else if (window.Galaxy) {
+      const ga = Galaxy.get(fromId), gb = Galaxy.get(toId);
+      if (ga && gb && ga.pos && gb.pos) {
+        dist = Math.max(0.08, Math.hypot(ga.pos.x - gb.pos.x, ga.pos.y - gb.pos.y));
+        k = (window.STATIONCFG && STATIONCFG.dockMapK) || 22;
+      } else {
+        dist = 1; k = window.MARKETCFG ? MARKETCFG.dockK : 12;
+      }
+    } else {
+      dist = 1; k = window.MARKETCFG ? MARKETCFG.dockK : 12;
+    }
     const speed = (this.mainDef().travelSpeed || 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
-    const seconds = (dist * (window.MARKETCFG ? MARKETCFG.dockK : 12)) / speed;
+    const seconds = (dist * k) / speed;
     return (seconds * 1000) / (window.Game.timeScale || 1);
   },
 

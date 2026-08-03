@@ -891,6 +891,14 @@ const STATIONCFG = {
   contractNpcFillAfterMs: 4 * 60 * 60 * 1000, // NPC won't snatch brand-new posts
   contractDurBaseMs: 25 * 60 * 1000,
   contractDurPerUnitMs: 8 * 1000,
+  // Customs / Free Port (docs/STATIONS.md §12)
+  freePortScrutinyMult: 0.35,      // × CUSTOMS.base
+  freePortBorderMult: 0.4,         // damp Senate smuggleFailAdd
+  customsSubsidy: 800,             // credits/cycle into treasury (lawful pay)
+  customsStandingTick: 1,
+  freePortStandingTick: -1,
+  ransomMult: 1.25,                // ransom = seized value × this
+  dockMapK: 22,                    // galaxy-map dock seconds per map-unit
   reactor: [
     { power: 2,  upkeep: 1200 },
     { power: 4,  upkeep: 3000 },
@@ -927,7 +935,7 @@ const STATION_MODULES = {
   warehouse:      { name: "Warehouse",      max: 2, power: [2, 3], cost: [30000, 50000] },
   customs_house:  { name: "Customs House",  max: 1, power: [3], conflicts: ["free_port", "black_market"], cost: [65000] },
   free_port:      { name: "Free Port",      max: 1, power: [3], conflicts: ["customs_house"], cost: [65000] },
-  black_market:   { name: "Black Market",   max: 1, power: [5], conflicts: ["customs_house"], cost: [90000] },
+  black_market:   { name: "Black Market",   max: 1, power: [5], conflicts: ["customs_house"], requires: { exchange_hall: 1 }, cost: [90000] },
   lane_buoy:      { name: "Lane Buoy",      max: 1, power: [2], cost: [35000] },
   reactor:        { name: "Reactor",        max: 5, power: [0, 0, 0, 0, 0], cost: [40000, 90000, 160000, 280000, 450000] },
 };

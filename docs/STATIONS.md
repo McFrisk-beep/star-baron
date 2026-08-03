@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook + Exchange Hall §9 + Contract Office §11); server RPCs stubbed in `docs/sql/sector_stock.sql`
+**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking); server RPCs stubbed in `docs/sql/sector_stock.sql`
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -420,6 +420,8 @@ Because a player station's production must be hauled to a capital to reach the m
 ---
 
 ## 12. Customs House and Free Port
+
+**Client status:** live in guest mode. Non-capital stations are dockable (`Economy._dockLocal` + map travel via galaxy `pos`). `Economy.customsScan` reads `Stations.scrutinyFor`; Customs House seizures go to `impoundHold` with ransom claims; Free Port lowers scrutiny and damps border edicts. Scrutiny is public on the star map before undock. Allied/Partner/owner skip Customs scans. Black Market requires Exchange Hall. Enforcement subsidy + standing/rep forks tick hourly. Covered by `tools/check_customs.js`.
 
 Both plug into the existing `CUSTOMS` block — `base: 0.10`, `cap: 0.85`, `repShield: 0.30`, `scrutinyClamp`, `seize: [0.30, 0.70]`. No new subsystem; the owner simply controls an input.
 

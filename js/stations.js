@@ -62,6 +62,8 @@ const Stations = {
       hall: [],                 // Exchange Hall listings
       contracts: [],            // Contract Office haul posts
       contractStats: { filled: 0, expired: 0 },
+      impoundHold: {},          // Customs House seized cargo { commId: qty }
+      impoundClaims: [],        // [{id, commId, qty, value, fromId, ransom}]
       upkeepPaidThrough: 0,
       cooldownUntil: 0,
       refitUntil: 0,
@@ -224,6 +226,10 @@ const Stations = {
       for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
       st.contracts = (st.contracts || []).filter(x => x.status === "active");
     }
+    if (moduleId === "customs_house") {
+      st.impoundHold = {};
+      st.impoundClaims = [];
+    }
     Game.state.credits += refund;
     st.status = "refit";
     st.refitUntil = Date.now() + STATIONCFG.refitMs;
@@ -267,13 +273,67 @@ const Stations = {
     return { ok: true, saleTariffBps: st.saleTariffBps };
   },
 
+  // ---- Access / docking (docs/STATIONS.md §12–13) -------------------------
+  roleOf(systemId, pid = this.playerId()) {
+    const st = this.get(systemId);
+    if (!st) return "guest";
+    if (st.ownerId === pid) return "owner";
+    const map = this.access[systemId] || {};
+    const r = map[pid];
+    if (r === "partner" || r === "allied" || r === "barred") return r;
+    return "guest";
+  },
+
+  setRole(systemId, pid, role) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    pid = String(pid || "").trim();
+    if (!pid || pid === this.playerId()) return { ok: false, msg: "Invalid player." };
+    if (!["allied", "guest", "barred", "partner"].includes(role))
+      return { ok: false, msg: "Unknown role." };
+    if (!this.access[systemId]) this.access[systemId] = {};
+    if (role === "guest") delete this.access[systemId][pid];
+    else this.access[systemId][pid] = role;
+    if (window.Game) Game.requestSave();
+    return { ok: true, role };
+  },
+
+  canDock(systemId) {
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station here." };
+    if (this.roleOf(systemId) === "barred") return { ok: false, msg: "Docking denied — you are barred." };
+    if (st.status === "cooldown") return { ok: false, msg: "Station is offline after a revolt." };
+    return { ok: true, st };
+  },
+
+  customsExempt(systemId, pid = this.playerId()) {
+    const st = this.get(systemId);
+    if (!st || !(st.modules.customs_house | 0)) return false;
+    const role = this.roleOf(systemId, pid);
+    return role === "owner" || role === "partner" || role === "allied";
+  },
+
+  // Public scrutiny readout shown before undock (never hidden).
+  publicScrutiny(systemId) {
+    const st = this.get(systemId);
+    if (!st) return null;
+    if (st.modules.free_port | 0) {
+      const pct = Math.round((CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35) * 100);
+      return { pct, label: "Free Port", flag: "open", chanceHint: pct };
+    }
+    if (st.modules.customs_house | 0) {
+      const pct = Util.clamp(st.scrutiny | 0, 0, Math.round((CUSTOMS.cap || 0.85) * 100));
+      return { pct, label: "Clean", flag: "clean", chanceHint: pct };
+    }
+    return { pct: null, label: "Open dock", flag: "neutral", chanceHint: null };
+  },
+
   // ---- Exchange Hall (docs/STATIONS.md §9) --------------------------------
   hasHall(st) {
     return !!(st && (st.modules.exchange_hall | 0) && st.status === "owned");
   },
 
-  // Guest constraint: no non-capital docking yet — hall is usable when docked
-  // at the sector capital (in-sector) or when you own the station.
+  // Visitors must be docked at the station (non-capital docking is live).
   canUseHall(systemId) {
     const st = this.get(systemId);
     if (!this.hasHall(st)) return { ok: false, msg: "No Exchange Hall here." };
@@ -281,9 +341,8 @@ const Stations = {
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
     if (st.ownerId === this.playerId()) return { ok: true, st };
-    const sec = Galaxy.sector(st.sectorId);
-    if (sec && s.currentSystem === sec.capital) return { ok: true, st };
-    return { ok: false, msg: "Dock at the sector capital to use this Exchange Hall." };
+    if (s.currentSystem === systemId) return { ok: true, st };
+    return { ok: false, msg: "Dock at this station to use the Exchange Hall." };
   },
 
   hallListings(systemId) {
@@ -435,10 +494,9 @@ const Stations = {
     const access = this.canUseHall(systemId);
     if (!access.ok) return access;
     const st = access.st;
-    // Black Market unlocks illicit-adjacent goods; without it, block blackboxes
-    // when the station runs a Customs House (clean port fantasy).
-    if (kind === "blackbox" && (st.modules.customs_house | 0) && !(st.modules.black_market | 0))
-      return { ok: false, msg: "Customs House — blackboxes need a Black Market." };
+    // Black Market unlocks illicit-adjacent goods on the hall.
+    if (kind === "blackbox" && !(st.modules.black_market | 0))
+      return { ok: false, msg: "Blackboxes need a Black Market." };
     price = Math.floor(+price || 0);
     if (price < (STATIONCFG.hallMinPrice || 50)) return { ok: false, msg: `Price at least ${STATIONCFG.hallMinPrice}c.` };
     const taken = this._takeListable(kind, ref);
@@ -794,7 +852,8 @@ const Stations = {
     const st = this.get(systemId);
     if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
     if (!(st.modules.customs_house | 0)) return { ok: false, msg: "Needs a Customs House." };
-    st.scrutiny = Util.clamp(Math.round(+pct || 0), 0, 100);
+    const capPct = Math.round((CUSTOMS.cap || 0.85) * 100);
+    st.scrutiny = Util.clamp(Math.round(+pct || 0), 0, capPct);
     if (window.Game) Game.requestSave();
     return { ok: true, scrutiny: st.scrutiny };
   },
@@ -1283,6 +1342,24 @@ const Stations = {
         this._ledger(st, 0, "upkeep_missed", String(upkeep));
       }
 
+      // Customs / Free Port policy forks (docs/STATIONS.md §12).
+      if (st.modules.customs_house | 0) {
+        const sub = STATIONCFG.customsSubsidy | 0;
+        if (sub > 0) { st.treasury += sub; this._ledger(st, sub, "enforcement", "lawful subsidy"); }
+        standing += STATIONCFG.customsStandingTick || 1;
+        if (st.ownerId === this.playerId() && window.Rep) {
+          Rep.change("free_trade", 0.4);
+          Rep.change("mining_combine", 0.2);
+          Rep.change("syndicate", -0.8);
+        }
+      } else if (st.modules.free_port | 0) {
+        standing += STATIONCFG.freePortStandingTick || -1;
+        if (st.ownerId === this.playerId() && window.Rep) {
+          Rep.change("syndicate", 0.6);
+          Rep.change("free_trade", -0.4);
+        }
+      }
+
       st.standing = Util.clamp(standing, 0, 100);
       st.delivered = 0;
 
@@ -1332,6 +1409,9 @@ const Stations = {
     // Hall listings return to sellers (not seized with the landlord).
     for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
     st.hall = [];
+    st.impoundHold = {};
+    st.impoundClaims = [];
+    delete this.access[st.systemId];
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
@@ -1354,13 +1434,113 @@ const Stations = {
     return row ? (1 - row.time) : 1;
   },
 
-  // Customs scrutiny override for a system (null = baseline).
+  // Customs scrutiny override for a system (null = baseline capital formula).
   scrutinyFor(systemId) {
     const st = this.get(systemId);
     if (!st) return null;
-    if (st.modules.free_port) return Math.max(0, (CUSTOMS.base || 0.1) * 0.35);
+    if (st.modules.free_port)
+      return Math.max(0, (CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35));
     if (st.modules.customs_house) return Util.clamp((st.scrutiny | 0) / 100, 0, CUSTOMS.cap || 0.85);
     return null;
+  },
+
+  // ---- Customs impound / ransom (docs/STATIONS.md §12) --------------------
+  impoundCargo(systemId, commId, qty, value, fromId) {
+    const st = this.get(systemId);
+    if (!st || !(st.modules.customs_house | 0)) return { ok: false, msg: "No Customs House." };
+    qty = Math.max(1, Math.floor(+qty || 0));
+    if (!st.impoundHold || typeof st.impoundHold !== "object") st.impoundHold = {};
+    if (!Array.isArray(st.impoundClaims)) st.impoundClaims = [];
+    st.impoundHold[commId] = (st.impoundHold[commId] | 0) + qty;
+    const ransom = Math.max(1, Math.round((value || 0) * (STATIONCFG.ransomMult || 1.25)));
+    const claimId = "ic" + (++Game.state.seq);
+    st.impoundClaims.push({
+      id: claimId, commId, qty, value: value | 0, ransom,
+      fromId: fromId || null, at: Date.now(),
+    });
+    this._ledger(st, 0, "impound", `${qty}× ${commId}`);
+    if (window.Game) Game.requestSave();
+    return { ok: true, claimId, ransom };
+  },
+
+  sellImpound(systemId, commId, qty) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    const s = Game.state;
+    if (s.travel) return { ok: false, msg: "Can't sell in transit." };
+    const sec = Galaxy.sector(st.sectorId);
+    if (!sec || s.currentSystem !== sec.capital) {
+      const cap = sec && Galaxy.get(sec.capital);
+      return { ok: false, msg: `Dock at ${cap ? cap.name : "the capital"} to fence impound.` };
+    }
+    qty = Math.min(Math.floor(+qty || 0), st.impoundHold[commId] | 0);
+    if (qty <= 0) return { ok: false, msg: "Nothing in impound." };
+    const price = Economy.sellPrice(commId);
+    const proceeds = Math.round(price * qty);
+    st.impoundHold[commId] -= qty;
+    this._trimImpoundClaims(st, commId, qty);
+    st.treasury += proceeds;
+    Stock.put(st.sectorId, commId, qty);
+    this._ledger(st, proceeds, "impound_sale", `${qty}× ${commId}`);
+    // Lawful fork: enforcement sales please Free Trade, annoy Syndicate.
+    if (window.Rep && st.ownerId === this.playerId()) {
+      Rep.change("free_trade", 1);
+      Rep.change("syndicate", -2);
+    }
+    if (window.Game) Game.requestSave();
+    return { ok: true, qty, proceeds };
+  },
+
+  _trimImpoundClaims(st, commId, qty) {
+    let left = qty;
+    st.impoundClaims = (st.impoundClaims || []).filter(c => {
+      if (c.commId !== commId || left <= 0) return true;
+      if (c.qty <= left) { left -= c.qty; return false; }
+      c.qty -= left; c.ransom = Math.max(1, Math.round(c.ransom * (c.qty / (c.qty + left))));
+      left = 0;
+      return true;
+    });
+  },
+
+  payRansom(systemId, claimId) {
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    const s = Game.state;
+    if (s.currentSystem !== systemId) return { ok: false, msg: "Dock at the station to pay ransom." };
+    const idx = (st.impoundClaims || []).findIndex(c => c.id === claimId);
+    if (idx < 0) return { ok: false, msg: "Claim gone." };
+    const c = st.impoundClaims[idx];
+    if (c.fromId && c.fromId !== this.playerId()) return { ok: false, msg: "Not your seizure." };
+    if (s.credits < c.ransom) return { ok: false, msg: "Not enough credits." };
+    const have = st.impoundHold[c.commId] | 0;
+    if (have < c.qty) return { ok: false, msg: "Goods already sold." };
+    s.credits -= c.ransom;
+    st.treasury += c.ransom;
+    st.impoundHold[c.commId] = have - c.qty;
+    s.positions[c.commId] = (s.positions[c.commId] | 0) + c.qty;
+    st.impoundClaims.splice(idx, 1);
+    this._ledger(st, c.ransom, "ransom", `${c.qty}× ${c.commId}`);
+    // Paying a bribe helps Syndicate; owner taking it costs lawful standing.
+    if (window.Rep) {
+      Rep.change("syndicate", 2);
+      Rep.change("free_trade", -1);
+      if (st.ownerId === this.playerId()) Rep.change("syndicate", 1);
+    }
+    if (window.Game) Game.requestSave();
+    return { ok: true, qty: c.qty, paid: c.ransom, commId: c.commId };
+  },
+
+  // Owner releases a claim back for free (or burns it).
+  dropImpoundClaim(systemId, claimId) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    const idx = (st.impoundClaims || []).findIndex(c => c.id === claimId);
+    if (idx < 0) return { ok: false, msg: "Claim gone." };
+    const c = st.impoundClaims[idx];
+    st.impoundClaims.splice(idx, 1);
+    st.impoundHold[c.commId] = Math.max(0, (st.impoundHold[c.commId] | 0) - c.qty);
+    if (window.Game) Game.requestSave();
+    return { ok: true };
   },
 
   // ---- tick (auctions; stock hour is driven by Stock.tick) ---------------
@@ -1417,6 +1597,10 @@ const Stations = {
       st.contractStats = (st.contractStats && typeof st.contractStats === "object")
         ? { filled: Math.max(0, st.contractStats.filled | 0), expired: Math.max(0, st.contractStats.expired | 0) }
         : { filled: 0, expired: 0 };
+      st.impoundHold = (st.impoundHold && typeof st.impoundHold === "object") ? st.impoundHold : {};
+      st.impoundClaims = Array.isArray(st.impoundClaims)
+        ? st.impoundClaims.filter(c => c && c.id && c.commId && (c.qty | 0) > 0)
+        : [];
       st.pendingPayouts = (st.pendingPayouts && typeof st.pendingPayouts === "object") ? st.pendingPayouts : {};
       st.reactorLevel = Util.clamp(st.reactorLevel | 0, 0, 5);
       this.syncBays(st);

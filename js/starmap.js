@@ -300,11 +300,13 @@ const StarMap = {
         const office = (st.modules.contract_office | 0);
         const rel = office ? Stations.reliability(st) : null;
         const officeTxt = !office ? "" : ` · Contract Office${rel == null ? "" : ` ${Math.round(rel * 100)}%`}`;
+        const scr = Stations.publicScrutiny(sys.id);
+        const scrTxt = scr && scr.chanceHint != null ? ` · scrutiny ${scr.chanceHint}%` : "";
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
           (st.status === "owned" ? " · owned" : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
-          officeTxt +
+          officeTxt + scrTxt +
           `</span>`;
       }
     }
@@ -350,6 +352,21 @@ const StarMap = {
       if (docked) trade = `<span class="badge">you are docked here</span>`;
       else if (unlocked) trade = `<button class="btn btn-go" id="sm-dock">Dock here</button>`;
       else trade = `<button class="btn btn-go" id="sm-unlock">Unlock — ${Util.credits(sys.unlock)}c</button>`;
+    } else if (!sys.capital && window.Stations && Stations.get(sys.id)) {
+      // Claimable stations: dockable (commodity exchange stays capital-only).
+      const gate = Stations.canDock(sys.id);
+      const scr = Stations.publicScrutiny(sys.id);
+      const scrTxt = scr && scr.chanceHint != null
+        ? `<span class="tip-dim"> · scrutiny ${scr.chanceHint}% (${scr.label})</span>`
+        : "";
+      if (docked) trade = `<span class="badge">docked at station</span>${scrTxt}`;
+      else if (!gate.ok) trade = `<span class="tip-dim">${gate.msg}</span>${scrTxt}`;
+      else trade = `<button class="btn btn-go" id="sm-dock">Dock at station</button>${scrTxt}`;
+      if (window.Expeditions) {
+        const exp = Expeditions.activeFor(sys.id), cd = Expeditions.cooldownLeft(sys.id);
+        if (exp) trade += ` <span class="badge">🛰 surveying…</span>`;
+        else if (cd <= 0) trade += ` <button class="btn btn-mini" id="sm-survey">Survey</button>`;
+      }
     } else if (window.Expeditions) {
       // backdrop outpost — not a trade hub, but you can dispatch a survey here
       const exp = Expeditions.activeFor(sys.id), cd = Expeditions.cooldownLeft(sys.id);
@@ -382,7 +399,7 @@ const StarMap = {
         } else if (st.status === "cooldown") {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}</div>`;
         }
-        // Exchange Hall: visitors use capital-dock access; owners manage via Stations tab.
+        // Exchange Hall: visitors must be docked here; owners manage via Stations tab.
         const hallAccess = Stations.canUseHall(sys.id);
         if (hallAccess.ok && st.ownerId !== Stations.playerId()) {
           const listings = Stations.hallListings(sys.id);
@@ -414,7 +431,7 @@ const StarMap = {
           }).filter(Boolean);
           const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
           stationBlock += `<div class="si-station si-hall"><b>Exchange Hall</b> · tariff ${tariff}%
-            <div class="tip-dim">Crafted goods only · docked at sector capital</div>
+            <div class="tip-dim">Crafted goods only · docked here</div>
             <div class="st-hall-list" style="margin-top:6px">
               <select id="sm-hall-item">${opts}</select>
               <input type="number" id="sm-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500" aria-label="list price">
@@ -426,6 +443,18 @@ const StarMap = {
             </table></div></div>`;
         } else if ((st.modules.exchange_hall | 0) && !hallAccess.ok && st.ownerId !== Stations.playerId()) {
           stationBlock += `<div class="si-station si-hall tip-dim">Exchange Hall — ${hallAccess.msg}</div>`;
+        }
+        // Visitor ransom offers for your seized cargo.
+        if (docked && st.ownerId !== Stations.playerId()) {
+          const mine = (st.impoundClaims || []).filter(c => !c.fromId || c.fromId === Stations.playerId());
+          if (mine.length) {
+            stationBlock += `<div class="si-station"><b>Impound ransom</b>` +
+              mine.map(c => {
+                const comm = COMMODITIES.find(x => x.id === c.commId);
+                return `<div class="tip-dim">${c.qty}× ${comm ? comm.name : c.commId} · ${Util.credits(c.ransom)}
+                  <button class="btn btn-mini btn-go" data-sm-ransom="${c.id}">Pay</button></div>`;
+              }).join("") + `</div>`;
+          }
         }
       }
     }
@@ -528,6 +557,14 @@ const StarMap = {
         const r = Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
         if (!r.ok) return UI.toast(r.msg, "warn");
         UI.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
+        UI.flashCredits(); this.renderInfo(sys); UI.updateHeader();
+      };
+    });
+    document.querySelectorAll("[data-sm-ransom]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.payRansom(sys.id, btn.dataset.smRansom);
+        if (!r.ok) return UI.toast(r.msg, "warn");
+        UI.toast(`Ransom paid — recovered ${r.qty} units.`, "good");
         UI.flashCredits(); this.renderInfo(sys); UI.updateHeader();
       };
     });

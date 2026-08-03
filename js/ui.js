@@ -2092,7 +2092,8 @@ const UI = {
         </section>
       </div>
       ${this._renderHallPanel(st)}
-      ${this._renderContractOfficePanel(st)}`;
+      ${this._renderContractOfficePanel(st)}
+      ${this._renderCustomsPanel(st)}`;
 
     body.querySelector("#st-set-prod")?.addEventListener("click", () => {
       const id = body.querySelector("#st-prod")?.value;
@@ -2153,6 +2154,95 @@ const UI = {
     });
     this._wireHallPanel(body, st);
     this._wireContractOfficePanel(body, st);
+    this._wireCustomsPanel(body, st);
+  },
+
+  _renderCustomsPanel(st) {
+    const hasCustoms = !!(st.modules.customs_house | 0);
+    const hasFree = !!(st.modules.free_port | 0);
+    if (!hasCustoms && !hasFree) {
+      return `<div class="panel" style="margin-top:14px"><h3>Customs / Free Port</h3>
+        <p class="muted-note">Install a Customs House (Clean flag, scrutiny dial, impound &amp; ransom) or a Free Port (low scrutiny, illicit traffic). They conflict. Scrutiny is always public on the star map.</p></div>`;
+    }
+    if (hasFree) {
+      const scr = Stations.publicScrutiny(st.systemId);
+      return `<div class="panel" style="margin-top:14px"><h3>Free Port <small>scrutiny ~${scr ? scr.chanceHint : "?"}%</small></h3>
+        <p class="muted-note">Border edicts are softened here. Syndicate likes you; lawful factions don't. No impound — seizures stay rare.</p></div>`;
+    }
+    const claims = st.impoundClaims || [];
+    const holdRows = Object.keys(st.impoundHold || {}).filter(id => (st.impoundHold[id] | 0) > 0).map(id => {
+      const c = COMMODITIES.find(x => x.id === id);
+      return `<tr><td>${c ? c.name : id}</td><td class="num">${st.impoundHold[id]}</td>
+        <td class="actions"><button class="btn btn-mini" data-st-impound-sell="${id}">Sell at capital</button></td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">Impound empty — seizures appear when smugglers dock.</td></tr>`;
+    const claimRows = claims.map(c => {
+      const comm = COMMODITIES.find(x => x.id === c.commId);
+      return `<tr><td>${c.qty}× ${comm ? comm.name : c.commId}<div class="tip-dim">ransom ${Util.credits(c.ransom)} · from ${c.fromId || "?"}</div></td>
+        <td class="actions"><button class="btn btn-mini" data-st-impound-drop="${c.id}">Drop</button></td></tr>`;
+    }).join("");
+    const access = Object.entries(this.accessRoles(st.systemId));
+    const accessRows = access.map(([pid, role]) =>
+      `<tr><td>${pid}</td><td>${role}</td>
+        <td class="actions"><button class="btn btn-mini" data-st-role-clear="${pid}">Guest</button></td></tr>`
+    ).join("") || `<tr><td colspan="3" class="muted-note">No special roles — Allied skips Customs scans.</td></tr>`;
+    return `<div class="panel st-customs" style="margin-top:14px">
+      <h3>Customs House <small>Clean · scrutiny ${st.scrutiny | 0}%</small></h3>
+      <p class="muted-note">Public seize chance shown on the map before anyone undocks. Allied / Partner / you are exempt.</p>
+      <label>Scrutiny % <input type="number" id="st-scrutiny" min="0" max="85" value="${st.scrutiny | 0}"></label>
+      <button class="btn btn-mini" id="st-set-scrutiny">Set</button>
+      <div class="st-hall-list" style="margin-top:10px">
+        <input type="text" id="st-role-pid" placeholder="player id" aria-label="player id">
+        <select id="st-role-val"><option value="allied">Allied</option><option value="partner">Partner</option><option value="barred">Barred</option></select>
+        <button class="btn btn-mini" id="st-set-role">Set role</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Access</th><th>Role</th><th></th></tr></thead><tbody>${accessRows}</tbody></table></div>
+      <h4 style="margin-top:12px">Impound</h4>
+      <div class="table-wrap"><table class="market">
+        <thead><tr><th>Goods</th><th class="num">Qty</th><th></th></tr></thead><tbody>${holdRows}</tbody></table></div>
+      ${claimRows ? `<div class="table-wrap" style="margin-top:8px"><table class="market"><tbody>${claimRows}</tbody></table></div>` : ""}
+    </div>`;
+  },
+
+  accessRoles(systemId) {
+    return (window.Stations && Stations.access[systemId]) || {};
+  },
+
+  _wireCustomsPanel(body, st) {
+    body.querySelector("#st-set-scrutiny")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-scrutiny")?.value || 0;
+      const r = Stations.setScrutiny(st.systemId, pct);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Scrutiny set to ${r.scrutiny}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("#st-set-role")?.addEventListener("click", () => {
+      const pid = body.querySelector("#st-role-pid")?.value;
+      const role = body.querySelector("#st-role-val")?.value;
+      const r = Stations.setRole(st.systemId, pid, role);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`${pid} → ${role}.`, "good"); this.renderStations();
+    });
+    body.querySelectorAll("[data-st-role-clear]").forEach(btn => {
+      btn.onclick = () => {
+        Stations.setRole(st.systemId, btn.dataset.stRoleClear, "guest");
+        this.renderStations();
+      };
+    });
+    body.querySelectorAll("[data-st-impound-sell]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.stImpoundSell;
+        const r = Stations.sellImpound(st.systemId, id, st.impoundHold[id] | 0);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Fenced ${r.qty} for ${Util.credits(r.proceeds)} → treasury.`, "good");
+        this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-st-impound-drop]").forEach(btn => {
+      btn.onclick = () => {
+        Stations.dropImpoundClaim(st.systemId, btn.dataset.stImpoundDrop);
+        this.renderStations();
+      };
+    });
   },
 
   _renderContractOfficePanel(st) {
@@ -2250,7 +2340,7 @@ const UI = {
     }).join("") || `<tr><td colspan="3" class="muted-note">No listings — be the first stall.</td></tr>`;
     return `<div class="panel st-hall" style="margin-top:14px">
       <h3>Exchange Hall <small>sale tariff ${((st.saleTariffBps || 0) / 100).toFixed(0)}%</small></h3>
-      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must be in-sector (docked at the capital). NPC traders sometimes clear stalls in guest mode.</p>
+      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must dock here. NPC traders sometimes clear stalls in guest mode.</p>
       <label>Tariff % <input type="number" id="st-tariff" min="0" max="15" value="${((st.saleTariffBps || 0) / 100).toFixed(0)}"></label>
       <button class="btn btn-mini" id="st-set-tariff">Set</button>
       <div class="st-hall-list" style="margin-top:10px">
@@ -3157,8 +3247,14 @@ const UI = {
     Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
-      this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} (${Util.credits(ev.value)}c) at the ${this.sysName(ev.sysId)} gate.`, "bad", 6000);
-      if (window.Feed) Feed.emit(`customs pulled a baron's ${ev.name.toLowerCase()} at ${this.sysName(ev.sysId)} — ${ev.qty} units gone 🚨`, { kind: "reaction" });
+      const where = this.sysName(ev.sysId);
+      if (ev.impoundedTo) {
+        this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} at ${where} — held in station impound (ransom available).`, "bad", 7000);
+        if (window.Feed) Feed.emit(`customs locked a baron's ${ev.name.toLowerCase()} in the ${where} impound 🚨`, { kind: "reaction" });
+      } else {
+        this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} (${Util.credits(ev.value)}c) at the ${where} gate.`, "bad", 6000);
+        if (window.Feed) Feed.emit(`customs pulled a baron's ${ev.name.toLowerCase()} at ${where} — ${ev.qty} units gone 🚨`, { kind: "reaction" });
+      }
       this.audioSafe("news"); this.updateHeader();
       if (this.page === "exchange") this.updateExchange();
     });

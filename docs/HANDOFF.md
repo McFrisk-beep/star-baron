@@ -411,7 +411,8 @@ working" surprise.
 
 **Stations & supply economy (in progress):** see `docs/STATIONS.md`. Client guest
 path is live — finite per-sector stock (`js/stock.js`), 78 NPC/claimable stations
-with auctions/modules/production/sentiment/Exchange Hall/Contract Office
-(`js/stations.js`), Stations tab + star-map visitor hall + Bazaar haul board.
-Server authority is stubbed in `docs/sql/sector_stock.sql`. Sanity:
-`tools/check_stock_economy.js`, `tools/check_stations.js`.
+with auctions/modules/production/sentiment/Exchange Hall/Contract Office/
+Customs·Free Port + non-capital docking (`js/stations.js`), Stations tab +
+star-map visitor hall + Bazaar haul board. Server authority is stubbed in
+`docs/sql/sector_stock.sql`. Sanity: `tools/check_stock_economy.js`,
+`tools/check_stations.js`, `tools/check_customs.js`.

@@ -180,23 +180,18 @@ const hallInst = Stations.install(target.systemId, "exchange_hall");
 assert.ok(hallInst.ok, hallInst.msg);
 assert.ok(Stations.hasHall(target), "hall installed");
 
-// Access: owner always; visitor needs sector capital dock
+// Access: owner always; visitor must dock at the station
 assert.ok(Stations.canUseHall(target.systemId).ok, "owner can use hall");
 const visitorDock = ctx.Game.state.currentSystem;
-ctx.Game.state.currentSystem = "navos"; // may or may not be this sector's capital
 const secHall = Galaxy.sector(target.sectorId);
-// Simulate non-owner access via capital
 const ownerSave = target.ownerId;
 target.ownerId = "alice";
+ctx.Game.state.currentSystem = target.systemId;
+assert.ok(Stations.canUseHall(target.systemId).ok, "docked visitor can use hall");
 ctx.Game.state.currentSystem = secHall.capital;
-assert.ok(Stations.canUseHall(target.systemId).ok, "capital dock unlocks visitor hall");
-// Wrong capital: dock at another sector's hub
-const otherCap = Galaxy.list.find(s => s.capital && s.id !== secHall.capital);
-assert.ok(otherCap, "another capital exists");
-ctx.Game.state.currentSystem = otherCap.id;
-assert.ok(!Stations.canUseHall(target.systemId).ok, "wrong capital blocks visitor hall");
+assert.ok(!Stations.canUseHall(target.systemId).ok, "capital dock no longer proxies hall");
 target.ownerId = ownerSave;
-ctx.Game.state.currentSystem = secHall.capital;
+ctx.Game.state.currentSystem = target.systemId;
 
 // List / cancel extractor
 const hallEx = { uid: "exHall1", type: "jack", scope: "all", name: "Hall Jack", components: [] };
@@ -234,14 +229,12 @@ const expired = Stations._expireHall(target, T);
 assert.strictEqual(expired.length, 1);
 assert.ok(Extractors.get(hallEx.uid), "expiry restores seller goods");
 
-// Customs House blocks blackbox without Black Market
-target.modules.customs_house = 1;
+// Blackboxes always need Black Market on the hall
 target.modules.black_market = 0;
 ctx.Game.state.items = { bb1: { uid: "bb1", name: "Hot Box", consumable: true, effectId: "smuggle", value: 200 } };
 ctx.Items = { isBlackbox: it => !!(it && it.effectId) };
 const bbBlock = Stations.listHallItem(target.systemId, "blackbox", "bb1", 200);
-assert.ok(!bbBlock.ok, "customs without black market blocks blackboxes");
-delete target.modules.customs_house;
+assert.ok(!bbBlock.ok, "blackboxes need a Black Market");
 
 // ---- Contract Office (§11) ------------------------------------------------
 delete target.modules.exchange_hall;
