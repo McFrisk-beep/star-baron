@@ -786,6 +786,8 @@ const TUTORIAL_STEPS = [
       <ul><li><b>Transports</b> haul cargo; <b>escorts</b> bring firepower.</li>
       <li>Your <b>flagship</b> sets travel speed and grants a passive bonus to the whole fleet.</li>
       <li>Send ships on <b>missions</b> (from the Bazaar) for credits and loot — riskier jobs pay far more.</li></ul>` },
+  { icon: "📜", title: "Charters",
+    body: `Heading offline? <b>Charter a hull</b> from the Bazaar. Pick how long and how dangerous; safe runs pay steadily, smuggling runs pay far more and sometimes don't come back. The ship is locked until it returns — you can buy it back early, but it costs you.` },
   { icon: "🛰", title: "The Bazaar",
     body: `The <b>Bazaar</b> is where you spend your winnings:
       <ul><li>Buy <b>ships</b>, hire <b>mercenaries</b>, and grab rare <b>accessories</b> that buff your ships.</li>

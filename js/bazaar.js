@@ -472,9 +472,9 @@ const Bazaar = {
   },
 
   tick(now = Date.now()) {
-    // Phase 3: listing payouts are app_pull. Same softIncomeLocal gate as routes
-    // — don't mint local credits while the server ledger owns them.
-    if (this.authoritative() && window.Routes && !Routes.softIncomeLocal()) {
+    // Phase 3: listing payouts are app_pull. Same softIncomeLocal gate as
+    // charters — don't mint local credits while the server ledger owns them.
+    if (this.authoritative() && window.Economy && !Economy.softIncomeLocal()) {
       this.fillSeededBoard(now);
       return [];
     }

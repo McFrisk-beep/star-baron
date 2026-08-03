@@ -540,7 +540,7 @@ const Senate = {
   shipClassBanned(cls) { return !!this._effects().shipBan[cls]; },
   travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
   windfallSurtax() { return this._effects().windfall || 0; },      // extra earnings tax (economy.js gates it to the top barons)
-  routeSafetyAdd() { return this._effects().route || 0; },         // +safer / −riskier route events (routes.js)
+  routeSafetyAdd() { return this._effects().route || 0; },         // reserved — route events retired; flagship routeSafe still softens charters
   salvageBonusAdd() { return this._effects().salvage || 0; },      // richer survey debrief payouts (survey-story.js)
   craftTimeAdd() { return this._effects().craftTime || 0; },       // Workshop craft duration delta (neg = faster)
   craftCostAdd() { return this._effects().craftCost || 0; },       // Workshop cost delta (neg = cheaper)

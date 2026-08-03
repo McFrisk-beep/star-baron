@@ -87,7 +87,7 @@ const Expeditions = {
   // Phase 3 live: app_pull parks expeditions at debrief; openPendingDebriefs()
   // opens the Dispatches threads. Guests still mature here.
   resolve(now = Date.now()) {
-    if (window.Routes && !Routes.softIncomeLocal()) {
+    if (window.Economy && !Economy.softIncomeLocal()) {
       // Server already parked matured trips — just open any missing threads.
       this.openPendingDebriefs(now);
       return [];

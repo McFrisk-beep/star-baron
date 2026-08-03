@@ -34,7 +34,15 @@ ctx.Fleet = {
 ctx.Items = { gen: o => ({ uid: "it1", name: "Test Widget", kind: (o && o.kind) || "engine", rarity: (o && o.rarity) || "common", bias: o && o.bias }) };
 ctx.Bazaar = { inventoryUsed: () => ctx.__invUsed || 0, capacity: () => 6 };
 ctx.Incidents = { apply: eff => { ctx.__applied = eff; return "applied"; } };
-ctx.Economy = { netWorth: () => ctx.Game.state.credits, refreshNetWorth() {}, checkAchievements() {} };
+ctx.Economy = {
+  netWorth: () => ctx.Game.state.credits, refreshNetWorth() {}, checkAchievements() {},
+  softIncomeLocal() {
+    if (!(ctx.Cloud && ctx.Cloud.authoritative && ctx.Cloud.authoritative())) return true;
+    if (ctx.Cloud.pullReady) return false;
+    if (ctx.Cloud.pullMissing) return true;
+    return false;
+  },
+};
 ctx.Rep = { factionForCategory: () => "mining_combine", change() {} };
 ctx.FACTIONS = { mining_combine: { name: "Mining Combine" } };
 ctx.Bus = { on() {}, emit() {} };
@@ -42,7 +50,8 @@ ctx.Senate = {
   travelSpeedMult: () => 1, salvageBonusAdd: () => 0, windfallSurtax: () => 0, routeSafetyAdd: () => 0,
   travelEdictNote: () => "", industryTaxLines: () => [],
 };
-ctx.Routes = { softIncomeLocal: () => true };
+// softIncomeLocal lives on Economy; stub Cloud so guest path stays local.
+ctx.Cloud = { authoritative: () => false, pullReady: false, pullMissing: false };
 ctx.Game = { timeScale: 1, state: null, requestSave() {} };
 
 const freshState = () => ({
@@ -134,26 +143,21 @@ const parked = Expeditions.list()[0];
 parked.startedAt = Date.now() - parked.etaMs - 1;
 parked.debrief = true;                         // as app_pull would park it
 ctx.Fleet.ship("s1").status = "debrief";
-ctx.Routes.softIncomeLocal = () => false;
+ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false, signedIn: () => true, playersReady: true };
 assert.strictEqual(Expeditions.resolve(Date.now()).length, 0, "resolve noop when server-authoritative soft income");
 assert.ok(Story.s().ephemeral["survey_" + parked.id], "openPendingDebriefs opens SurveyStory under Phase 3");
-ctx.Routes.softIncomeLocal = () => true;
 
 ctx.Game.state = freshState(); addShip();
 const exp3 = { id: "xp99", sysId: "near1", shipUid: "s1", danger: 0.2, debrief: true };
 ctx.Game.state.expeditions = [exp3];
 ctx.Fleet.ship("s1").status = "debrief";
-ctx.Routes.softIncomeLocal = () => false;
 const cGate = ctx.Game.state.credits;
-// Without Cloud.surveyDebrief, auth path releases without minting.
-ctx.Cloud = { surveyDebrief: null };
+// Phase 3 live (!softIncomeLocal) but no surveyDebrief RPC → local apply, no mint.
+ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false, surveyDebrief: null };
 SurveyStory.applyOutcome({ expId: "xp99", outcome: "push_ok", tplId: "dry_chart" });
 assert.strictEqual(ctx.Game.state.credits, cGate, "_pay skips credit mint when !softIncomeLocal");
-// applyOutcome auth branch needs Cloud.surveyDebrief; without it falls through to local
-// only when softIncomeLocal — here softIncomeLocal is false so auth path runs.
-// With surveyDebrief null, auth check is false → local _applyLocal still gated by payLocal.
 assert.strictEqual(ctx.Fleet.ship("s1").status, "idle", "ship still released under Phase 3 gate");
-ctx.Routes.softIncomeLocal = () => true;
+ctx.Cloud = { authoritative: () => false, pullReady: false, pullMissing: false };
 
 // 9) unmatured survey left running; matured debrief does not set cooldown early
 ctx.Game.state = freshState(); addShip();
