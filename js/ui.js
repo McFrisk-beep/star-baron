@@ -2030,6 +2030,34 @@ const UI = {
     const prodOpts = Stations.produceable(st.systemId).map(c =>
       `<option value="${c.id}" ${st.prodComm === c.id ? "selected" : ""}>${c.name}</option>`).join("");
 
+    Stations.syncBays(st);
+    const freeEx = (window.Extractors ? Extractors.unequipped() : []).filter(ex =>
+      !st.prodComm || Extractors.canProduce(ex, st.prodComm));
+    const exOpts = freeEx.map(ex =>
+      `<option value="${ex.uid}">${ex.name} (${EXTRACTORCFG.types[ex.type]?.label || ex.type})</option>`).join("");
+    const bayRows = (st.bays || []).map((bay, i) => {
+      let who, acts;
+      if (!bay.lesseeId) {
+        who = `<span class="muted-note">Vacant — open to lease @ ${((st.leaseTaxBps || 0) / 100).toFixed(0)}%</span>`;
+        acts = st.prodComm
+          ? `<select data-st-bay-ex="${i}" ${exOpts ? "" : "disabled"}>${exOpts || "<option>No free extractor</option>"}</select>
+             <button class="btn btn-mini" data-st-occupy="${i}" ${exOpts ? "" : "disabled"}>Occupy</button>`
+          : "";
+      } else if (bay.npc) {
+        who = `<span class="tip-dim">NPC tenant</span> · tax in`;
+        acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
+      } else if (bay.lesseeId === st.ownerId) {
+        const ex = window.Extractors && Extractors.get(bay.extractorId);
+        who = `<b>You</b> · ${ex ? ex.name : "extractor"}`;
+        acts = `<button class="btn btn-mini" data-st-vacate="${i}">Remove</button>`;
+      } else {
+        who = `<b>Lessee</b> ${bay.lesseeId}`;
+        acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
+      }
+      const y = bay.lesseeId ? Stations._bayGross(st, bay) : 0;
+      return `<tr><td>Bay ${i + 1}</td><td>${who}</td><td class="num">${y ? y + "/h" : "—"}</td><td class="actions">${acts}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="muted-note">Install a Production Hub to open bays.</td></tr>`;
+
     const band = sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
     body.innerHTML = `
       <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small></h2>
@@ -2044,11 +2072,13 @@ const UI = {
       <div class="st-grid">
         <section>
           <h3>Production Hub</h3>
-          <p class="muted-note">Output lands in the station hold. Haul it to the sector capital and Deliver to feed the exchange (and your standing).</p>
+          <p class="muted-note">Owner bays pay into the station hold. Lessees keep their share and pay your lease tax into the hold. Haul deliveries to the sector capital.</p>
           <label>Commodity <select id="st-prod">${prodOpts || "<option value=''>—</option>"}</select></label>
           <button class="btn btn-go" id="st-set-prod" ${(st.modules.production_hub | 0) ? "" : "disabled"}>Assign</button>
           <label>Lease tax % <input type="number" id="st-lease" min="0" max="40" value="${((st.leaseTaxBps || 0) / 100).toFixed(0)}"></label>
           <button class="btn btn-mini" id="st-set-lease">Set</button>
+          <div class="table-wrap" style="margin-top:10px"><table class="market st-bays"><thead><tr><th>Bay</th><th>Occupant</th><th class="num">Yield</th><th></th></tr></thead>
+          <tbody>${bayRows}</tbody></table></div>
           <ul class="st-hold">${holdRows}</ul>
         </section>
         <section>
@@ -2082,6 +2112,22 @@ const UI = {
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Delivered ${r.qty} for ${Util.credits(r.proceeds)}.`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader(); this.updateExchange();
+      };
+    });
+    body.querySelectorAll("[data-st-occupy]").forEach(btn => {
+      btn.onclick = () => {
+        const i = +btn.dataset.stOccupy;
+        const sel = body.querySelector(`[data-st-bay-ex="${i}"]`);
+        const r = Stations.occupyBay(st.systemId, i, sel && sel.value);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Extractor installed in bay.", "good"); this.renderStations();
+      };
+    });
+    body.querySelectorAll("[data-st-vacate]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.vacateBay(st.systemId, +btn.dataset.stVacate);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Bay cleared.", "info"); this.renderStations();
       };
     });
     body.querySelectorAll("[data-st-install]").forEach(btn => {

@@ -876,6 +876,9 @@ const STATIONCFG = {
   revoltStanding: 35,
   fairLeaseTaxBps: 2000,         // >20% lease tax hurts standing
   expectedDeliveryBase: 40,      // units/cycle expected at Prod Hub I × tier
+  // Vacant-bay NPC tenants (guest economy): fill chance falls as lease tax rises.
+  npcLeaseChanceMax: 0.50,
+  npcLeaseLeaveMult: 0.35,       // leave chance ≈ taxFrac × this
   reactor: [
     { power: 2,  upkeep: 1200 },
     { power: 4,  upkeep: 3000 },

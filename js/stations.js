@@ -188,6 +188,7 @@ const Stations = {
     s.credits -= check.cost;
     if (moduleId === "reactor") st.reactorLevel = check.next;
     else st.modules[moduleId] = check.next;
+    if (moduleId === "production_hub") this.syncBays(st);
     this._ledger(st, -check.cost, "install", `${STATION_MODULES[moduleId].name} ${"I".repeat(check.next)}`);
     if (window.Game) Game.requestSave();
     return { ok: true, level: check.next, cost: check.cost };
@@ -205,7 +206,13 @@ const Stations = {
     if (moduleId === "reactor") st.reactorLevel = 0;
     else delete st.modules[moduleId];
     // Drop dependent modules (Refinery needs Prod Hub ≥ II).
-    if (moduleId === "production_hub" && (st.modules.production_hub | 0) < 2) delete st.modules.refinery;
+    if (moduleId === "production_hub") {
+      delete st.modules.refinery;
+      this.syncBays(st); // releases extractors as bay count → 0
+      st.prodComm = null;
+    } else if ((st.modules.production_hub | 0) < 2) {
+      delete st.modules.refinery;
+    }
     Game.state.credits += refund;
     st.status = "refit";
     st.refitUntil = Date.now() + STATIONCFG.refitMs;
@@ -264,25 +271,187 @@ const Stations = {
     return COMMODITIES.filter(c => !c.craftOnly && c.rarity !== "exotic" && (sys.mods[c.cat] ?? 1) < 1.0);
   },
 
-  // Owner Production Hub output → station hold (must haul to capital).
+  // ---- Production Hub bays (docs/STATIONS.md §8) --------------------------
+  bayCount(st) {
+    const hub = st.modules.production_hub | 0;
+    if (!hub) return 0;
+    const row = STATIONCFG.prodHub[hub - 1];
+    return row ? row.bays : 0;
+  },
+
+  syncBays(st) {
+    const n = this.bayCount(st);
+    if (!Array.isArray(st.bays)) st.bays = [];
+    // Coerce / drop junk
+    st.bays = st.bays.filter(b => b && typeof b === "object").map(b => ({
+      lesseeId: b.lesseeId || null,
+      extractorId: b.extractorId || null,
+      npc: !!b.npc,
+    }));
+    while (st.bays.length < n) st.bays.push({ lesseeId: null, extractorId: null, npc: false });
+    while (st.bays.length > n) this._clearBay(st, st.bays.pop());
+    return st.bays;
+  },
+
+  _clearBay(st, bay) {
+    if (!bay) return;
+    // Player extractors stay in the pool; clearing just frees the install slot.
+    bay.lesseeId = null;
+    bay.extractorId = null;
+    bay.npc = false;
+  },
+
+  staffedBays(st) {
+    this.syncBays(st);
+    return (st.bays || []).filter(b => b.lesseeId);
+  },
+
+  // Owner parks an extractor in a bay (occupies it; output → station hold).
+  occupyBay(systemId, bayIndex, extractorUid) {
+    const st = this.get(systemId);
+    if (!st || st.ownerId !== this.playerId() || st.status !== "owned")
+      return { ok: false, msg: "Not your station." };
+    if (!(st.modules.production_hub | 0) || !st.prodComm)
+      return { ok: false, msg: "Assign a Production Hub commodity first." };
+    this.syncBays(st);
+    const bay = st.bays[bayIndex];
+    if (!bay) return { ok: false, msg: "No such bay." };
+    if (bay.lesseeId) return { ok: false, msg: "Bay is occupied." };
+    const ex = window.Extractors && Extractors.get(extractorUid);
+    if (!ex) return { ok: false, msg: "Extractor not found." };
+    if (Extractors.installedSet().has(extractorUid))
+      return { ok: false, msg: "That extractor is already installed elsewhere." };
+    if (!Extractors.canProduce(ex, st.prodComm))
+      return { ok: false, msg: "This extractor can't produce the hub commodity." };
+    bay.lesseeId = this.playerId();
+    bay.extractorId = extractorUid;
+    bay.npc = false;
+    if (window.Game) Game.requestSave();
+    return { ok: true, bay };
+  },
+
+  // Non-owner leases a vacant bay with their extractor (output → their cargo, tax to owner).
+  leaseBay(systemId, bayIndex, extractorUid) {
+    const st = this.get(systemId);
+    if (!st || st.status !== "owned") return { ok: false, msg: "Station isn't leasing." };
+    const pid = this.playerId();
+    if (st.ownerId === pid) return { ok: false, msg: "You own this station — occupy a bay instead." };
+    if (!(st.modules.production_hub | 0) || !st.prodComm)
+      return { ok: false, msg: "No Production Hub commodity assigned." };
+    this.syncBays(st);
+    const bay = st.bays[bayIndex];
+    if (!bay) return { ok: false, msg: "No such bay." };
+    if (bay.lesseeId) return { ok: false, msg: "Bay is occupied." };
+    const ex = window.Extractors && Extractors.get(extractorUid);
+    if (!ex) return { ok: false, msg: "Extractor not found." };
+    if (Extractors.installedSet().has(extractorUid))
+      return { ok: false, msg: "That extractor is already installed elsewhere." };
+    if (!Extractors.canProduce(ex, st.prodComm))
+      return { ok: false, msg: "This extractor can't produce the hub commodity." };
+    bay.lesseeId = pid;
+    bay.extractorId = extractorUid;
+    bay.npc = false;
+    if (window.Game) Game.requestSave();
+    return { ok: true, bay };
+  },
+
+  vacateBay(systemId, bayIndex) {
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    this.syncBays(st);
+    const bay = st.bays[bayIndex];
+    if (!bay || !bay.lesseeId) return { ok: false, msg: "Bay is empty." };
+    const pid = this.playerId();
+    // Owner can evict anyone; lessee can leave their own bay.
+    if (st.ownerId !== pid && bay.lesseeId !== pid)
+      return { ok: false, msg: "Not your bay." };
+    this._clearBay(st, bay);
+    if (window.Game) Game.requestSave();
+    return { ok: true };
+  },
+
+  // Soft NPC tenants for vacant bays — keeps lease tax meaningful in guest mode.
+  _fillNpcTenants(st, hourIndex) {
+    this.syncBays(st);
+    if (!st.prodComm || st.status !== "owned") return;
+    const taxFrac = Util.clamp((st.leaseTaxBps | 0) / 4000, 0, 1);
+    const fillChance = Util.clamp((STATIONCFG.npcLeaseChanceMax || 0.5) * (1 - taxFrac), 0.02, 0.5);
+    const leaveChance = taxFrac * (STATIONCFG.npcLeaseLeaveMult || 0.35);
+    for (let i = 0; i < st.bays.length; i++) {
+      const bay = st.bays[i];
+      const s = Market._seed([st.systemId, "lease", String(i), String(hourIndex)]);
+      if (bay.lesseeId && bay.npc) {
+        if (Market._u01(s, 0) < leaveChance) this._clearBay(st, bay);
+        continue;
+      }
+      if (bay.lesseeId) continue;
+      if (Market._u01(s, 1) < fillChance) {
+        bay.lesseeId = "npc";
+        bay.extractorId = null; // virtual jack-of-all-trades
+        bay.npc = true;
+      }
+    }
+  },
+
+  _bayGross(st, bay) {
+    const hub = st.modules.production_hub | 0;
+    const row = STATIONCFG.prodHub[hub - 1];
+    if (!row || !st.prodComm) return 0;
+    const perBay = row.yield / row.bays;
+    let ex = null;
+    if (bay.extractorId && window.Extractors) ex = Extractors.get(bay.extractorId);
+    // NPC tenants run a virtual jack.
+    if (!ex && bay.npc) ex = { type: "jack", scope: "all", components: [] };
+    if (!ex) return 0;
+    if (window.Extractors && !Extractors.canProduce(ex, st.prodComm) && !bay.npc) return 0;
+    const yMult = window.Extractors ? Extractors.yieldMult(ex) : 1;
+    const bon = window.Extractors ? Extractors.bonuses(ex) : { rate: 1 };
+    let gross = Math.round(perBay * yMult * bon.rate);
+    if ((st.standing | 0) < 20) gross = Math.floor(gross / 2); // general strike
+    return Math.max(0, gross);
+  },
+
+  // Owner + lessee bay production for one hour.
   _playerProduce(st, hourIndex) {
-    if (st.status !== "owned" && st.status !== "refit") return 0;
     if (st.status === "refit") return 0;
+    if (st.status !== "owned") return 0;
     const hub = st.modules.production_hub | 0;
     if (!hub || !st.prodComm) return 0;
-    const row = STATIONCFG.prodHub[hub - 1];
-    if (!row) return 0;
-    let yield_ = row.yield;
-    // Soft extractor bonus if the owner parked one (reuse Extractors when present).
-    if (window.Extractors && window.Game) {
-      // ponytail: no bay→extractor wiring yet; flat +10% if any extractor owned
-      if (Object.keys(Game.state.extractors || {}).length) yield_ = Math.round(yield_ * 1.1);
+    this.syncBays(st);
+    const taxBps = Util.clamp(st.leaseTaxBps | 0, 0, 4000);
+    let total = 0;
+    let ownerStaffed = 0;
+    for (const bay of st.bays) {
+      if (!bay.lesseeId) continue;
+      const gross = this._bayGross(st, bay);
+      if (gross <= 0) continue;
+      total += gross;
+      const isOwner = bay.lesseeId === st.ownerId && !bay.npc;
+      if (isOwner) {
+        ownerStaffed++;
+        st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
+      } else if (bay.npc) {
+        // Tax only into station hold; NPC keeps the rest off-map.
+        const taxQty = Math.floor(gross * taxBps / 10000);
+        if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
+      } else if (bay.lesseeId === this.playerId() && window.Game) {
+        const taxQty = Math.floor(gross * taxBps / 10000);
+        const keep = gross - taxQty;
+        if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
+        if (keep > 0) {
+          const s = Game.state;
+          const held = s.positions[st.prodComm] || 0;
+          s.positions[st.prodComm] = held + keep;
+          // Soft income at zero cost basis (same as industry minting).
+          s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
+        }
+      }
     }
-    // General strike (standing < 20): production halved (docs/STATIONS.md §6.3).
-    if ((st.standing | 0) < 20) yield_ = Math.floor(yield_ / 2);
-    st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + yield_;
-    st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub * (1 + this.tierInfo(st.tier).rank * 0.15));
-    return yield_;
+    // Expected deliveries scale with hub level and how many owner bays are staffed.
+    const staffFactor = Math.max(0.35, ownerStaffed / Math.max(1, st.bays.length));
+    st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub
+      * (1 + this.tierInfo(st.tier).rank * 0.15) * staffFactor);
+    return total;
   },
 
   // Haul station hold → sell on the sector capital exchange (owner action).
@@ -505,6 +674,7 @@ const Stations = {
     for (const st of this.list()) {
       if (st.status === "owned" || st.status === "refit") {
         // Player hubs don't feed sector stock directly.
+        if (st.status === "owned") this._fillNpcTenants(st, hourIndex);
         this._playerProduce(st, hourIndex);
         continue;
       }
@@ -550,7 +720,9 @@ const Stations = {
       else standing -= 5;
 
       const hub = st.modules.production_hub | 0;
-      if (!hub || !st.prodComm) standing -= 3;
+      this.syncBays(st);
+      const staffed = (st.bays || []).filter(b => b.lesseeId && !b.npc && b.lesseeId === st.ownerId).length;
+      if (!hub || !st.prodComm || !staffed) standing -= 3; // idle / unstaffed hub
       if ((st.leaseTaxBps | 0) > STATIONCFG.fairLeaseTaxBps) standing -= 2;
 
       // Upkeep: pull from treasury, then owner credits; unpaid hurts standing.
@@ -603,9 +775,12 @@ const Stations = {
     st.status = "cooldown";
     st.cooldownUntil = Date.now() + STATIONCFG.cooldownMs;
     st.treasury = 0; // forfeited to faction
-    st.hold = {};    // ponytail: docked lessee goods should return; guest has none yet
+    st.hold = {};
     st.standing = STATIONCFG.standingStart;
     st.prodComm = null;
+    // Clear bays — player extractors return to storage (not seized).
+    this.syncBays(st);
+    for (const bay of st.bays || []) this._clearBay(st, bay);
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
@@ -677,7 +852,9 @@ const Stations = {
       st.systemId = id;
       st.modules = (st.modules && typeof st.modules === "object") ? st.modules : {};
       st.hold = (st.hold && typeof st.hold === "object") ? st.hold : {};
+      st.bays = Array.isArray(st.bays) ? st.bays : [];
       st.reactorLevel = Util.clamp(st.reactorLevel | 0, 0, 5);
+      this.syncBays(st);
       st.standing = Util.clamp(+st.standing || STATIONCFG.standingStart, 0, 100);
       st.treasury = Math.max(0, Math.floor(+st.treasury || 0));
       st.leaseTaxBps = Util.clamp(st.leaseTaxBps | 0, 0, 4000);
