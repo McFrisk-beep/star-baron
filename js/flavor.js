@@ -786,6 +786,8 @@ const TUTORIAL_STEPS = [
       <ul><li><b>Transports</b> haul cargo; <b>escorts</b> bring firepower.</li>
       <li>Your <b>flagship</b> sets travel speed and grants a passive bonus to the whole fleet.</li>
       <li>Send ships on <b>missions</b> (from the Bazaar) for credits and loot — riskier jobs pay far more.</li></ul>` },
+  { icon: "📜", title: "Charters",
+    body: `Heading offline? <b>Charter a hull</b> from the Bazaar. Pick how long and how dangerous; safe runs pay steadily, smuggling runs pay far more and sometimes don't come back. The ship is locked until it returns — you can buy it back early, but it costs you.` },
   { icon: "🛰", title: "The Bazaar",
     body: `The <b>Bazaar</b> is where you spend your winnings:
       <ul><li>Buy <b>ships</b>, hire <b>mercenaries</b>, and grab rare <b>accessories</b> that buff your ships.</li>
@@ -857,8 +859,8 @@ const SENATE_EDICTS = [
   { id: "trade_relief",  issue: "trade",       type: "tariff",      scope: "cat",     mag: -0.08, weight: 0.9,  ballot: true, title: "{TARGET} Free-Trade Act", blurb: "Waives duties on {TARGET} — about {PCT} better on every trade, both ways." },
   // — cross-system stakes / new mechanics —
   { id: "windfall_tax",  issue: "tax",         type: "windfall",    scope: "none",    mag: 0.06,  weight: 0.7,  ballot: true, title: "Windfall Levy", blurb: "An antitrust surtax skims about {PCT} off the top barons' trade and route profits." },
-  { id: "convoy_act",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: 0.4,   weight: 0.9,  ballot: true, title: "Convoy Escort Mandate", blurb: "Naval escorts ride the trade lanes — automated routes run about {PCT} safer from raids." },
-  { id: "lane_dereg",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: -0.4,  weight: 0.3,  title: "Lane Patrol Cuts", blurb: "Slashed patrols leave the lanes to the corsairs — route raids bite about {PCT} harder." },
+  { id: "convoy_act",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: 0.4,   weight: 0.9,  ballot: true, title: "Convoy Escort Mandate", blurb: "Naval escorts ride the trade lanes — charter runs are about {PCT} safer from hull loss." },
+  { id: "lane_dereg",    issue: "borders",     type: "routeSafety", scope: "safety",  mag: -0.4,  weight: 0.3,  title: "Lane Patrol Cuts", blurb: "Slashed patrols leave the lanes to the corsairs — charter ship-loss odds run about {PCT} higher." },
   { id: "rationing",     issue: "trade",       type: "ration",      scope: "comm",    mag: 1.3,   weight: 0.8,  ballot: true, title: "{TARGET} Emergency Rationing", blurb: "Mandatory stockpiling of {TARGET} spikes demand — prices sit about {PCT} above their drift until repeal." },
   { id: "salvage_act",   issue: "subsidy",     type: "salvage",     scope: "none",    mag: 0.3,   weight: 0.9,  ballot: true, title: "Salvage Rights Act", blurb: "Opened salvage claims enrich survey debriefs — expedition payouts run about {PCT} higher." },
   // — Workshop / crafting (CRAFTING_AND_MATERIALS §3.5) —

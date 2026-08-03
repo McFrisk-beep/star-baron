@@ -216,7 +216,7 @@ const SurveyStory = {
   // Guest: local mint. Phase 3 live: app_survey_debrief banks the ledger.
   applyOutcome(payload) {
     const st = this.s(); if (!st || !payload) return "";
-    const auth = !!(window.Routes && !Routes.softIncomeLocal()
+    const auth = !!(window.Economy && !Economy.softIncomeLocal()
       && window.Cloud && Cloud.surveyDebrief);
     if (auth) return this._applyAuth(payload);
     return this._applyLocal(payload);
@@ -309,7 +309,7 @@ const SurveyStory = {
     // Guest/offline: mint credits/items locally. Phase 3 live (!softIncomeLocal):
     // skip — same accepted follow-up as Story.grant (server ledger / app_pull would
     // overwrite soft mints). Ship release + report still proceed in applyOutcome.
-    const payLocal = !(window.Routes && !Routes.softIncomeLocal());
+    const payLocal = !(window.Economy && !Economy.softIncomeLocal());
     if (spec.credits && payLocal) {
       let amt = Array.isArray(spec.credits) ? Util.randInt(spec.credits[0], spec.credits[1]) : spec.credits;
       if (window.Senate && Senate.salvageBonusAdd() > 0) amt = Math.round(amt * (1 + Senate.salvageBonusAdd()));   // Salvage Rights Act

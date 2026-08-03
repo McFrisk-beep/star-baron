@@ -19,7 +19,7 @@ const Game = {
       mainShip: { type: "pinnace" },
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
-      missions: [], reports: [], listings: [], orders: [], routes: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
+      missions: [], reports: [], listings: [], orders: [], charters: [], expeditions: [], surveyed: {}, industries: [], extractors: {}, components: {}, items: {},
       activeBoosts: [],   // [{ effectId, expiresAt }] — blackbox timed buffs (CRAFTING_AND_MATERIALS §2)
       knownRecipes: [],   // recipe ids unlocked by blueprints (Workshop)
       craftedOnce: [],    // one-of-a-kind recipes already completed
@@ -88,7 +88,40 @@ const Game = {
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
       delete s.avgCost; s.avgCost = (loaded.avgCost && typeof loaded.avgCost === "object") ? loaded.avgCost : {};
     }
-    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.routes ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    // Trade routes retired → Charter Contracts. Free any hull left on a route.
+    if (Array.isArray(s.ships)) for (const sh of s.ships) if (sh.status === "trading") sh.status = "idle";
+    delete s.routes;
+    // Validate charter shape at the trust boundary (localStorage / cloud sync).
+    const bands = (typeof CHARTER_BANDS !== "undefined" && CHARTER_BANDS) || {};
+    const shipUids = new Set(s.ships.map(sh => sh && sh.uid).filter(Boolean));
+    s.charters = (Array.isArray(s.charters) ? s.charters : []).filter(c =>
+      c && typeof c.id === "string"
+      && typeof c.shipUid === "string" && shipUids.has(c.shipUid)
+      && typeof c.band === "string" && bands[c.band]
+      && Number.isFinite(+c.durationMs) && +c.durationMs > 0
+      && Number.isFinite(+c.startedAt)
+      && Number.isFinite(+c.reward) && +c.reward >= 0
+      && !c.resolved
+    ).map(c => ({
+      id: c.id,
+      shipUid: c.shipUid,
+      band: c.band,
+      durationMs: +c.durationMs,
+      startedAt: +c.startedAt,
+      reward: Math.round(+c.reward),
+      faction: (c.faction && FACTIONS[c.faction]) ? c.faction : (bands[c.band].faction || null),
+      destroyChance: Util.clamp(+c.destroyChance || 0, 0, 0.85),
+      impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
+      impound: !!(bands[c.band].impound > 0),
+      resolved: false,
+    }));
+    for (const sh of s.ships) {
+      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid))
+        sh.status = "idle";
+      else if (s.charters.some(c => c.shipUid === sh.uid) && sh.status !== "impounded")
+        sh.status = "charter";
+    }
     if (!Array.isArray(s.activeBoosts)) s.activeBoosts = [];
     // Drop expired / unknown boosts so old/corrupt saves don't stick forever.
     s.activeBoosts = s.activeBoosts.filter(b => b && typeof b.effectId === "string" && Number.isFinite(+b.expiresAt) && +b.expiresAt > Date.now());
@@ -251,7 +284,7 @@ const Game = {
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
 
-    let offlineReports, offlineMercs, offlineSold, offlineRoutes, offlineOrders, offlineIndustry;
+    let offlineReports, offlineMercs, offlineSold, offlineCharters, offlineOrders, offlineIndustry;
     // Phase 3: logged-in catch-up is server-side (app_pull). Guests stay local.
     // If Phase 3 SQL isn't pasted yet, fall back to the local resolvers.
     let usedPull = false;
@@ -265,20 +298,22 @@ const Game = {
         usedPull = true;
         offlineReports = (pulled.resolved || []).concat(pulled.surveys || []);
         offlineSold = pulled.sold || [];
-        offlineRoutes = pulled.routed || { total: 0, runs: [], events: [] };
+        offlineCharters = []; // charters are client-local until app_charter_* lands
         offlineIndustry = pulled.industry || [];
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
+        if (window.Charters) Charters.reconcileShips();
       }
     }
     if (!usedPull) {
       // softIncomeLocal() is false for logged-in players until app_pull succeeds
-      // (or is confirmed missing). That prevents ghost industry stock / route
+      // (or is confirmed missing). That prevents ghost industry stock / charter
       // credits that Phase 3 app_commit and app_trade will reject.
       offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));
       offlineMercs = Fleet.pruneMercs(now);
       offlineSold = Bazaar.tick(now);
-      offlineRoutes = Routes.resolve(now);
+      offlineCharters = Charters.resolve(now);
+      offlineReports = offlineReports.concat(offlineCharters);
       offlineOrders = await Orders.process();
       offlineIndustry = Industries.resolve(now);
     }
@@ -353,7 +388,7 @@ const Game = {
     // once the "While You Were Away" modal is dismissed for a returning one.
     this._tutorialPending = !this.state.settings.tutorialSeen;
     const shownWYWA = UI.showWYWA({ elapsedMs: elapsed, reports: offlineReports, sold: offlineSold,
-      routed: offlineRoutes, orders: offlineOrders, industry: offlineIndustry, mercs: offlineMercs,
+      chartered: offlineCharters, orders: offlineOrders, industry: offlineIndustry, mercs: offlineMercs,
       recap: this.awayRecap(away, now) });
     this._booting = false;
     if (this._tutorialPending && !shownWYWA) { this._tutorialPending = false; UI.openTutorial(); }
@@ -407,9 +442,7 @@ const Game = {
         this._lastPullTry = now;
         void this.pullCatchUp().then(away => {
           this._pullInflight = false;
-          if (away && away.routed && away.routed.events) {
-            for (const ev of away.routed.events) Bus.emit("routeEvent", ev);
-          }
+          if (window.Charters) Charters.reconcileShips();
           this.requestSave();
         }).catch(() => { this._pullInflight = false; });
       }
@@ -417,13 +450,12 @@ const Game = {
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
       }).catch(e => console.warn("[Missions] resolve failed:", e));
-      if (Routes.softIncomeLocal()) {
+      if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
-        const routed = Routes.resolve(now);
-        for (const ev of routed.events) Bus.emit("routeEvent", ev);
+        const chartered = Charters.resolve(now);
         const made = Industries.resolve(now);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
-        if (surveyed.length || routed.total || made.length || crafted.length) this.requestSave();
+        if (surveyed.length || chartered.length || made.length || crafted.length) this.requestSave();
       } else if (window.Workshop) {
         const crafted = Workshop.resolve(now);
         if (crafted.length) this.requestSave();
@@ -443,15 +475,14 @@ const Game = {
       const surveyed = Expeditions.resolve(now);
       Fleet.pruneMercs(now);
       Rivals.tick(now);
-      const routed = Routes.resolve(now);
-      for (const ev of routed.events) Bus.emit("routeEvent", ev);
+      const chartered = Charters.resolve(now);
       void Orders.process().then(orderEv => {
         for (const ev of orderEv) Bus.emit("order", ev);
         if (orderEv.length) this.requestSave();
       }).catch(e => console.warn("[Orders] process failed:", e));
       const made = Industries.resolve(now);
       const crafted = window.Workshop ? Workshop.resolve(now) : [];
-      if (surveyed.length || routed.total || made.length || crafted.length || senateBills.length) this.requestSave();
+      if (surveyed.length || chartered.length || made.length || crafted.length || senateBills.length) this.requestSave();
     }
     UI.tick();
   },
@@ -518,11 +549,9 @@ const Game = {
         if (window.Bgm) Bgm.applyVolume();
       };
       if (window.Economy && Economy.authoritative()) {
-        void this.pullCatchUp().then(away => {
-          if (away && away.routed && away.routed.events) {
-            for (const ev of away.routed.events) Bus.emit("routeEvent", ev);
-          }
-          if (Cloud.pullReady || !Routes.softIncomeLocal()) {
+        void this.pullCatchUp().then(() => {
+          if (window.Charters) Charters.reconcileShips();
+          if (Cloud.pullReady || !Economy.softIncomeLocal()) {
             Fleet.pruneMercs(now);
             void Orders.process();
           } else {
@@ -530,7 +559,7 @@ const Game = {
             Expeditions.resolve(now);
             Fleet.pruneMercs(now);
             Bazaar.tick(now);
-            Routes.resolve(now);
+            Charters.resolve(now);
             void Orders.process();
             Industries.resolve(now);
           }
@@ -543,7 +572,7 @@ const Game = {
       Expeditions.resolve(now);
       Fleet.pruneMercs(now);
       Bazaar.tick(now);
-      Routes.resolve(now);
+      Charters.resolve(now);
       void Orders.process();
       Industries.resolve(now);
       if (window.Workshop) Workshop.resolve(now);
@@ -569,7 +598,7 @@ const Game = {
     // the player ever reaches Settings → Restore backup.
     if (!Store._cloudReady) return null;
     try {
-      // Soft-sync setup (new routes/industries/expeditions) before pull so the
+      // Soft-sync setup (new industries/expeditions) before pull so the
       // server sees them; credits only decrease (spends), never mint via commit.
       await Cloud.commit(this.snapshot());
       const r = await Cloud.pull();
@@ -598,7 +627,7 @@ const Game = {
   _softIncomeDue(now = Date.now()) {
     const s = this.state;
     if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
-    if ((s.routes || []).some(r => now >= (r.nextAt || 0))) return true;
+    if ((s.charters || []).some(c => !c.resolved && now >= c.startedAt + c.durationMs)) return true;
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;

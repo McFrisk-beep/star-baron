@@ -519,7 +519,7 @@ const Senate = {
         case "shipBan": if (e.cls) fx.shipBan[e.cls] = 1; break;
         case "warpGate": fx.warp += e.add; break;
         case "windfall": fx.windfall += e.add; break;      // antitrust surtax on the top barons' earnings
-        case "routeSafety": fx.route += e.add; break;       // +safer / −riskier automated routes
+        case "routeSafety": fx.route += e.add; break;       // +safer / −riskier charter destroy/impound odds
         case "salvage": fx.salvage += e.add; break;         // richer expedition/survey payouts
         case "craftTime": fx.craftTime += e.add; break;     // Workshop craft duration (neg = faster)
         case "craftCost": fx.craftCost += e.add; break;     // Workshop ingredient/credit cost (neg = cheaper)
@@ -540,7 +540,7 @@ const Senate = {
   shipClassBanned(cls) { return !!this._effects().shipBan[cls]; },
   travelSpeedMult() { return 1 + (this._effects().warp || 0); },   // standardized warp-gate edicts
   windfallSurtax() { return this._effects().windfall || 0; },      // extra earnings tax (economy.js gates it to the top barons)
-  routeSafetyAdd() { return this._effects().route || 0; },         // +safer / −riskier route events (routes.js)
+  routeSafetyAdd() { return this._effects().route || 0; },         // Convoy Mandate / Lane Cuts → Charters.destroyChance
   salvageBonusAdd() { return this._effects().salvage || 0; },      // richer survey debrief payouts (survey-story.js)
   craftTimeAdd() { return this._effects().craftTime || 0; },       // Workshop craft duration delta (neg = faster)
   craftCostAdd() { return this._effects().craftCost || 0; },       // Workshop cost delta (neg = cheaper)

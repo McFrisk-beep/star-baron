@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* check_industry_sell_routes.js — regression for:
-   1) Logged-in industry stock must not become unsellable ghost positions.
-   2) Trade-route nextAt heal + schedule align; authoritative cycles ignore fast-time.
+   Logged-in industry stock must not become unsellable ghost positions.
+   (Trade-route timing cases retired with routes.js → see check_charters.js.)
    Run:  node tools/check_industry_sell_routes.js                               */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
@@ -17,17 +17,17 @@ ctx.localStorage = {
 ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 
 for (const f of ["store.js", "data.js", "flavor.js", "market.js", "items.js", "fleet.js",
-  "economy.js", "reputation.js", "routes.js", "industries.js", "extractors.js", "bazaar.js", "expeditions.js"]) {
+  "economy.js", "reputation.js", "charters.js", "industries.js", "extractors.js", "bazaar.js", "expeditions.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
 }
 
-const { Market, Fleet, Routes, Industries, Economy, SYSTEMS, CONFIG } = ctx;
+const { Market, Industries, Economy, SYSTEMS } = ctx;
 Market.init();
 
 const fresh = () => ({
   credits: 10000, positions: {}, avgCost: {}, currentSystem: "navos", travel: null,
   unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
-  ships: [], routes: [], industries: [], extractors: {}, components: {}, items: {}, seq: 1,
+  ships: [], charters: [], industries: [], extractors: {}, components: {}, items: {}, seq: 1,
   prestige: { tier: 0, multiplier: 1 }, mainShip: { type: "pinnace" },
   stats: { trades: 0, contractsDone: 0, peakNetWorth: 10000, biggestTrade: 0 },
   reputation: { syndicate: 0, mining_combine: 0, free_trade: 0, agri_collective: 0 },
@@ -55,7 +55,7 @@ ctx.Galaxy = {
 
 (async () => {
   // ---- softIncomeLocal gates ----
-  assert.strictEqual(Routes.softIncomeLocal(), true, "guest soft income local");
+  assert.strictEqual(Economy.softIncomeLocal(), true, "guest soft income local");
 
   ctx.Cloud = {
     playersReady: true, pullReady: false, pullMissing: false,
@@ -64,7 +64,7 @@ ctx.Galaxy = {
     _isMissingRpc() { return false; },
   };
   assert.strictEqual(Economy.authoritative(), true);
-  assert.strictEqual(Routes.softIncomeLocal(), false, "auth without pull: no local mint");
+  assert.strictEqual(Economy.softIncomeLocal(), false, "auth without pull: no local mint");
 
   // Industry resolve must not mint ghost stock in that window
   ctx.Game.state = fresh();
@@ -79,7 +79,7 @@ ctx.Galaxy = {
 
   // Phase 2 fallback when pull RPC is confirmed missing
   ctx.Cloud.pullMissing = true;
-  assert.strictEqual(Routes.softIncomeLocal(), true);
+  assert.strictEqual(Economy.softIncomeLocal(), true);
   const made = Industries.resolve(T);
   assert(made.length > 0 && (ctx.Game.state.positions.iron_ore || 0) > 0, "fallback mints stock");
 
@@ -106,7 +106,6 @@ ctx.Galaxy = {
     };
   };
   ctx.Game.pullCatchUp = async () => {
-    // Simulate pull adopting server positions (empty)
     ctx.Game.state.positions = Object.assign({}, serverPositions);
     return {};
   };
@@ -116,44 +115,6 @@ ctx.Galaxy = {
   assert.strictEqual(sell.ok, false);
   assert(/exchange ledger/i.test(sell.msg) || /nothing to sell/i.test(sell.msg), sell.msg);
   assert.strictEqual(ctx.Game.state.positions.iron_ore || 0, 0, "ghost cleared");
-
-  // ---- route timing ----
-  ctx.Cloud.pullReady = false;
-  ctx.Cloud.pullMissing = true; // guest-like local resolve for timing checks
-  // actually authoritative+pullMissing uses catalog speed in cycleMsFor
-  ctx.Game.state = fresh();
-  const sh = Object.assign(Fleet.makeShip("corvette"), { status: "trading", dmg: 0.5 });
-  ctx.Game.state.ships.push(sh);
-  ctx.Game.state.routes.push({
-    id: "rt1", comm: "iron_ore", from: "korrin", to: "navos",
-    shipUids: [sh.uid], nextAt: T,
-  });
-  ctx.Game.timeScale = 60;
-  const authCycle = Routes.cycleMsFor(ctx.Game.state.routes[0]);
-  assert(authCycle > 60_000, "auth cycles ignore fast-time: " + authCycle);
-
-  // Guest path still scales
-  ctx.Cloud.playersReady = false;
-  assert.strictEqual(Routes.softIncomeLocal(), true);
-  const guestFast = Routes.cycleMsFor(ctx.Game.state.routes[0]);
-  assert(guestFast < authCycle, "guest fast-time shortens cycle");
-  assert(guestFast >= CONFIG.marketTickMs);
-
-  // Heal missing nextAt + schedule align (no per-tick spam)
-  ctx.Cloud.playersReady = true;
-  ctx.Cloud.pullMissing = true;
-  ctx.Game.timeScale = 1;
-  delete ctx.Game.state.routes[0].nextAt;
-  ctx.ROUTECFG.eventChance = 1;
-  let events = 0;
-  for (let i = 0; i < 5; i++) {
-    T += CONFIG.marketTickMs;
-    const r = Routes.resolve(T);
-    events += r.events.length;
-  }
-  // First tick heals + may bank once; later ticks must wait a full cycle (~minutes)
-  assert(events <= 1, "missing nextAt must not toast every tick, got " + events);
-  assert(ctx.Game.state.routes[0].nextAt > T, "nextAt in the future after resolve");
 
   console.log("check_industry_sell_routes: ok");
 })().catch(e => { console.error(e); process.exit(1); });

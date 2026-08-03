@@ -35,6 +35,17 @@ const Economy = {
   _rpcQueue: Promise.resolve(),
   busy() { return this._pending > 0; },
 
+  // Phase 3 soft income is server-side when app_pull is live. While logged-in
+  // but pull hasn't succeeded yet, do NOT mint local credits/events — Phase 3
+  // app_commit rejects credit increases, and local banking desyncs the ledger.
+  // Only fall back to local soft income when app_pull is confirmed missing.
+  softIncomeLocal() {
+    if (!(window.Cloud && Cloud.authoritative && Cloud.authoritative())) return true; // guest
+    if (Cloud.pullReady) return false;           // Phase 3 live
+    if (Cloud.pullMissing) return true;          // Phase 3 SQL not installed
+    return false;                               // retry pull; don't mint ghosts
+  },
+
   priceHere(commId) { return Market.systemPrice(commId, this.s().currentSystem); },
   inTransit() { return !!this.s().travel; },
 
@@ -63,9 +74,9 @@ const Economy = {
       bazaar: JSON.parse(JSON.stringify(s.bazaar || {})),
       pendingContracts: JSON.parse(JSON.stringify(s.pendingContracts || [])),
       bazaarBought: (s.bazaarBought || []).slice(),
-      // Phase 3: routes / extractors / components so a failed route or bazaar
-      // buy rolls back the optimistic mutation.
-      routes: JSON.parse(JSON.stringify(s.routes || [])),
+      // Phase 3: extractors / components / charters so a failed bazaar buy
+      // rolls back the optimistic mutation. (routes retired — see charters.js)
+      charters: JSON.parse(JSON.stringify(s.charters || [])),
       extractors: JSON.parse(JSON.stringify(s.extractors || {})),
       components: JSON.parse(JSON.stringify(s.components || {})),
       seq: s.seq,
@@ -92,7 +103,7 @@ const Economy = {
     if (snap.bazaar) s.bazaar = snap.bazaar;
     if (snap.pendingContracts) s.pendingContracts = snap.pendingContracts;
     if (snap.bazaarBought) s.bazaarBought = snap.bazaarBought;
-    if (snap.routes) s.routes = snap.routes;
+    if (snap.charters) s.charters = snap.charters;
     if (snap.extractors) s.extractors = snap.extractors;
     if (snap.components) s.components = snap.components;
     if (snap.seq != null) s.seq = snap.seq;
@@ -144,6 +155,7 @@ const Economy = {
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    if (window.Charters) Charters.reconcileShips();
   },
 
   // Phase-2/3 SQL used to stamp stub names ("Battleship", "Shield uncommon").
@@ -238,6 +250,7 @@ const Economy = {
     }
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    if (window.Charters) Charters.reconcileShips();
   },
 
   // Snapshot non-stub cosmetic names before a server slice clobbers them.

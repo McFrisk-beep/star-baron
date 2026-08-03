@@ -251,7 +251,7 @@ const FLAGSHIP_EFFECTS = {
   cargo:     { label: "Fleet cargo" },
   all:       { label: "All fleet stats" },
   industry:  { label: "Industry yield" },
-  routeSafe: { label: "Safer trade routes" },
+  routeSafe: { label: "Safer charters" },
   survey:    { label: "Survey scan power" },
   taxRelief: { label: "Industry tax relief" },
 };
@@ -317,33 +317,37 @@ const BAZAARCFG = {
   cancelFeeMin: 250,                 // floor so tiny tips/jobs still sting
 };
 
-/* ---- TRADE ROUTES ---------------------------------------------------------
-   Assign an idle ship to ferry a commodity from a cheap system to a dear one;
-   it banks the price spread × cargo every round trip while you're away.        */
-const ROUTECFG = {
-  margin: 0.5,              // ship keeps this × (spread × cargo) per round trip (the rest is "friction/fuel")
-  legSecondsPerDist: 150,   // round-trip seconds = 2 × distance × this ÷ ship speed (tune transit length here)
-  maxCyclesPerResolve: 50,  // cap round trips banked in a single catch-up (anti-windfall on long idles)
-  eventChance: 0.45,        // odds a banking run rolls a random event (else it's a quiet, ordinary run)
+/* ---- CHARTER CONTRACTS ----------------------------------------------------
+   Long-duration jobs bought from the Bazaar. Player stakes a hull (not credits)
+   against a locked-in payout; risk band + duration set pay and destroy odds.
+   Replaces automated trade routes (see docs / CHARTER_CONTRACTS).              */
+const CHARTERCFG = {
+  durations: [30, 60, 120, 240, 480, 720, 1440, 2880, 4320], // minutes: 30m … 72h
+  rateBase: 600,          // flat c/h floor for any hull
+  rateCargo: 30,          // c/h per point of cargo
+  rateFirepower: 60,      // c/h per point of firepower
+  taperExp: 0.75,         // hours^taperExp — long charters pay less per hour
+  payoutCapMult: 3,       // cap vs Economy.depth(); null disables
+  durationRiskExp: 0.5,   // hours^this — a 72h run is ~8.5× as dangerous as 1h
+  hullSoftness: 220,      // hull points at which a ship is "sturdy" (factor 1.0)
+  hullFactorClamp: [0.45, 2.2],
+  bailoutAt: 0.5,         // fraction of duration before which cancelling costs money
+  abortFeeRate: 0.70,     // early cancel = −reward × this
+  salvageFloor: 0.35,     // buyout at the bailout point
+  salvageCeil: 0.60,      // buyout ceiling as the charter matures
+  salvageStepMin: 10,     // buyout ticks up in steps of this many minutes
+  maxActive: 3,           // charters running at once
 };
 
-/* ---- TRADE-ROUTE EVENTS ---------------------------------------------------
-   Rolled once each time an automated route banks a batch of round trips
-   (routes.js). `w` is the relative weight; `mult` is a range applied to ONE
-   shipment's worth of profit so a swing can never exceed a single cycle (safe
-   for long offline catch-ups). `dmg`, if set, wears a random ship on the route
-   by that hull fraction. `good`/`bad` pick the toast tone + ± sign. Flavor is
-   surfaced live as a toast and in the "while you were away" recap.            */
-const ROUTE_EVENTS = [
-  { id: "bribe",    w: 3, mult: [0.55, 0.85], msg: "paid a bribe to slip cargo past a checkpoint" },
-  { id: "pirates",  w: 3, mult: [-0.4, 0.5],  msg: "pirates boarded and skimmed part of the haul" },
-  { id: "reroute",  w: 3, mult: [0.55, 0.9],  msg: "re-routed around a blockade and lost time" },
-  { id: "badtrade", w: 2, mult: [-0.5, 0.4],  msg: "misjudged demand and traded at a loss" },
-  { id: "damage",   w: 2, mult: [0.85, 1.05], dmg: [0.03, 0.09], msg: "took hull damage shaking off a tail" },
-  { id: "customs",  w: 2, mult: [0.4, 0.8],   msg: "customs docked a cut in duties" },
-  { id: "fastdeal", w: 3, mult: [1.25, 1.7],  good: true, msg: "beat rivals to a hot buyer for a bonus" },
-  { id: "windfall", w: 2, mult: [1.2, 1.55],  good: true, msg: "hit a supply crunch and sold dear" },
-];
+// Charter-specific risk (pay multipliers reuse DANGER). destroy/impound are
+// 1h bases; Charters.destroyChance scales them by duration × hull softness.
+const CHARTER_BANDS = {
+  safe:     { destroy: 0,    impound: 0,    faction: null,             blurb: "Lane courier — always completes." },
+  low:      { destroy: 0.01, impound: 0,    faction: "free_trade",     blurb: "Bulk haul with light lane risk." },
+  moderate: { destroy: 0.03, impound: 0,    faction: "mining_combine", blurb: "Ore run — damage or a shorted purse." },
+  high:     { destroy: 0.07, impound: 0,    faction: "agri_collective",blurb: "Smuggle run — hulls don't always come home." },
+  extreme:  { destroy: 0.14, impound: 0.06, faction: "syndicate",      blurb: "Contraband charter — destroyed or impounded." },
+};
 
 /* ---- INCIDENTS ------------------------------------------------------------
    Random choice-driven encounters during active play (incidents.js). Timer
@@ -972,8 +976,8 @@ const SENATECFG = {
   dossierMinPrice: 1500, dossierMaxPrice: 9000, dossierSlots: 3,
   // windfall levy: the surtax only bites barons ranked in the top N of the board
   windfallTopN: 3,
-  // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing a
-  // bad route-event's loss (0 = fully shrugged, 2.5 = 2.5× harsher)
+  // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing
+  // charter destroy/impound odds (0.1 = nearly shrugged, 2.5 = 2.5× riskier)
   routeSafetyClamp: [0.1, 2.5],
   // ballot initiative: table your own bill onto the docket (high tier + a fee).
   // Weekly quota = tier − ballotMinTier + 1 (tier 3 → 1/week, tier 4 → 2, …).
@@ -1303,8 +1307,8 @@ window.WORKSHOPCFG = WORKSHOPCFG;
 window.BLUEPRINTS = BLUEPRINTS;
 window.RECIPES = RECIPES;
 window.MARKETCFG = MARKETCFG;
-window.ROUTECFG = ROUTECFG;
-window.ROUTE_EVENTS = ROUTE_EVENTS;
+window.CHARTERCFG = CHARTERCFG;
+window.CHARTER_BANDS = CHARTER_BANDS;
 window.INCIDENTCFG = INCIDENTCFG;
 window.WARCFG = WARCFG;
 window.INDUSTRYCFG = INDUSTRYCFG;

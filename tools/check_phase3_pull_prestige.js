@@ -14,13 +14,13 @@ ctx.localStorage = { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(
 ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 
 for (const f of ["store.js", "data.js", "flavor.js", "market.js", "items.js", "fleet.js", "economy.js",
-  "reputation.js", "missions.js", "bazaar.js", "routes.js", "industries.js", "expeditions.js", "extractors.js"]) {
+  "reputation.js", "missions.js", "bazaar.js", "charters.js", "industries.js", "expeditions.js", "extractors.js"]) {
   const p = path.join(__dirname, "../js", f);
   if (!fs.existsSync(p)) continue;
   vm.runInContext(fs.readFileSync(p, "utf8"), ctx, { filename: f });
 }
 
-const { Market, Economy, Routes, Industries, Expeditions, Bazaar, Fleet, SYSTEMS, COMMODITIES } = ctx;
+const { Market, Economy, Charters, Industries, Expeditions, Bazaar, Fleet, SYSTEMS, COMMODITIES } = ctx;
 Market.init();
 
 const fresh = () => ({
@@ -32,7 +32,7 @@ const fresh = () => ({
   achievements: [], ships: [], items: {}, orders: [], seq: 1,
   mainShip: { type: "pinnace" },
   missions: [], reports: [], listings: [],
-  routes: [], industries: [], expeditions: [], surveyed: {},
+  charters: [], industries: [], expeditions: [], surveyed: {},
   extractors: {}, components: {},
   inventory: { capacity: 6, upgrades: 0 },
   bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [] },
@@ -53,6 +53,7 @@ ctx.Galaxy = {
 };
 ctx.Feed = { emit() {} };
 ctx.Wars = { active: () => null };
+ctx.Boosts = { mag: () => 0 };
 ctx.Extractors = ctx.Extractors || {
   get: (uid) => ctx.Game.state.extractors[uid],
   installedSet: () => new Set(),
@@ -63,22 +64,20 @@ ctx.Extractors = ctx.Extractors || {
 };
 
 (async () => {
-  // 1) Guest route resolve still banks locally
+  // 1) Guest charter resolve still banks locally
   ctx.Game.state = fresh();
-  const sh = Fleet.makeShip("drift");
-  sh.status = "trading";
-  ctx.Game.state.ships.push(sh);
-  ctx.Game.state.routes.push({
-    id: "rt1", comm: "iron_ore", from: "korrin", to: "navos",
-    shipUids: [sh.uid], nextAt: T - 60_000,
-  });
+  const sh = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
+  ctx.Game.state.ships.push(sh, Object.assign(Fleet.makeShip("mule"), { status: "idle" }));
+  const d = Charters.dispatch(sh.uid, "safe", 60, T);
+  assert(d.ok, d.msg);
   assert.strictEqual(Economy.authoritative(), false);
-  const g = Routes.resolve(T);
-  assert(g.total > 0 || g.runs.length >= 0, "guest resolve runs");
-  // even if spread is 0, nextAt should advance
-  assert(ctx.Game.state.routes[0].nextAt > T - 60_000);
+  T += 3600000;
+  const g = Charters.resolve(T);
+  assert.strictEqual(g.length, 1, "guest charter resolves");
+  assert(g[0].credits > 0);
 
-  // 2) Authoritative + pullReady → local resolve is a no-op
+  // 2) Authoritative + pullReady → local soft income is a no-op
+  T = 1_714_000_000_000;
   ctx.Game.state = fresh();
   ctx.Cloud = {
     playersReady: true, pullReady: true,
@@ -113,13 +112,13 @@ ctx.Extractors = ctx.Extractors || {
   assert.strictEqual(Economy.authoritative(), true);
   assert.strictEqual(ctx.Cloud.pullReady, true);
   const before = ctx.Game.state.credits;
-  ctx.Game.state.ships.push(Object.assign(Fleet.makeShip("drift"), { status: "trading" }));
-  ctx.Game.state.routes.push({
-    id: "rt2", comm: "iron_ore", from: "korrin", to: "navos",
-    shipUids: [ctx.Game.state.ships[0].uid], nextAt: T - 60_000,
-  });
-  const rSkip = Routes.resolve(T);
-  assert.strictEqual(rSkip.total, 0, "auth+pullReady skips local route banking");
+  const sh2 = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
+  ctx.Game.state.ships.push(sh2, Object.assign(Fleet.makeShip("mule"), { status: "idle" }));
+  const d2 = Charters.dispatch(sh2.uid, "safe", 60, T);
+  assert(d2.ok);
+  T += 3600000;
+  const rSkip = Charters.resolve(T);
+  assert.strictEqual(rSkip.length, 0, "auth+pullReady skips local charter banking");
   assert.strictEqual(ctx.Game.state.credits, before, "credits unchanged by local resolve");
   assert.strictEqual(Industries.resolve(T).length, 0);
   assert.strictEqual(Expeditions.resolve(T).length, 0);
@@ -133,49 +132,37 @@ ctx.Extractors = ctx.Extractors || {
   // 4) Prestige goes through RPC when authoritative
   ctx.Game.state.stats.peakNetWorth = 2_000_000;
   ctx.Game.state.credits = 2_000_000;
-  // Force canPrestige by faking net worth path — tier 0 → Magnate needs 1M
   assert(Economy.canPrestige(), "can prestige at 2M");
   const pr = await Economy.prestige();
   assert(pr.ok && (pr.tier === 1 || ctx.Game.state.prestige.tier === 1));
 
   // 5) Without pullReady, local soft income is gated:
-  //    - pull not missing yet → no local mint (avoid ghost stock/credits)
+  //    - pull not missing yet → no local mint
   //    - pullMissing → Phase 2 fallback allowed
+  T = 1_714_000_000_000;
   ctx.Cloud.pullReady = false;
   ctx.Cloud.pullMissing = false;
   ctx.Game.state = fresh();
-  ctx.Game.state.ships.push(Object.assign(Fleet.makeShip("drift"), { status: "trading" }));
-  ctx.Game.state.routes.push({
-    id: "rt3", comm: "iron_ore", from: "korrin", to: "navos",
-    shipUids: [ctx.Game.state.ships[0].uid], nextAt: T - 3600_000,
-  });
-  assert.strictEqual(Routes.resolve(T).total, 0, "auth without pullReady skips local mint");
+  const sh3 = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
+  ctx.Game.state.ships.push(sh3, Object.assign(Fleet.makeShip("mule"), { status: "idle" }));
+  Charters.dispatch(sh3.uid, "safe", 60, T);
+  T += 3600000;
+  assert.strictEqual(Charters.resolve(T).length, 0, "auth without pullReady skips local mint");
   ctx.Cloud.pullMissing = true;
-  const local = Routes.resolve(T);
-  assert(local.runs || local.total >= 0, "pullMissing Phase 2 fallback allowed");
+  const local = Charters.resolve(T);
+  assert.strictEqual(local.length, 1, "pullMissing Phase 2 fallback allowed");
 
-  // 6) Route start/stop go through the server RPC when authoritative (ship
-  //    'trading' status is server-owned — commit can't set it).
+  // 6) Charter reconcile restores status after a server ship slice
   ctx.Cloud.pullReady = true;
   ctx.Game.state = fresh();
   const rShip = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
-  ctx.Game.state.ships.push(rShip);
-  const calls = [];
-  ctx.Cloud.routeStart = async (comm, from, to, uids) => {
-    calls.push(["routeStart", comm, from, to, uids.length]);
-    const srvShip = Object.assign({}, rShip, { status: "trading" });
-    return {
-      ok: true, credits: ctx.Game.state.credits, positions: {}, avgCost: {},
-      ships: [srvShip], mainShip: ctx.Game.state.mainShip, missions: [], items: {},
-      inventory: ctx.Game.state.inventory, stats: ctx.Game.state.stats,
-      routes: [{ id: "rt9", comm, from, to, shipUids: uids, nextAt: T + 1000 }],
-    };
-  };
-  const rs = await Routes.start([rShip.uid], "iron_ore", "korrin", "navos");
-  assert(rs && rs.ok, "authoritative route start ok");
-  assert(calls.some(c => c[0] === "routeStart"), "route start used Cloud.routeStart RPC");
-  assert.strictEqual(ctx.Game.state.routes[0].id, "rt9", "server route id applied");
-  assert.strictEqual(ctx.Game.state.ships[0].status, "trading", "server marked ship trading");
+  ctx.Game.state.ships.push(rShip, Object.assign(Fleet.makeShip("mule"), { status: "idle" }));
+  const rs = Charters.dispatch(rShip.uid, "safe", 60, T);
+  assert(rs.ok);
+  // Simulate commit echoing ships as idle
+  ctx.Game.state.ships[0].status = "idle";
+  Charters.reconcileShips();
+  assert.strictEqual(ctx.Game.state.ships[0].status, "charter", "reconcile re-locks charter hull");
 
   console.log("check_phase3_pull_prestige: ok");
 })().catch(e => { console.error(e); process.exit(1); });
