@@ -10,6 +10,8 @@ and Baron Tier title can refresh anytime).
 
 Supabase → **SQL Editor** → paste & **Run**
 [`docs/sql/baron_board.sql`](sql/baron_board.sql).
+Safe to re-run (`create or replace`); needed if publish logs
+`42702 column reference "title" is ambiguous`.
 
 Prereqs:
 
