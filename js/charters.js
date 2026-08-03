@@ -1,5 +1,8 @@
-/* charters.js — Charter Contracts. Stake an idle hull on a timed job from the
+/* charters.js — Charter Contracts. Stake idle hull(s) on a timed job from the
    Bazaar; payout is locked at dispatch; risk band + duration set destroy odds.
+   Pay scales with cargo; loss odds rise hard with cargo and fall with attack /
+   hull / armor / shields — so pure haulers earn more and die more, escorts
+   earn less and keep the convoy alive. Group up to CHARTERCFG.maxShips.
    Cancelling early costs credits; after bailoutAt the sponsor buys the ship out.
    Replaces automated trade routes (routes.js retired).
 
@@ -11,19 +14,44 @@ const Charters = {
   s() { return window.Game.state; },
   list() { return this.s().charters || (this.s().charters = []); },
   active() { return this.list().filter(c => !c.resolved); },
-  ofShip(uid) { return this.active().find(c => c.shipUid === uid) || null; },
+  ofShip(uid) { return this.active().find(c => this.shipUids(c).includes(uid)) || null; },
 
-  shipRate(ship) {
-    const st = Fleet.stats(ship);
-    return CHARTERCFG.rateBase
-      + st.cargo * CHARTERCFG.rateCargo
-      + st.firepower * CHARTERCFG.rateFirepower;
+  // Prefer shipUids[]; legacy single-ship rows keep shipUid.
+  shipUids(charter) {
+    if (!charter) return [];
+    if (Array.isArray(charter.shipUids) && charter.shipUids.length)
+      return charter.shipUids.filter(Boolean);
+    return charter.shipUid ? [charter.shipUid] : [];
   },
 
-  quote(ship, band, durationMs) {
+  _asShips(shipsOrShip) {
+    if (Array.isArray(shipsOrShip)) return shipsOrShip.filter(Boolean);
+    return shipsOrShip ? [shipsOrShip] : [];
+  },
+
+  fleetStats(ships) {
+    const out = { cargo: 0, firepower: 0, hull: 0, armor: 0, shields: 0 };
+    for (const sh of this._asShips(ships)) {
+      const st = Fleet.stats(sh);
+      out.cargo += st.cargo || 0;
+      out.firepower += st.firepower || 0;
+      out.hull += st.hull || 0;
+      out.armor += st.armor || 0;
+      out.shields += st.shields || 0;
+    }
+    return out;
+  },
+
+  // Pay is cargo-driven — guns don't inflate the contract rate.
+  shipRate(ships) {
+    const st = this.fleetStats(ships);
+    return CHARTERCFG.rateBase + st.cargo * CHARTERCFG.rateCargo;
+  },
+
+  quote(ships, band, durationMs) {
     const h = durationMs / 3600000;
     const pay = (DANGER.find(d => d.id === band) || DANGER[0]).pay;
-    const raw = this.shipRate(ship) * pay * Math.pow(h, CHARTERCFG.taperExp);
+    const raw = this.shipRate(ships) * pay * Math.pow(h, CHARTERCFG.taperExp);
     const cap = CHARTERCFG.payoutCapMult
       ? Economy.depth() * CHARTERCFG.payoutCapMult : Infinity;
     return Math.round(Math.min(raw, cap) / 10) * 10;
@@ -31,12 +59,25 @@ const Charters = {
 
   durationRiskMult(h) { return Math.pow(Math.max(h, 0.5), CHARTERCFG.durationRiskExp); },
 
-  hullFactor(ship) {
-    const st = Fleet.stats(ship);
-    return Util.clamp(
-      CHARTERCFG.hullSoftness / Math.max(1, st.hull + st.armor * 2 + st.shields * 2),
-      CHARTERCFG.hullFactorClamp[0], CHARTERCFG.hullFactorClamp[1]
-    );
+  cargoRiskFactor(cargo) {
+    const soft = Math.max(1, CHARTERCFG.cargoRiskSoft || 30);
+    const exp = CHARTERCFG.cargoRiskExp == null ? 1.2 : CHARTERCFG.cargoRiskExp;
+    const cl = CHARTERCFG.cargoRiskClamp || [0.4, 8];
+    return Util.clamp(Math.pow(Math.max(cargo, 1) / soft, exp), cl[0], cl[1]);
+  },
+
+  defenseScore(st) {
+    return (st.firepower || 0) * (CHARTERCFG.defFirepower || 3)
+      + (st.hull || 0) * (CHARTERCFG.defHull || 1)
+      + (st.armor || 0) * (CHARTERCFG.defArmor || 2)
+      + (st.shields || 0) * (CHARTERCFG.defShields || 2);
+  },
+
+  defenseFactor(ships) {
+    const st = this.fleetStats(ships);
+    const soft = Math.max(1, CHARTERCFG.defenseSoftness || 100);
+    const cl = CHARTERCFG.defenseFactorClamp || [0.25, 2.5];
+    return Util.clamp(soft / Math.max(1, this.defenseScore(st)), cl[0], cl[1]);
   },
 
   // Senate Convoy Escort Mandate (+) / Lane Patrol Cuts (−) scale charter risk
@@ -49,23 +90,27 @@ const Charters = {
     return Util.clamp(1 - safety, cl[0], cl[1]);
   },
 
-  destroyChance(ship, band, durationMs) {
+  destroyChance(ships, band, durationMs) {
     const b = CHARTER_BANDS[band] || CHARTER_BANDS.safe;
+    const st = this.fleetStats(ships);
     const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
     return Util.clamp(
       b.destroy * this.durationRiskMult(durationMs / 3600000)
-        * this.hullFactor(ship) * (1 - safe) * this._senateRiskMult(),
+        * this.cargoRiskFactor(st.cargo) * this.defenseFactor(ships)
+        * (1 - safe) * this._senateRiskMult(),
       0, 0.85
     );
   },
 
-  impoundChance(ship, band, durationMs) {
+  impoundChance(ships, band, durationMs) {
     const b = CHARTER_BANDS[band] || CHARTER_BANDS.safe;
     if (!(b.impound > 0)) return 0;
+    const st = this.fleetStats(ships);
     const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
     return Util.clamp(
       b.impound * this.durationRiskMult(durationMs / 3600000)
-        * this.hullFactor(ship) * (1 - safe) * this._senateRiskMult(),
+        * this.cargoRiskFactor(st.cargo) * this.defenseFactor(ships)
+        * (1 - safe) * this._senateRiskMult(),
       0, 0.85
     );
   },
@@ -98,38 +143,72 @@ const Charters = {
     });
   },
 
-  dispatch(shipUid, band, durationMin, now = Date.now()) {
+  // Fraction of locked reward paid when these hulls return. Legacy rows without
+  // a cargo snapshot pay in full (single-ship era). Zero-cargo groups (rateBase
+  // only) also pay in full if anything survives.
+  payoutFrac(charter, survivors) {
+    const by = charter && charter.cargoByShip;
+    if (!by || typeof by !== "object") return 1;
+    const total = Math.max(0, +charter.cargoTotal || 0);
+    if (total <= 0) return 1;
+    let alive = 0;
+    for (const sh of survivors || []) alive += Math.max(0, +by[sh.uid] || 0);
+    return Util.clamp(alive / total, 0, 1);
+  },
+
+  dispatch(shipUids, band, durationMin, now = Date.now()) {
     const s = this.s();
-    const sh = Fleet.ship(shipUid);
-    if (!sh) return { ok: false, msg: "Ship not found." };
-    if (sh.mercenary) return { ok: false, msg: "Mercenaries can't take charters." };
-    if (sh.status !== "idle") return { ok: false, msg: "Ship must be idle." };
+    const uids = [...new Set((Array.isArray(shipUids) ? shipUids : [shipUids]).filter(Boolean))];
+    if (!uids.length) return { ok: false, msg: "Pick at least one ship." };
+    if (uids.length > (CHARTERCFG.maxShips || 6))
+      return { ok: false, msg: `At most ${CHARTERCFG.maxShips} ships per charter.` };
     if (!CHARTER_BANDS[band]) return { ok: false, msg: "Unknown risk band." };
     if (!CHARTERCFG.durations.includes(+durationMin)) return { ok: false, msg: "Pick a listed duration." };
     if (this.active().length >= CHARTERCFG.maxActive) return { ok: false, msg: `At most ${CHARTERCFG.maxActive} charters at once.` };
+
+    const ships = [];
+    for (const uid of uids) {
+      const sh = Fleet.ship(uid);
+      if (!sh) return { ok: false, msg: "Ship not found." };
+      if (sh.mercenary) return { ok: false, msg: "Mercenaries can't take charters." };
+      if (sh.status !== "idle") return { ok: false, msg: `${sh.name} must be idle.` };
+      ships.push(sh);
+    }
     // Don't leave the player with zero free hulls and no credits to act.
-    const freeHulls = Fleet.idle().filter(x => !x.mercenary && x.uid !== shipUid).length;
+    const freeHulls = Fleet.idle().filter(x => !x.mercenary && !uids.includes(x.uid)).length;
     if (freeHulls === 0 && s.credits <= 0)
       return { ok: false, msg: "Can't charter your last hull with no credits left — you'd be stranded." };
 
     const durationMs = (+durationMin) * 60000;
-    const reward = this.quote(sh, band, durationMs);
-    const destroy = this.destroyChance(sh, band, durationMs);
+    const reward = this.quote(ships, band, durationMs);
+    const destroy = this.destroyChance(ships, band, durationMs);
     const bandInfo = CHARTER_BANDS[band];
+    // Snapshot cargo at dispatch — resolve pro-rates pay by cargo that returns,
+    // so losing the hauler can't cash the full convoy quote on an escort alone.
+    const cargoByShip = {};
+    let cargoTotal = 0;
+    for (const sh of ships) {
+      const cargo = Math.max(0, Fleet.stats(sh).cargo | 0);
+      cargoByShip[sh.uid] = cargo;
+      cargoTotal += cargo;
+    }
     const charter = {
       id: "ch" + (++s.seq),
-      shipUid: sh.uid,
+      shipUid: ships[0].uid,          // legacy single-ship field (first hull)
+      shipUids: ships.map(sh => sh.uid),
       band,
       durationMs,
       startedAt: now,
       reward,
+      cargoByShip,
+      cargoTotal,
       faction: bandInfo.faction,
       destroyChance: destroy,
-      impoundChance: this.impoundChance(sh, band, durationMs),
+      impoundChance: this.impoundChance(ships, band, durationMs),
       impound: (bandInfo.impound || 0) > 0,
       resolved: false,
     };
-    sh.status = "charter";
+    for (const sh of ships) sh.status = "charter";
     this.list().push(charter);
     Economy.refreshNetWorth();
     Bus.emit("charterStart", charter);
@@ -144,8 +223,10 @@ const Charters = {
     if (value < 0 && s.credits < -value)
       return { ok: false, msg: `Need ${Util.credits(-value)}c to abort — not enough credits.` };
     s.credits += value;
-    const sh = Fleet.ship(c.shipUid);
-    if (sh && sh.status === "charter") sh.status = "idle";
+    for (const uid of this.shipUids(c)) {
+      const sh = Fleet.ship(uid);
+      if (sh && sh.status === "charter") sh.status = "idle";
+    }
     const repHit = c.faction ? Rep.onContractCancel(c.faction, c.band) : 0;
     s.charters = this.list().filter(x => x.id !== id);
     Economy.refreshNetWorth();
@@ -163,47 +244,71 @@ const Charters = {
     for (const c of this.list()) {
       if (c.resolved || now < c.startedAt + c.durationMs) continue;
       c.resolved = true;
-      const sh = Fleet.ship(c.shipUid);
+      const uids = this.shipUids(c);
+      const ships = uids.map(u => Fleet.ship(u)).filter(Boolean);
       const bandLabel = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
+      const names = ships.map(sh => sh.name);
       const report = {
         uid: c.id, title: `Charter — ${bandLabel}`, type: "charter",
         success: true, ts: now, danger: c.band, faction: c.faction || null,
         credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [],
-        shipName: sh ? sh.name : null,
+        shipName: names.length ? names.join(", ") : null,
       };
 
-      if (!sh) {
+      if (!ships.length) {
         report.success = false;
-        report.summary = "Charter closed — hull already gone.";
-      } else if (Math.random() < (c.destroyChance || 0)) {
-        report.success = false;
-        report.lost.push({ uid: sh.uid, name: sh.name });
-        s.ships = s.ships.filter(x => x.uid !== sh.uid);
-        report.summary = `${sh.name} lost on a ${bandLabel.toLowerCase()} charter.`;
-      } else if (c.impound && Math.random() < (c.impoundChance || 0)) {
-        report.success = false;
-        sh.status = "impounded";
-        sh.retrieveCost = Math.round((Fleet.shipDef(sh.type).price || 2000) * 0.5) || 1500;
-        report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
-        report.summary = `${sh.name} impounded on a contraband charter — retrieve for ${Util.credits(sh.retrieveCost)}c.`;
+        report.summary = "Charter closed — hulls already gone.";
       } else {
-        const smuggle = c.band === "high" || c.band === "extreme";
-        const prof = DMGCFG.types[smuggle ? "smuggle" : "transport"] || DMGCFG.types.transport;
-        const dangerMult = DMGCFG.dangerMult[c.band] || 1;
-        if (Math.random() < prof.chance) {
-          const before = sh.dmg || 0;
-          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult);
-          report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
+        // Each hull rolls the convoy chance — escorts lower that shared rate.
+        const survivors = [];
+        for (const sh of ships) {
+          if (Math.random() < (c.destroyChance || 0)) {
+            report.lost.push({ uid: sh.uid, name: sh.name });
+            s.ships = s.ships.filter(x => x.uid !== sh.uid);
+          } else if (c.impound && Math.random() < (c.impoundChance || 0)) {
+            sh.status = "impounded";
+            sh.retrieveCost = Math.round((Fleet.shipDef(sh.type).price || 2000) * 0.5) || 1500;
+            report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
+          } else {
+            survivors.push(sh);
+          }
         }
-        const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
-        const gross = Math.round(c.reward * (c.faction ? Rep.rewardMult(c.faction) : 1) * rewardMult);
-        report.credits = Economy.afterTax(gross);
-        report.taxed = gross - report.credits;
-        s.credits += report.credits;
-        s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
-        if (c.faction) Rep.onContract(c.faction, smuggle ? "smuggle" : "transport", c.band);
-        sh.status = "idle";
-        report.summary = `${sh.name} returned from a ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).`;
+
+        if (!survivors.length) {
+          report.success = false;
+          const bits = [];
+          if (report.lost.length) bits.push(`lost ${report.lost.map(x => x.name).join(", ")}`);
+          if (report.impounded.length) bits.push(`impounded ${report.impounded.map(x => x.name).join(", ")}`);
+          report.summary = `Charter wiped — ${bits.join("; ") || "no hulls returned"}.`;
+        } else {
+          const smuggle = c.band === "high" || c.band === "extreme";
+          const prof = DMGCFG.types[smuggle ? "smuggle" : "transport"] || DMGCFG.types.transport;
+          const dangerMult = DMGCFG.dangerMult[c.band] || 1;
+          for (const sh of survivors) {
+            if (Math.random() < prof.chance) {
+              const before = sh.dmg || 0;
+              Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult);
+              report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
+            }
+            sh.status = "idle";
+          }
+          const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
+          const frac = this.payoutFrac(c, survivors);
+          const gross = Math.round(c.reward * frac * (c.faction ? Rep.rewardMult(c.faction) : 1) * rewardMult);
+          report.credits = Economy.afterTax(gross);
+          report.taxed = gross - report.credits;
+          report.cargoFrac = frac;
+          s.credits += report.credits;
+          s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
+          if (c.faction) Rep.onContract(c.faction, smuggle ? "smuggle" : "transport", c.band);
+          const lostNote = report.lost.length
+            ? ` Lost ${report.lost.map(x => x.name).join(", ")}.` : "";
+          const impNote = report.impounded.length
+            ? ` Impounded ${report.impounded.map(x => x.name).join(", ")}.` : "";
+          const cutNote = frac < 1 - 1e-9
+            ? ` Payout cut to ${Math.round(frac * 100)}% — cargo hulls missing.` : "";
+          report.summary = `${survivors.map(sh => sh.name).join(", ")} returned from a ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).${lostNote}${impNote}${cutNote}`;
+        }
       }
 
       s.reports.unshift(report);
@@ -222,7 +327,8 @@ const Charters = {
   // After a server ship slice, re-lock hulls still on open charters.
   // ponytail: drop once app_charter_* owns ship status on the ledger.
   reconcileShips() {
-    const locked = new Set(this.active().map(c => c.shipUid));
+    const locked = new Set();
+    for (const c of this.active()) for (const uid of this.shipUids(c)) locked.add(uid);
     for (const sh of this.s().ships || []) {
       if (locked.has(sh.uid) && sh.status !== "charter" && sh.status !== "impounded")
         sh.status = "charter";

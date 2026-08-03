@@ -20,7 +20,7 @@ const UI = {
   _reportSig: "",
   _pending: null,        // pending contract awaiting ship selection
   _equipItem: null,
-  charterPick: { shipUid: null, durationMin: 60, band: "safe" },
+  charterPick: { shipUids: [], durationMin: 60, band: "safe" },
   lbOffset: null,        // Barons page start index; null = center on you
 
   s() { return window.Game.state; },
@@ -248,7 +248,9 @@ const UI = {
     el.innerHTML = html;
   },
   _charterCardHtml(c) {
-    const sh = Fleet.ship(c.shipUid);
+    const uids = Charters.shipUids(c);
+    const names = uids.map(u => { const sh = Fleet.ship(u); return sh ? sh.name : null; }).filter(Boolean);
+    const label = names.length ? names.join(", ") : "Unknown hull";
     const danger = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
     const left = Math.max(0, c.startedAt + c.durationMs - Date.now());
     const val = Charters.cancelValue(c);
@@ -256,9 +258,10 @@ const UI = {
       ? `${this.t("comms.cancelCharter", "Cancel")} — ${Util.credits(-val)}c`
       : `${this.t("comms.buyoutCharter", "Buy out")} +${Util.credits(val)}c`;
     const btnCls = val < 0 ? "btn btn-mini btn-cancel-fee" : "btn btn-mini btn-go";
+    const nTag = uids.length > 1 ? ` · ${uids.length} hulls` : "";
     return `<div class="contract pending-card">
-      <div class="c-head"><b>${sh ? sh.name : "Unknown hull"}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
-      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}% · returns ${Util.duration(left)}</div>
+      <div class="c-head"><b>${label}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
+      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · returns ${Util.duration(left)}</div>
       <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
@@ -308,10 +311,11 @@ const UI = {
     const c = Charters.active().find(x => x.id === id);
     if (!c) return this.toast("Charter not found.", "warn");
     const val = Charters.cancelValue(c);
-    const sh = Fleet.ship(c.shipUid);
+    const names = Charters.shipUids(c).map(u => Fleet.ship(u)?.name).filter(Boolean);
+    const who = names.length ? names.join(", ") : "hull";
     const msg = val < 0
-      ? `Abort charter for ${sh ? sh.name : "hull"}?\nAbort fee: ${Util.credits(-val)}c`
-      : `Buy out charter for ${sh ? sh.name : "hull"}?\nYou receive ${Util.credits(val)}c`;
+      ? `Abort charter for ${who}?\nAbort fee: ${Util.credits(-val)}c`
+      : `Buy out charter for ${who}?\nYou receive ${Util.credits(val)}c`;
     if (!confirm(msg)) return;
     const r = Charters.cancel(c.id);
     if (!r.ok) return this.toast(r.msg, "warn");
@@ -1547,8 +1551,20 @@ const UI = {
 
   // Bazaar filter/sort selects. data-bzf = "sort.<tab>" | "filt.<tab>".
   onBazaarFilter(e) {
-    if (e.target && e.target.id === "ch-ship") {
-      this.charterPick.shipUid = e.target.value; this.renderBazaar(); return;
+    const chShip = e.target && e.target.closest("[data-ch-ship]");
+    if (chShip) {
+      const uid = chShip.dataset.chShip;
+      const set = new Set(this.charterPick.shipUids || []);
+      if (chShip.checked) {
+        if (set.size >= (CHARTERCFG.maxShips || 6)) {
+          chShip.checked = false;
+          return this.toast(`At most ${CHARTERCFG.maxShips} ships per charter.`, "warn");
+        }
+        set.add(uid);
+      } else set.delete(uid);
+      this.charterPick.shipUids = [...set];
+      this.renderBazaar();
+      return;
     }
     const sel = e.target.closest("[data-bzf]"); if (!sel) return;
     const [kind, tab] = sel.dataset.bzf.split(".");
@@ -1564,29 +1580,33 @@ const UI = {
   _charterPanelHtml() {
     const idle = Fleet.idle().filter(sh => !sh.mercenary);
     const pick = this.charterPick;
+    if (!Array.isArray(pick.shipUids)) pick.shipUids = pick.shipUid ? [pick.shipUid] : [];
     if (!idle.length) {
       return `<div class="panel"><h2>Charter a hull</h2>
         <p class="muted-note">No idle ships. Finish a mission or wait for a charter to return.</p></div>`;
     }
-    if (!pick.shipUid || !idle.some(sh => sh.uid === pick.shipUid)) pick.shipUid = idle[0].uid;
+    // Keep only still-idle selections; default to first hull if empty.
+    pick.shipUids = pick.shipUids.filter(uid => idle.some(sh => sh.uid === uid));
+    if (!pick.shipUids.length) pick.shipUids = [idle[0].uid];
     if (!CHARTERCFG.durations.includes(pick.durationMin)) pick.durationMin = 60;
     if (!CHARTER_BANDS[pick.band]) pick.band = "safe";
-    const sh = Fleet.ship(pick.shipUid);
-    const st = Fleet.stats(sh);
+    const ships = pick.shipUids.map(uid => Fleet.ship(uid)).filter(Boolean);
+    const st = Charters.fleetStats(ships);
     const durationMs = pick.durationMin * 60000;
-    const reward = Charters.quote(sh, pick.band, durationMs);
+    const reward = Charters.quote(ships, pick.band, durationMs);
     const afterTax = Economy.afterTax(reward);
-    const lose = Charters.destroyChance(sh, pick.band, durationMs);
+    const lose = Charters.destroyChance(ships, pick.band, durationMs);
     const abortFee = -Charters.cancelPreview(reward, lose, durationMs, 0);
     const buyout = Charters.cancelPreview(reward, lose, durationMs, durationMs * CHARTERCFG.bailoutAt);
     const bailMin = Math.round(pick.durationMin * CHARTERCFG.bailoutAt);
     const bandInfo = CHARTER_BANDS[pick.band] || {};
-    const freeLeft = idle.filter(x => x.uid !== pick.shipUid).length;
+    const freeLeft = idle.filter(x => !pick.shipUids.includes(x.uid)).length;
     const stranded = freeLeft === 0 && this.s().credits <= 0;
     const atCap = Charters.active().length >= CHARTERCFG.maxActive;
-    const shipOpts = idle.map(s => {
+    const shipRows = idle.map(s => {
       const sst = Fleet.stats(s);
-      return `<option value="${s.uid}"${s.uid === pick.shipUid ? " selected" : ""}>${s.name} · ▣ ${sst.cargo} ⚔ ${sst.firepower}</option>`;
+      const on = pick.shipUids.includes(s.uid);
+      return `<label class="mm-ship ch-ship"><input type="checkbox" data-ch-ship="${s.uid}"${on ? " checked" : ""}/> <b>${s.name}</b> <span class="cls-tag">${Fleet.shipDef(s.type).cls}</span> ▣ ${sst.cargo} · ⚔ ${sst.firepower} · ♥ ${sst.hull}</label>`;
     }).join("");
     const durBtns = CHARTERCFG.durations.map(m =>
       `<button type="button" class="btn btn-mini ch-dur ${m === pick.durationMin ? "active" : ""}" data-ch-dur="${m}">${this._fmtDurMin(m)}</button>`).join("");
@@ -1594,19 +1614,19 @@ const UI = {
       `<button type="button" class="btn btn-mini ch-band dgr-${d.id} ${d.id === pick.band ? "active" : ""}" data-ch-band="${d.id}">${d.label}</button>`).join("");
     let disableReason = "";
     if (atCap) disableReason = `Already running ${CHARTERCFG.maxActive} charters.`;
+    else if (!ships.length) disableReason = "Pick at least one ship.";
     else if (stranded) disableReason = "Can't charter your last hull with no credits — you'd be stranded.";
-    return `<div class="panel"><h2>Charter a hull <small>stake a ship, not credits</small></h2>
-      <p class="muted-note">Pick how long and how dangerous. Safe runs pay steadily; smuggling runs pay far more and sometimes don't come back. The hull is locked until return — buy it back early for a fee.</p>
-      <div class="rt-form ch-form">
-        <label>Ship <select id="ch-ship">${shipOpts}</select></label>
-        <div class="ch-stats">▣ ${st.cargo} · ⚔ ${st.firepower} · ♥ ${Math.round(st.hull * (1 - (sh.dmg || 0)))}/${st.hull}</div>
-      </div>
+    const n = ships.length;
+    return `<div class="panel"><h2>Charter a hull <small>stake ship(s), not credits</small></h2>
+      <p class="muted-note">Pay scales with cargo that returns; loss odds climb with fat holds and fall with attack, hull, armor, and shields. Group escorts with haulers — up to ${CHARTERCFG.maxShips} hulls.</p>
+      <div class="mm-list ch-ships">${shipRows}</div>
+      <div class="ch-stats">Group · ▣ ${st.cargo} · ⚔ ${st.firepower} · ♥ ${st.hull} / armor ${st.armor} / shields ${st.shields}${n > 1 ? ` · ${n} hulls` : ""}</div>
       <div class="ch-row"><span class="ch-label">Duration</span><div class="ch-btns">${durBtns}</div></div>
       <div class="ch-row"><span class="ch-label">Risk</span><div class="ch-btns">${bandBtns}</div></div>
       <p class="muted-note">${bandInfo.blurb || ""}</p>
       <div class="mm-calc ch-quote">
         <div>Payout <b class="up">${Util.credits(reward)}c</b> <span class="muted-note">(after tax: ${Util.credits(afterTax)}c)</span></div>
-        <div>Ship loss <b class="${lose > 0.05 ? "down" : ""}">${(lose * 100).toFixed(0)}%</b> · Returns in <b>${Util.duration(durationMs)}</b></div>
+        <div>Ship loss <b class="${lose > 0.05 ? "down" : ""}">${(lose * 100).toFixed(0)}%</b> each · Returns in <b>${Util.duration(durationMs)}</b></div>
         <div>Cancel now <b class="down">−${Util.credits(abortFee)}c</b> · buys out at <b class="up">+${Util.credits(buyout)}c</b> after ${this._fmtDurMin(bailMin)}</div>
       </div>
       ${disableReason ? `<p class="down">${disableReason}</p>` : ""}
@@ -1629,8 +1649,9 @@ const UI = {
     if (chBand) { this.charterPick.band = chBand.dataset.chBand; this.renderBazaar(); return; }
     if (t.id === "ch-dispatch" || t.closest("#ch-dispatch")) {
       if (Economy.busy()) return;
-      const r = Charters.dispatch(this.charterPick.shipUid, this.charterPick.band, this.charterPick.durationMin);
+      const r = Charters.dispatch(this.charterPick.shipUids, this.charterPick.band, this.charterPick.durationMin);
       if (!r.ok) return this.toast(r.msg, "warn");
+      this.charterPick.shipUids = [];
       this.toast(`Charter dispatched — ${Util.credits(r.charter.reward)}c locked in.`, "good");
       window.Game.requestSave(); this.renderBazaar(); this.renderFleet();
       if (this.commsTab === "pending") this.renderPendingContracts();
@@ -2063,7 +2084,8 @@ const UI = {
 
     const band = sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
     body.innerHTML = `
-      <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small></h2>
+      <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small>
+        <button class="btn btn-mini btn-warn" id="st-relinquish" title="Walk away — modules persist for the next owner">Relinquish</button></h2>
       <div class="st-meters">
         <div>Power <b>${used}/${budget}</b> <span class="muted-note">(${free} free)</span></div>
         <div>Standing <b>${st.standing.toFixed(0)}</b>/100</div>
@@ -2095,6 +2117,21 @@ const UI = {
       ${this._renderContractOfficePanel(st)}
       ${this._renderCustomsPanel(st)}`;
 
+    body.querySelector("#st-relinquish")?.addEventListener("click", () => {
+      const holdV = Stations.holdValue(st);
+      const holdNote = holdV > 0
+        ? `\nHold goods cashed out at ~${Util.credits(holdV)}c.`
+        : "\nHold is empty.";
+      if (!confirm(`Relinquish ${st.name}? Modules stay for the next owner; treasury returns to you.${holdNote}`)) return;
+      const r = Stations.relinquish(st.systemId);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      const bits = [];
+      if (r.treasury) bits.push(`treasury ${Util.credits(r.treasury)}`);
+      if (r.holdCredits) bits.push(`hold ${Util.credits(r.holdCredits)}`);
+      this.toast(bits.length ? `Station relinquished — returned ${bits.join(" + ")}.` : "Station relinquished.", "info");
+      this.flashCredits(); this.renderStations(); this.updateHeader();
+      if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
+    });
     body.querySelector("#st-set-prod")?.addEventListener("click", () => {
       const id = body.querySelector("#st-prod")?.value;
       const r = Stations.setProduction(st.systemId, id);
@@ -3306,8 +3343,12 @@ const UI = {
     if (this.commsTab === "pending" && this.page === "comms") this.renderPendingContracts();
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
     if (this.page === "industries") this.renderIndustries();
-    // skip the periodic re-render while a filter <select> is focused, so an open dropdown isn't nuked
-    if (this.page === "bazaar") { const a = document.activeElement; if (!(a && a.classList && a.classList.contains("bz-filter"))) this.renderBazaar(); }
+    // skip the periodic re-render while a <select> is focused, so an open dropdown isn't nuked
+    if (this.page === "bazaar") {
+      const a = document.activeElement;
+      const holdingSelect = a && (a.tagName === "SELECT" || (a.classList && a.classList.contains("bz-filter")));
+      if (!holdingSelect) this.renderBazaar();
+    }
     if (this.page === "barons") this.renderLeaderboard();
     if (this.page === "systems" && this.s().travel) this.renderSystems();
   },

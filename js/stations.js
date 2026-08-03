@@ -1231,6 +1231,96 @@ const Stations = {
     return n;
   },
 
+  _isAdmin() { return !!(window.Cloud && Cloud.isAdmin && Cloud.isAdmin()); },
+
+  // Cancel an open auction and refund the local player's escrowed high bid.
+  _cancelAuction(systemId) {
+    const auc = this.auctions[systemId];
+    if (!auc || auc.status !== "open") return;
+    const pid = this.playerId();
+    if (auc.highBidder === pid || auc.highBidder === "player") {
+      Game.state.credits += auc.highBid | 0;
+    }
+    auc.status = "cancelled";
+    delete this.auctions[systemId];
+  },
+
+  // Admin: take a claimable station immediately — no bid, no 72h wait, no cap.
+  // ponytail: client-gated like the rest of Stations until Phase 4; add
+  // app_station_admin_claim (role-checked) before cloud-authoritative ownership.
+  adminClaim(systemId) {
+    if (!this._isAdmin()) return { ok: false, msg: "Admins only." };
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    if (st.status === "owned" && st.ownerId === this.playerId())
+      return { ok: false, msg: "You already own this station." };
+    if (st.status === "owned" && st.ownerId && st.ownerId !== this.playerId())
+      return { ok: false, msg: "Already owned — relinquish first." };
+    this._cancelAuction(systemId);
+    const pid = this.playerId();
+    st.ownerId = pid;
+    st.status = "owned";
+    st.standing = STATIONCFG.standingStart;
+    st.delivered = 0;
+    st.cooldownUntil = 0;
+    if (window.Game) Game.requestSave();
+    return { ok: true, st };
+  },
+
+  // Exchange-style value of goods sitting in the station hold (for buyback).
+  holdValue(st) {
+    let n = 0;
+    for (const [commId, qty] of Object.entries((st && st.hold) || {})) {
+      const q = qty | 0;
+      if (q <= 0) continue;
+      const price = (window.Economy && Economy.sellPrice)
+        ? Economy.sellPrice(commId)
+        : (window.Market ? Market.price(commId) : 0);
+      n += Math.round((+price || 0) * q);
+    }
+    return n;
+  },
+
+  // Owner walks away. Modules persist; no cooldown. Treasury + hold buyback return.
+  // ponytail: local until app_station_relinquish lands with the station RPC set.
+  relinquish(systemId) {
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    const pid = this.playerId();
+    const mine = st.ownerId === pid && st.status === "owned";
+    if (!mine) return { ok: false, msg: "Not your station." };
+    const treasury = st.treasury | 0;
+    const holdCredits = this.holdValue(st);
+    if (treasury > 0) {
+      Game.state.credits += treasury;
+      this._ledger(st, -treasury, "relinquish", "treasury returned");
+      st.treasury = 0;
+    }
+    if (holdCredits > 0) {
+      Game.state.credits += holdCredits;
+      this._ledger(st, holdCredits, "relinquish_hold", "hold buyback");
+    }
+    for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
+    st.contracts = (st.contracts || []).filter(x => x.status === "active");
+    for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
+    st.hall = [];
+    this.syncBays(st);
+    for (const bay of st.bays || []) this._clearBay(st, bay);
+    st.ownerId = null;
+    st.status = "npc";
+    st.cooldownUntil = 0;
+    st.hold = {};
+    st.standing = STATIONCFG.standingStart;
+    st.prodComm = null;
+    st.impoundHold = {};
+    st.impoundClaims = [];
+    st.delivered = 0;
+    delete this.access[st.systemId];
+    this._cancelAuction(systemId);
+    if (window.Game) Game.requestSave();
+    return { ok: true, st, treasury, holdCredits };
+  },
+
   // Credits currently locked in bids — counted in net worth.
   _closeAuction(systemId, now = Date.now()) {
     const auc = this.auctions[systemId];
