@@ -80,6 +80,8 @@ const Economy = {
       extractors: JSON.parse(JSON.stringify(s.extractors || {})),
       components: JSON.parse(JSON.stringify(s.components || {})),
       seq: s.seq,
+      // Phase 4: roll back optimistic Stock.take/put on failed app_trade.
+      stock: window.Stock ? JSON.parse(JSON.stringify(Stock.serialize())) : null,
     };
   },
   _restoreEconomy(snap) {
@@ -107,6 +109,7 @@ const Economy = {
     if (snap.extractors) s.extractors = snap.extractors;
     if (snap.components) s.components = snap.components;
     if (snap.seq != null) s.seq = snap.seq;
+    if (snap.stock && window.Stock) Stock.hydrate(snap.stock);
   },
   _applyServerSlice(r) {
     const s = this.s();
@@ -153,6 +156,11 @@ const Economy = {
     if (r.craftedOnce) s.craftedOnce = r.craftedOnce;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
+    // Phase 4: resync shelf from trade response (authoritative units).
+    if (window.Stock && r.sectorId && r.commodity != null && r.stockUnits != null)
+      Stock.applyTradeDelta(r.sectorId, r.commodity, r.stockUnits);
+    if (window.Stock && r.stockUnitsBySector)
+      Stock.applyServerUnits(r.stockUnitsBySector, r.stockLastTickAt);
     this.repairCosmeticNames();
     this._restoreEquip(equip);
     if (window.Charters) Charters.reconcileShips();
@@ -457,60 +465,39 @@ const Economy = {
   },
 
   // ---- market depth (per Baron Tier) -------------------------------------
-  // `depth` is the tier's trade cap: it caps a single trade's ACTUAL notional
-  // (credits paid / received, INCLUDING price pressure + slippage) AND sets how
-  // hard your own trading moves the price. Buying/selling pushes a persistent,
-  // decaying pressure into Market so splitting a big order into small ones — or
-  // hopping back and forth — closes the gap just the same.
+  // `depth` is the tier's per-trade notional ceiling (credits paid / received).
+  // Price movement comes from finite sector stock (Stock), not slippage curves.
   depth() { return this.tierInfo().cap || 10000; },
-  // Depth used ONLY for price impact (how hard your trading moves the local
-  // price). Decoupled from the trade cap so we can flatten the price response to
-  // order size without also raising the notional a single trade may move.
-  impactDepth() { return this.depth() * (window.MARKETCFG ? (MARKETCFG.impactSoftening || 1) : 1); },
-  spotHere(commId) { return Market.spot(commId, this.s().currentSystem); },
+  spotHere(commId) { return Market.systemPrice(commId, this.s().currentSystem); },
 
-  // {a,b} such that a buy costs a·q + b·q² and a sell nets a·q − b·q² (gross,
-  // pre-tax) at the CURRENT pressure — the true credits moved, not units×spot.
-  _quote(commId, side) {
-    const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    const spot0 = this.spotHere(commId), p0 = Market.impactAt(commId, this.s().currentSystem);
-    const tax = window.Senate ? Senate.tradeTax(cat, side) : 0;
-    const base = side === "buy" ? spot0 * (1 + this._spread(cat)) * (1 + tax)
-                                : spot0 * (1 - this._spread(cat)) * (1 - tax);
-    return { spot0, p0, base, a: base * (1 + p0), b: base * spot0 / (2 * this.impactDepth()) };
+  // Units available on this sector's exchange shelf.
+  stockHere(commId) {
+    if (!window.Stock) return Infinity;
+    return Stock.availableHere(this.s().currentSystem, commId);
   },
-  // most units you may BUY without spending more than L credits (cost ≤ L)
-  _buyQtyForSpend(commId, L) {
-    const { a, b } = this._quote(commId, "buy");
-    if (a <= 0 || L <= 0) return 0;
-    const q = b > 0 ? (-a + Math.sqrt(a * a + 4 * b * L)) / (2 * b) : L / a;
-    return Math.max(0, Math.floor(q));
-  },
-  // most units you may SELL without taking more than L credits (gross ≤ L).
-  // Gross proceeds a·q − b·q² peak at q=a/2b; past that you're just dumping into
-  // a crashed (floored) market, so we never allow more than the peak — which also
-  // keeps proceeds ≤ its max there. Below the peak, cap where proceeds hit L.
-  _sellQtyForTake(commId, L) {
-    const { a, b } = this._quote(commId, "sell");
-    if (a <= 0 || L <= 0) return 0;
-    if (b <= 0) return Math.floor(L / a);
-    const qPeak = a / (2 * b);
-    const disc = a * a - 4 * b * L;
-    const qL = disc > 0 ? (a - Math.sqrt(disc)) / (2 * b) : Infinity;   // ascending-branch crossing of L
-    return Math.max(0, Math.floor(Math.min(qPeak, qL)));
-  },
-  // cap-only limits (the per-trade notional ceiling, ignoring what you can afford/hold)
-  buyCapQty(commId) { return this._buyQtyForSpend(commId, this.depth()); },
-  sellCapQty(commId) { return this._sellQtyForTake(commId, this.depth()); },
 
-  // effective ceilings the UI clamps to: bounded by BOTH the cap and afford/holdings
+  buyCapQty(commId) {
+    const px = this.buyPrice(commId);
+    if (px <= 0) return 0;
+    return Math.floor(this.depth() / px);
+  },
+  sellCapQty(commId) {
+    const px = this.sellPrice(commId);
+    if (px <= 0) return 0;
+    return Math.floor(this.depth() / px);
+  },
+
+  // effective ceilings the UI clamps to: cap + afford/holdings + sector stock
   maxBuy(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const s = this.s();
     if (window.Market && !Market.stocks(commId, s.currentSystem)) return 0;
-    if (this.spotHere(commId) <= 0 || s.credits <= 0) return 0;
-    return this._buyQtyForSpend(commId, Math.min(s.credits, this.depth()));
+    const px = this.buyPrice(commId);
+    if (px <= 0 || s.credits <= 0) return 0;
+    const byMoney = Math.floor(Math.min(s.credits, this.depth()) / px);
+    const byStock = this.stockHere(commId);
+    return Math.max(0, Math.min(byMoney, byStock));
   },
   maxSell(commId) {
     const c = COMMODITIES.find(x => x.id === commId);
@@ -518,7 +505,7 @@ const Economy = {
     const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
     const held = this.s().positions[commId] || 0;
-    if (held <= 0 || this.spotHere(commId) <= 0) return 0;
+    if (held <= 0 || this.sellPrice(commId) <= 0) return 0;
     return Math.min(held, this.sellCapQty(commId));
   },
   // Named ban toast / trade failure: "Foodstuffs has been banned due to Foodstuffs Prohibition."
@@ -562,22 +549,32 @@ const Economy = {
     if (window.Market && !Market.stocks(commId, s.currentSystem)) {
       return { ok: false, msg: "This station doesn't stock that commodity." };
     }
-    const capQ = this.buyCapQty(commId);                              // per-trade notional cap (credits paid ≤ depth)
+    const stockQ = this.stockHere(commId);
+    if (stockQ <= 0) return { ok: false, msg: "Sector stock is empty — nothing to buy." };
+    const capQ = this.buyCapQty(commId);
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
-    const capped = qty > capQ; if (capped) qty = capQ;
-    const now = Date.now(), sys = s.currentSystem;
-    const { spot0, p0, base } = this._quote(commId, "buy");
-    const dP = spot0 * qty / this.impactDepth();                      // pressure this order adds (gentler than the cap)
-    const avg = base * (1 + p0 + dP / 2);                             // average fill over the rising price
-    const cost = avg * qty;
-    if (cost > s.credits) return { ok: false, msg: "Not enough credits." };
+    let capped = false;
+    if (qty > capQ) { qty = capQ; capped = true; }
+    if (qty > stockQ) { qty = stockQ; capped = true; }
+    // Deplete sector stock first so a failed mid-flight can't double-spend units.
+    if (window.Stock) {
+      const took = Stock.takeHere(s.currentSystem, commId, qty);
+      if (took <= 0) return { ok: false, msg: "Sector stock is empty — nothing to buy." };
+      if (took < qty) { qty = took; capped = true; }
+    }
+    const price = this.buyPrice(commId);
+    const cost = price * qty;
+    if (cost > s.credits) {
+      // Roll stock back — credits gate fired after the take.
+      if (window.Stock) Stock.putHere(s.currentSystem, commId, qty);
+      return { ok: false, msg: "Not enough credits." };
+    }
     s.credits -= cost;
     const held = s.positions[commId] || 0, prevCost = s.avgCost[commId] || 0;
     s.positions[commId] = held + qty;
     s.avgCost[commId] = (held * prevCost + cost) / (held + qty);
-    Market.addImpact(commId, sys, dP, now);                           // price stays elevated, then decays
-    this._afterTrade(commId, "buy", qty, cost, avg);
-    return Object.assign({ ok: true, qty, cost, price: avg, capped }, this._edictReceipt(commId, cat));
+    this._afterTrade(commId, "buy", qty, cost, price);
+    return Object.assign({ ok: true, qty, cost, price, capped }, this._edictReceipt(commId, cat));
   },
 
   _sellLocal(commId, qty) {
@@ -590,22 +587,19 @@ const Economy = {
     if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
     const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
-    const capQ = this.sellCapQty(commId);                            // per-trade notional cap (credits taken ≤ depth)
+    const capQ = this.sellCapQty(commId);
     if (capQ <= 0) return { ok: false, msg: "Beyond this station's depth for your tier." };
     const capped = qty > capQ; if (capped) qty = capQ;
-    const now = Date.now(), sys = s.currentSystem;
-    const { spot0, p0, base } = this._quote(commId, "sell");
-    const dP = spot0 * qty / this.impactDepth();                      // pressure this order removes (gentler than the cap)
-    const price = base * Math.max(MARKETCFG.sellFloorFactor, 1 + p0 - dP / 2);   // average fill over the falling price
+    const price = this.sellPrice(commId);
     const grossRealized = (price - (s.avgCost[commId] || 0)) * qty;
     const taxLines = this.baronTaxLines();
-    const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;   // Baron Tier earnings tax (on profit)
-    const proceeds = price * qty - tax;                                                // keep principal + after-tax profit
+    const tax = grossRealized > 0 ? Math.round(grossRealized * this.baronTax()) : 0;
+    const proceeds = price * qty - tax;
     const realized = grossRealized - tax;
     s.credits += proceeds;
     s.positions[commId] = held - qty;
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
-    Market.addImpact(commId, sys, -dP, now);                          // your selling depresses the local price
+    if (window.Stock) Stock.putHere(s.currentSystem, commId, qty);
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
     return Object.assign({ ok: true, qty, proceeds, price, realized, tax, taxLines, capped }, this._edictReceipt(commId, cat));
   },
@@ -699,11 +693,20 @@ const Economy = {
   },
 
   // Docking now takes time: it starts a transit driven by the main ship's speed.
+  // Capitals need unlock; claimable stations auto-unlock when Stations.canDock allows.
   _dockLocal(sysId) {
     const s = this.s();
-    if (!s.unlockedSystems.includes(sysId)) return { ok: false, msg: "System locked." };
     if (s.travel) return { ok: false, msg: "Already in transit." };
     if (sysId === s.currentSystem) return { ok: false, msg: "Already docked here." };
+    const gSys = window.Galaxy && Galaxy.get(sysId);
+    const isStation = !!(gSys && !gSys.capital && window.Stations && Stations.get(sysId));
+    if (isStation) {
+      const gate = Stations.canDock(sysId);
+      if (!gate.ok) return gate;
+      if (!s.unlockedSystems.includes(sysId)) s.unlockedSystems.push(sysId);
+    } else if (!s.unlockedSystems.includes(sysId)) {
+      return { ok: false, msg: "System locked." };
+    }
     const etaMs = Fleet.dockTravelMs(s.currentSystem, sysId);
     s.travel = { from: s.currentSystem, to: sysId, departedAt: Date.now(), etaMs };
     Bus.emit("travelStart", { to: sysId, etaMs });
@@ -734,8 +737,14 @@ const Economy = {
       const to = s.travel.to;
       s.currentSystem = to; s.travel = null;
       const customs = this.customsScan(to);       // gate scan before the exchange opens
-      Bus.emit("dock", { sysId: to, arrived: true });
-      return { to, customs };
+      // Claim any parked lease output waiting at this station.
+      let leaseClaim = null;
+      if (window.Stations && Stations.claimPendingCargo) {
+        const r = Stations.claimPendingCargo(to);
+        if (r && r.claimed && Object.keys(r.claimed).length) leaseClaim = r.claimed;
+      }
+      Bus.emit("dock", { sysId: to, arrived: true, leaseClaim });
+      return { to, customs, leaseClaim };
     }
     return null;
   },
@@ -743,27 +752,43 @@ const Economy = {
   // Customs scan on arrival: if you're carrying any illicit goods, roll a
   // seizure and confiscate a slice of one stack. Odds rise with Senate border
   // edicts and at low-tolerance systems, and fall with Syndicate standing.
+  // Station Customs House / Free Port override scrutiny (docs/STATIONS.md §12).
   // Returns the seizure event (also emitted on the bus) or null. Reused live + offline.
   customsScan(sysId) {
     const s = this.s();
     const illicit = COMMODITIES.filter(c => c.cat === "illicit" && (s.positions[c.id] || 0) > 0);
     if (!illicit.length) return null;
+    // Allied / owner walk through a Customs House unscanned.
+    if (window.Stations && Stations.customsExempt(sysId)) return null;
     const comm = Util.pick(illicit);
     const held = s.positions[comm.id] || 0;
-    const sys = SYSTEMS.find(x => x.id === sysId);
+    const sys = (window.Galaxy && Galaxy.get(sysId)) || SYSTEMS.find(x => x.id === sysId);
     const tol = (sys && sys.mods && sys.mods.illicit) || 1;
-    const scrutiny = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
-    const border = window.Senate ? Senate.smuggleFailAdd() : 0;
+    const baseline = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
+    let border = window.Senate ? Senate.smuggleFailAdd() : 0;
+    const st = window.Stations && Stations.get(sysId);
+    const stOverride = window.Stations ? Stations.scrutinyFor(sysId) : null;
+    if (st && (st.modules.free_port | 0))
+      border *= (STATIONCFG.freePortBorderMult != null ? STATIONCFG.freePortBorderMult : 0.4);
     const shield = Math.max(0, Rep.get("syndicate")) / 100 * CUSTOMS.repShield;
-    let chance = Util.clamp((CUSTOMS.base + border) * scrutiny - shield, 0, CUSTOMS.cap);
+    // Station dial/Free Port = absolute chance input; capitals keep × baseline.
+    let chance = stOverride != null
+      ? Util.clamp(stOverride + border * 0.5 - shield, 0, CUSTOMS.cap)
+      : Util.clamp((CUSTOMS.base + border) * baseline - shield, 0, CUSTOMS.cap);
     if (window.Boosts) chance = Util.clamp(chance * (1 + Boosts.mag("customsSeize")), 0, CUSTOMS.cap);
     if (Math.random() >= chance) return null;
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
-    const value = Math.round(qty * this.priceHere(comm.id));
+    const value = Math.round(qty * Market.systemPrice(comm.id, sysId));
     s.positions[comm.id] = held - qty;
     if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
+    let impoundedTo = null, claimId = null;
+    // Customs House: cargo enters station impound (not destroyed).
+    if (st && (st.modules.customs_house | 0) && st.status === "owned" && window.Stations) {
+      const r = Stations.impoundCargo(sysId, comm.id, qty, value, Stations.playerId());
+      if (r && r.ok) { impoundedTo = sysId; claimId = r.claimId; }
+    }
     this.refreshNetWorth();
-    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance };
+    const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance, impoundedTo, claimId };
     Bus.emit("customs", ev);
     return ev;
   },
@@ -779,11 +804,13 @@ const Economy = {
   netWorth() {
     const s = this.s();
     let nw = s.credits;
-    // value holdings at SPOT (excludes your own price pressure) so a big buy
-    // can't self-inflate net worth / peak-net-worth into an early tier unlock
+    // Value holdings at pre-scarcity spot so a regional shortage can't inflate
+    // peak-net-worth into an early tier unlock via inventory mark-to-market.
     for (const c of COMMODITIES) { const q = s.positions[c.id] || 0; if (q) nw += q * Market.spot(c.id, s.currentSystem); }
     nw += Fleet.fleetValue();
     nw += Bazaar.itemsValue();
+    // Escrowed auction bids still count (docs/STATIONS.md §5.2).
+    if (window.Stations) nw += Stations.escrowForNetWorth();
     return nw;
   },
 

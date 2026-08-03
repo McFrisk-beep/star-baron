@@ -19,7 +19,18 @@ const Extractors = {
   s() { return window.Game.state; },
   pool() { return this.s().extractors || (this.s().extractors = {}); },
   get(uid) { return this.pool()[uid]; },
-  installedSet() { return new Set((this.s().industries || []).map(i => i.extractorUid).filter(Boolean)); },
+  installedSet() {
+    const set = new Set((this.s().industries || []).map(i => i.extractorUid).filter(Boolean));
+    // Station Production Hub bays also lock an extractor (docs/STATIONS.md §8).
+    if (window.Stations) {
+      for (const st of Stations.list()) {
+        for (const bay of st.bays || []) {
+          if (bay && bay.extractorId && this.pool()[bay.extractorId]) set.add(bay.extractorId);
+        }
+      }
+    }
+    return set;
+  },
   unequipped() { const used = this.installedSet(); return Object.values(this.pool()).filter(e => !used.has(e.uid)); },
 
   yieldMult(ex) { return ex ? EXTRACTORCFG.types[ex.type].yieldMult : 0; },

@@ -408,3 +408,12 @@ catch-up + welcome-back recap cover every system. The biggest open work is an
 **server-authoritative/deterministic market** (design doc written, tabled).
 Verify the Supabase SQL in §5 is fully applied — that's the usual "cloud not
 working" surprise.
+
+**Stations & supply economy:** see `docs/STATIONS.md`. Client guest path is live
+— finite per-sector stock (`js/stock.js`), 78 NPC/claimable stations with
+auctions/modules/production/sentiment/Exchange Hall/Contract Office/
+Customs·Free Port + non-capital docking (`js/stations.js`). **Phase 4 server
+stock:** paste `docs/sql/phase4_sector_stock.sql` per `docs/PHASE4_SETUP.md`
+(replaces `app_trade` with shelf lock + scarcity; `app_station_*` stubbed).
+Sanity: `tools/check_stock_economy.js`, `tools/check_stations.js`,
+`tools/check_customs.js`, `tools/check_scarcity_parity.js`.

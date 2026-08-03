@@ -83,6 +83,7 @@ const UI = {
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
+      tabStations: $("tab-stations"), stationsTabs: $("stations-tabs"), stationsBody: $("stations-body"),
       settings: $("settings-modal"), setVolume: $("set-volume"), setVolumeVal: $("set-volume-val"),
       setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
@@ -124,6 +125,7 @@ const UI = {
     else if (name === "ach") this.renderAchievements();
     else if (name === "industries") { this.showIndustriesTab(this.industriesTab || "permits"); this.renderIndustries(); }
     else if (name === "workshop") this.renderWorkshop();
+    else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
     else if (name === "hub") this.renderBoostBar();
@@ -667,11 +669,11 @@ const UI = {
     this.refs.exchangeSub.textContent = `${pricesAt} · trade cap ${Util.credits(Economy.depth())}c/order`;
     const note = document.getElementById("exchange-note");
     if (note) note.innerHTML =
-      `<b>How trading works:</b> prices are local to each station — buy where a good is cheap, sell where it's dear. ` +
-      `But <b>large orders move the local price</b> (slippage), and the nudge <b>lingers</b>, so you can't dump unlimited volume — ` +
-      `splitting an order or hopping back and forth won't dodge it. Each order is capped at <b>${Util.credits(Economy.depth())}c</b> ` +
-      `(your <b>${Economy.tierTitle()}</b> tier; it rises as you ascend), and <b>Buy Max / Sell All</b> fill up to that cap. ` +
-      `Your quantity auto-adjusts to what you can afford, hold, and move.`;
+      `<b>How trading works:</b> each sector capital has a <b>finite stock</b> of commodities. ` +
+      `Buying depletes the shelf and scarcity pushes the price up; selling restocks it and eases the price. ` +
+      `Stations across the sector feed the capital — starve a region and sentiment collapses. ` +
+      `Each order is capped at <b>${Util.credits(Economy.depth())}c</b> ` +
+      `(your <b>${Economy.tierTitle()}</b> tier), and <b>Buy Max</b> also clamps to units on the shelf.`;
     // transit overlay
     if (this.s().travel) {
       const t = this.s().travel;
@@ -688,11 +690,13 @@ const UI = {
       const r = this.rows[c.id]; if (!r) continue;
       const q = this.s().positions[c.id] || 0;
       const stocked = Market.stocks(c.id, sys);
+      const shelf = window.Stock ? Stock.availableHere(sys, c.id) : null;
       // Hide unstocked rows unless you hold some (so you can still sell).
       r.tr.classList.toggle("hidden", !stocked && !q);
       if (!stocked && !q) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
+      if (shelf != null) r.price.title = `Sector stock: ${shelf} units`;
       if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
       this.lastPrice[c.id] = p;
       const pct = Market.changePct(c.id);
@@ -819,6 +823,12 @@ const UI = {
     const badge = this.refs.fleetBadge;
     if (missionsN + reportsN > 0) { badge.classList.remove("hidden"); badge.textContent = missionsN + reportsN; }
     else badge.classList.add("hidden");
+    // Stations tab appears once you own at least one (docs/STATIONS.md §5.3).
+    if (this.refs.tabStations && window.Stations) {
+      const n = Stations.ownedCount();
+      this.refs.tabStations.classList.toggle("hidden", n < 1);
+      if (n < 1 && this.page === "stations") this.showPage("hub");
+    }
     if (this.page === "fleet") this.updateNavIndicator();   // badge changes the active pill's width
   },
   flashCredits() { const e = this.refs.credits; e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); },
@@ -1373,14 +1383,17 @@ const UI = {
       const danger = DANGER.find(d => d.id === c.danger);
       const ok = idlePower >= (c.minFirepower || 0);
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
-      return `<div class="contract">${this._art(ASSET.contract(c.type), (c.type || "C")[0])}
+      const stationTag = c.source === "station"
+        ? `<span class="c-station" title="Station haul">◈ ${c.stationName || "Station"} · ${c.ownerHandle || "Baron"}</span>`
+        : "";
+      return `<div class="contract${c.source === "station" ? " contract-station" : ""}">${this._art(ASSET.contract(c.type), (c.type || "C")[0])}
         <div class="c-head"><b>${c.title}</b><span class="ctype ct-${c.type}">${c.type}</span></div>
         <div class="c-desc">${c.desc}</div>
-        <div class="c-tags">${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
+        <div class="c-tags">${stationTag}${sponChip(c.faction)}${c.warEffort ? `<span class="war-effort">⚔ war effort</span>` : ""}<span class="dgr-${c.danger}">${danger.label}</span>
           ${c.minFirepower ? `<span class="${ok ? "" : "down"}">⚔ need ${c.minFirepower}</span>` : `<span class="up">no escort needed</span>`}
           ${c.cargoRequired ? `<span>▣ ${c.cargoRequired}</span>` : ""}
           <span>⌁ ${Util.duration(c.durationMs / (window.Game.timeScale || 1))}</span>
-          <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
+          <span class="up">${Util.credits(c.reward.credits)}c${bonus > 0.001 && c.source !== "station" ? ` <span class="rep-bonus">+${(bonus * 100).toFixed(0)}%</span>` : ""}</span></div>
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
           <button class="btn btn-go" data-view="${c.id}">${this.t("comms.viewContract", "View Contract")}</button></div></div>`;
     };
@@ -1968,6 +1981,412 @@ const UI = {
       this.toast("Component removed to storage.", "info");
       window.Game.requestSave(); this.renderIndustries(); this.updateHeader();
     }
+  },
+
+  // ===== STATIONS ==========================================================
+  renderStations() {
+    const body = this.refs.stationsBody, tabs = this.refs.stationsTabs;
+    if (!body || !window.Stations) return;
+    const owned = Stations.ownedBy();
+    if (!owned.length) {
+      body.innerHTML = `<h2>Stations</h2><p class="muted-note">You don't own a station yet. Open a non-capital system on the Star Map and start an auction.</p>`;
+      if (tabs) tabs.innerHTML = "";
+      return;
+    }
+    if (!this.stationsTab || !owned.some(st => st.systemId === this.stationsTab))
+      this.stationsTab = owned[0].systemId;
+    if (tabs) {
+      tabs.innerHTML = owned.map(st =>
+        `<button type="button" class="subtab${st.systemId === this.stationsTab ? " active" : ""}" data-st="${st.systemId}" aria-current="${st.systemId === this.stationsTab ? "page" : "false"}">${st.name}</button>`
+      ).join("");
+      tabs.onclick = e => {
+        const b = e.target.closest("[data-st]"); if (!b) return;
+        this.stationsTab = b.dataset.st; this.renderStations();
+      };
+    }
+    const st = Stations.get(this.stationsTab); if (!st) return;
+    const sys = Galaxy.get(st.systemId);
+    const sent = (window.Stock && Stock.sentiment[st.sectorId]) ?? STATIONCFG.sentimentStart;
+    const free = Stations.powerFree(st), budget = Stations.powerBudget(st), used = Stations.powerUsed(st);
+    const upkeep = Stations.upkeepPerCycle(st);
+    const holdRows = Object.entries(st.hold || {}).filter(([, q]) => q > 0)
+      .map(([id, q]) => {
+        const c = COMMODITIES.find(x => x.id === id);
+        return `<li class="st-hold-row"><b>${c ? c.name : id}</b> ×${q}
+          <button class="btn btn-mini" data-st-deliver="${id}">Deliver all</button></li>`;
+      }).join("") || `<li class="muted-note">Hold empty — assign a Production Hub commodity.</li>`;
+
+    const modRows = Object.keys(STATION_MODULES).map(id => {
+      const def = STATION_MODULES[id];
+      const lvl = id === "reactor" ? (st.reactorLevel | 0) : (st.modules[id] | 0);
+      const check = Stations.canInstall(st, id);
+      const lvlTxt = lvl ? "I".repeat(lvl) : "—";
+      const installBtn = lvl < def.max
+        ? `<button class="btn btn-mini" data-st-install="${id}" ${check.ok ? "" : "disabled"} title="${check.msg || ""}">Install ${"I".repeat(lvl + 1)} · ${Util.credits(def.cost[lvl] || 0)}</button>`
+        : "";
+      const removeBtn = lvl > 0
+        ? `<button class="btn btn-mini btn-warn" data-st-uninstall="${id}">Uninstall</button>` : "";
+      return `<tr><td>${def.name}</td><td class="num">${lvlTxt}</td><td class="num">${id === "reactor" ? "+" + ((STATIONCFG.reactor[lvl - 1] || {}).power || 0) : (def.power[Math.max(0, lvl - 1)] || def.power[0] || 0)}pwr</td>
+        <td class="actions">${installBtn} ${removeBtn}</td></tr>`;
+    }).join("");
+
+    const prodOpts = Stations.produceable(st.systemId).map(c =>
+      `<option value="${c.id}" ${st.prodComm === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+
+    Stations.syncBays(st);
+    const freeEx = (window.Extractors ? Extractors.unequipped() : []).filter(ex =>
+      !st.prodComm || Extractors.canProduce(ex, st.prodComm));
+    const exOpts = freeEx.map(ex =>
+      `<option value="${ex.uid}">${ex.name} (${EXTRACTORCFG.types[ex.type]?.label || ex.type})</option>`).join("");
+    const bayRows = (st.bays || []).map((bay, i) => {
+      let who, acts;
+      if (!bay.lesseeId) {
+        who = `<span class="muted-note">Vacant — open to lease @ ${((st.leaseTaxBps || 0) / 100).toFixed(0)}%</span>`;
+        acts = st.prodComm
+          ? `<select data-st-bay-ex="${i}" ${exOpts ? "" : "disabled"}>${exOpts || "<option>No free extractor</option>"}</select>
+             <button class="btn btn-mini" data-st-occupy="${i}" ${exOpts ? "" : "disabled"}>Occupy</button>`
+          : "";
+      } else if (bay.npc) {
+        who = `<span class="tip-dim">NPC tenant</span> · tax in`;
+        acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
+      } else if (bay.lesseeId === st.ownerId) {
+        const ex = window.Extractors && Extractors.get(bay.extractorId);
+        who = `<b>You</b> · ${ex ? ex.name : "extractor"}`;
+        acts = `<button class="btn btn-mini" data-st-vacate="${i}">Remove</button>`;
+      } else {
+        who = `<b>Lessee</b> ${bay.lesseeId}`;
+        acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
+      }
+      const y = bay.lesseeId ? Stations._bayGross(st, bay) : 0;
+      return `<tr><td>Bay ${i + 1}</td><td>${who}</td><td class="num">${y ? y + "/h" : "—"}</td><td class="actions">${acts}</td></tr>`;
+    }).join("") || `<tr><td colspan="4" class="muted-note">Install a Production Hub to open bays.</td></tr>`;
+
+    const band = sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
+    body.innerHTML = `
+      <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small></h2>
+      <div class="st-meters">
+        <div>Power <b>${used}/${budget}</b> <span class="muted-note">(${free} free)</span></div>
+        <div>Standing <b>${st.standing.toFixed(0)}</b>/100</div>
+        <div>Sector sentiment <b title="${sent.toFixed(1)}">${band}</b></div>
+        <div>Treasury <b>${Util.credits(st.treasury)}</b>
+          <button class="btn btn-mini" data-st-withdraw ${st.treasury < 1 ? "disabled" : ""}>Withdraw all</button></div>
+        <div>Upkeep <b>${Util.credits(upkeep)}</b>/cycle</div>
+      </div>
+      <div class="st-grid">
+        <section>
+          <h3>Production Hub</h3>
+          <p class="muted-note">Owner bays pay into the station hold. Lessees keep their share and pay your lease tax into the hold. Haul deliveries to the sector capital.</p>
+          <label>Commodity <select id="st-prod">${prodOpts || "<option value=''>—</option>"}</select></label>
+          <button class="btn btn-go" id="st-set-prod" ${(st.modules.production_hub | 0) ? "" : "disabled"}>Assign</button>
+          <label>Lease tax % <input type="number" id="st-lease" min="0" max="40" value="${((st.leaseTaxBps || 0) / 100).toFixed(0)}"></label>
+          <button class="btn btn-mini" id="st-set-lease">Set</button>
+          <div class="table-wrap" style="margin-top:10px"><table class="market st-bays"><thead><tr><th>Bay</th><th>Occupant</th><th class="num">Yield</th><th></th></tr></thead>
+          <tbody>${bayRows}</tbody></table></div>
+          <ul class="st-hold">${holdRows}</ul>
+        </section>
+        <section>
+          <h3>Modules</h3>
+          <div class="table-wrap"><table class="market st-mods"><thead><tr><th>Module</th><th class="num">Lvl</th><th class="num">Power</th><th></th></tr></thead>
+          <tbody>${modRows}</tbody></table></div>
+          <p class="muted-note">Uninstall refunds 50% of component cost and starts a 6h refit (no production).</p>
+        </section>
+      </div>
+      ${this._renderHallPanel(st)}
+      ${this._renderContractOfficePanel(st)}
+      ${this._renderCustomsPanel(st)}`;
+
+    body.querySelector("#st-set-prod")?.addEventListener("click", () => {
+      const id = body.querySelector("#st-prod")?.value;
+      const r = Stations.setProduction(st.systemId, id);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast("Production retooling…", "good"); this.renderStations(); this.updateHeader();
+    });
+    body.querySelector("#st-set-lease")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-lease")?.value || 0;
+      Stations.setLeaseTax(st.systemId, pct * 100);
+      this.toast(`Lease tax set to ${pct}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("[data-st-withdraw]")?.addEventListener("click", () => {
+      const r = Stations.withdraw(st.systemId, st.treasury);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Withdrew ${Util.credits(r.amount)}.`, "good"); this.flashCredits(); this.renderStations(); this.updateHeader();
+    });
+    body.querySelectorAll("[data-st-deliver]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.stDeliver;
+        const r = Stations.deliver(st.systemId, id, st.hold[id] | 0);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Delivered ${r.qty} for ${Util.credits(r.proceeds)}.`, "good");
+        this.flashCredits(); this.renderStations(); this.updateHeader(); this.updateExchange();
+      };
+    });
+    body.querySelectorAll("[data-st-occupy]").forEach(btn => {
+      btn.onclick = () => {
+        const i = +btn.dataset.stOccupy;
+        const sel = body.querySelector(`[data-st-bay-ex="${i}"]`);
+        const r = Stations.occupyBay(st.systemId, i, sel && sel.value);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Extractor installed in bay.", "good"); this.renderStations();
+      };
+    });
+    body.querySelectorAll("[data-st-vacate]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.vacateBay(st.systemId, +btn.dataset.stVacate);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Bay cleared.", "info"); this.renderStations();
+      };
+    });
+    body.querySelectorAll("[data-st-install]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.install(st.systemId, btn.dataset.stInstall);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Installed. −${Util.credits(r.cost)}`, "good");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-st-uninstall]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.uninstall(st.systemId, btn.dataset.stUninstall);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+    this._wireHallPanel(body, st);
+    this._wireContractOfficePanel(body, st);
+    this._wireCustomsPanel(body, st);
+  },
+
+  _renderCustomsPanel(st) {
+    const hasCustoms = !!(st.modules.customs_house | 0);
+    const hasFree = !!(st.modules.free_port | 0);
+    if (!hasCustoms && !hasFree) {
+      return `<div class="panel" style="margin-top:14px"><h3>Customs / Free Port</h3>
+        <p class="muted-note">Install a Customs House (Clean flag, scrutiny dial, impound &amp; ransom) or a Free Port (low scrutiny, illicit traffic). They conflict. Scrutiny is always public on the star map.</p></div>`;
+    }
+    if (hasFree) {
+      const scr = Stations.publicScrutiny(st.systemId);
+      return `<div class="panel" style="margin-top:14px"><h3>Free Port <small>scrutiny ~${scr ? scr.chanceHint : "?"}%</small></h3>
+        <p class="muted-note">Border edicts are softened here. Syndicate likes you; lawful factions don't. No impound — seizures stay rare.</p></div>`;
+    }
+    const claims = st.impoundClaims || [];
+    const holdRows = Object.keys(st.impoundHold || {}).filter(id => (st.impoundHold[id] | 0) > 0).map(id => {
+      const c = COMMODITIES.find(x => x.id === id);
+      return `<tr><td>${c ? c.name : id}</td><td class="num">${st.impoundHold[id]}</td>
+        <td class="actions"><button class="btn btn-mini" data-st-impound-sell="${id}">Sell at capital</button></td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">Impound empty — seizures appear when smugglers dock.</td></tr>`;
+    const claimRows = claims.map(c => {
+      const comm = COMMODITIES.find(x => x.id === c.commId);
+      return `<tr><td>${c.qty}× ${comm ? comm.name : c.commId}<div class="tip-dim">ransom ${Util.credits(c.ransom)} · from ${c.fromId || "?"}</div></td>
+        <td class="actions"><button class="btn btn-mini" data-st-impound-drop="${c.id}">Drop</button></td></tr>`;
+    }).join("");
+    const access = Object.entries(this.accessRoles(st.systemId));
+    const accessRows = access.map(([pid, role]) =>
+      `<tr><td>${pid}</td><td>${role}</td>
+        <td class="actions"><button class="btn btn-mini" data-st-role-clear="${pid}">Guest</button></td></tr>`
+    ).join("") || `<tr><td colspan="3" class="muted-note">No special roles — Allied skips Customs scans.</td></tr>`;
+    return `<div class="panel st-customs" style="margin-top:14px">
+      <h3>Customs House <small>Clean · scrutiny ${st.scrutiny | 0}%</small></h3>
+      <p class="muted-note">Public seize chance shown on the map before anyone undocks. Allied / Partner / you are exempt.</p>
+      <label>Scrutiny % <input type="number" id="st-scrutiny" min="0" max="85" value="${st.scrutiny | 0}"></label>
+      <button class="btn btn-mini" id="st-set-scrutiny">Set</button>
+      <div class="st-hall-list" style="margin-top:10px">
+        <input type="text" id="st-role-pid" placeholder="player id" aria-label="player id">
+        <select id="st-role-val"><option value="allied">Allied</option><option value="partner">Partner</option><option value="barred">Barred</option></select>
+        <button class="btn btn-mini" id="st-set-role">Set role</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Access</th><th>Role</th><th></th></tr></thead><tbody>${accessRows}</tbody></table></div>
+      <h4 style="margin-top:12px">Impound</h4>
+      <div class="table-wrap"><table class="market">
+        <thead><tr><th>Goods</th><th class="num">Qty</th><th></th></tr></thead><tbody>${holdRows}</tbody></table></div>
+      ${claimRows ? `<div class="table-wrap" style="margin-top:8px"><table class="market"><tbody>${claimRows}</tbody></table></div>` : ""}
+    </div>`;
+  },
+
+  accessRoles(systemId) {
+    return (window.Stations && Stations.access[systemId]) || {};
+  },
+
+  _wireCustomsPanel(body, st) {
+    body.querySelector("#st-set-scrutiny")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-scrutiny")?.value || 0;
+      const r = Stations.setScrutiny(st.systemId, pct);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Scrutiny set to ${r.scrutiny}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("#st-set-role")?.addEventListener("click", () => {
+      const pid = body.querySelector("#st-role-pid")?.value;
+      const role = body.querySelector("#st-role-val")?.value;
+      const r = Stations.setRole(st.systemId, pid, role);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`${pid} → ${role}.`, "good"); this.renderStations();
+    });
+    body.querySelectorAll("[data-st-role-clear]").forEach(btn => {
+      btn.onclick = () => {
+        Stations.setRole(st.systemId, btn.dataset.stRoleClear, "guest");
+        this.renderStations();
+      };
+    });
+    body.querySelectorAll("[data-st-impound-sell]").forEach(btn => {
+      btn.onclick = () => {
+        const id = btn.dataset.stImpoundSell;
+        const r = Stations.sellImpound(st.systemId, id, st.impoundHold[id] | 0);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Fenced ${r.qty} for ${Util.credits(r.proceeds)} → treasury.`, "good");
+        this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-st-impound-drop]").forEach(btn => {
+      btn.onclick = () => {
+        Stations.dropImpoundClaim(st.systemId, btn.dataset.stImpoundDrop);
+        this.renderStations();
+      };
+    });
+  },
+
+  _renderContractOfficePanel(st) {
+    if (!(st.modules.contract_office | 0)) {
+      return `<div class="panel" style="margin-top:14px"><h3>Contract Office</h3>
+        <p class="muted-note">Install a Contract Office to post escrowed haul jobs from your station hold onto the Bazaar board. NPC haulers fill slowly; players clear them faster.</p></div>`;
+    }
+    const rel = Stations.reliability(st);
+    const relTxt = rel == null ? "unrated" : `${Math.round(rel * 100)}% fulfilled`;
+    const holdIds = Object.keys(st.hold || {}).filter(id => (st.hold[id] | 0) > 0);
+    const opts = holdIds.map(id => {
+      const c = COMMODITIES.find(x => x.id === id);
+      return `<option value="${id}">${c ? c.name : id} (${st.hold[id]})</option>`;
+    }).join("") || `<option value="">Hold empty</option>`;
+    const rows = (st.contracts || []).map(c => {
+      const comm = COMMODITIES.find(x => x.id === c.commId);
+      const left = Math.max(0, c.expiresAt - Date.now());
+      return `<tr>
+        <td>${c.qty}× ${comm ? comm.name : c.commId}<div class="tip-dim">${c.status} · ${c.rate}c/u · ${Util.duration(left)}</div></td>
+        <td class="num">${Util.credits(c.escrow)}</td>
+        <td class="actions">${c.status === "open"
+          ? `<button class="btn btn-mini" data-st-haul-cancel="${c.id}">Cancel</button>`
+          : `<span class="tip-dim">in flight</span>`}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">No haul postings — escrow a bounty from the hold.</td></tr>`;
+    const feePct = ((STATIONCFG.contractPostFeeBps || 0) / 100).toFixed(0);
+    return `<div class="panel st-haul" style="margin-top:14px">
+      <h3>Contract Office <small>${relTxt}</small></h3>
+      <p class="muted-note">Post haul orders to the Bazaar Contracts board. Bounty is escrowed at post (${feePct}% faction fee). Goods leave the hold until filled, expired, or cancelled.</p>
+      <div class="st-hall-list" style="margin-top:10px">
+        <select id="st-haul-comm">${opts}</select>
+        <input type="number" id="st-haul-qty" min="1" value="20" aria-label="quantity">
+        <input type="number" id="st-haul-rate" min="${STATIONCFG.contractMinRate || 5}" value="40" aria-label="credits per unit">
+        <button class="btn btn-go" id="st-haul-post">Post haul</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Posting</th><th class="num">Escrow</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  },
+
+  _wireContractOfficePanel(body, st) {
+    body.querySelector("#st-haul-post")?.addEventListener("click", () => {
+      const commId = body.querySelector("#st-haul-comm")?.value;
+      const qty = +body.querySelector("#st-haul-qty")?.value || 0;
+      const rate = +body.querySelector("#st-haul-rate")?.value || 0;
+      const r = Stations.postHaul(st.systemId, commId, qty, rate);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Haul posted — escrowed ${Util.credits(r.contract.escrow)} (+${Util.credits(r.fee)} fee).`, "good");
+      this.flashCredits(); this.renderStations(); this.updateHeader();
+      if (this.page === "bazaar") this.renderBazaar();
+    });
+    body.querySelectorAll("[data-st-haul-cancel]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Haul cancelled — goods and bounty returned.", "info");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
+  },
+
+  _renderHallPanel(st) {
+    if (!(st.modules.exchange_hall | 0)) {
+      return `<div class="panel" style="margin-top:14px"><h3>Exchange Hall</h3>
+        <p class="muted-note">Install an Exchange Hall to open a player marketplace for gear, ships, extractors, components, blackboxes, and blueprints (not commodities).</p></div>`;
+    }
+    const listings = Stations.hallListings(st.systemId);
+    const inv = (window.Bazaar ? Bazaar.inventoryItems() : []).map(it => {
+      const kind = window.Items && Items.isBlackbox(it) ? "blackbox" : "gear";
+      return `<option value="${kind}:${it.uid}">${it.name} (${kind})</option>`;
+    });
+    const exs = (window.Extractors ? Extractors.unequipped() : []).map(ex =>
+      `<option value="extractor:${ex.uid}">${ex.name}</option>`);
+    const comps = (window.Components ? Components.unequipped() : []).map(c =>
+      `<option value="component:${c.uid}">${c.name || c.uid}</option>`);
+    const ships = (this.s().ships || []).filter(sh => sh.status === "idle" && !sh.mercenary).map(sh =>
+      `<option value="ship:${sh.uid}">${sh.name || sh.type}</option>`);
+    const bps = (this.s().knownRecipes || []).map(id => {
+      const r = (typeof RECIPES !== "undefined" ? RECIPES : []).find(x => x.id === id);
+      return r ? `<option value="blueprint:${id}">${r.name} Blueprint</option>` : "";
+    }).filter(Boolean);
+    const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
+    const rows = listings.map(l => {
+      const mine = l.sellerId === Stations.playerId();
+      const left = Math.max(0, l.expiresAt - Date.now());
+      return `<tr>
+        <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)} left</div></td>
+        <td class="num">${Util.credits(l.price)}</td>
+        <td class="actions">${mine
+          ? `<button class="btn btn-mini" data-hall-cancel="${l.id}">Cancel</button>`
+          : `<button class="btn btn-mini btn-go" data-hall-buy="${l.id}" data-cost="${l.price}">Buy</button>`}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="3" class="muted-note">No listings — be the first stall.</td></tr>`;
+    return `<div class="panel st-hall" style="margin-top:14px">
+      <h3>Exchange Hall <small>sale tariff ${((st.saleTariffBps || 0) / 100).toFixed(0)}%</small></h3>
+      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must dock here. NPC traders sometimes clear stalls in guest mode.</p>
+      <label>Tariff % <input type="number" id="st-tariff" min="0" max="15" value="${((st.saleTariffBps || 0) / 100).toFixed(0)}"></label>
+      <button class="btn btn-mini" id="st-set-tariff">Set</button>
+      <div class="st-hall-list" style="margin-top:10px">
+        <select id="st-hall-item">${opts}</select>
+        <input type="number" id="st-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500" aria-label="list price">
+        <button class="btn btn-go" id="st-hall-list">List</button>
+      </div>
+      <div class="table-wrap" style="margin-top:10px"><table class="market">
+        <thead><tr><th>Listing</th><th class="num">Price</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+  },
+
+  _wireHallPanel(body, st) {
+    body.querySelector("#st-set-tariff")?.addEventListener("click", () => {
+      const pct = +body.querySelector("#st-tariff")?.value || 0;
+      Stations.setSaleTariff(st.systemId, pct * 100);
+      this.toast(`Sale tariff set to ${pct}%.`, "good"); this.renderStations();
+    });
+    body.querySelector("#st-hall-list")?.addEventListener("click", () => {
+      const raw = body.querySelector("#st-hall-item")?.value || "";
+      const price = +body.querySelector("#st-hall-price")?.value || 0;
+      const [kind, ref] = raw.split(":");
+      if (!kind || !ref) return this.toast("Pick something to list.", "warn");
+      const r = Stations.listHallItem(st.systemId, kind, ref, price);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
+      this.renderStations(); this.updateHeader();
+    });
+    body.querySelectorAll("[data-hall-cancel]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.cancelHallListing(st.systemId, btn.dataset.hallCancel);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast("Listing cancelled — item returned.", "info");
+        this.renderStations(); this.updateHeader();
+      };
+    });
+    body.querySelectorAll("[data-hall-buy]").forEach(btn => {
+      btn.onclick = () => {
+        const r = Stations.buyHallListing(st.systemId, btn.dataset.hallBuy);
+        if (!r.ok) return this.toast(r.msg, "warn");
+        this.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
+        this.flashCredits(); this.renderStations(); this.updateHeader();
+      };
+    });
   },
 
   // ===== SENATE / space politics ===========================================
@@ -2825,11 +3244,26 @@ const UI = {
       if (this.page === "fleet") this.renderInventory();
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
-    Bus.on("dock", d => { if (d.arrived) { this.toast(`Docked at ${this.sysName(d.sysId)}.`, "good"); this.updateExchange(); this.updateHeader(); this.renderSystems(); } });
+    Bus.on("dock", d => {
+      if (!d.arrived) return;
+      let msg = `Docked at ${this.sysName(d.sysId)}.`;
+      if (d.leaseClaim) {
+        const n = Object.values(d.leaseClaim).reduce((a, q) => a + (q | 0), 0);
+        if (n > 0) msg += ` Claimed ${n} leased units.`;
+      }
+      this.toast(msg, "good");
+      this.updateExchange(); this.updateHeader(); this.renderSystems();
+    });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
-      this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} (${Util.credits(ev.value)}c) at the ${this.sysName(ev.sysId)} gate.`, "bad", 6000);
-      if (window.Feed) Feed.emit(`customs pulled a baron's ${ev.name.toLowerCase()} at ${this.sysName(ev.sysId)} — ${ev.qty} units gone 🚨`, { kind: "reaction" });
+      const where = this.sysName(ev.sysId);
+      if (ev.impoundedTo) {
+        this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} at ${where} — held in station impound (ransom available).`, "bad", 7000);
+        if (window.Feed) Feed.emit(`customs locked a baron's ${ev.name.toLowerCase()} in the ${where} impound 🚨`, { kind: "reaction" });
+      } else {
+        this.toast(`⚠ Customs seized ${ev.qty} ${ev.name} (${Util.credits(ev.value)}c) at the ${where} gate.`, "bad", 6000);
+        if (window.Feed) Feed.emit(`customs pulled a baron's ${ev.name.toLowerCase()} at ${where} — ${ev.qty} units gone 🚨`, { kind: "reaction" });
+      }
       this.audioSafe("news"); this.updateHeader();
       if (this.page === "exchange") this.updateExchange();
     });
@@ -2867,6 +3301,7 @@ const UI = {
     this.updateClock();
     if (this.page === "hub") this.renderBoostBar();
     if (this.page === "workshop") this.renderWorkshop();
+    if (this.page === "stations") this.renderStations();
     if (this.page === "fleet") { this.renderMissions(); this.renderCharters(); }
     if (this.commsTab === "pending" && this.page === "comms") this.renderPendingContracts();
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
@@ -2884,6 +3319,7 @@ const UI = {
     if (this.page === "bazaar") this.renderBazaar();
     if (this.page === "barons") this.renderLeaderboard();
     if (this.page === "senate") this.renderSenate();
+    if (this.page === "stations") this.renderStations();
   },
 };
 

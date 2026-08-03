@@ -156,7 +156,36 @@ const Workshop = {
     let ms = recipe.craftMs || 60 * 1000;
     if (window.Boosts) ms *= Math.max(0.2, 1 + Boosts.mag("craftTime", now));
     if (window.Senate) ms *= Math.max(0.2, 1 + Senate.craftTimeAdd());
+    // Workshop Annex (docs/STATIONS.md §10) — best owned station; craft isn't
+    // location-locked yet. Upgrade: require docking at the annex system.
+    if (window.Stations) {
+      let factor = 1;
+      for (const st of Stations.ownedBy()) factor = Math.min(factor, Stations.workshopTimeFactor(st.systemId));
+      ms *= factor;
+    }
     return Math.max(CONFIG.marketTickMs, ms / (window.Game.timeScale || 1));
+  },
+
+  // Stochastic material discount (option 3): each unit has `chance` of not
+  // being consumed. Averages correctly at every quantity; no fractional stock.
+  _annexMatChance() {
+    if (!window.Stations) return 0;
+    let best = 0;
+    for (const st of Stations.ownedBy()) best = Math.max(best, Stations.workshopMatChance(st.systemId));
+    return best;
+  },
+  _consumeIng(commId, need) {
+    const s = this.s();
+    let pay = need;
+    const chance = this._annexMatChance();
+    if (chance > 0) {
+      let saved = 0;
+      for (let i = 0; i < need; i++) if (Math.random() < chance) saved++;
+      pay = need - saved;
+    }
+    s.positions[commId] = (s.positions[commId] || 0) - pay;
+    if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
+    return pay;
   },
 
   haveQty(commId) { return this.s().positions[commId] || 0; },
@@ -221,16 +250,8 @@ const Workshop = {
     if (!chk.ok) return chk;
     const { recipe, flavor } = chk;
     const s = this.s();
-    for (const ing of recipe.ingredients || []) {
-      const need = this.ingQty(ing);
-      s.positions[ing.id] = (s.positions[ing.id] || 0) - need;
-      if (s.positions[ing.id] <= 0) { s.positions[ing.id] = 0; s.avgCost[ing.id] = 0; }
-    }
-    if (flavor) {
-      const fNeed = this.ingQty(flavor);
-      s.positions[flavor.id] = (s.positions[flavor.id] || 0) - fNeed;
-      if (s.positions[flavor.id] <= 0) { s.positions[flavor.id] = 0; s.avgCost[flavor.id] = 0; }
-    }
+    for (const ing of recipe.ingredients || []) this._consumeIng(ing.id, this.ingQty(ing));
+    if (flavor) this._consumeIng(flavor.id, this.ingQty(flavor));
     const credits = this.creditCost(recipe);
     if (credits) s.credits -= credits;
     const ms = this.craftMs(recipe, now);

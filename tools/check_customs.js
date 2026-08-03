@@ -1,72 +1,137 @@
 #!/usr/bin/env node
-/* check_customs.js — runnable check for the customs seizure system.
-   Loads the real store/data/economy scripts into a bare vm context with the
-   neighbouring modules stubbed, pins Math.random, and asserts the seizure
-   odds and confiscation math. Run:  node tools/check_customs.js               */
+/* check_customs.js — non-capital docking, Customs/Free Port scrutiny, impound.
+   Run: node tools/check_customs.js */
+"use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 
-const ctx = vm.createContext({ console });
+const ctx = vm.createContext({ console, Math, setTimeout, clearTimeout });
 ctx.window = ctx;
-for (const f of ["store.js", "data.js", "economy.js"])
+let T = 1_720_000_000_000;
+ctx.Date = { now: () => T };
+ctx.localStorage = { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } };
+ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
+
+for (const f of ["store.js", "data.js", "flavor.js", "market.js", "galaxy.js", "stock.js", "stations.js", "extractors.js", "economy.js", "fleet.js", "reputation.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
-
-const { Economy, CUSTOMS, Util, SYSTEMS } = ctx;
-// neighbours customsScan touches
-ctx.Market = { systemPrice: () => 500 };            // contraband ~500c/unit for value math
-ctx.Rep = { get: () => 0 };                          // neutral Syndicate standing by default
-Economy.refreshNetWorth = () => {};                  // skip Fleet/Bazaar valuation in isolation
-const homeSys = SYSTEMS.find(x => x.mods && x.mods.illicit === 1) || SYSTEMS[0]; // tolerance 1.0 → scrutiny 1.0
-const state = () => ({ currentSystem: homeSys.id, positions: {}, avgCost: {}, travel: null });
-const pin = v => vm.runInContext(`Math.random = () => ${v}`, ctx);
-
-// 1) no contraband held → no scan, no event
-ctx.Game = { state: state() };
-assert.strictEqual(Economy.customsScan(homeSys.id), null, "empty hold = no scan");
-
-// 2) forced hit (random 0): seizes a slice, reduces the stack, values it
-ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 100; ctx.Game.state.avgCost.contraband = 300;
-pin(0);   // 0 < chance → hit; randFloat(0.30,0.70) → 0.30 seized
-let ev = Economy.customsScan(homeSys.id);
-assert(ev && ev.qty === 30, `hit seizes 30% of 100 (got ${ev && ev.qty})`);
-assert(ev.value === 30 * 500, "value = qty × price");
-assert(ctx.Game.state.positions.contraband === 70, "stack reduced by seizure");
-assert(ctx.Game.state.avgCost.contraband === 300, "cost basis kept while stock remains");
-
-// 3) forced miss (random above the chance): nothing taken
-ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 100;
-pin(0.99);   // 0.99 >= chance (~0.10) → miss
-assert.strictEqual(Economy.customsScan(homeSys.id), null, "miss leaves the hold intact");
-assert(ctx.Game.state.positions.contraband === 100, "no units lost on a miss");
-
-// 4) seizing the last unit drops the cost basis (ceil ensures ≥1 taken on a hit)
-ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 1; ctx.Game.state.avgCost.contraband = 300;
-pin(0);   // hit; ceil(1 × frac) = 1 → stack cleared
-ev = Economy.customsScan(homeSys.id);
-assert(ev && ev.qty === 1 && ctx.Game.state.positions.contraband === 0, "seizure clears a single-unit stack");
-assert(ctx.Game.state.avgCost.contraband === 0, "cleared stack zeroes cost basis");
-
-// 5) Senate border edict raises the odds; Syndicate standing lowers them
-ctx.Senate = { smuggleFailAdd: () => 0.5 };   // heavy border crackdown
-ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 100;
-pin(0.4);   // chance = (0.10 + 0.50)*1.0 = 0.60 > 0.4 → hit under the crackdown
-assert(Economy.customsScan(homeSys.id) !== null, "border edict makes 0.4 a hit");
-ctx.Rep = { get: () => 100 };   // Allied Syndicate: shield 0.30 → chance 0.30 < 0.4 → miss
-ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 100;
-pin(0.4);
-assert.strictEqual(Economy.customsScan(homeSys.id), null, "friendly Syndicate shields the same roll");
-ctx.Senate = undefined; ctx.Rep = { get: () => 0 };
-
-// 6) low-tolerance system scans harder: a roll that misses at a permissive gate
-// (mod 1.0, chance = base) must HIT at a strict one (mod < 1, chance > base)
-const strict = SYSTEMS.filter(x => x.mods && x.mods.illicit < 1).sort((a, b) => a.mods.illicit - b.mods.illicit)[0];
-if (strict) {
-  const scrut = Util.clamp(2 - strict.mods.illicit, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
-  const roll = (CUSTOMS.base + CUSTOMS.base * scrut) / 2;   // between the two systems' chances
-  pin(roll);
-  ctx.Game = { state: state() }; ctx.Game.state.positions.contraband = 100;
-  assert.strictEqual(Economy.customsScan(homeSys.id), null, "permissive gate misses this roll");
-  ctx.Game = { state: { currentSystem: strict.id, positions: { contraband: 100 }, avgCost: {}, travel: null } };
-  assert(Economy.customsScan(strict.id) !== null, "strict gate hits the same roll");
 }
 
-console.log("check_customs: all assertions passed ✔");
+const { Market, Galaxy, Stock, Stations, Economy, Fleet, SYSTEMS, STATIONCFG, CUSTOMS, Util, COMMODITIES } = ctx;
+Market.init();
+Galaxy.build();
+Stock.init(T);
+Stations.ensure();
+
+ctx.Game = {
+  state: {
+    credits: 5_000_000, positions: {}, avgCost: {}, currentSystem: "navos", travel: null,
+    unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
+    reputation: { syndicate: 0, mining_combine: 0, free_trade: 0, agri_collective: 0 },
+    prestige: { tier: 0, multiplier: 1 },
+    stats: { trades: 0, contractsDone: 0, peakNetWorth: 50000, biggestTrade: 0 },
+    achievements: [], ships: [{ uid: "sh1", type: "mule", name: "Test", status: "idle", accessories: [], dmg: 0 }],
+    items: {}, orders: [], seq: 1, mainShip: { type: "pinnace" },
+    extractors: {}, components: {}, industries: [], listings: [], missions: [],
+  },
+  requestSave() {},
+  timeScale: 1,
+};
+ctx.Bus = { emit() {} };
+ctx.UI = { toast() {} };
+ctx.Bazaar = { itemsValue: () => 0 };
+ctx.Boosts = { mag: () => 0 };
+ctx.Senate = { smuggleFailAdd: () => 0, travelSpeedMult: () => 1 };
+
+const target = Stations.list()[0];
+assert.ok(target);
+target.ownerId = "alice";
+target.status = "owned";
+target.modules = { customs_house: 1 };
+target.scrutiny = 50;
+target.reactorLevel = 2;
+
+// Public scrutiny is never hidden
+const pub = Stations.publicScrutiny(target.systemId);
+assert.ok(pub && pub.chanceHint === 50, "public scrutiny shows dial");
+assert.strictEqual(Stations.scrutinyFor(target.systemId), 0.5);
+
+// Docking: barred blocks; guest auto-unlocks
+assert.ok(Stations.canDock(target.systemId).ok, "guest can dock");
+Stations.setRole = Stations.setRole.bind(Stations);
+// Owner is alice — setRole needs owner. Pretend we are alice via playerId override.
+const realPid = Stations.playerId;
+Stations.playerId = () => "alice";
+assert.ok(Stations.setRole(target.systemId, "player", "barred").ok);
+Stations.playerId = realPid;
+assert.ok(!Stations.canDock(target.systemId).ok, "barred denied");
+Stations.playerId = () => "alice";
+Stations.setRole(target.systemId, "player", "guest");
+Stations.playerId = realPid;
+assert.ok(Stations.canDock(target.systemId).ok);
+
+const dock = Economy._dockLocal(target.systemId);
+assert.ok(dock.ok, dock.msg);
+assert.ok(ctx.Game.state.unlockedSystems.includes(target.systemId), "station auto-unlocked");
+assert.ok(ctx.Game.state.travel, "transit started");
+assert.ok(Fleet.dockTravelMs("navos", target.systemId) > 0, "map travel time");
+
+// Arrive + customs seize → impound
+ctx.Game.state.travel.etaMs = 0;
+ctx.Game.state.travel.departedAt = T - 1;
+const illicit = COMMODITIES.find(c => c.cat === "illicit");
+assert.ok(illicit, "has illicit commodity");
+ctx.Game.state.positions[illicit.id] = 20;
+// Force seize: high scrutiny, stub Math.random
+const rnd = Math.random;
+Math.random = () => 0; // always seize / max seize slice lower bound path
+const arrived = Economy.checkArrival(T);
+Math.random = rnd;
+assert.ok(arrived && arrived.to === target.systemId);
+assert.ok(arrived.customs, "customs fired");
+assert.strictEqual(arrived.customs.impoundedTo, target.systemId, "cargo → station impound");
+assert.ok((target.impoundHold[illicit.id] | 0) > 0, "impound hold filled");
+assert.ok((target.impoundClaims || []).length, "claim issued");
+
+// Allied exempt
+Stations.playerId = () => "alice";
+Stations.setRole(target.systemId, "player", "allied");
+Stations.playerId = realPid;
+ctx.Game.state.positions[illicit.id] = 10;
+assert.ok(Stations.customsExempt(target.systemId), "allied exempt");
+assert.strictEqual(Economy.customsScan(target.systemId), null, "allied skips scan");
+
+// Free Port lowers scrutiny
+Stations.playerId = () => "alice";
+Stations.setRole(target.systemId, "player", "guest");
+delete target.modules.customs_house;
+target.modules.free_port = 1;
+Stations.playerId = realPid;
+const fp = Stations.scrutinyFor(target.systemId);
+assert.ok(fp < CUSTOMS.base, "free port below baseline");
+const pubFp = Stations.publicScrutiny(target.systemId);
+assert.strictEqual(pubFp.label, "Free Port");
+
+// Ransom path (restore customs + claim)
+delete target.modules.free_port;
+target.modules.customs_house = 1;
+target.impoundHold = { [illicit.id]: 5 };
+target.impoundClaims = [{ id: "icTest", commId: illicit.id, qty: 5, value: 1000, ransom: 1250, fromId: "player", at: T }];
+ctx.Game.state.currentSystem = target.systemId;
+ctx.Game.state.credits = 10_000;
+ctx.Game.state.positions[illicit.id] = 0;
+const before = ctx.Game.state.credits;
+const ransom = Stations.payRansom(target.systemId, "icTest");
+assert.ok(ransom.ok, ransom.msg);
+assert.strictEqual(ctx.Game.state.credits, before - 1250);
+assert.strictEqual(ctx.Game.state.positions[illicit.id], 5);
+assert.strictEqual(target.treasury, 1250);
+
+// Black Market requires Exchange Hall
+target.modules = { customs_house: 0 };
+target.ownerId = "player";
+Stations.playerId = realPid;
+target.status = "owned";
+target.reactorLevel = 4;
+const bmNoHall = Stations.canInstall(target, "black_market");
+assert.ok(!bmNoHall.ok, "BM needs exchange hall");
+
+console.log("OK check_customs");

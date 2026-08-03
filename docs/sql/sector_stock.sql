@@ -1,0 +1,12 @@
+-- Sector stock + stations (docs/STATIONS.md §14)
+--
+-- Paste target moved to:
+--   docs/sql/phase4_sector_stock.sql
+--
+-- Apply order: docs/PHASE4_SETUP.md (after Phase 1–3 + workshop/repair overlays).
+-- Guest / single-player still runs finite stock client-side (js/stock.js).
+-- Signed-in trade uses the replaced public.app_trade in phase4_sector_stock.sql
+-- (stock lock + scarcity × market.price_system). Station auction/module RPCs
+-- are stubbed there until a later paste.
+--
+-- Do not paste this file — paste phase4_sector_stock.sql instead.

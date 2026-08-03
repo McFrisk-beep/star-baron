@@ -66,6 +66,9 @@ const Missions = {
       stakeTier: contract.stakeTier || 0,
       faction: contract.faction, resolved: false,
       contractId: contract.id || null,
+      // Station Contract Office haul (docs/STATIONS.md §11)
+      stationId: contract.stationId || null,
+      source: contract.source || null,
     };
     for (const u of uids) Fleet.ship(u).status = "mission";
     s.missions.push(mission);
@@ -111,6 +114,8 @@ const Missions = {
     }
     const repHit = m.faction ? Rep.onContractCancel(m.faction, m.danger) : 0;
     s.missions = s.missions.filter(x => x.uid !== uid);
+    if (m.source === "station" && m.contractId && window.Stations)
+      Stations.settleHaul(m.contractId, "abandon");
     Economy.refreshNetWorth();
     Bus.emit("missionAbandoned", m);
     return { ok: true, mission: m, repHit: repHit || 0 };
@@ -199,37 +204,45 @@ const Missions = {
 
       if (success) {
         const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
-        const gross = Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
+        // Station hauls pay the escrowed bounty as-is (no faction stake mult / loot).
+        const stationHaul = m.source === "station";
+        const gross = stationHaul
+          ? Math.round(m.reward.credits || 0)
+          : Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
         report.credits = Economy.afterTax(gross);                 // Baron Tier earnings tax
         report.taxed = gross - report.credits;
         s.credits += report.credits;
         s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
-        if (m.faction) Rep.onContract(m.faction, m.type, m.danger);
-        const bias = { safe: 0, low: 0.1, moderate: 0.25, high: 0.45, extreme: 0.7 }[m.danger] || 0;
-        if (Math.random() < (m.reward.itemChance || 0)) {
-          const it = Items.gen({ bias });
-          s.items[it.uid] = it; report.items.push(it);
-          if (Math.random() < bias * 0.4) { const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2); }
-        }
-        if (Math.random() < (m.reward.stockChance || 0)) {
-          const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
-          const qty = Util.randInt(8, 40);
-          const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
-          s.positions[c.id] = held + qty;
-          s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
-          report.stock = { commId: c.id, name: c.name, qty };
-        }
-        // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).
-        const danger = m.danger || "";
-        if (window.Workshop && (danger === "high" || danger === "extreme")
-            && Math.random() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
-          const pool = Workshop.dropPool("mission");
-          if (pool.length) {
-            const bp = Util.pick(pool);
-            const gr = Workshop.grantBlueprint(bp.id);
-            if (gr.ok) report.blueprint = bp.name;
+        if (m.faction && !stationHaul) Rep.onContract(m.faction, m.type, m.danger);
+        if (!stationHaul) {
+          const bias = { safe: 0, low: 0.1, moderate: 0.25, high: 0.45, extreme: 0.7 }[m.danger] || 0;
+          if (Math.random() < (m.reward.itemChance || 0)) {
+            const it = Items.gen({ bias });
+            s.items[it.uid] = it; report.items.push(it);
+            if (Math.random() < bias * 0.4) { const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2); }
+          }
+          if (Math.random() < (m.reward.stockChance || 0)) {
+            const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
+            const qty = Util.randInt(8, 40);
+            const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
+            s.positions[c.id] = held + qty;
+            s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
+            report.stock = { commId: c.id, name: c.name, qty };
+          }
+          // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).
+          const danger = m.danger || "";
+          if (window.Workshop && (danger === "high" || danger === "extreme")
+              && Math.random() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
+            const pool = Workshop.dropPool("mission");
+            if (pool.length) {
+              const bp = Util.pick(pool);
+              const gr = Workshop.grantBlueprint(bp.id);
+              if (gr.ok) report.blueprint = bp.name;
+            }
           }
         }
+        if (stationHaul && m.contractId && window.Stations)
+          Stations.settleHaul(m.contractId, "success");
         for (const sh of survivors) sh.status = "idle";
       } else {
         // failure: survivors are seized (smuggle jobs) or limp home damaged.
@@ -241,6 +254,8 @@ const Missions = {
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else sh.status = "idle";
         }
+        if (m.source === "station" && m.contractId && window.Stations)
+          Stations.settleHaul(m.contractId, "fail");
       }
       if (report.lost.length) s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));
       s.reports.unshift(report);

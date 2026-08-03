@@ -1,5 +1,5 @@
-/* market.js — deterministic price function (Phase 0).
-   O(1) in time t: client and (soon) server compute the same number from the
+/* market.js — deterministic price function + sector-stock scarcity.
+   O(1) in time t: client and (soon) server compute the same anchor from the
    shared formula in docs/SERVER_AUTHORITATIVE_DESIGN.md §4.
 
    price_global(c, t) =
@@ -7,18 +7,17 @@
             × event_mult(c,t),
             c.base×FLOOR, c.base×CEIL )
 
-   price_system(c, system, t) = price_global × mod(system,cat) × local_event_mult
+   price_system(c, system, t) =
+     price_global × mod(system,cat) × local_event_mult × scarcity(sector, c)
 
-   The 2s tick just recomputes; sparklines sample the function. Client-only
-   overlays (Broadcast/Wars/Galaxy applyNews·applyLocal, Senate, trade impact)
-   still multiply on top for today's UX — Phase 1+ moves authority server-side. */
+   Scarcity comes from Stock (docs/STATIONS.md §2). Finite sector stock replaced
+   the old decaying tradeImpact pressure — buying depletes stock honestly.     */
 
 const Market = {
   prices: {},        // id -> current displayed global price
   hist: {},          // id -> [recent prices] for sparklines
   effects: [],       // active galactic news overlays: {target, mult, startedAt, durationMs, id}
   localEffects: [],  // active LOCAL overlays: {systemId, target, mult, startedAt, durationMs, id}
-  tradeImpact: {},   // "sysId:commId" -> { p, at }: your persistent, decaying price pressure
   volMult: 1,        // reserved (prestige used to crank this; kept at 1)
   histLen: 60,
   _oscCache: {},     // id -> [{A,P,θ}×3]
@@ -73,7 +72,6 @@ const Market = {
     this.hist = {};
     this.effects = [];
     this.localEffects = [];
-    this.tradeImpact = {};
     this._oscCache = {};
     const now = Date.now();
     for (const c of COMMODITIES) {
@@ -142,18 +140,14 @@ const Market = {
   },
 
   // ---- seeded event schedules (pure; identical on server) -----------------
-  // Slot s starts at s*period. We look back a few slots so long-duration events
-  // still cover `t` after their slot has rolled over.
   _eventSlot(slot, kind) {
     const s = this._seed([kind, "slot", String(slot)]);
     const cats = ["mineral", "gas", "agri", "tech", "luxury", "illicit"];
-    // ~70% category-wide, ~30% single commodity — keeps the tape alive without chaos.
     const pickCat = this._u01(s, 0) < 0.7;
     const tradeable = this.tradeable();
     const target = pickCat
       ? cats[Math.floor(this._u01(s, 1) * cats.length) % cats.length]
       : tradeable[Math.floor(this._u01(s, 1) * tradeable.length) % tradeable.length].id;
-    // mult in [0.55, 0.85] ∪ [1.15, 1.70]
     const up = this._u01(s, 2) < 0.55;
     const mult = up ? 1.15 + this._u01(s, 3) * 0.55 : 0.55 + this._u01(s, 3) * 0.30;
     return { target, mult };
@@ -169,7 +163,6 @@ const Market = {
       const start = s * periodMs;
       if (t < start || t >= start + durationMs) continue;
       if (ev.target !== comm.id && ev.target !== comm.cat) continue;
-      // Smooth sin envelope (0→1→0) so slot edges don't step the price.
       const envelope = Math.sin(((t - start) / durationMs) * Math.PI);
       m *= 1 + (ev.mult - 1) * envelope * CONFIG.newsImpact;
     }
@@ -196,8 +189,7 @@ const Market = {
     return this._scheduleMult(comm, t, MARKETCFG.localEventPeriodMs, MARKETCFG.localEventDurationMs, "local", systemId);
   },
 
-  // ---- pure formula (SQL contract; no senate / client overlays) -----------
-  // baseOverride lets the live path re-band around a legislated base.
+  // ---- pure formula (SQL contract; no senate / client overlays / scarcity) -
   formulaGlobal(commOrId, t, baseOverride = null) {
     const c = typeof commOrId === "string" ? this.byId(commOrId) : commOrId;
     const base = baseOverride == null ? c.base : baseOverride;
@@ -220,40 +212,25 @@ const Market = {
     return this.formulaGlobal(c, t, c.base * senateFx) * this.newsMult(c, t);
   },
 
-  // ---- player price pressure (market depth / anti-arbitrage) --------------
-  _impactKey(commId, sysId) { return sysId + ":" + commId; },
-  impactAt(commId, sysId, now = Date.now()) {
-    const e = this.tradeImpact[this._impactKey(commId, sysId)];
-    if (!e) return 0;
-    const decay = Math.pow(0.5, (now - e.at) / MARKETCFG.impactHalfLifeMs);
-    return e.p * decay;
-  },
-  addImpact(commId, sysId, dP, now = Date.now()) {
-    const k = this._impactKey(commId, sysId);
-    const p = Util.clamp(this.impactAt(commId, sysId, now) + dP, MARKETCFG.impactFloor, 4);
-    this.tradeImpact[k] = { p, at: now };
-  },
   _mod(cat, systemId) {
     const sys = SYSTEMS.find(s => s.id === systemId);
     const raw = sys ? (sys.mods[cat] ?? 1) : (window.Galaxy ? (Galaxy.modsFor(systemId)[cat] ?? 1) : 1);
     return 1 + (raw - 1) * MARKETCFG.modCompression;
   },
-  // Spot at a system EXCLUDING your own pressure (mods + seeded local + overlays).
-  // `rare: false` skips the rare-stock exchange premium (used by trade routes —
+
+  // Spot at a system EXCLUDING scarcity (mods + seeded local + overlays).
+  // `rare: false` skips the rare-stock exchange premium (used by charters —
   // the server has no premium, and routes abstract capital).
   spot(id, systemId, now = Date.now(), { rare = true } = {}) {
     const c = this.byId(id);
     let p = this.prices[id] * this._mod(c.cat, systemId)
       * this.localEventMult(c, systemId, now) * this.localMult(c, systemId, now);
-    // Rare scarcity: when a rare good is stocked here, buy/sell marks higher.
     if (rare && (c.rarity || "common") === "rare" && this.stocks(id, systemId)) {
       p *= (MARKETCFG.rareStockPremium || 1.35);
     }
     return p;
   },
 
-  // Combined active-news multiplier for one commodity (decays to 1 over life).
-  // Client overlay from Broadcast/Wars/WorldFeed — not part of the SQL contract.
   newsMult(comm, now) {
     let m = 1;
     for (const e of this.effects) {
@@ -293,10 +270,6 @@ const Market = {
   pruneEffects(now) {
     this.effects = this.effects.filter(e => now - e.startedAt < e.durationMs);
     this.localEffects = this.localEffects.filter(e => now - e.startedAt < e.durationMs);
-    for (const k in this.tradeImpact) {
-      const e = this.tradeImpact[k];
-      if (Math.abs(e.p) * Math.pow(0.5, (now - e.at) / MARKETCFG.impactHalfLifeMs) < 0.002) delete this.tradeImpact[k];
-    }
   },
 
   _sampleHist(id, now) {
@@ -308,7 +281,6 @@ const Market = {
     return h;
   },
 
-  // Recompute every commodity from the clock (no accumulated random walk).
   tick(now) {
     this.pruneEffects(now);
     for (const c of COMMODITIES) {
@@ -320,8 +292,6 @@ const Market = {
     }
   },
 
-  // Offline catch-up: prices are a pure function of time, so one recompute +
-  // hist resample replaces the old N-tick random-walk simulation.
   advance(elapsedMs, endNow) {
     if (elapsedMs < CONFIG.marketTickMs) return;
     this.pruneEffects(endNow);
@@ -333,14 +303,16 @@ const Market = {
 
   price(id) { return this.prices[id]; },
 
+  // Live exchange price: spot × sector-stock scarcity.
   systemPrice(id, systemId, now = Date.now()) {
-    return this.spot(id, systemId, now) * (1 + this.impactAt(id, systemId, now));
+    const scar = window.Stock ? Stock.scarcityMultForSystem(systemId, id) : 1;
+    return this.spot(id, systemId, now) * scar;
   },
 
-  // Route pricing = systemPrice without the rare-stock exchange premium.
-  // Matches server market.price_system (no premium) so the modal ¢/h matches payouts.
+  // Charter pricing = systemPrice without the rare-stock exchange premium.
   routePrice(id, systemId, now = Date.now()) {
-    return this.spot(id, systemId, now, { rare: false }) * (1 + this.impactAt(id, systemId, now));
+    const scar = window.Stock ? Stock.scarcityMultForSystem(systemId, id) : 1;
+    return this.spot(id, systemId, now, { rare: false }) * scar;
   },
 
   history(id) { return this.hist[id] || []; },
@@ -367,14 +339,13 @@ const Market = {
   },
 
   serialize() {
-    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects, tradeImpact: this.tradeImpact };
+    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects };
   },
   hydrate(snap) {
     if (!snap) return;
-    // Prices/hist are recomputed from the clock; keep overlays + trade pressure.
     if (snap.effects) this.effects = snap.effects;
     if (snap.localEffects) this.localEffects = snap.localEffects;
-    if (snap.tradeImpact) this.tradeImpact = snap.tradeImpact;
+    // tradeImpact retired — ignore if present on old saves.
     const now = Date.now();
     for (const c of COMMODITIES) {
       this.prices[c.id] = this.displayGlobal(c, now);

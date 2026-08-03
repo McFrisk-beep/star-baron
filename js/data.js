@@ -792,13 +792,6 @@ const RECIPES = [
 const MARKETCFG = {
   modCompression: 0.35,          // per-system mod deviation kept (0.35 = gaps shrink 65%; smaller cross-station spread → less arbitrage)
   dockK: 18,                     // sector docking seconds per distance unit (was 12 — longer hops)
-  impactHalfLifeMs: 25 * 60 * 1000,  // how fast a system's price recovers from your trading
-  impactFloor: -0.85,            // pressure can't drop a price below 15% of spot
-  sellFloorFactor: 0.1,          // a sell fill can't be marked below 10% of spot, however large
-  // Your own trade moves the local price along a GENTLER slope than the trade
-  // cap: impact is computed against depth × this, so a big order jumps the price
-  // far less than before (still linear, so splitting an order can't dodge it).
-  impactSoftening: 3,            // 1 = old behaviour; higher = flatter price response to order size
   // Rare goods only appear at 1–2 stations and cost more where they do (scarcity).
   rareStockPremium: 1.35,
 
@@ -814,6 +807,137 @@ const MARKETCFG = {
   localEventPeriodMs: 45 * 60 * 1000,  // per-system seeded-event slot length
   eventDurationMs: 45 * 60 * 1000,     // how long a scheduled event distorts price
   localEventDurationMs: 20 * 60 * 1000,
+};
+
+/* ---- SECTOR STOCK / SUPPLY ECONOMY (docs/STATIONS.md) ---------------------
+   Finite per-sector commodity stock. Price = anchor × sectorMod × scarcity.
+   tradeImpact is gone — buying depletes stock and scarcity moves the price.   */
+const STOCKCFG = {
+  elasticity: 0.35,
+  minMult: 0.70,
+  maxMult: 3.00,
+  baseline: { common: 6000, uncommon: 2500, rare: 800 },
+  specialtyMult: 1.6,            // sector specialty category baseline
+  offSpecialtyMult: 0.7,         // everything else
+  tickMs: 60 * 60 * 1000,        // hourly consumption / NPC production
+  trickleFrac: 0.02,             // surplus fraction moved into empty sectors
+  // NPC output /hour: tuned so zero-player galaxy equilibrates near baseline.
+  npcUnits: { common: 12, uncommon: 5, rare: 2 },
+  npcOutputBoost: 2.5,           // npcOutputMult = clamp(1+(1-ratio)*boost, 1, 3.5)
+  npcOutputMultMax: 3.5,
+  seasonalAmp: 0.08,             // ± noise on consumption
+  glutCapMult: 3.0,              // hard shelf ceiling vs baseline
+};
+
+// Per-commodity hourly demand at a "normal" sector, before sectorPop / cat mults.
+const CONSUMPTION = {
+  defaultByRarity: { common: 8, uncommon: 3, rare: 1 },
+  // Category × sector affinity (design §3). Applied on top of per-comm base.
+  catSectorMult: {
+    agri:    { _: 1 },
+    gas:     { _: 1 },
+    mineral: { _: 0.55 },
+    tech:    { forge: 2, _: 1 },
+    luxury:  { sprawl: 2.5, core: 1.5, _: 0.5 },
+    illicit: { sprawl: 2, core: 1.2, _: 0.6 },
+  },
+  // Relative population pressure per sector (Core densest).
+  sectorPop: { core: 1.35, belt: 1.0, tide: 0.95, green: 1.1, forge: 1.05, sprawl: 1.2 },
+};
+
+/* ---- SPACE STATIONS (docs/STATIONS.md) ------------------------------------
+   78 claimable non-capital stations. Tier from the generated stationName
+   suffix. Power budget gates modules; Reactor buys more power at steep upkeep. */
+const STATION_TIERS = {
+  Berth:      { power: 3,  upkeep: 800,   rank: 0 },
+  Relay:      { power: 5,  upkeep: 1600,  rank: 1 },
+  Waystation: { power: 7,  upkeep: 3000,  rank: 2 },
+  Dock:       { power: 9,  upkeep: 5200,  rank: 3 },
+  Outpost:    { power: 12, upkeep: 8500,  rank: 4 },
+  Anchorage:  { power: 15, upkeep: 13000, rank: 5 },
+  Station:    { power: 15, upkeep: 13000, rank: 5 }, // capital flavour aliases
+  Spire:      { power: 15, upkeep: 13000, rank: 5 },
+  Platform:   { power: 15, upkeep: 13000, rank: 5 },
+};
+
+const STATIONCFG = {
+  auctionHours: 72,
+  minBidIncrement: 50000,
+  antiSnipeMs: 30 * 60 * 1000,
+  openingBase: 150000,
+  openingPerTier: 100000,
+  moduleValueFrac: 0.5,          // inherited modules inflate opening bid
+  refitMs: 6 * 60 * 60 * 1000,
+  cooldownMs: 24 * 60 * 60 * 1000,
+  sentimentStart: 70,
+  standingStart: 60,
+  revoltRate: 0.15,
+  revoltSentiment: 40,
+  revoltStanding: 35,
+  fairLeaseTaxBps: 2000,         // >20% lease tax hurts standing
+  expectedDeliveryBase: 40,      // units/cycle expected at Prod Hub I × tier
+  // Vacant-bay NPC tenants (guest economy): fill chance falls as lease tax rises.
+  npcLeaseChanceMax: 0.50,
+  npcLeaseLeaveMult: 0.35,       // leave chance ≈ taxFrac × this
+  // Exchange Hall (docs/STATIONS.md §9)
+  hallListMs: 48 * 60 * 60 * 1000,  // listing expiry window
+  hallNpcBuyChance: 0.12,         // per listing per hourly tick (guest liquidity)
+  hallMinPrice: 50,
+  // Contract Office (docs/STATIONS.md §11)
+  contractListMs: 36 * 60 * 60 * 1000, // haul posting window
+  contractPostFeeBps: 500,             // 5% posting fee → faction sink (anti-alt)
+  contractMinRate: 5,                  // credits per unit floor
+  contractNpcFillChance: 0.08,       // per open haul per hourly tick
+  contractNpcFillAfterMs: 4 * 60 * 60 * 1000, // NPC won't snatch brand-new posts
+  contractDurBaseMs: 25 * 60 * 1000,
+  contractDurPerUnitMs: 8 * 1000,
+  // Customs / Free Port (docs/STATIONS.md §12)
+  freePortScrutinyMult: 0.35,      // × CUSTOMS.base
+  freePortBorderMult: 0.4,         // damp Senate smuggleFailAdd
+  customsSubsidy: 800,             // credits/cycle into treasury (lawful pay)
+  customsStandingTick: 1,
+  freePortStandingTick: -1,
+  ransomMult: 1.25,                // ransom = seized value × this
+  dockMapK: 22,                    // galaxy-map dock seconds per map-unit
+  reactor: [
+    { power: 2,  upkeep: 1200 },
+    { power: 4,  upkeep: 3000 },
+    { power: 6,  upkeep: 6000 },
+    { power: 8,  upkeep: 11000 },
+    { power: 10, upkeep: 18000 },
+  ],
+  prodHub: [
+    { power: 4,  yield: 60,  bays: 2, upkeep: 900 },
+    { power: 6,  yield: 140, bays: 3, upkeep: 1800 },
+    { power: 8,  yield: 260, bays: 4, upkeep: 3200 },
+    { power: 10, yield: 420, bays: 6, upkeep: 5000 },
+    { power: 12, yield: 640, bays: 8, upkeep: 7500 },
+  ],
+  workshop: [
+    { power: 3, time: 0.15, mat: 0.10, upkeep: 1000 },
+    { power: 5, time: 0.30, mat: 0.20, upkeep: 2200 },
+    { power: 7, time: 0.45, mat: 0.30, upkeep: 4000 },
+  ],
+  // Ownership caps by Baron Tier index (0=Baron … 6=Cosmocrat).
+  ownerCap: [1, 1, 1, 2, 2, 2, 3],
+};
+
+// Module catalogue. `conflicts` = mutual exclusion; `requires` = other module min level.
+const STATION_MODULES = {
+  production_hub: { name: "Production Hub", max: 5, power: [4, 6, 8, 10, 12], cost: [25000, 55000, 110000, 200000, 350000] },
+  refinery:       { name: "Refinery",       max: 1, power: [5], requires: { production_hub: 2 }, cost: [80000] },
+  exchange_hall:  { name: "Exchange Hall",  max: 1, power: [4], cost: [60000] },
+  workshop_annex: { name: "Workshop Annex", max: 3, power: [3, 5, 7], cost: [40000, 90000, 160000] },
+  dry_dock:       { name: "Dry Dock",       max: 1, power: [3], cost: [45000] },
+  charter_office: { name: "Charter Office", max: 1, power: [3], cost: [40000] },
+  contract_office:{ name: "Contract Office",max: 1, power: [4], cost: [70000] },
+  survey_relay:   { name: "Survey Relay",   max: 1, power: [4], cost: [55000] },
+  warehouse:      { name: "Warehouse",      max: 2, power: [2, 3], cost: [30000, 50000] },
+  customs_house:  { name: "Customs House",  max: 1, power: [3], conflicts: ["free_port", "black_market"], cost: [65000] },
+  free_port:      { name: "Free Port",      max: 1, power: [3], conflicts: ["customs_house"], cost: [65000] },
+  black_market:   { name: "Black Market",   max: 1, power: [5], conflicts: ["customs_house"], requires: { exchange_hall: 1 }, cost: [90000] },
+  lane_buoy:      { name: "Lane Buoy",      max: 1, power: [2], cost: [35000] },
+  reactor:        { name: "Reactor",        max: 5, power: [0, 0, 0, 0, 0], cost: [40000, 90000, 160000, 280000, 450000] },
 };
 
 /* ---- BATTLE DAMAGE --------------------------------------------------------
@@ -917,13 +1041,13 @@ const RIVALS = [
 // that tier: trading near the cap eats heavy slippage, so the exploit of dumping
 // a huge position at one quoted price is gone. Scales with progression.
 const BARON_TIERS = [
-  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  cap: 15000,    threshold: 0 },
-  { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  cap: 30000,    threshold: 1000000 },
-  { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  cap: 60000,    threshold: 2500000 },
-  { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  cap: 120000,   threshold: 6000000 },
-  { title: "Plutocrat", tax: 0.40, permits: 24, fleet: 7,  cap: 220000,   threshold: 15000000 },
-  { title: "Potentate", tax: 0.50, permits: 28, fleet: 8,  cap: 350000,   threshold: 40000000 },
-  { title: "Cosmocrat", tax: 0.60, permits: 32, fleet: 10, cap: 500000,   threshold: 100000000 },
+  { title: "Baron",     tax: 0.00, permits: 8,  fleet: 3,  cap: 15000,    stations: 1, threshold: 0 },
+  { title: "Magnate",   tax: 0.10, permits: 12, fleet: 4,  cap: 30000,    stations: 1, threshold: 1000000 },
+  { title: "Tycoon",    tax: 0.20, permits: 16, fleet: 5,  cap: 60000,    stations: 1, threshold: 2500000 },
+  { title: "Oligarch",  tax: 0.30, permits: 20, fleet: 6,  cap: 120000,   stations: 2, threshold: 6000000 },
+  { title: "Plutocrat", tax: 0.40, permits: 24, fleet: 7,  cap: 220000,   stations: 2, threshold: 15000000 },
+  { title: "Potentate", tax: 0.50, permits: 28, fleet: 8,  cap: 350000,   stations: 2, threshold: 40000000 },
+  { title: "Cosmocrat", tax: 0.60, permits: 32, fleet: 10, cap: 500000,   stations: 3, threshold: 100000000 },
 ];
 
 const PRESTIGE = {
@@ -1147,6 +1271,7 @@ const PAGE_BG_PAGES = [
   { id: "bazaar", label: "Bazaar" },
   { id: "industries", label: "Industries" },
   { id: "workshop", label: "Workshop" },
+  { id: "stations", label: "Stations" },
   { id: "senate", label: "Senate" },
   { id: "barons", label: "Barons" },
   { id: "ach", label: "Milestones" },
@@ -1164,6 +1289,7 @@ const HUB_PROPS = [
   { id: "bazaar",     page: "bazaar",     label: "Bazaar",       icon: "🛒" },
   { id: "industries", page: "industries", label: "Foundry",      icon: "🏭" },
   { id: "workshop",   page: "workshop",   label: "Workshop",     icon: "🔧" },
+  { id: "stations",   page: "stations",   label: "Stations",     icon: "🛰️" },
   { id: "senate",     page: "senate",     label: "Senate",       icon: "🏛️" },
   { id: "starmap",    page: "starmap",    label: "Star Map",     icon: "🗺️" },
   { id: "systems",    page: "systems",    label: "Star Systems", icon: "🪐" },
@@ -1307,6 +1433,11 @@ window.WORKSHOPCFG = WORKSHOPCFG;
 window.BLUEPRINTS = BLUEPRINTS;
 window.RECIPES = RECIPES;
 window.MARKETCFG = MARKETCFG;
+window.STOCKCFG = STOCKCFG;
+window.CONSUMPTION = CONSUMPTION;
+window.STATION_TIERS = STATION_TIERS;
+window.STATIONCFG = STATIONCFG;
+window.STATION_MODULES = STATION_MODULES;
 window.CHARTERCFG = CHARTERCFG;
 window.CHARTER_BANDS = CHARTER_BANDS;
 window.INCIDENTCFG = INCIDENTCFG;
