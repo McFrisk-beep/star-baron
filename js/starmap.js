@@ -386,18 +386,22 @@ const StarMap = {
         const openMin = Stations.openingBid(st);
         if (st.status === "owned" && st.ownerId === Stations.playerId()) {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · yours · standing ${st.standing.toFixed(0)}
-            <button class="btn btn-mini" id="sm-st-manage">Manage</button></div>`;
+            <button class="btn btn-mini" id="sm-st-manage">Manage</button>
+            <button class="btn btn-mini btn-warn" id="sm-st-relinquish">Relinquish</button></div>`;
         } else if (auc && auc.status === "open") {
           const left = Math.max(0, auc.closesAt - Date.now());
           const min = auc.highBid + STATIONCFG.minBidIncrement;
           stationBlock = `<div class="si-station"><b>${st.name}</b> · auction
             <div class="tip-dim">high ${Util.credits(auc.highBid)} · closes ${Util.duration(left)}</div>
-            <button class="btn btn-go" id="sm-st-bid" data-min="${min}">Bid ${Util.credits(min)}</button></div>`;
+            <button class="btn btn-go" id="sm-st-bid" data-min="${min}">Bid ${Util.credits(min)}</button>
+            ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "npc" || (st.status === "cooldown" && Date.now() >= st.cooldownUntil)) {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
-            <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button></div>`;
+            <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>
+            ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "cooldown") {
-          stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}</div>`;
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}
+            ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         }
         // Exchange Hall: visitors must be docked here; owners manage via Stations tab.
         const hallAccess = Stations.canUseHall(sys.id);
@@ -568,6 +572,22 @@ const StarMap = {
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Bid placed: ${Util.credits(r.auction.highBid)}`, "good");
       UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
+    };
+    const stAdminClaim = document.getElementById("sm-st-admin-claim");
+    if (stAdminClaim) stAdminClaim.onclick = () => {
+      const r = Stations.adminClaim(sys.id);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Claimed ${r.st.name} (admin).`, "good");
+      UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
+    };
+    const stRelinquish = document.getElementById("sm-st-relinquish");
+    if (stRelinquish) stRelinquish.onclick = () => {
+      if (!confirm(`Relinquish ${Stations.get(sys.id)?.name || "this station"}? Modules stay for the next owner; treasury returns to you.`)) return;
+      const r = Stations.relinquish(sys.id);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast("Station relinquished.", "info");
+      UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
+      if (UI.page === "stations") UI.renderStations();
     };
     const stManage = document.getElementById("sm-st-manage");
     if (stManage) stManage.onclick = () => { this.close(); UI.showPage("stations"); };

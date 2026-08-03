@@ -332,4 +332,31 @@ assert.ok(Stations.reliability(target) < 1, "expiry lowers reliability");
 
 ctx.Game.state.currentSystem = visitorDock;
 
+// Admin free claim — no auction, no escrow, skips cooldown.
+ctx.Cloud = { isAdmin: () => true };
+const freeTarget = Stations.list().find(st => st.status === "npc" && st.ownerId == null
+  && st.systemId !== target.systemId && st.systemId !== other.systemId);
+assert.ok(freeTarget, "npc station available for admin claim");
+const creditsBeforeClaim = ctx.Game.state.credits;
+const adminR = Stations.adminClaim(freeTarget.systemId);
+assert.ok(adminR.ok, adminR.msg);
+assert.strictEqual(freeTarget.status, "owned");
+assert.strictEqual(freeTarget.ownerId, "player");
+assert.strictEqual(ctx.Game.state.credits, creditsBeforeClaim, "admin claim costs nothing");
+
+// Relinquish returns control to NPC, keeps modules, returns treasury.
+freeTarget.modules = { production_hub: 1 };
+freeTarget.reactorLevel = 1;
+freeTarget.treasury = 12_000;
+const creditsBeforeRel = ctx.Game.state.credits;
+const rel = Stations.relinquish(freeTarget.systemId);
+assert.ok(rel.ok, rel.msg);
+assert.strictEqual(freeTarget.status, "npc");
+assert.strictEqual(freeTarget.ownerId, null);
+assert.strictEqual(freeTarget.modules.production_hub, 1, "modules persist");
+assert.strictEqual(freeTarget.reactorLevel, 1, "reactor persists");
+assert.strictEqual(ctx.Game.state.credits, creditsBeforeRel + 12_000, "treasury returned");
+ctx.Cloud = { isAdmin: () => false };
+assert.ok(!Stations.adminClaim(freeTarget.systemId).ok, "non-admin blocked");
+
 console.log("OK check_stations");

@@ -1231,6 +1231,74 @@ const Stations = {
     return n;
   },
 
+  _isAdmin() { return !!(window.Cloud && Cloud.isAdmin && Cloud.isAdmin()); },
+
+  // Cancel an open auction and refund the local player's escrowed high bid.
+  _cancelAuction(systemId) {
+    const auc = this.auctions[systemId];
+    if (!auc || auc.status !== "open") return;
+    const pid = this.playerId();
+    if (auc.highBidder === pid || auc.highBidder === "player") {
+      Game.state.credits += auc.highBid | 0;
+    }
+    auc.status = "cancelled";
+    delete this.auctions[systemId];
+  },
+
+  // Admin: take a claimable station immediately — no bid, no 72h wait, no cap.
+  adminClaim(systemId) {
+    if (!this._isAdmin()) return { ok: false, msg: "Admins only." };
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    if (st.status === "owned" && st.ownerId === this.playerId())
+      return { ok: false, msg: "You already own this station." };
+    if (st.status === "owned" && st.ownerId && st.ownerId !== this.playerId())
+      return { ok: false, msg: "Already owned — relinquish first." };
+    this._cancelAuction(systemId);
+    const pid = this.playerId();
+    st.ownerId = pid;
+    st.status = "owned";
+    st.standing = STATIONCFG.standingStart;
+    st.delivered = 0;
+    st.cooldownUntil = 0;
+    if (window.Game) Game.requestSave();
+    return { ok: true, st };
+  },
+
+  // Owner (or admin of their own claim) walks away. Modules persist; no cooldown.
+  relinquish(systemId) {
+    const st = this.get(systemId);
+    if (!st) return { ok: false, msg: "No station." };
+    const pid = this.playerId();
+    const mine = st.ownerId === pid && st.status === "owned";
+    if (!mine) return { ok: false, msg: "Not your station." };
+    // Return treasury before wiping identity.
+    if ((st.treasury | 0) > 0) {
+      Game.state.credits += st.treasury | 0;
+      this._ledger(st, -(st.treasury | 0), "relinquish", "treasury returned");
+      st.treasury = 0;
+    }
+    for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
+    st.contracts = (st.contracts || []).filter(x => x.status === "active");
+    for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
+    st.hall = [];
+    this.syncBays(st);
+    for (const bay of st.bays || []) this._clearBay(st, bay);
+    st.ownerId = null;
+    st.status = "npc";
+    st.cooldownUntil = 0;
+    st.hold = {};
+    st.standing = STATIONCFG.standingStart;
+    st.prodComm = null;
+    st.impoundHold = {};
+    st.impoundClaims = [];
+    st.delivered = 0;
+    delete this.access[st.systemId];
+    this._cancelAuction(systemId);
+    if (window.Game) Game.requestSave();
+    return { ok: true, st };
+  },
+
   // Credits currently locked in bids — counted in net worth.
   _closeAuction(systemId, now = Date.now()) {
     const auc = this.auctions[systemId];

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* check_charters.js — Charter Contracts: quote, cancel curve, locking, resolve,
-   migration. Run:  node tools/check_charters.js                                 */
+   migration, multi-ship grouping, cargo/defense risk. Run: node tools/check_charters.js */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 
@@ -44,25 +44,30 @@ ctx.Game = {
     delete s.routes;
     const bands = ctx.CHARTER_BANDS || {};
     const shipUids = new Set(s.ships.map(sh => sh && sh.uid).filter(Boolean));
-    s.charters = (Array.isArray(s.charters) ? s.charters : []).filter(c =>
-      c && typeof c.id === "string"
-      && typeof c.shipUid === "string" && shipUids.has(c.shipUid)
-      && typeof c.band === "string" && bands[c.band]
-      && Number.isFinite(+c.durationMs) && +c.durationMs > 0
-      && Number.isFinite(+c.startedAt)
-      && Number.isFinite(+c.reward) && +c.reward >= 0
-      && !c.resolved
-    ).map(c => ({
-      id: c.id, shipUid: c.shipUid, band: c.band,
-      durationMs: +c.durationMs, startedAt: +c.startedAt, reward: Math.round(+c.reward),
-      faction: bands[c.band].faction || null,
-      destroyChance: ctx.Util.clamp(+c.destroyChance || 0, 0, 0.85),
-      impoundChance: ctx.Util.clamp(+c.impoundChance || 0, 0, 0.85),
-      impound: !!(bands[c.band].impound > 0), resolved: false,
-    }));
+    const maxShips = (ctx.CHARTERCFG && ctx.CHARTERCFG.maxShips) || 6;
+    s.charters = (Array.isArray(s.charters) ? s.charters : []).map(c => {
+      if (!c || typeof c.id !== "string" || typeof c.band !== "string" || !bands[c.band]) return null;
+      if (!(Number.isFinite(+c.durationMs) && +c.durationMs > 0)) return null;
+      if (!(Number.isFinite(+c.startedAt) && Number.isFinite(+c.reward) && +c.reward >= 0)) return null;
+      if (c.resolved) return null;
+      let uids = Array.isArray(c.shipUids) ? c.shipUids.filter(u => typeof u === "string" && shipUids.has(u)) : [];
+      if (!uids.length && typeof c.shipUid === "string" && shipUids.has(c.shipUid)) uids = [c.shipUid];
+      uids = [...new Set(uids)].slice(0, maxShips);
+      if (!uids.length) return null;
+      return {
+        id: c.id, shipUid: uids[0], shipUids: uids, band: c.band,
+        durationMs: +c.durationMs, startedAt: +c.startedAt, reward: Math.round(+c.reward),
+        faction: bands[c.band].faction || null,
+        destroyChance: ctx.Util.clamp(+c.destroyChance || 0, 0, 0.85),
+        impoundChance: ctx.Util.clamp(+c.impoundChance || 0, 0, 0.85),
+        impound: !!(bands[c.band].impound > 0), resolved: false,
+      };
+    }).filter(Boolean);
+    const onCharter = (uid) => s.charters.some(c =>
+      (Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid);
     for (const sh of s.ships) {
-      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid)) sh.status = "idle";
-      else if (s.charters.some(c => c.shipUid === sh.uid) && sh.status !== "impounded") sh.status = "charter";
+      if (sh.status === "charter" && !onCharter(sh.uid)) sh.status = "idle";
+      else if (onCharter(sh.uid) && sh.status !== "impounded") sh.status = "charter";
     }
     return s;
   },
@@ -91,6 +96,7 @@ ctx.Boosts = { mag: () => 0 };
 const mule = () => Object.assign(Fleet.makeShip("mule"), { name: "Old Faithful", status: "idle" });
 const drift = () => Object.assign(Fleet.makeShip("drift"), { name: "Hauler", status: "idle" });
 const bulk = () => Object.assign(Fleet.makeShip("bulk"), { name: "Bulk", status: "idle" });
+const gunboat = () => Object.assign(Fleet.makeShip("gunboat"), { name: "Gunboat", status: "idle" });
 
 // 1) Quote determinism — reward stored at dispatch is the base paid at resolve
 ctx.Game.state = fresh();
@@ -99,6 +105,8 @@ const d = Charters.dispatch(sh1.uid, "safe", 60, T);
 assert(d.ok, d.msg);
 const locked = d.charter.reward;
 assert.strictEqual(locked, Charters.quote(sh1, "safe", 3600000));
+assert.ok(Array.isArray(d.charter.shipUids) && d.charter.shipUids.length === 1
+  && d.charter.shipUids[0] === sh1.uid, "shipUids populated");
 // Force a clean resolve (no RNG destroy on safe)
 T += 3600000;
 const reps = Charters.resolve(T);
@@ -212,10 +220,12 @@ const loaded = {
   ships: [
     { uid: "s1", type: "mule", cls: "transport", name: "X", status: "trading", accessories: [] },
     { uid: "s2", type: "mule", cls: "transport", name: "Y", status: "charter", accessories: [] },
+    { uid: "s3", type: "gunboat", cls: "escort", name: "Z", status: "charter", accessories: [] },
   ],
   routes: [{ id: "rt1", comm: "iron_ore", from: "a", to: "b", shipUids: ["s1"] }],
   charters: [
     { id: "ch1", shipUid: "s2", band: "high", durationMs: 3600000, startedAt: T, reward: 5000, destroyChance: 0.07 },
+    { id: "ch2", shipUids: ["s2", "s3"], shipUid: "s2", band: "moderate", durationMs: 3600000, startedAt: T, reward: 8000, destroyChance: 0.04 },
     { id: "bad", shipUid: "gone", band: "high", durationMs: 3600000, startedAt: T, reward: 100 }, // missing ship
     { id: "bad2", shipUid: "s1", band: "nope", durationMs: 3600000, startedAt: T, reward: 100 }, // bad band
     null,
@@ -224,10 +234,13 @@ const loaded = {
 const mig = ctx.Game.migrate(loaded);
 assert.strictEqual(mig.ships[0].status, "idle");
 assert.strictEqual(mig.routes, undefined);
-assert.strictEqual(mig.charters.length, 1);
+assert.strictEqual(mig.charters.length, 2);
 assert.strictEqual(mig.charters[0].id, "ch1");
+assert.strictEqual(mig.charters[0].shipUids.join(","), "s2");
 assert.strictEqual(mig.charters[0].impound, false, "high band has no impound");
+assert.strictEqual(mig.charters[1].shipUids.join(","), "s2,s3", "group charter kept");
 assert.strictEqual(mig.ships[1].status, "charter", "valid charter re-locks hull");
+assert.strictEqual(mig.ships[2].status, "charter", "group escort re-locked");
 
 // 10) Senate routeSafety softens / sharpens destroy odds; impound reads config table
 ctx.Game.state = fresh();
@@ -246,9 +259,35 @@ ctx.Game.state.ships.push(mule());
 const dHi = Charters.dispatch(ctx.Game.state.ships[1].uid, "high", 60, T);
 assert.strictEqual(dHi.charter.impound, false);
 
-// Sample payout sanity (safe mule 1h ≈ 1,020)
+// 11) Pay scales with cargo (not firepower); fat holds riskier; escorts cut risk
 ctx.Game.state = fresh();
-const sm = mule(); ctx.Game.state.ships.push(sm);
-assert.strictEqual(Charters.quote(sm, "safe", 3600000), 1020);
+const mPay = Charters.quote(mule(), "safe", 3600000);
+const gPay = Charters.quote(gunboat(), "safe", 3600000);
+const bPay = Charters.quote(bulk(), "safe", 3600000);
+assert(bPay > mPay, `bulk pays more than mule ${bPay} > ${mPay}`);
+assert(mPay > gPay, `mule (more cargo) pays more than gunboat ${mPay} > ${gPay}`);
+assert.strictEqual(mPay, 960, "mule safe 1h cargo-only rate");
+
+const mRisk = Charters.destroyChance(mule(), "extreme", 3600000);
+const bRisk = Charters.destroyChance(bulk(), "extreme", 3600000);
+const escortRisk = Charters.destroyChance([bulk(), gunboat()], "extreme", 3600000);
+assert(bRisk > mRisk, `bulk riskier than mule ${bRisk} > ${mRisk}`);
+assert(escortRisk < bRisk, `escort cuts bulk risk ${escortRisk} < ${bRisk}`);
+
+// 12) Multi-ship dispatch locks all hulls; cancel frees all
+ctx.Game.state = fresh();
+ctx.Game.state.credits = 50_000;
+const h1 = bulk(), h2 = gunboat(), spare = mule();
+ctx.Game.state.ships.push(h1, h2, spare);
+const dg = Charters.dispatch([h1.uid, h2.uid], "safe", 60, T);
+assert(dg.ok, dg.msg);
+assert.strictEqual(h1.status, "charter");
+assert.strictEqual(h2.status, "charter");
+assert.strictEqual(spare.status, "idle");
+assert.strictEqual(Charters.ofShip(h2.uid).id, dg.charter.id);
+const cg = Charters.cancel(dg.charter.id, T + 60000);
+assert(cg.ok, cg.msg);
+assert.strictEqual(h1.status, "idle");
+assert.strictEqual(h2.status, "idle");
 
 console.log("check_charters: ok");

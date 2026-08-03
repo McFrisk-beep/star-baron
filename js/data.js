@@ -323,30 +323,38 @@ const BAZAARCFG = {
    Replaces automated trade routes (see docs / CHARTER_CONTRACTS).              */
 const CHARTERCFG = {
   durations: [30, 60, 120, 240, 480, 720, 1440, 2880, 4320], // minutes: 30m … 72h
-  rateBase: 600,          // flat c/h floor for any hull
-  rateCargo: 30,          // c/h per point of cargo
-  rateFirepower: 60,      // c/h per point of firepower
+  rateBase: 600,          // flat c/h floor for any hull / group
+  rateCargo: 30,          // c/h per point of cargo (pay scales with hold, not guns)
   taperExp: 0.75,         // hours^taperExp — long charters pay less per hour
   payoutCapMult: 3,       // cap vs Economy.depth(); null disables
   durationRiskExp: 0.5,   // hours^this — a 72h run is ~8.5× as dangerous as 1h
-  hullSoftness: 220,      // hull points at which a ship is "sturdy" (factor 1.0)
-  hullFactorClamp: [0.45, 2.2],
+  // Cargo draws pirates; attack / hull / armor / shields cut the odds.
+  cargoRiskSoft: 30,      // cargo at which cargo-risk factor ≈ 1.0
+  cargoRiskExp: 1.2,      // (cargo/soft)^exp — big holds get much riskier
+  cargoRiskClamp: [0.4, 8],
+  defFirepower: 3,        // attack weight in the defense score
+  defHull: 1,
+  defArmor: 2,
+  defShields: 2,
+  defenseSoftness: 100,   // defense score at which defense-factor ≈ 1.0
+  defenseFactorClamp: [0.25, 2.5],
   bailoutAt: 0.5,         // fraction of duration before which cancelling costs money
   abortFeeRate: 0.70,     // early cancel = −reward × this
   salvageFloor: 0.35,     // buyout at the bailout point
   salvageCeil: 0.60,      // buyout ceiling as the charter matures
   salvageStepMin: 10,     // buyout ticks up in steps of this many minutes
   maxActive: 3,           // charters running at once
+  maxShips: 6,            // hulls you can group onto one charter
 };
 
 // Charter-specific risk (pay multipliers reuse DANGER). destroy/impound are
-// 1h bases; Charters.destroyChance scales them by duration × hull softness.
+// 1h bases; Charters.destroyChance scales them by duration × cargo × defense.
 const CHARTER_BANDS = {
   safe:     { destroy: 0,    impound: 0,    faction: null,             blurb: "Lane courier — always completes." },
-  low:      { destroy: 0.01, impound: 0,    faction: "free_trade",     blurb: "Bulk haul with light lane risk." },
-  moderate: { destroy: 0.03, impound: 0,    faction: "mining_combine", blurb: "Ore run — damage or a shorted purse." },
-  high:     { destroy: 0.07, impound: 0,    faction: "agri_collective",blurb: "Smuggle run — hulls don't always come home." },
-  extreme:  { destroy: 0.14, impound: 0.06, faction: "syndicate",      blurb: "Contraband charter — destroyed or impounded." },
+  low:      { destroy: 0.01, impound: 0,    faction: "free_trade",     blurb: "Bulk haul with light lane risk. Escorts cut losses." },
+  moderate: { destroy: 0.03, impound: 0,    faction: "mining_combine", blurb: "Ore run — fat holds draw raids; guns and plating help." },
+  high:     { destroy: 0.07, impound: 0,    faction: "agri_collective",blurb: "Smuggle run — haulers pay, fighters keep them alive." },
+  extreme:  { destroy: 0.14, impound: 0.06, faction: "syndicate",      blurb: "Contraband — big cargo, big loss odds unless escorted." },
 };
 
 /* ---- INCIDENTS ------------------------------------------------------------

@@ -97,31 +97,37 @@ const Game = {
     // Validate charter shape at the trust boundary (localStorage / cloud sync).
     const bands = (typeof CHARTER_BANDS !== "undefined" && CHARTER_BANDS) || {};
     const shipUids = new Set(s.ships.map(sh => sh && sh.uid).filter(Boolean));
-    s.charters = (Array.isArray(s.charters) ? s.charters : []).filter(c =>
-      c && typeof c.id === "string"
-      && typeof c.shipUid === "string" && shipUids.has(c.shipUid)
-      && typeof c.band === "string" && bands[c.band]
-      && Number.isFinite(+c.durationMs) && +c.durationMs > 0
-      && Number.isFinite(+c.startedAt)
-      && Number.isFinite(+c.reward) && +c.reward >= 0
-      && !c.resolved
-    ).map(c => ({
-      id: c.id,
-      shipUid: c.shipUid,
-      band: c.band,
-      durationMs: +c.durationMs,
-      startedAt: +c.startedAt,
-      reward: Math.round(+c.reward),
-      faction: (c.faction && FACTIONS[c.faction]) ? c.faction : (bands[c.band].faction || null),
-      destroyChance: Util.clamp(+c.destroyChance || 0, 0, 0.85),
-      impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
-      impound: !!(bands[c.band].impound > 0),
-      resolved: false,
-    }));
+    const maxShips = (typeof CHARTERCFG !== "undefined" && CHARTERCFG.maxShips) || 6;
+    s.charters = (Array.isArray(s.charters) ? s.charters : []).map(c => {
+      if (!c || typeof c.id !== "string" || typeof c.band !== "string" || !bands[c.band]) return null;
+      if (!(Number.isFinite(+c.durationMs) && +c.durationMs > 0)) return null;
+      if (!(Number.isFinite(+c.startedAt) && Number.isFinite(+c.reward) && +c.reward >= 0)) return null;
+      if (c.resolved) return null;
+      let uids = Array.isArray(c.shipUids) ? c.shipUids.filter(u => typeof u === "string" && shipUids.has(u)) : [];
+      if (!uids.length && typeof c.shipUid === "string" && shipUids.has(c.shipUid)) uids = [c.shipUid];
+      uids = [...new Set(uids)].slice(0, maxShips);
+      if (!uids.length) return null;
+      return {
+        id: c.id,
+        shipUid: uids[0],
+        shipUids: uids,
+        band: c.band,
+        durationMs: +c.durationMs,
+        startedAt: +c.startedAt,
+        reward: Math.round(+c.reward),
+        faction: (c.faction && FACTIONS[c.faction]) ? c.faction : (bands[c.band].faction || null),
+        destroyChance: Util.clamp(+c.destroyChance || 0, 0, 0.85),
+        impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
+        impound: !!(bands[c.band].impound > 0),
+        resolved: false,
+      };
+    }).filter(Boolean);
+    const onCharter = (uid) => s.charters.some(c =>
+      (Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid);
     for (const sh of s.ships) {
-      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid))
+      if (sh.status === "charter" && !onCharter(sh.uid))
         sh.status = "idle";
-      else if (s.charters.some(c => c.shipUid === sh.uid) && sh.status !== "impounded")
+      else if (onCharter(sh.uid) && sh.status !== "impounded")
         sh.status = "charter";
     }
     if (!Array.isArray(s.activeBoosts)) s.activeBoosts = [];
