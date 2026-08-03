@@ -456,9 +456,10 @@ const Game = {
       if (!Cloud.pullMissing && !this._pullInflight && (this._softIncomeDue(now) || retryPull)) {
         this._pullInflight = true;
         this._lastPullTry = now;
-        void this.pullCatchUp().then(away => {
+        void this.pullCatchUp().then(async away => {
           this._pullInflight = false;
           if (window.Charters) Charters.reconcileShips();
+          await this.syncSectorStock();
           this.requestSave();
         }).catch(() => { this._pullInflight = false; });
       }
@@ -567,8 +568,9 @@ const Game = {
         if (window.Bgm) Bgm.applyVolume();
       };
       if (window.Economy && Economy.authoritative()) {
-        void this.pullCatchUp().then(() => {
+        void this.pullCatchUp().then(async () => {
           if (window.Charters) Charters.reconcileShips();
+          await this.syncSectorStock();
           if (Cloud.pullReady || !Economy.softIncomeLocal()) {
             Fleet.pruneMercs(now);
             void Orders.process();
