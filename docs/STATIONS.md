@@ -28,7 +28,7 @@ Measured from the current generator (`GALAXY.seed = 195939070`):
 | Sable Sprawl | Sable | luxury | 15 | 14 |
 | **Total** | | | **84** | **78** |
 
-Every generated system already carries a `stationName` (`Galaxy.build`), using the suffixes Outpost / Relay / Dock / Waystation / Berth. Those become the tier ladder — no new naming needed.
+Every generated system already carries a `stationName` (`Galaxy.build`), using the suffixes Outpost / Relay / Dock / Waystation / Berth / **Anchorage**. Those become the tier ladder — no new naming needed. Capitals keep separate flavour aliases (Station / Spire / Platform / Anchorage) and stay unclaimable; Anchorage on a non-capital is the claimable top tier that unlocks the §7.1 power ceiling of 25.
 
 ---
 

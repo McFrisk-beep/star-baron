@@ -278,6 +278,8 @@ const Stations = {
       // ponytail: no bay→extractor wiring yet; flat +10% if any extractor owned
       if (Object.keys(Game.state.extractors || {}).length) yield_ = Math.round(yield_ * 1.1);
     }
+    // General strike (standing < 20): production halved (docs/STATIONS.md §6.3).
+    if ((st.standing | 0) < 20) yield_ = Math.floor(yield_ / 2);
     st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + yield_;
     st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub * (1 + this.tierInfo(st.tier).rank * 0.15));
     return yield_;

@@ -43,6 +43,14 @@ const target = Stations.list()[0];
 assert.ok(target, "has stations");
 assert.strictEqual(target.status, "npc");
 
+// Anchorage must be reachable on claimable (non-capital) stations — §7.1 max power 25.
+const tiers = new Set(Stations.list().map(st => st.tier));
+assert.ok(tiers.has("Anchorage"), `claimable tier set includes Anchorage, got ${[...tiers].join(",")}`);
+assert.ok(!Galaxy.list.some(s => !s.capital && / (Station|Spire|Platform)$/.test(s.stationName)),
+  "capital flavour aliases stay off claimable systems");
+assert.strictEqual(Stations.tierInfo("Anchorage").power + STATIONCFG.reactor[4].power, 25,
+  "Anchorage + Reactor V = 25 power");
+
 const openMin = Stations.openingBid(target);
 const before = ctx.Game.state.credits;
 const r0 = Stations.openAuction(target.systemId, openMin);
@@ -103,6 +111,20 @@ for (const id of ["exchange_hall", "dry_dock", "charter_office", "warehouse", "l
   if (!r.ok && /power/i.test(r.msg || "")) { blocked = true; break; }
 }
 assert.ok(blocked || Stations.powerFree(target) >= 0, "power budget enforced");
+
+// General strike: standing < 20 halves Production Hub output (§6.3).
+target.status = "owned";
+target.ownerId = "player";
+target.modules = { production_hub: 1 };
+target.prodComm = pool[0].id;
+target.hold = {};
+target.standing = 50;
+const full = Stations._playerProduce(target, 99);
+target.hold = {};
+target.standing = 19;
+const struck = Stations._playerProduce(target, 100);
+assert.ok(full > 0, "baseline production > 0");
+assert.strictEqual(struck, Math.floor(full / 2), `strike halves ${full} → ${struck}`);
 
 // Cap: Baron can only own 1 — second auction forfeits at close if already owned
 const other = Stations.list().find(st => st.systemId !== target.systemId);

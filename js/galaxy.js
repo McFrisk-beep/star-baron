@@ -64,7 +64,9 @@ const Galaxy = {
             y: Math.min(0.95, Math.max(0.05, sec.pos.y + Math.sin(ang) * rad * 0.9)),
           },
           planets: this._planets(name, sec, rng, ri, pick, cats),
-          stationName: `${name} ${pick(["Outpost", "Relay", "Dock", "Waystation", "Berth"])}`,
+          // Anchorage is the claimable top tier (docs/STATIONS.md §7.1 max power 25).
+          // Capitals keep their own flavour aliases (Station/Spire/Platform) and stay unclaimable.
+          stationName: `${name} ${pick(["Outpost", "Relay", "Dock", "Waystation", "Berth", "Anchorage"])}`,
         };
         this._register(sys); ids.push(sys.id);
       }
