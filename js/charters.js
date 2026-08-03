@@ -39,12 +39,22 @@ const Charters = {
     );
   },
 
+  // Senate Convoy Escort Mandate (+) / Lane Patrol Cuts (−) scale charter risk
+  // the same way they used to swing route-raid losses (SENATECFG.routeSafetyClamp).
+  _senateRiskMult() {
+    if (!window.Senate || !Senate.routeSafetyAdd) return 1;
+    const safety = Senate.routeSafetyAdd();
+    if (!safety) return 1;
+    const cl = (window.SENATECFG && SENATECFG.routeSafetyClamp) || [0.1, 2.5];
+    return Util.clamp(1 - safety, cl[0], cl[1]);
+  },
+
   destroyChance(ship, band, durationMs) {
     const b = CHARTER_BANDS[band] || CHARTER_BANDS.safe;
     const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
     return Util.clamp(
       b.destroy * this.durationRiskMult(durationMs / 3600000)
-        * this.hullFactor(ship) * (1 - safe),
+        * this.hullFactor(ship) * (1 - safe) * this._senateRiskMult(),
       0, 0.85
     );
   },
@@ -55,7 +65,7 @@ const Charters = {
     const safe = window.Fleet ? Fleet.mainBonus("routeSafe") : 0;
     return Util.clamp(
       b.impound * this.durationRiskMult(durationMs / 3600000)
-        * this.hullFactor(ship) * (1 - safe),
+        * this.hullFactor(ship) * (1 - safe) * this._senateRiskMult(),
       0, 0.85
     );
   },
@@ -116,7 +126,7 @@ const Charters = {
       faction: bandInfo.faction,
       destroyChance: destroy,
       impoundChance: this.impoundChance(sh, band, durationMs),
-      impound: band === "extreme",
+      impound: (bandInfo.impound || 0) > 0,
       resolved: false,
     };
     sh.status = "charter";

@@ -34,15 +34,39 @@ const fresh = () => ({
   inventory: { capacity: 6, upgrades: 0 },
   bazaar: { mercs: [], contracts: [], accessories: [], extractors: [], components: [], yard: [], flagships: [] },
 });
-ctx.Game = { state: fresh(), timeScale: 1, migrate(loaded) {
-  // Minimal migrate mirror of Game.migrate charter bits for test 9.
-  const s = Object.assign({}, fresh(), loaded);
-  if (!Array.isArray(s.ships)) s.ships = [];
-  if (Array.isArray(s.ships)) for (const sh of s.ships) if (sh.status === "trading") sh.status = "idle";
-  delete s.routes;
-  s.charters ||= [];
-  return s;
-} };
+// Mirror Game.migrate's charter/route trust-boundary bits (full main.js needs too many stubs).
+ctx.Game = {
+  state: fresh(), timeScale: 1,
+  migrate(loaded) {
+    const s = Object.assign({}, fresh(), loaded);
+    if (!Array.isArray(s.ships)) s.ships = [];
+    for (const sh of s.ships) if (sh.status === "trading") sh.status = "idle";
+    delete s.routes;
+    const bands = ctx.CHARTER_BANDS || {};
+    const shipUids = new Set(s.ships.map(sh => sh && sh.uid).filter(Boolean));
+    s.charters = (Array.isArray(s.charters) ? s.charters : []).filter(c =>
+      c && typeof c.id === "string"
+      && typeof c.shipUid === "string" && shipUids.has(c.shipUid)
+      && typeof c.band === "string" && bands[c.band]
+      && Number.isFinite(+c.durationMs) && +c.durationMs > 0
+      && Number.isFinite(+c.startedAt)
+      && Number.isFinite(+c.reward) && +c.reward >= 0
+      && !c.resolved
+    ).map(c => ({
+      id: c.id, shipUid: c.shipUid, band: c.band,
+      durationMs: +c.durationMs, startedAt: +c.startedAt, reward: Math.round(+c.reward),
+      faction: bands[c.band].faction || null,
+      destroyChance: ctx.Util.clamp(+c.destroyChance || 0, 0, 0.85),
+      impoundChance: ctx.Util.clamp(+c.impoundChance || 0, 0, 0.85),
+      impound: !!(bands[c.band].impound > 0), resolved: false,
+    }));
+    for (const sh of s.ships) {
+      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid)) sh.status = "idle";
+      else if (s.charters.some(c => c.shipUid === sh.uid) && sh.status !== "impounded") sh.status = "charter";
+    }
+    return s;
+  },
+};
 ctx.Rep = {
   edgeForCategory: () => 0, onTrade() {}, get: () => 0, discount: () => 0,
   rewardMult: () => 1, onContract() {}, onContractCancel: () => 0,
@@ -55,10 +79,13 @@ ctx.Galaxy = {
   signatureCommodity: () => null,
 };
 ctx.Wars = { active: () => null };
+let _senateSafety = 0;
 ctx.Senate = {
   travelSpeedMult: () => 1, smuggleFailAdd: () => 0, shipClassBanned: () => false, shipBanInfo: () => null,
   windfallSurtax: () => 0, tradeTax: () => 0,
+  routeSafetyAdd: () => _senateSafety,
 };
+ctx.SENATECFG = ctx.SENATECFG || { routeSafetyClamp: [0.1, 2.5] };
 ctx.Boosts = { mag: () => 0 };
 
 const mule = () => Object.assign(Fleet.makeShip("mule"), { name: "Old Faithful", status: "idle" });
@@ -179,15 +206,45 @@ assert.strictEqual(ctx.Game.state.ships.length, 0, "last hull destroyed");
 const starterDef = ctx.SHIP_CATALOG.transport.find(d => d.price === 0 && !d.craftOnly);
 assert(starterDef, "free starter exists for wiped fleet");
 
-// 9) Migration — routes + trading → idle + charters[]
+// 9) Migration — routes + trading → idle; bad charter rows dropped; good ones kept
 const loaded = {
-  credits: 2000, ships: [{ uid: "s1", type: "mule", cls: "transport", name: "X", status: "trading", accessories: [] }],
+  credits: 2000,
+  ships: [
+    { uid: "s1", type: "mule", cls: "transport", name: "X", status: "trading", accessories: [] },
+    { uid: "s2", type: "mule", cls: "transport", name: "Y", status: "charter", accessories: [] },
+  ],
   routes: [{ id: "rt1", comm: "iron_ore", from: "a", to: "b", shipUids: ["s1"] }],
+  charters: [
+    { id: "ch1", shipUid: "s2", band: "high", durationMs: 3600000, startedAt: T, reward: 5000, destroyChance: 0.07 },
+    { id: "bad", shipUid: "gone", band: "high", durationMs: 3600000, startedAt: T, reward: 100 }, // missing ship
+    { id: "bad2", shipUid: "s1", band: "nope", durationMs: 3600000, startedAt: T, reward: 100 }, // bad band
+    null,
+  ],
 };
 const mig = ctx.Game.migrate(loaded);
 assert.strictEqual(mig.ships[0].status, "idle");
 assert.strictEqual(mig.routes, undefined);
-assert(Array.isArray(mig.charters));
+assert.strictEqual(mig.charters.length, 1);
+assert.strictEqual(mig.charters[0].id, "ch1");
+assert.strictEqual(mig.charters[0].impound, false, "high band has no impound");
+assert.strictEqual(mig.ships[1].status, "charter", "valid charter re-locks hull");
+
+// 10) Senate routeSafety softens / sharpens destroy odds; impound reads config table
+ctx.Game.state = fresh();
+const shS = mule(); ctx.Game.state.ships.push(shS);
+_senateSafety = 0;
+const base = Charters.destroyChance(shS, "high", 3600000);
+_senateSafety = 0.4; // Convoy Escort Mandate
+const safer = Charters.destroyChance(shS, "high", 3600000);
+_senateSafety = -0.4; // Lane Patrol Cuts
+const riskier = Charters.destroyChance(shS, "high", 3600000);
+_senateSafety = 0;
+assert(safer < base && riskier > base, `senate safety swings destroy chance ${safer} < ${base} < ${riskier}`);
+const dExt = Charters.dispatch(shS.uid, "extreme", 60, T);
+assert.strictEqual(dExt.charter.impound, true, "impound from CHARTER_BANDS.impound > 0");
+ctx.Game.state.ships.push(mule());
+const dHi = Charters.dispatch(ctx.Game.state.ships[1].uid, "high", 60, T);
+assert.strictEqual(dHi.charter.impound, false);
 
 // Sample payout sanity (safe mule 1h ≈ 1,020)
 ctx.Game.state = fresh();

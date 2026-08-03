@@ -88,17 +88,39 @@ const Game = {
       s.travel = null; s.seq = Math.max(2, loaded.seq || 1); s.v = 2;
       delete s.avgCost; s.avgCost = (loaded.avgCost && typeof loaded.avgCost === "object") ? loaded.avgCost : {};
     }
-    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.charters ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
     // Trade routes retired → Charter Contracts. Free any hull left on a route.
     if (Array.isArray(s.ships)) for (const sh of s.ships) if (sh.status === "trading") sh.status = "idle";
     delete s.routes;
-    if (!Array.isArray(s.charters)) s.charters = [];
-    // Charter whose ship vanished → drop it; charter ship whose record vanished → free it.
-    s.charters = s.charters.filter(c => c && typeof c.id === "string" && c.shipUid
-      && s.ships.some(sh => sh.uid === c.shipUid));
+    // Validate charter shape at the trust boundary (localStorage / cloud sync).
+    const bands = (typeof CHARTER_BANDS !== "undefined" && CHARTER_BANDS) || {};
+    const shipUids = new Set(s.ships.map(sh => sh && sh.uid).filter(Boolean));
+    s.charters = (Array.isArray(s.charters) ? s.charters : []).filter(c =>
+      c && typeof c.id === "string"
+      && typeof c.shipUid === "string" && shipUids.has(c.shipUid)
+      && typeof c.band === "string" && bands[c.band]
+      && Number.isFinite(+c.durationMs) && +c.durationMs > 0
+      && Number.isFinite(+c.startedAt)
+      && Number.isFinite(+c.reward) && +c.reward >= 0
+      && !c.resolved
+    ).map(c => ({
+      id: c.id,
+      shipUid: c.shipUid,
+      band: c.band,
+      durationMs: +c.durationMs,
+      startedAt: +c.startedAt,
+      reward: Math.round(+c.reward),
+      faction: (c.faction && FACTIONS[c.faction]) ? c.faction : (bands[c.band].faction || null),
+      destroyChance: Util.clamp(+c.destroyChance || 0, 0, 0.85),
+      impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
+      impound: !!(bands[c.band].impound > 0),
+      resolved: false,
+    }));
     for (const sh of s.ships) {
-      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid && !c.resolved))
+      if (sh.status === "charter" && !s.charters.some(c => c.shipUid === sh.uid))
         sh.status = "idle";
+      else if (s.charters.some(c => c.shipUid === sh.uid) && sh.status !== "impounded")
+        sh.status = "charter";
     }
     if (!Array.isArray(s.activeBoosts)) s.activeBoosts = [];
     // Drop expired / unknown boosts so old/corrupt saves don't stick forever.

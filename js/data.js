@@ -976,8 +976,8 @@ const SENATECFG = {
   dossierMinPrice: 1500, dossierMaxPrice: 9000, dossierSlots: 3,
   // windfall levy: the surtax only bites barons ranked in the top N of the board
   windfallTopN: 3,
-  // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing a
-  // bad route-event's loss (0 = fully shrugged, 2.5 = 2.5× harsher)
+  // route-safety clamp: how far a Convoy Mandate (+) / Lane Cuts (−) can swing
+  // charter destroy/impound odds (0.1 = nearly shrugged, 2.5 = 2.5× riskier)
   routeSafetyClamp: [0.1, 2.5],
   // ballot initiative: table your own bill onto the docket (high tier + a fee).
   // Weekly quota = tier − ballotMinTier + 1 (tier 3 → 1/week, tier 4 → 2, …).

@@ -256,7 +256,7 @@ const UI = {
     const btnCls = val < 0 ? "btn btn-mini btn-cancel-fee" : "btn btn-mini btn-go";
     return `<div class="contract pending-card">
       <div class="c-head"><b>${sh ? sh.name : "Unknown hull"}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
-      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${(c.destroyChance * 100).toFixed(0)}% · returns ${Util.duration(left)}</div>
+      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}% · returns ${Util.duration(left)}</div>
       <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
@@ -918,18 +918,7 @@ const UI = {
       el.innerHTML = `<p class="muted-note">No charters running. Dispatch a hull from the Bazaar → Charters tab — the ship is locked until it returns.</p>`;
       el.onclick = null; return;
     }
-    el.innerHTML = list.map(c => {
-      const sh = Fleet.ship(c.shipUid);
-      const danger = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
-      const left = Math.max(0, c.startedAt + c.durationMs - Date.now());
-      const val = Charters.cancelValue(c);
-      const btn = val < 0
-        ? `<button class="btn btn-mini btn-cancel-fee" data-charter-cancel="${c.id}">Cancel — ${Util.credits(-val)}c</button>`
-        : `<button class="btn btn-mini btn-go" data-charter-cancel="${c.id}">Buy out +${Util.credits(val)}c</button>`;
-      return `<div class="route"><div class="route-head"><b>${sh ? sh.name : "Hull"}</b>
-          <span class="route-leg dgr-${c.band}">${danger} · ${Util.credits(c.reward)}c</span>${btn}</div>
-        <div class="route-foot">ship loss ${(c.destroyChance * 100).toFixed(0)}% · returns ${Util.duration(left)}</div></div>`;
-    }).join("");
+    el.innerHTML = `<div class="contract-list">` + list.map(c => this._charterCardHtml(c)).join("") + `</div>`;
     el.onclick = e => {
       const btn = e.target.closest("[data-charter-cancel]"); if (!btn) return;
       this.cancelCharter(btn.dataset.charterCancel);
@@ -1575,8 +1564,8 @@ const UI = {
     const reward = Charters.quote(sh, pick.band, durationMs);
     const afterTax = Economy.afterTax(reward);
     const lose = Charters.destroyChance(sh, pick.band, durationMs);
-    const abortFee = Math.round(reward * CHARTERCFG.abortFeeRate);
-    const buyout = Math.round(reward * CHARTERCFG.salvageFloor);
+    const abortFee = -Charters.cancelPreview(reward, lose, durationMs, 0);
+    const buyout = Charters.cancelPreview(reward, lose, durationMs, durationMs * CHARTERCFG.bailoutAt);
     const bailMin = Math.round(pick.durationMin * CHARTERCFG.bailoutAt);
     const bandInfo = CHARTER_BANDS[pick.band] || {};
     const freeLeft = idle.filter(x => x.uid !== pick.shipUid).length;
