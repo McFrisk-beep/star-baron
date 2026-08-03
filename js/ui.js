@@ -104,6 +104,10 @@ const UI = {
   // ===== tabs ==============================================================
   showPage(name) {
     if (name === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // star map is an overlay, not a page
+    if (window.Stations && Stations.hubAccess && name !== "hub") {
+      const access = Stations.hubAccess(name);
+      if (!access.ok) { this.toast(access.reason || "Unavailable at this dock", "warn"); return; }
+    }
     if (window.StarMap && StarMap.open) StarMap.close();                        // picking any section leaves the star map
     this.page = name;
     for (const t of this.refs.tabs.querySelectorAll(".tab")) t.classList.toggle("active", t.dataset.page === name);
@@ -833,6 +837,7 @@ const UI = {
       this.refs.tabStations.classList.toggle("hidden", n < 1);
       if (n < 1 && this.page === "stations") this.showPage("hub");
     }
+    this.updateDockGates();
     if (this.page === "fleet") this.updateNavIndicator();   // badge changes the active pill's width
   },
   flashCredits() { const e = this.refs.credits; e.classList.remove("flash"); void e.offsetWidth; e.classList.add("flash"); },
@@ -1711,59 +1716,157 @@ const UI = {
   },
 
   // ===== systems ===========================================================
+  systemsTab: "main",
+  systemsSectorFilter: "",
+
+  _sysDockAction(sysId, s) {
+    const here = s.currentSystem === sysId && !s.travel;
+    const unlocked = (s.unlockedSystems || []).includes(sysId);
+    const gSys = window.Galaxy && Galaxy.get(sysId);
+    const isStation = !!(gSys && !gSys.capital && window.Stations && Stations.get(sysId));
+    if (here) return `<span class="badge">docked</span>`;
+    if (s.travel && s.travel.to === sysId) return `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
+    if (!isStation && !unlocked) {
+      const cost = (SYSTEMS.find(x => x.id === sysId) || {}).unlock || 0;
+      return `<button class="btn btn-mini" data-unlock="${sysId}" data-cost="${cost}">Unlock ${Util.credits(cost)}c</button>`;
+    }
+    if (isStation && window.Stations) {
+      const gate = Stations.canDock(sysId);
+      if (!gate.ok) return `<span class="tip-dim">${gate.msg}</span>`;
+    }
+    const eta = Fleet.dockTravelMs(s.currentSystem, sysId);
+    const warp = window.Senate ? Senate.travelEdictNote(eta) : "";
+    return `<button class="btn btn-mini" data-dock="${sysId}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(eta)}${warp})</button>`;
+  },
+
+  _sysServiceChips(sysId) {
+    if (!window.Stations || !Stations.serviceList) return "";
+    const rows = Stations.serviceList(sysId).filter(r =>
+      r.id === "exchange" || r.ok || /hall|production|workshop|contract|charter|customs|free_port|black_market/.test(r.id)
+    ).slice(0, 8);
+    if (!rows.length) return "";
+    return `<div class="system-services">${rows.map(r =>
+      `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
+    ).join("")}</div>`;
+  },
+
   renderSystems() {
     const ul = this.refs.systemList; if (!ul) return;
     const s = this.s(); ul.innerHTML = "";
-    // live intro: post-compression multipliers, the per-trade cap, and the slippage rule
-    const intro = document.getElementById("sys-intro");
-    if (intro) intro.innerHTML =
-      `Each tag is the <b>local price multiplier</b> for a goods category: ` +
-      `<span class="mod cheap">&lt;1.00 = cheaper to buy here</span> ` +
-      `<span class="mod dear">&gt;1.00 = sells for more here</span> ` +
-      `<span class="mod">1.00 = average</span>. ` +
-      `Gaps are deliberately modest — and <b>your own trades move the local price</b> (and it lingers), ` +
-      `so arbitrage is a skill loop, not a printer. Per-trade cap at your tier: <b>${Util.credits(Economy.depth())}c/order</b>. ` +
-      `<b>dist</b> sets docking time.`;
-    for (const sys of SYSTEMS) {
-      const unlocked = s.unlockedSystems.includes(sys.id), here = s.currentSystem === sys.id && !s.travel;
-      const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
-      const mods = Object.keys(sys.mods).map(k => {
-        const v = window.Market ? Market._mod(k, sys.id) : sys.mods[k];   // the compressed multiplier actually charged
-        const tip = v < 1 ? `${k}: ${((1 - v) * 100).toFixed(0)}% cheaper to buy here`
-          : v > 1 ? `${k}: ${((v - 1) * 100).toFixed(0)}% pricier — good to sell here`
-          : `${k}: average price`;
-        return `<span class="mod ${v < 0.995 ? "cheap" : v > 1.005 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
-      }).join("");
-      let action;
-      if (!unlocked) action = `<button class="btn btn-mini" data-unlock="${sys.id}" data-cost="${sys.unlock}">Unlock ${Util.credits(sys.unlock)}c</button>`;
-      else if (here) action = `<span class="badge">docked</span>`;
-      else if (s.travel && s.travel.to === sys.id) action = `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
-      else {
-        const eta = Fleet.dockTravelMs(s.currentSystem, sys.id);
-        const warp = window.Senate ? Senate.travelEdictNote(eta) : "";
-        action = `<button class="btn btn-mini" data-dock="${sys.id}" ${s.travel ? "disabled" : ""}>Dock (${Util.duration(eta)}${warp})</button>`;
-      }
-      li.innerHTML = `<div class="system-head"><b>${sys.name}</b><span class="dist" title="distance from Navos Junction — sets docking travel time">dist ${sys.distance}</span>${action}</div><div class="mods">${mods}</div>`;
-      ul.appendChild(li);
+    const tab = this.systemsTab || "main";
+    const filters = document.getElementById("sys-hub-filters");
+    const sectorSel = document.getElementById("sys-sector-filter");
+    if (filters) filters.classList.toggle("hidden", tab !== "stations");
+    if (sectorSel && !sectorSel.dataset.wired) {
+      sectorSel.dataset.wired = "1";
+      const opts = [`<option value="">All sectors</option>`]
+        .concat((typeof SECTORS !== "undefined" ? SECTORS : []).map(sec =>
+          `<option value="${sec.id}">${sec.name}</option>`));
+      sectorSel.innerHTML = opts.join("");
+      sectorSel.value = this.systemsSectorFilter || "";
+      sectorSel.onchange = () => { this.systemsSectorFilter = sectorSel.value; this.renderSystems(); };
+    } else if (sectorSel) {
+      sectorSel.value = this.systemsSectorFilter || "";
     }
+    const tabs = document.getElementById("systems-tabs");
+    if (tabs) {
+      for (const b of tabs.querySelectorAll("[data-sys-tab]")) {
+        b.classList.toggle("active", b.dataset.sysTab === tab);
+        b.setAttribute("aria-current", b.dataset.sysTab === tab ? "page" : "false");
+      }
+    }
+
+    const intro = document.getElementById("sys-intro");
+    if (intro) {
+      if (tab === "main") {
+        intro.innerHTML =
+          `The six <b>sector capitals</b> — commodity exchange, bazaar, and full hub services. ` +
+          `Each tag is the <b>local price multiplier</b>: ` +
+          `<span class="mod cheap">&lt;1.00 = cheaper to buy</span> ` +
+          `<span class="mod dear">&gt;1.00 = sells for more</span>. ` +
+          `Per-trade cap: <b>${Util.credits(Economy.depth())}c/order</b>. <b>dist</b> sets docking time.`;
+      } else {
+        intro.innerHTML =
+          `Claimable <b>system hubs</b> — dock anywhere (signed-in needs the station-dock SQL patch). ` +
+          `Commodity trading stays at capitals; station services depend on installed modules. ` +
+          `NPC-held stations keep upgrades dormant until claimed.`;
+      }
+    }
+
+    if (tab === "main") {
+      for (const sys of SYSTEMS) {
+        const unlocked = s.unlockedSystems.includes(sys.id);
+        const here = s.currentSystem === sys.id && !s.travel;
+        const li = this.el("li", "system" + (here ? " here" : "") + (unlocked ? "" : " locked"));
+        const mods = Object.keys(sys.mods).map(k => {
+          const v = window.Market ? Market._mod(k, sys.id) : sys.mods[k];
+          const tip = v < 1 ? `${k}: ${((1 - v) * 100).toFixed(0)}% cheaper to buy here`
+            : v > 1 ? `${k}: ${((v - 1) * 100).toFixed(0)}% pricier — good to sell here`
+            : `${k}: average price`;
+          return `<span class="mod ${v < 0.995 ? "cheap" : v > 1.005 ? "dear" : ""}" title="${tip}">${k} ${v.toFixed(2)}</span>`;
+        }).join("");
+        li.innerHTML =
+          `<div class="system-head"><b>${sys.name}</b>` +
+          `<span class="dist" title="distance from Navos Junction — sets docking travel time">dist ${sys.distance}</span>` +
+          `${this._sysDockAction(sys.id, s)}</div><div class="mods">${mods}</div>`;
+        ul.appendChild(li);
+      }
+    } else if (window.Galaxy && window.Stations) {
+      Stations.ensure();
+      const filter = this.systemsSectorFilter || "";
+      const hubs = Galaxy.list.filter(g => !g.capital && Stations.get(g.id))
+        .filter(g => !filter || g.sectorId === filter)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      if (!hubs.length) {
+        ul.innerHTML = `<li class="muted-note">No system hubs in this sector.</li>`;
+      }
+      for (const g of hubs) {
+        const st = Stations.get(g.id);
+        const here = s.currentSystem === g.id && !s.travel;
+        const sec = Galaxy.sector(g.sectorId);
+        const li = this.el("li", "system" + (here ? " here" : ""));
+        const own = st.status === "owned" ? "owned" : st.status === "cooldown" ? "cooldown" : "NPC";
+        li.innerHTML =
+          `<div class="system-head"><b>${st.name}</b>` +
+          `<span class="dist" title="${g.name}">${sec ? sec.name : g.sectorId} · ${st.tier} · ${own}</span>` +
+          `${this._sysDockAction(g.id, s)}</div>` +
+          `<div class="tip-dim" style="font-size:11px;margin-top:2px">${g.name}</div>` +
+          this._sysServiceChips(g.id);
+        ul.appendChild(li);
+      }
+    }
+
     this.markUnaffordable(ul);
     ul.onclick = async e => {
       const u = e.target.closest("[data-unlock]"), d = e.target.closest("[data-dock]");
       if (u) {
         if (Economy.busy()) return;
         const r = await Economy.unlockSystem(u.dataset.unlock);
-        if (!r.ok) return this.toast(r.msg, "warn");
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't unlock.", "warn");
         this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good");
         this.flashCredits(); window.Game.requestSave(); this.renderSystems();
       } else if (d) {
         if (Economy.busy()) return;
         const r = await Economy.dockAt(d.dataset.dock);
-        if (!r.ok) return this.toast(r.msg, "warn");
+        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
         const warp = window.Senate ? Senate.travelEdictNote(r.etaMs) : "";
         this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}${warp}`, "good");
-        window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange();
+        window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
       }
     };
+  },
+
+  // Gray bottom-nav tabs that the current dock doesn't offer.
+  updateDockGates() {
+    if (!this.refs.tabs || !window.Stations || !Stations.hubAccess) return;
+    for (const t of this.refs.tabs.querySelectorAll(".tab[data-page]")) {
+      const page = t.dataset.page;
+      if (!page || page === "starmap") { t.classList.remove("tab-disabled"); t.removeAttribute("title"); continue; }
+      const access = Stations.hubAccess(page);
+      t.classList.toggle("tab-disabled", !access.ok);
+      if (access.ok) t.removeAttribute("title");
+      else t.title = access.reason || "Unavailable at this dock";
+    }
   },
 
   // ===== milestones ========================================================
@@ -3111,6 +3214,12 @@ const UI = {
       if (t.dataset.page === "starmap") { if (window.StarMap) StarMap.toggle(); return; }   // overlay, not a page — leaves the underlying page active
       this.showPage(t.dataset.page);
     };
+    const systemsTabs = document.getElementById("systems-tabs");
+    if (systemsTabs) systemsTabs.onclick = e => {
+      const b = e.target.closest("[data-sys-tab]"); if (!b) return;
+      this.systemsTab = b.dataset.sysTab;
+      this.renderSystems();
+    };
     const commsTabs = document.getElementById("comms-tabs");
     if (commsTabs) commsTabs.onclick = e => {
       const b = e.target.closest("[data-comms]"); if (!b) return;
@@ -3289,7 +3398,13 @@ const UI = {
         if (n > 0) msg += ` Claimed ${n} leased units.`;
       }
       this.toast(msg, "good");
-      this.updateExchange(); this.updateHeader(); this.renderSystems();
+      // Leave pages the new dock doesn't offer (e.g. Exchange at an NPC station).
+      if (window.Stations && Stations.hubAccess && this.page !== "hub") {
+        const access = Stations.hubAccess(this.page, d.sysId);
+        if (!access.ok) this.showPage("hub");
+      }
+      this.updateExchange(); this.updateHeader(); this.renderSystems(); this.updateDockGates();
+      if (window.StarMap && StarMap.open) StarMap.refreshInfo();
     });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap

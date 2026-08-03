@@ -361,7 +361,7 @@ const StarMap = {
         : "";
       if (docked) trade = `<span class="badge">docked at station</span>${scrTxt}`;
       else if (!gate.ok) trade = `<span class="tip-dim">${gate.msg}</span>${scrTxt}`;
-      else trade = `<button class="btn btn-go" id="sm-dock">Dock at station</button>${scrTxt}`;
+      else trade = `<button class="btn btn-go" id="sm-dock">Dock here</button>${scrTxt}`;
       if (window.Expeditions) {
         const exp = Expeditions.activeFor(sys.id), cd = Expeditions.cooldownLeft(sys.id);
         if (exp) trade += ` <span class="badge">🛰 surveying…</span>`;
@@ -459,6 +459,14 @@ const StarMap = {
                   <button class="btn btn-mini btn-go" data-sm-ransom="${c.id}">Pay</button></div>`;
               }).join("") + `</div>`;
           }
+        }
+        // Services strip — what's online vs grayed at this dock.
+        if (Stations.serviceList) {
+          const svcs = Stations.serviceList(sys.id);
+          stationBlock += `<div class="si-station si-services"><b>Station services</b>
+            <div class="system-services">${svcs.map(r =>
+              `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
+            ).join("")}</div></div>`;
         }
         // Visitor Production Hub bay leases (docs/STATIONS.md §8).
         if (docked && st.status === "owned" && st.ownerId !== Stations.playerId()

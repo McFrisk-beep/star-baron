@@ -134,4 +134,18 @@ target.reactorLevel = 4;
 const bmNoHall = Stations.canInstall(target, "black_market");
 assert.ok(!bmNoHall.ok, "BM needs exchange hall");
 
+// Hub gating: capitals open; NPC stations gray services; modules wake when owned.
+assert.ok(Stations.hubAccess("exchange", "navos").ok, "capital exchange open");
+ctx.Game.state.currentSystem = target.systemId;
+target.status = "npc";
+target.modules = { exchange_hall: 1, workshop_annex: 1 };
+assert.ok(!Stations.hubAccess("exchange").ok, "no commodity exchange at station");
+assert.ok(!Stations.hubAccess("bazaar").ok, "NPC modules dormant");
+assert.ok(Stations.serviceList(target.systemId).every(r => r.id === "exchange" || !r.ok), "NPC services gray");
+target.status = "owned";
+target.ownerId = "player";
+assert.ok(Stations.hubAccess("bazaar").ok, "owned hall unlocks bazaar gate");
+assert.ok(Stations.hubAccess("workshop").ok, "owner annex unlocks workshop");
+assert.ok(Stations.serviceList(target.systemId).find(r => r.id === "exchange_hall").ok, "hall online when owned");
+
 console.log("OK check_customs");

@@ -68,7 +68,20 @@ const Hub = {
   // ---- input ---------------------------------------------------------------
   _blocked() { return !!document.querySelector(".modal-backdrop:not(.hidden)"); },
   _typing() { const a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); },
-  _open() { const p = this._near; if (!p) return; if (p.page === "starmap") { if (window.StarMap) StarMap.toggle(); } else if (window.UI) UI.showPage(p.page); },
+  _propAccess(page) {
+    if (window.Stations && Stations.hubAccess) return Stations.hubAccess(page);
+    return { ok: true };
+  },
+  _open() {
+    const p = this._near; if (!p) return;
+    const access = this._propAccess(p.page);
+    if (!access.ok) {
+      if (window.UI) UI.toast(access.reason || "Unavailable at this dock", "warn");
+      return;
+    }
+    if (p.page === "starmap") { if (window.StarMap) StarMap.toggle(); }
+    else if (window.UI) UI.showPage(p.page);
+  },
   _key(e, down) {
     if (!this._active || this._typing() || this._blocked()) return;
     const k = (e.key || "").toLowerCase();
@@ -200,16 +213,22 @@ const Hub = {
       const d = Math.hypot(pr.tx + 0.5 - this.px, pr.ty + 0.5 - this.py);
       if (d < rad && d < bestD) { bestD = d; best = pr; }
     }
-    if ((best && best.id) !== (this._near && this._near._room)) {
-      if (best) {
-        const meta = this.prop(best.id);
-        this._near = { id: best.id, page: meta.page, label: meta.label, _room: best.id, tx: best.tx, ty: best.ty };
-        if (this.prompt) {
-          this.prompt.textContent = "▸ " + ((window.I18n ? I18n.t("hub.open", "Open {x}") : "Open {x}").replace("{x}", meta.label));
-          this.prompt.setAttribute("aria-label", "Open " + meta.label);
-          this.prompt.classList.remove("hidden");
-        }
-      } else { this._near = null; if (this.prompt) this.prompt.classList.add("hidden"); }
+    if (!best) {
+      this._near = null;
+      if (this.prompt) { this.prompt.classList.add("hidden"); this.prompt.classList.remove("hub-prompt-locked"); }
+      return;
+    }
+    const meta = this.prop(best.id);
+    const access = this._propAccess(meta.page);
+    const locked = !access.ok;
+    const changed = !this._near || this._near._room !== best.id || this._near.locked !== locked || this._near.reason !== access.reason;
+    this._near = { id: best.id, page: meta.page, label: meta.label, _room: best.id, tx: best.tx, ty: best.ty, locked, reason: access.reason };
+    if (changed && this.prompt) {
+      const open = (window.I18n ? I18n.t("hub.open", "Open {x}") : "Open {x}").replace("{x}", meta.label);
+      this.prompt.textContent = access.ok ? ("▸ " + open) : ("▹ " + meta.label + " — " + (access.reason || "unavailable"));
+      this.prompt.setAttribute("aria-label", access.ok ? ("Open " + meta.label) : (meta.label + " unavailable"));
+      this.prompt.classList.toggle("hub-prompt-locked", locked);
+      this.prompt.classList.remove("hidden");
     }
   },
 
@@ -277,18 +296,22 @@ const Hub = {
       }
     }
 
-    // props
+    // props (gray out when the current dock lacks that service / module)
     for (const pr of (room.props || [])) {
       const meta = this.prop(pr.id);
+      const locked = !this._propAccess(meta.page).ok;
       const sx = ox + (pr.tx + 0.5) * ts, sy = oy + (pr.ty + 0.5) * ts;
-      ctx.fillStyle = "rgba(40,58,110,.85)";
+      ctx.globalAlpha = locked ? 0.38 : 1;
+      ctx.fillStyle = locked ? "rgba(28,34,52,.85)" : "rgba(40,58,110,.85)";
       this._roundRect(ctx, sx - ts * 0.42, sy - ts * 0.42, ts * 0.84, ts * 0.84, ts * 0.16); ctx.fill();
-      ctx.strokeStyle = "rgba(130,160,230,.45)"; ctx.stroke();
+      ctx.strokeStyle = locked ? "rgba(90,100,130,.35)" : "rgba(130,160,230,.45)"; ctx.stroke();
       const img = this._imgs[pr.id];
       if (img) ctx.drawImage(img, sx - ts * 0.36, sy - ts * 0.36, ts * 0.72, ts * 0.72);
-      else { ctx.font = `${Math.floor(ts * 0.5)}px system-ui, "Segoe UI Emoji", "Noto Color Emoji"`; ctx.fillStyle = "#fff"; ctx.fillText(meta.icon, sx, sy + 1); }
+      else { ctx.font = `${Math.floor(ts * 0.5)}px system-ui, "Segoe UI Emoji", "Noto Color Emoji"`; ctx.fillStyle = locked ? "#889" : "#fff"; ctx.fillText(meta.icon, sx, sy + 1); }
       ctx.font = `${Math.max(9, Math.floor(ts * 0.22))}px system-ui, sans-serif`;
-      ctx.fillStyle = "rgba(220,230,255,.85)"; ctx.fillText(meta.label, sx, sy + ts * 0.62);
+      ctx.fillStyle = locked ? "rgba(140,150,170,.7)" : "rgba(220,230,255,.85)";
+      ctx.fillText(meta.label, sx, sy + ts * 0.62);
+      ctx.globalAlpha = 1;
     }
 
     // player

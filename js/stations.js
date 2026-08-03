@@ -306,6 +306,106 @@ const Stations = {
     return { ok: true, st };
   },
 
+  // True when sysId is a sector capital (full hub services).
+  isCapital(systemId) {
+    if (!systemId) return false;
+    const g = window.Galaxy && Galaxy.get(systemId);
+    if (g) return !!g.capital;
+    return !!(typeof SYSTEMS !== "undefined" && SYSTEMS.some(s => s.id === systemId));
+  },
+
+  // Hub / nav availability at the player's current dock.
+  // Capitals: full services. Claimable stations: gate on ownership + modules.
+  // Modules persist through revolt but stay dormant while status is npc.
+  hubAccess(page, systemId) {
+    const s = window.Game && Game.state;
+    const sysId = systemId || (s && s.currentSystem);
+    if (!sysId || !page) return { ok: true };
+    // Always-on: navigation, personal fleet, galactic meta.
+    if (/^(starmap|systems|barons|comms|ach|hub|senate|fleet)$/.test(page)) return { ok: true };
+
+    if (this.isCapital(sysId)) {
+      if (page === "stations") {
+        return this.ownedCount() > 0
+          ? { ok: true }
+          : { ok: false, reason: "You don't own a station yet" };
+      }
+      return { ok: true };
+    }
+
+    const st = this.get(sysId);
+    if (!st) return { ok: false, reason: "No station services here" };
+    const owned = st.status === "owned";
+    const mine = owned && st.ownerId === this.playerId();
+    const mod = id => (st.modules && st.modules[id]) | 0;
+
+    if (!owned) {
+      const npcReason = {
+        exchange: "Commodity exchange is at sector capitals",
+        bazaar: "No station market while NPC-held",
+        industries: "Foundries run from capital hubs",
+        workshop: "Modules dormant while NPC-held",
+        stations: "Station is NPC-held",
+      };
+      return { ok: false, reason: npcReason[page] || "Unavailable at this dock" };
+    }
+
+    switch (page) {
+      case "exchange":
+        return { ok: false, reason: "Commodity exchange is at sector capitals" };
+      case "bazaar":
+        if (mod("charter_office") || mod("contract_office") || mod("black_market") || mod("exchange_hall"))
+          return { ok: true };
+        return { ok: false, reason: "Needs Exchange Hall, Charter, or Contract Office" };
+      case "industries":
+        return { ok: false, reason: "Foundries run from capital hubs" };
+      case "workshop":
+        if (mod("workshop_annex") && mine) return { ok: true };
+        if (mod("workshop_annex")) return { ok: false, reason: "Owner's Workshop Annex only" };
+        return { ok: false, reason: "No Workshop Annex installed" };
+      case "stations":
+        return mine ? { ok: true } : { ok: false, reason: "Not your station" };
+      default:
+        return { ok: true };
+    }
+  },
+
+  // Compact services strip for Star Map / System Hubs (module presence).
+  serviceList(systemId) {
+    if (this.isCapital(systemId)) {
+      return [
+        { id: "exchange", label: "Commodity Exchange", ok: true },
+        { id: "bazaar", label: "Bazaar", ok: true },
+        { id: "workshop", label: "Workshop", ok: true },
+        { id: "fleet", label: "Fleet Bay", ok: true },
+      ];
+    }
+    const st = this.get(systemId);
+    if (!st) return [];
+    const owned = st.status === "owned";
+    const mod = id => (st.modules && st.modules[id]) | 0;
+    const row = (id, label, need) => {
+      if (!owned) return { id, label, ok: false, reason: "NPC-held — modules dormant" };
+      if (need && !mod(need)) return { id, label, ok: false, reason: "Not installed" };
+      return { id, label, ok: true };
+    };
+    return [
+      { id: "exchange", label: "Commodity Exchange", ok: false, reason: "Capitals only" },
+      row("exchange_hall", "Exchange Hall", "exchange_hall"),
+      row("production_hub", "Production Hub", "production_hub"),
+      row("workshop_annex", "Workshop Annex", "workshop_annex"),
+      row("contract_office", "Contract Office", "contract_office"),
+      row("charter_office", "Charter Office", "charter_office"),
+      row("dry_dock", "Dry Dock", "dry_dock"),
+      row("customs_house", "Customs House", "customs_house"),
+      row("free_port", "Free Port", "free_port"),
+      row("black_market", "Black Market", "black_market"),
+      row("warehouse", "Warehouse", "warehouse"),
+      row("survey_relay", "Survey Relay", "survey_relay"),
+      row("lane_buoy", "Lane Buoy", "lane_buoy"),
+    ];
+  },
+
   customsExempt(systemId, pid = this.playerId()) {
     const st = this.get(systemId);
     if (!st || !(st.modules.customs_house | 0)) return false;
