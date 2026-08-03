@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + Workshop Annex hook); server RPCs stubbed in `docs/sql/sector_stock.sql`
+**Status:** client guest path live (Phases 1–6 + Production Hub bays/leases + Workshop Annex hook); server RPCs stubbed in `docs/sql/sector_stock.sql`
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 

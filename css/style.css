@@ -1722,4 +1722,5 @@ body.reduced .hub-prompt { animation: none; }
 @media (max-width: 900px) { .st-grid { grid-template-columns: 1fr; } }
 .st-hold { list-style: none; padding: 0; margin: 10px 0 0; }
 .st-hold-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
-.st-mods td.actions { white-space: nowrap; }
+.st-mods td.actions, .st-bays td.actions { white-space: nowrap; }
+.st-bays select { max-width: 12rem; margin-right: 4px; }
