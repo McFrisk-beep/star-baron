@@ -68,7 +68,13 @@ const Barons = {
         this.missing = true;
         console.warn("[Barons] publish unavailable — run docs/sql/baron_board.sql");
       } else {
-        console.warn("[Barons] publish failed:", e);
+        const msg = String((e && (e.message || e.details || e)) || e);
+        // Stale RPC before the v_title/v_tier rename — one line, not the full PostgREST dump.
+        if (/42702|ambiguous/i.test(msg)) {
+          console.warn("[Barons] publish needs SQL refresh — re-run docs/sql/baron_board.sql");
+        } else {
+          console.warn("[Barons] publish failed:", e);
+        }
       }
       return null;
     } finally {
