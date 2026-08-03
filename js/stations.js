@@ -1246,6 +1246,8 @@ const Stations = {
   },
 
   // Admin: take a claimable station immediately — no bid, no 72h wait, no cap.
+  // ponytail: client-gated like the rest of Stations until Phase 4; add
+  // app_station_admin_claim (role-checked) before cloud-authoritative ownership.
   adminClaim(systemId) {
     if (!this._isAdmin()) return { ok: false, msg: "Admins only." };
     const st = this.get(systemId);
@@ -1265,18 +1267,38 @@ const Stations = {
     return { ok: true, st };
   },
 
-  // Owner (or admin of their own claim) walks away. Modules persist; no cooldown.
+  // Exchange-style value of goods sitting in the station hold (for buyback).
+  holdValue(st) {
+    let n = 0;
+    for (const [commId, qty] of Object.entries((st && st.hold) || {})) {
+      const q = qty | 0;
+      if (q <= 0) continue;
+      const price = (window.Economy && Economy.sellPrice)
+        ? Economy.sellPrice(commId)
+        : (window.Market ? Market.price(commId) : 0);
+      n += Math.round((+price || 0) * q);
+    }
+    return n;
+  },
+
+  // Owner walks away. Modules persist; no cooldown. Treasury + hold buyback return.
+  // ponytail: local until app_station_relinquish lands with the station RPC set.
   relinquish(systemId) {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     const pid = this.playerId();
     const mine = st.ownerId === pid && st.status === "owned";
     if (!mine) return { ok: false, msg: "Not your station." };
-    // Return treasury before wiping identity.
-    if ((st.treasury | 0) > 0) {
-      Game.state.credits += st.treasury | 0;
-      this._ledger(st, -(st.treasury | 0), "relinquish", "treasury returned");
+    const treasury = st.treasury | 0;
+    const holdCredits = this.holdValue(st);
+    if (treasury > 0) {
+      Game.state.credits += treasury;
+      this._ledger(st, -treasury, "relinquish", "treasury returned");
       st.treasury = 0;
+    }
+    if (holdCredits > 0) {
+      Game.state.credits += holdCredits;
+      this._ledger(st, holdCredits, "relinquish_hold", "hold buyback");
     }
     for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
     st.contracts = (st.contracts || []).filter(x => x.status === "active");
@@ -1296,7 +1318,7 @@ const Stations = {
     delete this.access[st.systemId];
     this._cancelAuction(systemId);
     if (window.Game) Game.requestSave();
-    return { ok: true, st };
+    return { ok: true, st, treasury, holdCredits };
   },
 
   // Credits currently locked in bids — counted in net worth.

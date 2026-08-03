@@ -356,6 +356,21 @@ assert.strictEqual(freeTarget.ownerId, null);
 assert.strictEqual(freeTarget.modules.production_hub, 1, "modules persist");
 assert.strictEqual(freeTarget.reactorLevel, 1, "reactor persists");
 assert.strictEqual(ctx.Game.state.credits, creditsBeforeRel + 12_000, "treasury returned");
+
+// Relinquish buyback — hold goods are cashed out, not silently wiped.
+assert.ok(Stations.adminClaim(freeTarget.systemId).ok);
+const holdComm = Stations.produceable(freeTarget.systemId)[0]?.id || "iron_ore";
+freeTarget.hold = { [holdComm]: 25 };
+freeTarget.treasury = 0;
+const holdWorth = Stations.holdValue(freeTarget);
+assert.ok(holdWorth > 0, "hold has exchange value");
+const creditsBeforeHold = ctx.Game.state.credits;
+const rel2 = Stations.relinquish(freeTarget.systemId);
+assert.ok(rel2.ok, rel2.msg);
+assert.strictEqual(rel2.holdCredits, holdWorth);
+assert.strictEqual(ctx.Game.state.credits, creditsBeforeHold + holdWorth, "hold buyback credited");
+assert.strictEqual(Object.keys(freeTarget.hold || {}).length, 0, "hold cleared");
+
 ctx.Cloud = { isAdmin: () => false };
 assert.ok(!Stations.adminClaim(freeTarget.systemId).ok, "non-admin blocked");
 

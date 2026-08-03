@@ -143,6 +143,19 @@ const Charters = {
     });
   },
 
+  // Fraction of locked reward paid when these hulls return. Legacy rows without
+  // a cargo snapshot pay in full (single-ship era). Zero-cargo groups (rateBase
+  // only) also pay in full if anything survives.
+  payoutFrac(charter, survivors) {
+    const by = charter && charter.cargoByShip;
+    if (!by || typeof by !== "object") return 1;
+    const total = Math.max(0, +charter.cargoTotal || 0);
+    if (total <= 0) return 1;
+    let alive = 0;
+    for (const sh of survivors || []) alive += Math.max(0, +by[sh.uid] || 0);
+    return Util.clamp(alive / total, 0, 1);
+  },
+
   dispatch(shipUids, band, durationMin, now = Date.now()) {
     const s = this.s();
     const uids = [...new Set((Array.isArray(shipUids) ? shipUids : [shipUids]).filter(Boolean))];
@@ -170,6 +183,15 @@ const Charters = {
     const reward = this.quote(ships, band, durationMs);
     const destroy = this.destroyChance(ships, band, durationMs);
     const bandInfo = CHARTER_BANDS[band];
+    // Snapshot cargo at dispatch — resolve pro-rates pay by cargo that returns,
+    // so losing the hauler can't cash the full convoy quote on an escort alone.
+    const cargoByShip = {};
+    let cargoTotal = 0;
+    for (const sh of ships) {
+      const cargo = Math.max(0, Fleet.stats(sh).cargo | 0);
+      cargoByShip[sh.uid] = cargo;
+      cargoTotal += cargo;
+    }
     const charter = {
       id: "ch" + (++s.seq),
       shipUid: ships[0].uid,          // legacy single-ship field (first hull)
@@ -178,6 +200,8 @@ const Charters = {
       durationMs,
       startedAt: now,
       reward,
+      cargoByShip,
+      cargoTotal,
       faction: bandInfo.faction,
       destroyChance: destroy,
       impoundChance: this.impoundChance(ships, band, durationMs),
@@ -269,9 +293,11 @@ const Charters = {
             sh.status = "idle";
           }
           const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
-          const gross = Math.round(c.reward * (c.faction ? Rep.rewardMult(c.faction) : 1) * rewardMult);
+          const frac = this.payoutFrac(c, survivors);
+          const gross = Math.round(c.reward * frac * (c.faction ? Rep.rewardMult(c.faction) : 1) * rewardMult);
           report.credits = Economy.afterTax(gross);
           report.taxed = gross - report.credits;
+          report.cargoFrac = frac;
           s.credits += report.credits;
           s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
           if (c.faction) Rep.onContract(c.faction, smuggle ? "smuggle" : "transport", c.band);
@@ -279,7 +305,9 @@ const Charters = {
             ? ` Lost ${report.lost.map(x => x.name).join(", ")}.` : "";
           const impNote = report.impounded.length
             ? ` Impounded ${report.impounded.map(x => x.name).join(", ")}.` : "";
-          report.summary = `${survivors.map(sh => sh.name).join(", ")} returned from a ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).${lostNote}${impNote}`;
+          const cutNote = frac < 1 - 1e-9
+            ? ` Payout cut to ${Math.round(frac * 100)}% — cargo hulls missing.` : "";
+          report.summary = `${survivors.map(sh => sh.name).join(", ")} returned from a ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).${lostNote}${impNote}${cutNote}`;
         }
       }
 

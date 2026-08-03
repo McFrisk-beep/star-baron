@@ -108,6 +108,8 @@ b { color: #fff; font-weight: 600; }
 .btn-go { background: linear-gradient(180deg, #0f6f86, #0a4c62); border-color: var(--accent); color: #dffaff;
   text-shadow: 0 0 6px rgba(63,227,255,.6); }
 .btn-go:hover { filter: brightness(1.15); box-shadow: 0 0 12px rgba(63,227,255,.5); }
+.btn-warn { background: #3d2a1d; border-color: #6e4a2a; color: #ffb86b; }
+.btn-warn:hover { background: #4d3525; }
 /* big CTAs skinned with the pack's octagon primary button (normal/hover/pressed) */
 .btn-cta {
   border: 12px solid transparent; border-radius: 0; background: none;

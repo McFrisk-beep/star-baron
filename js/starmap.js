@@ -582,10 +582,18 @@ const StarMap = {
     };
     const stRelinquish = document.getElementById("sm-st-relinquish");
     if (stRelinquish) stRelinquish.onclick = () => {
-      if (!confirm(`Relinquish ${Stations.get(sys.id)?.name || "this station"}? Modules stay for the next owner; treasury returns to you.`)) return;
+      const st0 = Stations.get(sys.id);
+      const holdV = st0 ? Stations.holdValue(st0) : 0;
+      const holdNote = holdV > 0
+        ? `\nHold goods cashed out at ~${Util.credits(holdV)}c.`
+        : "\nHold is empty.";
+      if (!confirm(`Relinquish ${st0?.name || "this station"}? Modules stay for the next owner; treasury returns to you.${holdNote}`)) return;
       const r = Stations.relinquish(sys.id);
       if (!r.ok) return UI.toast(r.msg, "warn");
-      UI.toast("Station relinquished.", "info");
+      const bits = [];
+      if (r.treasury) bits.push(`treasury ${Util.credits(r.treasury)}`);
+      if (r.holdCredits) bits.push(`hold ${Util.credits(r.holdCredits)}`);
+      UI.toast(bits.length ? `Station relinquished — returned ${bits.join(" + ")}.` : "Station relinquished.", "info");
       UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
       if (UI.page === "stations") UI.renderStations();
     };

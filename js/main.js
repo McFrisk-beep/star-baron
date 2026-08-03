@@ -107,6 +107,17 @@ const Game = {
       if (!uids.length && typeof c.shipUid === "string" && shipUids.has(c.shipUid)) uids = [c.shipUid];
       uids = [...new Set(uids)].slice(0, maxShips);
       if (!uids.length) return null;
+      const cargoByShip = {};
+      let cargoTotal = 0;
+      if (c.cargoByShip && typeof c.cargoByShip === "object") {
+        for (const uid of uids) {
+          const n = Math.max(0, Math.round(+c.cargoByShip[uid] || 0));
+          cargoByShip[uid] = n;
+          cargoTotal += n;
+        }
+      } else if (Number.isFinite(+c.cargoTotal) && +c.cargoTotal >= 0) {
+        cargoTotal = Math.round(+c.cargoTotal);
+      }
       return {
         id: c.id,
         shipUid: uids[0],
@@ -115,6 +126,8 @@ const Game = {
         durationMs: +c.durationMs,
         startedAt: +c.startedAt,
         reward: Math.round(+c.reward),
+        cargoByShip,
+        cargoTotal,
         faction: (c.faction && FACTIONS[c.faction]) ? c.faction : (bands[c.band].faction || null),
         destroyChance: Util.clamp(+c.destroyChance || 0, 0, 0.85),
         impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),

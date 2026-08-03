@@ -1618,7 +1618,7 @@ const UI = {
     else if (stranded) disableReason = "Can't charter your last hull with no credits — you'd be stranded.";
     const n = ships.length;
     return `<div class="panel"><h2>Charter a hull <small>stake ship(s), not credits</small></h2>
-      <p class="muted-note">Pay scales with cargo; loss odds climb with fat holds and fall with attack, hull, armor, and shields. Group escorts with haulers — up to ${CHARTERCFG.maxShips} hulls.</p>
+      <p class="muted-note">Pay scales with cargo that returns; loss odds climb with fat holds and fall with attack, hull, armor, and shields. Group escorts with haulers — up to ${CHARTERCFG.maxShips} hulls.</p>
       <div class="mm-list ch-ships">${shipRows}</div>
       <div class="ch-stats">Group · ▣ ${st.cargo} · ⚔ ${st.firepower} · ♥ ${st.hull} / armor ${st.armor} / shields ${st.shields}${n > 1 ? ` · ${n} hulls` : ""}</div>
       <div class="ch-row"><span class="ch-label">Duration</span><div class="ch-btns">${durBtns}</div></div>
@@ -2118,10 +2118,17 @@ const UI = {
       ${this._renderCustomsPanel(st)}`;
 
     body.querySelector("#st-relinquish")?.addEventListener("click", () => {
-      if (!confirm(`Relinquish ${st.name}? Modules stay for the next owner; treasury returns to you.`)) return;
+      const holdV = Stations.holdValue(st);
+      const holdNote = holdV > 0
+        ? `\nHold goods cashed out at ~${Util.credits(holdV)}c.`
+        : "\nHold is empty.";
+      if (!confirm(`Relinquish ${st.name}? Modules stay for the next owner; treasury returns to you.${holdNote}`)) return;
       const r = Stations.relinquish(st.systemId);
       if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast("Station relinquished.", "info");
+      const bits = [];
+      if (r.treasury) bits.push(`treasury ${Util.credits(r.treasury)}`);
+      if (r.holdCredits) bits.push(`hold ${Util.credits(r.holdCredits)}`);
+      this.toast(bits.length ? `Station relinquished — returned ${bits.join(" + ")}.` : "Station relinquished.", "info");
       this.flashCredits(); this.renderStations(); this.updateHeader();
       if (window.StarMap) { StarMap.updateGalaxyNodes(); StarMap.refreshInfo(); }
     });

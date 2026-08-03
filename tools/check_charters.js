@@ -54,9 +54,19 @@ ctx.Game = {
       if (!uids.length && typeof c.shipUid === "string" && shipUids.has(c.shipUid)) uids = [c.shipUid];
       uids = [...new Set(uids)].slice(0, maxShips);
       if (!uids.length) return null;
+      const cargoByShip = {};
+      let cargoTotal = 0;
+      if (c.cargoByShip && typeof c.cargoByShip === "object") {
+        for (const uid of uids) {
+          const n = Math.max(0, Math.round(+c.cargoByShip[uid] || 0));
+          cargoByShip[uid] = n;
+          cargoTotal += n;
+        }
+      }
       return {
         id: c.id, shipUid: uids[0], shipUids: uids, band: c.band,
         durationMs: +c.durationMs, startedAt: +c.startedAt, reward: Math.round(+c.reward),
+        cargoByShip, cargoTotal,
         faction: bands[c.band].faction || null,
         destroyChance: ctx.Util.clamp(+c.destroyChance || 0, 0, 0.85),
         impoundChance: ctx.Util.clamp(+c.impoundChance || 0, 0, 0.85),
@@ -289,5 +299,30 @@ const cg = Charters.cancel(dg.charter.id, T + 60000);
 assert(cg.ok, cg.msg);
 assert.strictEqual(h1.status, "idle");
 assert.strictEqual(h2.status, "idle");
+
+// 13) Group payout pro-rates by surviving cargo — losing the hauler can't cash full quote
+ctx.Game.state = fresh();
+ctx.Game.state.credits = 50_000;
+const haul = bulk(), escort = gunboat(), spare2 = mule();
+ctx.Game.state.ships.push(haul, escort, spare2);
+const dPr = Charters.dispatch([haul.uid, escort.uid], "safe", 60, T);
+assert(dPr.ok, dPr.msg);
+assert.ok(dPr.charter.cargoTotal > 0 && dPr.charter.cargoByShip[haul.uid] > dPr.charter.cargoByShip[escort.uid]);
+const lockedGroup = dPr.charter.reward;
+// Simulate hauler already gone before resolve; escort still on the job.
+ctx.Game.state.ships = ctx.Game.state.ships.filter(s => s.uid !== haul.uid);
+dPr.charter.destroyChance = 0;
+dPr.charter.impoundChance = 0;
+T += 3600000;
+const beforePr = ctx.Game.state.credits;
+const rPr = Charters.resolve(T);
+assert.strictEqual(rPr.length, 1);
+assert.ok(ctx.Game.state.ships.some(s => s.uid === escort.uid), "escort survived");
+const frac = Charters.payoutFrac(dPr.charter, [escort]);
+assert(frac < 0.1, `escort-only cargo frac small ${frac}`);
+const expected = Economy.afterTax(Math.round(lockedGroup * frac));
+assert.strictEqual(rPr[0].credits, expected, "payout pro-rated to surviving cargo");
+assert.strictEqual(ctx.Game.state.credits, beforePr + expected);
+assert.ok(/Payout cut/i.test(rPr[0].summary || ""), "report notes cargo cut");
 
 console.log("check_charters: ok");
