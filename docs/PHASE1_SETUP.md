@@ -24,7 +24,7 @@ This creates:
 | `public.players` | Authoritative save (`state` jsonb). RLS: **read-own only** — no client writes. |
 | `app_bootstrap()` | Ensure row (migrates from `saves` once); return state. |
 | `app_trade(action, commodity, qty)` | Validated buy/sell at docked system. |
-| `app_dock(system)` / `app_unlock(system)` | Travel + unlock-by-credits. |
+| `app_dock(system)` / `app_unlock(system)` | Travel + unlock-by-credits. Claimable system hubs auto-unlock on dock (re-run `docs/sql/station_dock_unlock.sql` if signed-in "Dock here" still says System locked). |
 | `app_commit(state)` | Autosave merge: accepts client credits/positions (interim), protects travel/unlocks. |
 
 ## 3. Deploy the client

@@ -164,7 +164,18 @@
       <!-- STAR SYSTEMS -->
       <section class="page hidden" id="page-systems">
         <div class="panel">
-          <h2><span data-i18n="systems.title">Star Systems</span> <small data-i18n="systems.sub">dock to trade at local prices</small></h2>
+          <h2><span data-i18n="systems.title">Star Systems</span> <small data-i18n="systems.sub">dock at capitals or claimable system hubs</small></h2>
+          <nav class="subtabs systems-subtabs" id="systems-tabs" aria-label="Star system groups">
+            <button type="button" class="subtab active" data-sys-tab="main" data-i18n="systems.mainHubs">Main Hubs</button>
+            <button type="button" class="subtab" data-sys-tab="stations" data-i18n="systems.systemHubs">System Hubs</button>
+          </nav>
+          <div id="sys-hub-filters" class="sys-hub-filters hidden">
+            <label class="sys-filter-label">Sector
+              <select id="sys-sector-filter" aria-label="Filter system hubs by sector">
+                <option value="">All sectors</option>
+              </select>
+            </label>
+          </div>
           <p class="sys-legend" id="sys-intro"></p>
           <ul class="system-list" id="system-list"></ul>
         </div>

@@ -465,7 +465,14 @@ begin
   unlocked := coalesce(st->'unlockedSystems', '[]'::jsonb);
 
   if not (unlocked ? dest) then
-    return jsonb_build_object('ok', false, 'error', 'System locked.');
+    -- Capitals need app_unlock first. Claimable system hubs (unknown to
+    -- _system_unlock) auto-unlock on dock — mirrors client Stations.canDock.
+    if app._system_unlock(dest) is null then
+      unlocked := unlocked || jsonb_build_array(dest);
+      st := jsonb_set(st, '{unlockedSystems}', unlocked);
+    else
+      return jsonb_build_object('ok', false, 'error', 'System locked.');
+    end if;
   end if;
   if app._in_transit(st) then
     return jsonb_build_object('ok', false, 'error', 'Already in transit.');
@@ -486,7 +493,8 @@ begin
   return jsonb_build_object(
     'ok', true, 'travel', true, 'etaMs', eta_ms,
     'travelObj', st->'travel',
-    'currentSystem', cur, 'credits', (st->>'credits')::float8
+    'currentSystem', cur, 'credits', (st->>'credits')::float8,
+    'unlockedSystems', st->'unlockedSystems'
   );
 end;
 $$;

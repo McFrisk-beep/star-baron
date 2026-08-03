@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed.
+**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Signed-in docking at system hubs:** paste `docs/sql/station_dock_unlock.sql` (or re-run the `app_dock` block in `phase1_players.sql`) so claimable hubs auto-unlock on dock. **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed.
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
