@@ -309,6 +309,8 @@ Reactor costs no Power itself but occupies a dedicated slot, so it is never a fr
 
 **Sticky swapping.** Uninstalling refunds 50% of component cost and none of the credits, and the station goes **offline for a 6-hour refit** — no production, no services, no tariff. Enough friction to make choices feel chosen; not so much that a mistake is permanent.
 
+Refit is *offline*, not *unowned*. Through the whole downtime the owner keeps the station, the Stations tab, the star-map panel and every owner control (reassign, staff bays, withdraw, relinquish), and nobody can auction it out from under them. Only `npc` and `cooldown` are ownerless states.
+
 ### 7.4 Sample builds at Waystation (7 power)
 
 | Build | Modules | Identity |
@@ -329,7 +331,7 @@ Functions like the existing Industries system and should reuse its plumbing (`IN
 
 **Owner controls:**
 
-- **Assigned commodity** — chosen from what the system supports. A system can produce any commodity in a category where its generated `mods` value is below 1.0. Changeable, with a retooling downtime.
+- **Assigned commodity** — chosen from what the system supports. A system can produce any commodity in a category where its generated `mods` value is below 1.0. *Changing* it costs a retooling downtime (half a refit); the first assignment on an idle hub has nothing to retool from, so it starts clean.
 - **Level** — I–V, each raising both yield and bay count.
 - **Lease tax** — 0–40%, owner-set, applied to non-owner output.
 

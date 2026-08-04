@@ -133,7 +133,7 @@ const StarMap = {
     for (const sys of Galaxy.list) {
       const g = document.createElementNS(ns, "g");
       const st = (!sys.capital && window.Stations) ? Stations.get(sys.id) : null;
-      const owned = st && st.status === "owned";
+      const owned = st && Stations.ownerHeld(st);
       const auction = st && window.Stations && Stations.getAuction(sys.id);
       g.setAttribute("class", "node" + (sys.capital ? " cap" : "") + (owned ? " st-owned" : "") + (auction && auction.status === "open" ? " st-auction" : ""));
       g.setAttribute("transform", `translate(${X(sys.pos.x)},${Y(sys.pos.y)})`);
@@ -303,7 +303,9 @@ const StarMap = {
         const scr = Stations.publicScrutiny(sys.id);
         const scrTxt = scr && scr.chanceHint != null ? ` · scrutiny ${scr.chanceHint}%` : "";
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
-          (st.status === "owned" ? " · owned" : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
+          (st.status === "owned" ? " · owned"
+            : st.status === "refit" ? ` · owned · refit ${Util.duration(Stations.refitLeft(st))}`
+            : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
           officeTxt + scrTxt +
@@ -384,8 +386,9 @@ const StarMap = {
       if (st) {
         const auc = Stations.getAuction(sys.id);
         const openMin = Stations.openingBid(st);
-        if (st.status === "owned" && st.ownerId === Stations.playerId()) {
-          stationBlock = `<div class="si-station"><b>${st.name}</b> · yours · standing ${st.standing.toFixed(0)}
+        if (Stations.ownerHeld(st) && st.ownerId === Stations.playerId()) {
+          const left = Stations.refitLeft(st);
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · yours · standing ${st.standing.toFixed(0)}${left > 0 ? ` · <span class="tip-dim">refit ${Util.duration(left)}</span>` : ""}
             <button class="btn btn-mini" id="sm-st-manage">Manage</button>
             <button class="btn btn-mini btn-warn" id="sm-st-relinquish">Relinquish</button></div>`;
         } else if (auc && auc.status === "open") {

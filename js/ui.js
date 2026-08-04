@@ -1825,7 +1825,8 @@ const UI = {
         const here = s.currentSystem === g.id && !s.travel;
         const sec = Galaxy.sector(g.sectorId);
         const li = this.el("li", "system" + (here ? " here" : ""));
-        const own = st.status === "owned" ? "owned" : st.status === "cooldown" ? "cooldown" : "NPC";
+        const own = st.status === "owned" ? "owned" : st.status === "refit" ? "refit"
+          : st.status === "cooldown" ? "cooldown" : "NPC";
         li.innerHTML =
           `<div class="system-head"><b>${st.name}</b>` +
           `<span class="dist" title="${g.name}">${sec ? sec.name : g.sectorId} · ${st.tier} · ${own}</span>` +
@@ -2258,9 +2259,15 @@ const UI = {
     }).join("") || `<tr><td colspan="4" class="muted-note">Install a Production Hub to open bays.</td></tr>`;
 
     const band = sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
+    const refitLeft = Stations.refitLeft(st);
+    const refitBanner = refitLeft > 0
+      ? `<p class="muted-note"><b>Refit in progress — back online in ${Util.duration(refitLeft)}.</b>
+         Production and visitor services are paused. You keep the station and these controls throughout.</p>`
+      : "";
     body.innerHTML = `
       <h2>${st.name} <small>${st.tier} · ${sys ? sys.name : st.systemId} · ${st.status}</small>
         <button class="btn btn-mini btn-warn" id="st-relinquish" title="Walk away — modules persist for the next owner">Relinquish</button></h2>
+      ${refitBanner}
       <div class="st-meters">
         <div>Power <b>${used}/${budget}</b> <span class="muted-note">(${free} free)</span></div>
         <div>Standing <b>${st.standing.toFixed(0)}</b>/100</div>
@@ -2311,7 +2318,10 @@ const UI = {
       const id = body.querySelector("#st-prod")?.value;
       const r = Stations.setProduction(st.systemId, id);
       if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast("Production retooling…", "good"); this.renderStations(); this.updateHeader();
+      this.toast(r.retool
+        ? `Retooling — the hub is offline for ${Util.duration(r.refitUntil - Date.now())}.`
+        : "Production line assigned.", "good");
+      this.renderStations(); this.updateHeader();
     });
     body.querySelector("#st-set-lease")?.addEventListener("click", () => {
       const pct = +body.querySelector("#st-lease")?.value || 0;

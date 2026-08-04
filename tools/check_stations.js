@@ -374,4 +374,78 @@ assert.strictEqual(Object.keys(freeTarget.hold || {}).length, 0, "hold cleared")
 ctx.Cloud = { isAdmin: () => false };
 assert.ok(!Stations.adminClaim(freeTarget.systemId).ok, "non-admin blocked");
 
+// ---- Refit is owner-held, not a lockout -----------------------------------
+// Regression: setProduction/uninstall flip status to "refit", and every
+// ownership gate keyed on status === "owned", so the owner lost the Stations
+// tab, the star-map panel and every control for the whole downtime.
+target.ownerId = "player";
+target.status = "owned";
+target.modules = { production_hub: 1 };
+target.reactorLevel = 2;
+target.prodComm = pool[0].id;
+ctx.Game.state.credits = 5_000_000;
+
+// First assignment on an idle hub is not a retool — no downtime (docs §8).
+target.prodComm = null;
+const firstSet = Stations.setProduction(target.systemId, pool[0].id);
+assert.ok(firstSet.ok, firstSet.msg);
+assert.strictEqual(firstSet.retool, false, "first assignment does not retool");
+assert.strictEqual(target.status, "owned", "idle hub stays online on first assign");
+
+// Switching commodity does cost downtime.
+const alt = pool.find(c => c.id !== pool[0].id);
+if (alt) {
+  const swap = Stations.setProduction(target.systemId, alt.id);
+  assert.ok(swap.ok, swap.msg);
+  assert.strictEqual(swap.retool, true, "switching commodity retools");
+} else {
+  target.status = "refit";
+  target.refitUntil = T + STATIONCFG.refitMs / 2;
+}
+assert.strictEqual(target.status, "refit");
+assert.ok(Stations.refitLeft(target) > 0, "refit reports time remaining");
+
+// The owner keeps the station through the downtime.
+assert.ok(Stations.ownerHeld(target), "refit is owner-held");
+assert.strictEqual(Stations.ownedCount(), 1, "refit station still counts as owned");
+assert.ok(Stations.ownedBy().some(st => st.systemId === target.systemId),
+  "refit station still listed on the Stations tab");
+assert.ok(Stations.hubAccess("stations", target.systemId).ok,
+  "owner console reachable during refit");
+
+// ...but services are offline, and say so instead of claiming NPC ownership.
+const bazaarGate = Stations.hubAccess("bazaar", target.systemId);
+assert.ok(!bazaarGate.ok, "services offline during refit");
+assert.ok(/refit/i.test(bazaarGate.reason), `refit reason, got "${bazaarGate.reason}"`);
+const svcHub = Stations.serviceList(target.systemId).find(r => r.id === "production_hub");
+assert.ok(!svcHub.ok && /refit/i.test(svcHub.reason), "service chip reads refit, not NPC-held");
+assert.strictEqual(Stations._playerProduce(target, 7), 0, "no production during refit");
+
+// Nobody can auction a station out from under a refitting owner.
+const grab = Stations.openAuction(target.systemId, Stations.openingBid(target));
+assert.ok(!grab.ok, "refit station is not auctionable");
+
+// Owner actions that must keep working while offline.
+assert.ok(Stations.setProduction(target.systemId, pool[0].id).ok, "can reassign during refit");
+target.treasury = 5_000;
+assert.ok(Stations.withdraw(target.systemId, 5_000).ok, "can withdraw during refit");
+
+// Refit ends on tick.
+const savedT = T;
+T = target.refitUntil + 1;
+Stations.tick(T);
+assert.strictEqual(target.status, "owned", "tick clears finished refit");
+T = savedT;
+
+// A corrupt refitUntil must never strand the owner forever.
+target.status = "refit";
+target.refitUntil = Number.MAX_SAFE_INTEGER;
+Stations.hydrate(Stations.serialize());
+const rehydrated = Stations.get(target.systemId);
+assert.ok(rehydrated.refitUntil <= T + STATIONCFG.refitMs, "absurd refit timer clamped");
+rehydrated.status = "refit";
+rehydrated.refitUntil = NaN;
+Stations.hydrate(Stations.serialize());
+assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit timer releases station");
+
 console.log("OK check_stations");
