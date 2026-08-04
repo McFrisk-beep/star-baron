@@ -215,6 +215,9 @@ const Game = {
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
     // Flat positions/items → hold + station bays (docs/HAULING.md §4).
+    // Don't inherit defaultState's `_haulingMigrated: true` — only an explicit
+    // flag on the loaded save means migration already ran.
+    if (!(loaded && loaded._haulingMigrated)) s._haulingMigrated = false;
     if (window.Assets) {
       try { Assets.migrateState(s); }
       catch (e) { console.warn("[Game] Assets.migrateState failed:", e); }
