@@ -395,15 +395,23 @@ assert.strictEqual(target.status, "owned", "idle hub stays online on first assig
 // Switching commodity does cost downtime.
 const alt = pool.find(c => c.id !== pool[0].id);
 if (alt) {
+  const quoted = Stations.retoolCost(target, alt.id);
+  assert.ok(quoted > 0, "switching commodity is quoted a cost");
   const swap = Stations.setProduction(target.systemId, alt.id);
   assert.ok(swap.ok, swap.msg);
   assert.strictEqual(swap.retool, true, "switching commodity retools");
+  assert.strictEqual(swap.refitUntil - T, quoted, "charged downtime matches the quote");
 } else {
   target.status = "refit";
   target.refitUntil = T + STATIONCFG.refitMs / 2;
 }
 assert.strictEqual(target.status, "refit");
 assert.ok(Stations.refitLeft(target) > 0, "refit reports time remaining");
+
+// retoolCost must agree with what setProduction actually charges — it's what
+// the confirm prompt quotes, so a drift would mean lying to the player.
+assert.strictEqual(Stations.retoolCost(target, target.prodComm), 0, "same commodity is free");
+assert.strictEqual(Stations.uninstallCost(), STATIONCFG.refitMs, "uninstall costs a full refit");
 
 // The owner keeps the station through the downtime.
 assert.ok(Stations.ownerHeld(target), "refit is owner-held");

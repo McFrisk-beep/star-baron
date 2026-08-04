@@ -83,6 +83,13 @@ const Stations = {
     return st && st.status === "refit" ? Math.max(0, (+st.refitUntil || 0) - Date.now()) : 0;
   },
 
+  // Downtime a *pending* change would cost, in ms (0 = none). One place for the
+  // rule so the confirm prompt and the change itself can never disagree.
+  retoolCost(st, commId) {
+    return st && st.prodComm && st.prodComm !== commId ? Math.floor(STATIONCFG.refitMs / 2) : 0;
+  },
+  uninstallCost() { return STATIONCFG.refitMs; },
+
   ownedBy(pid = this.playerId()) { return this.list().filter(st => st.ownerId === pid && this.ownerHeld(st)); },
   ownedCount(pid = this.playerId()) { return this.ownedBy(pid).length; },
 
@@ -260,11 +267,12 @@ const Stations = {
     if ((sys.mods[c.cat] ?? 1) >= 1.0) return { ok: false, msg: "This system doesn't produce that category." };
     // docs/STATIONS.md §8: changing the commodity costs retooling downtime.
     // An idle hub has nothing to retool from, so first assignment starts clean.
-    const retool = !!st.prodComm && st.prodComm !== commId;
+    const cost = this.retoolCost(st, commId);
+    const retool = cost > 0;
     st.prodComm = commId;
     if (retool) {
       st.status = "refit";
-      st.refitUntil = Date.now() + Math.floor(STATIONCFG.refitMs / 2); // retooling < full refit
+      st.refitUntil = Date.now() + cost; // retooling < full refit
     }
     if (window.Game) Game.requestSave();
     return { ok: true, retool, refitUntil: retool ? st.refitUntil : 0 };
