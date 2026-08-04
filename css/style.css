@@ -298,6 +298,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .svc-chip { font-size: 10px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--ink-dim); background: transparent; }
 .svc-chip.on { color: var(--good, #6dcc8a); border-color: rgba(109,204,138,.35); }
 .svc-chip.off { opacity: .45; text-decoration: line-through; text-decoration-color: rgba(160,170,190,.5); }
+.st-refit { color: var(--warn, #e0b25c); }
 .tab.tab-disabled { opacity: .4; filter: grayscale(.7); }
 .hub-prompt-locked { opacity: .7; color: var(--ink-dim) !important; }
 .mods { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }

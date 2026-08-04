@@ -80,6 +80,7 @@ const UI = {
       ordComm: $("ord-comm"), ordKind: $("ord-kind"), ordPrice: $("ord-price"), ordQty: $("ord-qty"),
       ordAdd: $("ord-add"), ordersList: $("orders-list"),
       boostBar: $("boost-bar"), boostEmpty: $("boost-empty"),
+      hubDock: $("hub-dock"), hubDockBody: $("hub-dock-body"),
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
@@ -132,7 +133,7 @@ const UI = {
     else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "hub") this.renderBoostBar();
+    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); }
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
@@ -154,6 +155,34 @@ const UI = {
         <span class="boost-meta"><span class="boost-name">${e.name}</span>
         <span class="boost-cd">${Util.duration(left)}</span></span></div>`;
     }).join("");
+  },
+
+  // Dock status on the Hub page. Visible to *everyone* berthed here, not just
+  // the owner — a visitor who can't reach the Exchange Hall deserves to know
+  // it's a refit with a clock on it, not a station that's permanently shut.
+  renderHubDock() {
+    const panel = this.refs.hubDock, body = this.refs.hubDockBody;
+    if (!panel || !body || !window.Stations || !window.Galaxy) return;
+    const s = this.s();
+    const st = s.travel ? null : Stations.get(s.currentSystem);
+    if (!st) { panel.classList.add("hidden"); return; }
+    panel.classList.remove("hidden");
+
+    const sys = Galaxy.get(st.systemId);
+    const mine = st.ownerId === Stations.playerId() && Stations.ownerHeld(st);
+    const left = Stations.refitLeft(st);
+    const status = left > 0
+      ? `<span class="st-refit">Refit — back online in <b>${Util.duration(left)}</b></span>`
+      : st.status === "cooldown" ? `<span class="st-refit">Offline after a revolt</span>`
+      : Stations.ownerHeld(st) ? (mine ? "Yours" : "Player-held") : "NPC-held";
+
+    const svcs = Stations.serviceList(st.systemId).filter(r => r.id !== "exchange");
+    body.innerHTML = `
+      <p><b>${st.name}</b> <span class="muted-note">${st.tier} · ${sys ? sys.name : st.systemId} · ${status}</span></p>
+      ${left > 0 ? `<p class="muted-note">Production and visitor services are paused for the refit. Docking, undocking and travel are unaffected.</p>` : ""}
+      <div class="system-services">${svcs.map(r =>
+        `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
+      ).join("")}</div>`;
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -1825,7 +1854,8 @@ const UI = {
         const here = s.currentSystem === g.id && !s.travel;
         const sec = Galaxy.sector(g.sectorId);
         const li = this.el("li", "system" + (here ? " here" : ""));
-        const own = st.status === "owned" ? "owned" : st.status === "refit" ? "refit"
+        const own = st.status === "owned" ? "owned"
+          : st.status === "refit" ? `refit · ${Util.duration(Stations.refitLeft(st))} left`
           : st.status === "cooldown" ? "cooldown" : "NPC";
         li.innerHTML =
           `<div class="system-head"><b>${st.name}</b>` +
@@ -2316,6 +2346,16 @@ const UI = {
     });
     body.querySelector("#st-set-prod")?.addEventListener("click", () => {
       const id = body.querySelector("#st-prod")?.value;
+      // Downtime is the expensive part of this decision — ask before it's spent,
+      // never after. Silent when the change is free (idle hub, same commodity).
+      const cost = Stations.retoolCost(st, id);
+      if (cost > 0) {
+        const from = COMMODITIES.find(c => c.id === st.prodComm);
+        const to = COMMODITIES.find(c => c.id === id);
+        if (!confirm(`Retool ${st.name} from ${from ? from.name : st.prodComm} to ${to ? to.name : id}?\n\n`
+          + `The station goes offline for ${Util.duration(cost)} — no production, no visitor services, `
+          + `and bays yield nothing until it's back.`)) return;
+      }
       const r = Stations.setProduction(st.systemId, id);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(r.retool
@@ -2368,7 +2408,21 @@ const UI = {
     });
     body.querySelectorAll("[data-st-uninstall]").forEach(btn => {
       btn.onclick = () => {
-        const r = Stations.uninstall(st.systemId, btn.dataset.stUninstall);
+        const id = btn.dataset.stUninstall;
+        const def = STATION_MODULES[id];
+        const lvl = id === "reactor" ? (st.reactorLevel | 0) : (st.modules[id] | 0);
+        let refund = 0;
+        for (let i = 0; i < lvl; i++) refund += Math.floor((def.cost[i] || 0) * 0.5);
+        const knockOn = [];
+        if (id === "production_hub") knockOn.push("clears the assigned commodity, empties every bay, and removes the Refinery");
+        else if (id === "exchange_hall") knockOn.push("returns all Exchange Hall listings to their sellers");
+        else if (id === "contract_office") knockOn.push("refunds every open haul contract");
+        else if (id === "customs_house") knockOn.push("releases all impounded cargo");
+        if (!confirm(`Uninstall ${def.name} from ${st.name}?\n\n`
+          + `Refund is ${Util.credits(refund)} — 50% of component cost, and none of the credits.\n`
+          + `The station goes offline for ${Util.duration(Stations.uninstallCost())}.`
+          + (knockOn.length ? `\nThis also ${knockOn[0]}.` : ""))) return;
+        const r = Stations.uninstall(st.systemId, id);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
         this.flashCredits(); this.renderStations(); this.updateHeader();
@@ -3533,7 +3587,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "hub") this.renderBoostBar();
+    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); }
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.
     if (this.page === "stations") {
@@ -3553,7 +3607,11 @@ const UI = {
       if (!holdingSelect) this.renderBazaar();
     }
     if (this.page === "barons") this.renderLeaderboard();
-    if (this.page === "systems" && this.s().travel) this.renderSystems();
+    // Re-render the System Hubs list while anything is refitting, so the
+    // countdown on the list actually counts down.
+    if (this.page === "systems" && (this.s().travel
+      || (window.Stations && Stations.list().some(st => st.status === "refit"))))
+      this.renderSystems();
   },
 
   fullRender() {
