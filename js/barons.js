@@ -7,6 +7,7 @@ const Barons = {
   rows: [],           // last fetched remote rows (no "you" synthetic)
   fetchedAt: 0,
   missing: false,     // true once we know SQL isn't installed
+  publishBroken: false, // true once publish fails on schema — board still reads fine
   _publishing: false,
   window: () => (typeof RIVALCFG !== "undefined" && RIVALCFG.window) || 10,
 
@@ -54,7 +55,7 @@ const Barons = {
 
   // Push our row. Safe to call often — server ignores same-day wealth writes.
   async publish() {
-    if (!this.signedIn() || this.missing || this._publishing) return null;
+    if (!this.signedIn() || this.missing || this.publishBroken || this._publishing) return null;
     if (!window.Economy) return null;
     this._publishing = true;
     try {
@@ -70,7 +71,10 @@ const Barons = {
       } else {
         const msg = String((e && (e.message || e.details || e)) || e);
         // Stale RPC before the v_title/v_tier rename — one line, not the full PostgREST dump.
+        // Latch it: a schema mismatch won't fix itself mid-session, so retrying on
+        // every save just buys a 400 and a console entry per autosave.
         if (/42702|ambiguous/i.test(msg)) {
+          this.publishBroken = true;
           console.warn("[Barons] publish needs SQL refresh — re-run docs/sql/baron_board.sql");
         } else {
           console.warn("[Barons] publish failed:", e);

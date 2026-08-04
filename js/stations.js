@@ -75,7 +75,15 @@ const Stations = {
   get(systemId) { return this.byId[systemId] || null; },
   list() { return Object.values(this.byId); },
   claimable() { return this.list().filter(st => st.status === "npc" || st.status === "cooldown"); },
-  ownedBy(pid = this.playerId()) { return this.list().filter(st => st.ownerId === pid && st.status === "owned"); },
+
+  // "refit" is an owner-held *offline* state: services and production stop, but
+  // the owner keeps the station and its console. Only npc/cooldown are ownerless.
+  ownerHeld(st) { return !!st && (st.status === "owned" || st.status === "refit"); },
+  refitLeft(st) {
+    return st && st.status === "refit" ? Math.max(0, (+st.refitUntil || 0) - Date.now()) : 0;
+  },
+
+  ownedBy(pid = this.playerId()) { return this.list().filter(st => st.ownerId === pid && this.ownerHeld(st)); },
   ownedCount(pid = this.playerId()) { return this.ownedBy(pid).length; },
 
   ownerCap(tierIdx) {
@@ -241,7 +249,7 @@ const Stations = {
   // ---- Production Hub ----------------------------------------------------
   setProduction(systemId, commId) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || st.status !== "owned")
+    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
     if (!(st.modules.production_hub | 0)) return { ok: false, msg: "Install a Production Hub first." };
     const sys = Galaxy.get(systemId);
@@ -250,11 +258,16 @@ const Stations = {
     if (!c || c.craftOnly || c.rarity === "exotic") return { ok: false, msg: "Can't produce that." };
     // System supports any cat where mods[cat] < 1.0
     if ((sys.mods[c.cat] ?? 1) >= 1.0) return { ok: false, msg: "This system doesn't produce that category." };
+    // docs/STATIONS.md §8: changing the commodity costs retooling downtime.
+    // An idle hub has nothing to retool from, so first assignment starts clean.
+    const retool = !!st.prodComm && st.prodComm !== commId;
     st.prodComm = commId;
-    st.status = "refit";
-    st.refitUntil = Date.now() + Math.floor(STATIONCFG.refitMs / 2); // retooling < full refit
+    if (retool) {
+      st.status = "refit";
+      st.refitUntil = Date.now() + Math.floor(STATIONCFG.refitMs / 2); // retooling < full refit
+    }
     if (window.Game) Game.requestSave();
-    return { ok: true };
+    return { ok: true, retool, refitUntil: retool ? st.refitUntil : 0 };
   },
 
   setLeaseTax(systemId, bps) {
@@ -335,9 +348,16 @@ const Stations = {
 
     const st = this.get(sysId);
     if (!st) return { ok: false, reason: "No station services here" };
-    const owned = st.status === "owned";
+    const owned = this.ownerHeld(st);
     const mine = owned && st.ownerId === this.playerId();
     const mod = id => (st.modules && st.modules[id]) | 0;
+
+    // The owner's console stays reachable through a refit — that's where the
+    // countdown lives, and where they cancel/reassign what caused it.
+    if (page === "stations") return mine ? { ok: true } : { ok: false, reason: owned ? "Not your station" : "Station is NPC-held" };
+    if (st.status === "refit") {
+      return { ok: false, reason: `Refit in progress — back online in ${Util.duration(this.refitLeft(st))}` };
+    }
 
     if (!owned) {
       const npcReason = {
@@ -363,8 +383,6 @@ const Stations = {
         if (mod("workshop_annex") && mine) return { ok: true };
         if (mod("workshop_annex")) return { ok: false, reason: "Owner's Workshop Annex only" };
         return { ok: false, reason: "No Workshop Annex installed" };
-      case "stations":
-        return mine ? { ok: true } : { ok: false, reason: "Not your station" };
       default:
         return { ok: true };
     }
@@ -382,11 +400,13 @@ const Stations = {
     }
     const st = this.get(systemId);
     if (!st) return [];
-    const owned = st.status === "owned";
+    const refit = st.status === "refit";
+    const owned = this.ownerHeld(st);
     const mod = id => (st.modules && st.modules[id]) | 0;
     const row = (id, label, need) => {
       if (!owned) return { id, label, ok: false, reason: "NPC-held — modules dormant" };
       if (need && !mod(need)) return { id, label, ok: false, reason: "Not installed" };
+      if (refit) return { id, label, ok: false, reason: `Refit — back online in ${Util.duration(this.refitLeft(st))}` };
       return { id, label, ok: true };
     };
     return [
@@ -436,8 +456,9 @@ const Stations = {
   // Visitors must be docked at the station (non-capital docking is live).
   canUseHall(systemId) {
     const st = this.get(systemId);
+    if (st && st.status === "refit" && (st.modules.exchange_hall | 0))
+      return { ok: false, msg: `Station is in refit — ${Util.duration(this.refitLeft(st))} left.` };
     if (!this.hasHall(st)) return { ok: false, msg: "No Exchange Hall here." };
-    if (st.status === "refit") return { ok: false, msg: "Station is in refit." };
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
     if (st.ownerId === this.playerId()) return { ok: true, st };
@@ -806,10 +827,11 @@ const Stations = {
 
   postHaul(systemId, commId, qty, rate) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || st.status !== "owned")
+    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
+    if (st.status === "refit")
+      return { ok: false, msg: `Station is in refit — ${Util.duration(this.refitLeft(st))} left.` };
     if (!this.hasContractOffice(st)) return { ok: false, msg: "Install a Contract Office first." };
-    if (st.status === "refit") return { ok: false, msg: "Station is in refit." };
     const comm = COMMODITIES.find(c => c.id === commId);
     if (!comm || comm.craftOnly) return { ok: false, msg: "Unknown commodity." };
     qty = Math.floor(+qty || 0);
@@ -1005,8 +1027,10 @@ const Stations = {
   // Owner parks an extractor in a bay (occupies it; output → station hold).
   occupyBay(systemId, bayIndex, extractorUid) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || st.status !== "owned")
+    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
+    // Staffing during a refit is allowed — output is gated in _playerProduce,
+    // so the owner can have the line ready for the moment it comes back up.
     if (!(st.modules.production_hub | 0) || !st.prodComm)
       return { ok: false, msg: "Assign a Production Hub commodity first." };
     this.syncBays(st);
@@ -1240,7 +1264,7 @@ const Stations = {
   openAuction(systemId, bid) {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
-    if (st.status === "owned") return { ok: false, msg: "Already owned." };
+    if (this.ownerHeld(st)) return { ok: false, msg: "Already owned." };
     if (st.status === "cooldown" && Date.now() < st.cooldownUntil)
       return { ok: false, msg: "Station is cooling down after a revolt." };
     if (this.auctions[systemId] && this.auctions[systemId].status === "open")
@@ -1387,7 +1411,7 @@ const Stations = {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     const pid = this.playerId();
-    const mine = st.ownerId === pid && st.status === "owned";
+    const mine = st.ownerId === pid && this.ownerHeld(st);
     if (!mine) return { ok: false, msg: "Not your station." };
     const treasury = st.treasury | 0;
     const holdCredits = this.holdValue(st);
@@ -1542,10 +1566,9 @@ const Stations = {
         if (this.hasContractOffice(st)) this._npcFillHauls(st, hourIndex);
       }
 
-      if (st.status !== "owned") continue;
-
-      // Suspend standing decay during declared refit (open question → yes).
-      if (st.status === "refit") { st.delivered = 0; continue; }
+      // Standing decay and upkeep are both suspended during a declared refit
+      // (docs open question → yes): the station is offline by the owner's choice.
+      if (st.status !== "owned") { if (st.status === "refit") st.delivered = 0; continue; }
 
       let standing = st.standing;
       const expected = st.expected || STATIONCFG.expectedDeliveryBase;
@@ -1842,6 +1865,13 @@ const Stations = {
       st.saleTariffBps = Util.clamp(st.saleTariffBps | 0, 0, 1500);
       st.scrutiny = Util.clamp(st.scrutiny | 0, 0, 100);
       if (!["npc", "owned", "refit", "cooldown"].includes(st.status)) st.status = st.ownerId ? "owned" : "npc";
+      // Timers are the only thing standing between an owner and their station —
+      // a NaN or a far-future value from a corrupt save must never strand them.
+      const now = Date.now();
+      st.refitUntil = Math.min(Math.max(0, +st.refitUntil || 0), now + STATIONCFG.refitMs);
+      st.cooldownUntil = Math.min(Math.max(0, +st.cooldownUntil || 0), now + STATIONCFG.cooldownMs);
+      if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
+      if (st.status === "cooldown" && now >= st.cooldownUntil) st.status = "npc";
     }
     this.ensure();
   },
