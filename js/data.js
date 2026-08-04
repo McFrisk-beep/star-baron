@@ -1246,9 +1246,15 @@ const SYSTEMVIEW = {
 // is a pool — _assetPool picks one deterministically from `salt` (item uid).
 // Broadcast pools may store { url, title?, caption? } entries (flavor per frame).
 const ASSET_OVERRIDES = {};
+// Git-committed baseline for the same keys (js/assets-local.js), used when no
+// live Supabase override is set. Lets admins still live-swap art without a
+// redeploy, while the default content costs nothing to serve.
+const _localFallback = key => (typeof LOCAL_ASSET_POOLS !== "undefined" ? LOCAL_ASSET_POOLS[key] : undefined);
 const _asset = (key, path) => {
   const v = ASSET_OVERRIDES[key];
-  return (typeof v === "string" && v) ? v : path;
+  if (typeof v === "string" && v) return v;
+  const local = _localFallback(key);
+  return (typeof local === "string" && local) ? local : path;
 };
 const _poolHash = salt => {
   let h = 2166136261;
@@ -1263,7 +1269,12 @@ const _assetPoolEntry = (key, salt, path) => {
   if (Array.isArray(v) && v.length) entry = v[_poolHash(salt) % v.length];
   else if (typeof v === "string" && v) entry = v;
   else if (v && typeof v === "object" && v.url) entry = v;
-  if (!entry) return { url: path, title: "", caption: "" };
+  if (!entry) {
+    const local = _localFallback(key);
+    if (Array.isArray(local) && local.length) return { url: local[_poolHash(salt) % local.length], title: "", caption: "" };
+    if (typeof local === "string" && local) return { url: local, title: "", caption: "" };
+    return { url: path, title: "", caption: "" };
+  }
   if (typeof entry === "string") return { url: entry, title: "", caption: "" };
   return {
     url: entry.url || path,
@@ -1292,6 +1303,8 @@ const ASSET = {
   // Per-tab page backgrounds (admin Images → Page backgrounds). Empty default = no image.
   // Cover+center stage behind page UI — mobile crops left/right (see .page-bg).
   pageBg: id => _asset(`pagebg:${id}`, ""),
+  // Per-system space backdrop (Star Map). Empty default falls back to the sector nebula.
+  spacebg: id => _asset(`spacebg:${id}`, ""),
   // Per-hull art pools. Admins upload N images against a catalog hull id and
   // each individual ship picks one deterministically from `salt` — the shipyard
   // offer id on the shelf, then the ship's uid once it's bought, so the picture
