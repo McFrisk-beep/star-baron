@@ -2163,15 +2163,18 @@ const UI = {
         this.stationsTab = b.dataset.st; this.renderStations();
       };
     }
-    // Preserve in-progress form drafts + open module details across tick re-renders.
-    const draftProd = body.querySelector("#st-prod")?.value;
-    const draftLease = body.querySelector("#st-lease")?.value;
-    const draftScrutiny = body.querySelector("#st-scrutiny")?.value;
-    const openMods = new Set(
-      [...body.querySelectorAll("details.st-mod[open]")].map(d => d.dataset.mod).filter(Boolean)
-    );
+    // Preserve in-progress form drafts + open module details across tick re-renders
+    // — but only when re-rendering the same station tab, else stale drafts leak in.
+    const sameTab = body.dataset.st === this.stationsTab;
+    const draftProd = sameTab ? body.querySelector("#st-prod")?.value : undefined;
+    const draftLease = sameTab ? body.querySelector("#st-lease")?.value : undefined;
+    const draftScrutiny = sameTab ? body.querySelector("#st-scrutiny")?.value : undefined;
+    const openMods = sameTab
+      ? new Set([...body.querySelectorAll("details.st-mod[open]")].map(d => d.dataset.mod).filter(Boolean))
+      : new Set();
 
     const st = Stations.get(this.stationsTab); if (!st) return;
+    body.dataset.st = st.systemId;
     const sys = Galaxy.get(st.systemId);
     const sent = (window.Stock && Stock.sentiment[st.sectorId]) ?? STATIONCFG.sentimentStart;
     const free = Stations.powerFree(st), budget = Stations.powerBudget(st), used = Stations.powerUsed(st);
