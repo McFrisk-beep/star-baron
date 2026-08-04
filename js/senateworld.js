@@ -15,6 +15,7 @@
 
 const SenateWorld = {
   lastId: 0,
+  lastResultAt: null,   // created_at cursor for world_senate_result — avoids refetching the same rows every poll
   timer: null,
   pollMs: 45000,
   active: false,
@@ -84,7 +85,10 @@ const SenateWorld = {
     this.active = true;
     Senate.setShared(true);                       // server owns the agenda + outcomes; stop local generation
     if (haveAgenda) for (const r of agenda.reverse()) { this.ingest(r); this.lastId = Math.max(this.lastId, r.id); }
-    if (haveResults) for (const r of results.reverse()) this.applyResult(r, false);   // quiet on first load
+    if (haveResults) for (const r of results.reverse()) {
+      this.applyResult(r, false);   // quiet on first load
+      if (!this.lastResultAt || r.created_at > this.lastResultAt) this.lastResultAt = r.created_at;
+    }
     await this._drive();                          // admin: resolve anything now-due and publish
     console.log(`[SenateWorld] shared senate live (${haveAgenda ? agenda.length : 0} bills, ${haveResults ? results.length : 0} results).`);
   },
@@ -97,9 +101,17 @@ const SenateWorld = {
       for (const r of (data || [])) { this.ingest(r); this.lastId = Math.max(this.lastId, r.id); }
     } catch (e) { /* transient */ }
     try {
-      const { data, error } = await this._selectResults(q => q.order("created_at", { ascending: false }).limit(60));
+      // Cursor on created_at, same as the id cursor above — only pull results landed since the last poll
+      // instead of re-downloading the whole recent-results window every 45s.
+      const { data, error } = await this._selectResults(q => {
+        const qq = q.order("created_at", { ascending: true }).limit(20);
+        return this.lastResultAt ? qq.gt("created_at", this.lastResultAt) : qq;
+      });
       if (error) throw error;
-      for (const r of (data || []).reverse()) this.applyResult(r, true);   // announce newly-landed outcomes
+      for (const r of (data || [])) {
+        this.applyResult(r, true);   // announce newly-landed outcomes
+        if (!this.lastResultAt || r.created_at > this.lastResultAt) this.lastResultAt = r.created_at;
+      }
     } catch (e) { /* transient or table missing */ }
     await this._drive();        // admin only: resolve any bill now past its (shared) deadline + publish
   },
