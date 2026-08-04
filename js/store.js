@@ -64,6 +64,13 @@ const Store = {
         const boot = await Cloud.bootstrap();
         if (boot) {
           this._cloudReady = true;
+          // Soft/local blackboxes + activeBoosts + slow-stock buy marks are
+          // client-owned; app_commit forces server `items` and wipes them. Merge
+          // anything newer from the local cache so a refresh after buy/use
+          // doesn't erase a paid-for box or an active buff.
+          const uid = this._userId();
+          const localMine = !!(local && uid && local.cloudUserId === uid);
+          if (localMine) this.mergeSoftItems(boot, local);
           this.localSave(this._stampOwner(boot));
           console.log("[Store] loaded authoritative players state");
           return boot;
@@ -118,6 +125,49 @@ const Store = {
     if (!this.signedIn() || !this._cloudReady) return;
     try { if (state) { this._stampOwner(state); await Cloud.saveRemote(state); } }
     catch (e) { this._cloudFail("flush", e); }
+  },
+
+  // Merge soft/local slices that app_commit overwrites from the server row.
+  // - blackbox items the client minted (bazaar / survey) but the server never saw
+  // - activeBoosts with a later expiry
+  // - bazaarBought ids for the slow shelf (bb-*/bp-*) so a bought slot stays bought
+  // Also re-parks any restored blackbox into the hauling ledger if missing.
+  mergeSoftItems(target, source) {
+    if (!target || !source) return target;
+    target.items = target.items || {};
+    source.items = source.items || {};
+    const isBox = (it) => !!(it && (it.consumable || it.kind === "blackbox") && it.effectId);
+    for (const [uid, it] of Object.entries(source.items)) {
+      if (!isBox(it) || target.items[uid]) continue;
+      target.items[uid] = it;
+      if (window.Assets && !Assets.gearLocation(uid)) {
+        // parkGear reads Game.state — temporarily point at target if needed.
+        const prev = window.Game && Game.state;
+        if (window.Game) Game.state = target;
+        try { Assets.parkGear(uid, target.currentSystem); } catch (e) { /* ignore */ }
+        if (window.Game) Game.state = prev;
+      }
+    }
+    // Keep the longer-lived boost per effectId.
+    const byId = new Map();
+    for (const b of (target.activeBoosts || [])) {
+      if (b && typeof b.effectId === "string" && Number.isFinite(+b.expiresAt) && +b.expiresAt > Date.now())
+        byId.set(b.effectId, b);
+    }
+    for (const b of (source.activeBoosts || [])) {
+      if (!b || typeof b.effectId !== "string" || !Number.isFinite(+b.expiresAt) || +b.expiresAt <= Date.now()) continue;
+      const cur = byId.get(b.effectId);
+      if (!cur || +b.expiresAt > +cur.expiresAt) byId.set(b.effectId, b);
+    }
+    target.activeBoosts = [...byId.values()];
+    // Slow-shelf purchase marks (blackboxes/blueprints) — server bazaarBought
+    // never sees soft buys, so union the bb-/bp- ids from local.
+    const bought = new Set(Array.isArray(target.bazaarBought) ? target.bazaarBought : []);
+    for (const id of (source.bazaarBought || [])) {
+      if (typeof id === "string" && (/^bb-/.test(id) || /^bp-/.test(id))) bought.add(id);
+    }
+    target.bazaarBought = [...bought];
+    return target;
   },
 
   async clear() {

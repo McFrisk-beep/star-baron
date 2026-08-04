@@ -176,6 +176,14 @@ const Boosts = {
     const e = this.effect(it.effectId);
     if (!e) return { ok: false, msg: "Unknown blackbox effect." };
     if (window.Bazaar && Bazaar.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
+    // Must be in the hold or docked bay — can't use a box three sectors away.
+    if (window.Assets) {
+      const loc = Assets.gearLocation(itemUid);
+      if (!loc) return { ok: false, msg: "Blackbox isn't here." };
+      if (loc !== "hold" && (s.travel || loc !== s.currentSystem))
+        return { ok: false, msg: "Dock where the blackbox is stored to use it." };
+      Assets.withdraw(loc === "hold" ? "hold" : loc, "gear", itemUid);
+    }
     delete s.items[itemUid];
     this.prune(now);
     s.activeBoosts = s.activeBoosts.filter(b => b.effectId !== e.id);

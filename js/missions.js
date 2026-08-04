@@ -219,7 +219,11 @@ const Missions = {
           if (Math.random() < (m.reward.itemChance || 0)) {
             const it = Items.gen({ bias });
             s.items[it.uid] = it; report.items.push(it);
-            if (Math.random() < bias * 0.4) { const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2); }
+            if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
+            if (Math.random() < bias * 0.4) {
+              const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2);
+              if (window.Assets) Assets.parkGear(it2.uid, s.currentSystem);
+            }
           }
           if (Math.random() < (m.reward.stockChance || 0)) {
             const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
@@ -227,6 +231,7 @@ const Missions = {
             const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
             s.positions[c.id] = held + qty;
             s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
+            if (window.Assets) Assets.parkBlocks(s.currentSystem, c.id, qty);
             report.stock = { commId: c.id, name: c.name, qty };
           }
           // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).

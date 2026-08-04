@@ -320,7 +320,11 @@ const SurveyStory = {
       const bias = EXPEDCFG.rarityBiasMax * ((exp && exp.danger) || 0);
       const it = Items.gen({ bias, kind: prefer || undefined, rarity: spec.item === true ? undefined : spec.item });
       const room = !(window.Bazaar) || (() => { try { return Bazaar.inventoryUsed() < Bazaar.capacity(); } catch (e) { return true; } })();
-      if (room) { this.s().items[it.uid] = it; report.items.push(it); }
+      if (room) {
+        this.s().items[it.uid] = it; report.items.push(it);
+        // Survey loot lands at the surveyed system — go get it (HAULING.md §5).
+        if (window.Assets) Assets.parkGear(it.uid, (exp && exp.systemId) || this.s().currentSystem);
+      }
     }
     if (spec.materials && payLocal) {
       const far = !!(exp && exp.far);
@@ -330,12 +334,14 @@ const SurveyStory = {
       const rareish = COMMODITIES.filter(c => !c.craftOnly && (c.rarity === "rare" || c.rarity === "uncommon"));
       const pool = (Math.random() < exoticP && exotic.length ? exotic : rareish.length ? rareish : COMMODITIES);
       const c = Util.pick(pool);
+      const landAt = (exp && exp.systemId) || this.s().currentSystem;
       if (c) {
         const qty = Util.randInt(qtyRange[0], qtyRange[1]);
         const st = this.s();
         const held = st.positions[c.id] || 0, avg = st.avgCost[c.id] || 0;
         st.positions[c.id] = held + qty;
         st.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // salvage — no cost basis
+        if (window.Assets) Assets.parkBlocks(landAt, c.id, qty);
         report.stock = { commId: c.id, name: c.name, qty };
       }
       // Occasional blackbox alongside material salvage (CRAFTING_AND_MATERIALS §2.3).
@@ -346,6 +352,7 @@ const SurveyStory = {
           const box = Items.genBlackbox();
           this.s().items[box.uid] = box;
           report.items.push(box);
+          if (window.Assets) Assets.parkGear(box.uid, landAt);
         }
       }
       // Expedition-tier blueprints (CRAFTING_AND_MATERIALS §3.3).

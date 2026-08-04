@@ -189,26 +189,26 @@ const SHIP_CATALOG = {
   ],
   // Main/flagship: travelSpeed + effects[]. rarity tier ⇒ effect count (common=1 … legendary=5).
   main: [
-    // common — 1 effect
-    { id: "pinnace",      name: "Baron's Pinnace",     cls: "main", rarity: "common",    travelSpeed: 1.0, effects: [{ type: "firepower", pct: 0.05 }], hull: 200,  price: 0,      sprite: "shuttle" },
-    { id: "lane_runner",  name: "Lane Runner",         cls: "main", rarity: "common",    travelSpeed: 1.4, effects: [{ type: "speed", pct: 0.08 }],      hull: 220,  price: 12000,  sprite: "shuttle" },
-    { id: "ore_throne",   name: "Ore Throne",          cls: "main", rarity: "common",    travelSpeed: 1.1, effects: [{ type: "industry", pct: 0.06 }],   hull: 260,  price: 18000,  sprite: "hauler" },
-    { id: "quiet_keel",   name: "Quiet Keel",          cls: "main", rarity: "common",    travelSpeed: 1.2, effects: [{ type: "routeSafe", pct: 0.10 }],  hull: 240,  price: 16000,  sprite: "hauler" },
+    // common — 1 effect. `cargo` = flagship hold slots (docs/HAULING.md §3).
+    { id: "pinnace",      name: "Baron's Pinnace",     cls: "main", rarity: "common",    travelSpeed: 1.0, cargo: 4,  effects: [{ type: "firepower", pct: 0.05 }], hull: 200,  price: 0,      sprite: "shuttle" },
+    { id: "lane_runner",  name: "Lane Runner",         cls: "main", rarity: "common",    travelSpeed: 1.4, cargo: 5,  effects: [{ type: "speed", pct: 0.08 }],      hull: 220,  price: 12000,  sprite: "shuttle" },
+    { id: "quiet_keel",   name: "Quiet Keel",          cls: "main", rarity: "common",    travelSpeed: 1.2, cargo: 6,  effects: [{ type: "routeSafe", pct: 0.10 }],  hull: 240,  price: 16000,  sprite: "hauler" },
+    { id: "ore_throne",   name: "Ore Throne",          cls: "main", rarity: "common",    travelSpeed: 1.1, cargo: 8,  effects: [{ type: "industry", pct: 0.06 }],   hull: 260,  price: 18000,  sprite: "hauler" },
     // uncommon — 2 effects
-    { id: "yacht",        name: "Void Yacht",          cls: "main", rarity: "uncommon",  travelSpeed: 1.6, effects: [{ type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.06 }], hull: 320, price: 24000, sprite: "hauler" },
-    { id: "harvest_seat", name: "Harvest Seat",        cls: "main", rarity: "uncommon",  travelSpeed: 1.3, effects: [{ type: "industry", pct: 0.08 }, { type: "taxRelief", pct: 0.04 }], hull: 340, price: 38000, sprite: "freighter" },
-    { id: "chart_crown",  name: "Chart Crown",         cls: "main", rarity: "uncommon",  travelSpeed: 1.5, effects: [{ type: "survey", pct: 0.12 }, { type: "speed", pct: 0.05 }], hull: 300, price: 36000, sprite: "shuttle" },
-    { id: "escort_pulpit",name: "Escort Pulpit",       cls: "main", rarity: "uncommon",  travelSpeed: 1.4, effects: [{ type: "firepower", pct: 0.10 }, { type: "routeSafe", pct: 0.08 }], hull: 380, price: 42000, sprite: "freighter" },
+    { id: "chart_crown",  name: "Chart Crown",         cls: "main", rarity: "uncommon",  travelSpeed: 1.5, cargo: 8,  effects: [{ type: "survey", pct: 0.12 }, { type: "speed", pct: 0.05 }], hull: 300, price: 36000, sprite: "shuttle" },
+    { id: "escort_pulpit",name: "Escort Pulpit",       cls: "main", rarity: "uncommon",  travelSpeed: 1.4, cargo: 9,  effects: [{ type: "firepower", pct: 0.10 }, { type: "routeSafe", pct: 0.08 }], hull: 380, price: 42000, sprite: "freighter" },
+    { id: "yacht",        name: "Void Yacht",          cls: "main", rarity: "uncommon",  travelSpeed: 1.6, cargo: 10, effects: [{ type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.06 }], hull: 320, price: 24000, sprite: "hauler" },
+    { id: "harvest_seat", name: "Harvest Seat",        cls: "main", rarity: "uncommon",  travelSpeed: 1.3, cargo: 12, effects: [{ type: "industry", pct: 0.08 }, { type: "taxRelief", pct: 0.04 }], hull: 340, price: 38000, sprite: "freighter" },
     // rare — 3 effects
-    { id: "flagship",     name: "Command Flagship",    cls: "main", rarity: "rare",      travelSpeed: 2.2, effects: [{ type: "firepower", pct: 0.12 }, { type: "speed", pct: 0.06 }, { type: "routeSafe", pct: 0.08 }], hull: 640, price: 140000, sprite: "freighter" },
-    { id: "foundry_ark",  name: "Foundry Ark",         cls: "main", rarity: "rare",      travelSpeed: 1.8, effects: [{ type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.06 }, { type: "cargo", pct: 0.08 }], hull: 700, price: 160000, sprite: "leviathan" },
-    { id: "lens_of_sable",name: "Lens of Sable",       cls: "main", rarity: "rare",      travelSpeed: 2.0, effects: [{ type: "survey", pct: 0.18 }, { type: "speed", pct: 0.08 }, { type: "firepower", pct: 0.05 }], hull: 560, price: 155000, sprite: "hauler" },
+    { id: "lens_of_sable",name: "Lens of Sable",       cls: "main", rarity: "rare",      travelSpeed: 2.0, cargo: 14, effects: [{ type: "survey", pct: 0.18 }, { type: "speed", pct: 0.08 }, { type: "firepower", pct: 0.05 }], hull: 560, price: 155000, sprite: "hauler" },
+    { id: "flagship",     name: "Command Flagship",    cls: "main", rarity: "rare",      travelSpeed: 2.2, cargo: 16, effects: [{ type: "firepower", pct: 0.12 }, { type: "speed", pct: 0.06 }, { type: "routeSafe", pct: 0.08 }], hull: 640, price: 140000, sprite: "freighter" },
+    { id: "foundry_ark",  name: "Foundry Ark",         cls: "main", rarity: "rare",      travelSpeed: 1.8, cargo: 20, effects: [{ type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.06 }, { type: "cargo", pct: 0.08 }], hull: 700, price: 160000, sprite: "leviathan" },
     // epic — 4 effects
-    { id: "magnate_spire",name: "Magnate Spire",       cls: "main", rarity: "epic",      travelSpeed: 2.4, effects: [{ type: "firepower", pct: 0.10 }, { type: "industry", pct: 0.10 }, { type: "routeSafe", pct: 0.10 }, { type: "taxRelief", pct: 0.05 }], hull: 900, price: 320000, sprite: "leviathan" },
-    { id: "ghost_cathedral", name: "Ghost Cathedral",  cls: "main", rarity: "epic",      travelSpeed: 2.6, effects: [{ type: "survey", pct: 0.20 }, { type: "routeSafe", pct: 0.12 }, { type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.08 }], hull: 820, price: 340000, sprite: "freighter" },
+    { id: "ghost_cathedral", name: "Ghost Cathedral",  cls: "main", rarity: "epic",      travelSpeed: 2.6, cargo: 22, effects: [{ type: "survey", pct: 0.20 }, { type: "routeSafe", pct: 0.12 }, { type: "speed", pct: 0.10 }, { type: "cargo", pct: 0.08 }], hull: 820, price: 340000, sprite: "freighter" },
+    { id: "magnate_spire",name: "Magnate Spire",       cls: "main", rarity: "epic",      travelSpeed: 2.4, cargo: 24, effects: [{ type: "firepower", pct: 0.10 }, { type: "industry", pct: 0.10 }, { type: "routeSafe", pct: 0.10 }, { type: "taxRelief", pct: 0.05 }], hull: 900, price: 320000, sprite: "leviathan" },
     // legendary — 5 effects
-    { id: "dreadnought",  name: "Baron Dreadnought",   cls: "main", rarity: "legendary", travelSpeed: 3.0, effects: [{ type: "all", pct: 0.10 }, { type: "industry", pct: 0.08 }, { type: "routeSafe", pct: 0.10 }, { type: "survey", pct: 0.10 }, { type: "taxRelief", pct: 0.06 }], hull: 1300, price: 650000, sprite: "leviathan" },
-    { id: "cosmocrat_seat", name: "Cosmocrat Seat",    cls: "main", rarity: "legendary", travelSpeed: 3.2, effects: [{ type: "all", pct: 0.08 }, { type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.08 }, { type: "routeSafe", pct: 0.12 }, { type: "survey", pct: 0.12 }], hull: 1400, price: 800000, sprite: "leviathan" },
+    { id: "dreadnought",  name: "Baron Dreadnought",   cls: "main", rarity: "legendary", travelSpeed: 3.0, cargo: 30, effects: [{ type: "all", pct: 0.10 }, { type: "industry", pct: 0.08 }, { type: "routeSafe", pct: 0.10 }, { type: "survey", pct: 0.10 }, { type: "taxRelief", pct: 0.06 }], hull: 1300, price: 650000, sprite: "leviathan" },
+    { id: "cosmocrat_seat", name: "Cosmocrat Seat",    cls: "main", rarity: "legendary", travelSpeed: 3.2, cargo: 32, effects: [{ type: "all", pct: 0.08 }, { type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.08 }, { type: "routeSafe", pct: 0.12 }, { type: "survey", pct: 0.12 }], hull: 1400, price: 800000, sprite: "leviathan" },
   ],
 };
 const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...SHIP_CATALOG.main];
@@ -248,7 +248,7 @@ const FLAGSHIP_EFFECTS = {
   hull:      { label: "Fleet hull" },
   armor:     { label: "Fleet armor" },
   shields:   { label: "Fleet shields" },
-  cargo:     { label: "Fleet cargo" },
+  cargo:     { label: "Hold / fleet cargo" },
   all:       { label: "All fleet stats" },
   industry:  { label: "Industry yield" },
   routeSafe: { label: "Safer charters" },
@@ -307,7 +307,7 @@ const BAZAARCFG = {
   contractExpiryMs: 8 * 60 * 1000,   // an open contract expires after this
   contractNpcTakeMs: 4 * 60 * 1000,  // ~when an NPC may grab an untaken job
   contractTakenShowMs: 2 * 60 * 1000,// "Contract taken" lingers this long
-  inventoryUpgradeStep: 10,          // +slots per upgrade
+  inventoryUpgradeStep: 10,          // +station-bay slots per upgrade (HAULING.md)
   inventoryUpgradeBase: 6000,        // first upgrade price (scales up)
   itemResaleMult: 0.55,              // instant "Sell now" payout = this × an item's value
   shipResaleMult: 0.5,               // sell a ship for this × its catalog price (40–60% band); gear adds its resale value
@@ -820,6 +820,26 @@ const MARKETCFG = {
 /* ---- SECTOR STOCK / SUPPLY ECONOMY (docs/STATIONS.md) ---------------------
    Finite per-sector commodity stock. Price = anchor × sectorMod × scarcity.
    tradeImpact is gone — buying depletes stock and scarcity moves the price.   */
+/* ---- HAULING / CARGO BLOCKS (docs/HAULING.md) -----------------------------
+   Commodity stock is stored in rarity-sized blocks; each block = 1 bay/hold slot.
+   Anchored under STOCKCFG.baseline so a block is a meaningful bite of a shelf. */
+const BLOCKCFG = {
+  byRarity: { common: 5000, uncommon: 2000, rare: 500, exotic: 100 },
+};
+const STATION_BAY_BASE = 50;         // base station-bay slots (Inventory Bay upgrades add more)
+const COURIERCFG = {
+  maxActive: 3,
+  speed: 0.8,                        // slower than any flagship travelSpeed
+  base: 200,
+  perSlot: 40,
+  perDist: 80,
+  valueRate: 0.01,
+  baseRisk: 0.04,
+  riskCap: 0.55,
+  routeSafeWeight: 0.5,
+  laneMultWeight: 0.5,
+};
+
 const STOCKCFG = {
   elasticity: 0.35,
   minMult: 0.70,
@@ -1349,6 +1369,7 @@ const PAGE_BG_PAGES = [
   { id: "hub", label: "Hub" },
   { id: "exchange", label: "Exchange" },
   { id: "fleet", label: "Fleet" },
+  { id: "assets", label: "Assets" },
   { id: "systems", label: "Star Systems" },
   { id: "bazaar", label: "Bazaar" },
   { id: "industries", label: "Industries" },
@@ -1516,6 +1537,9 @@ window.BLUEPRINTS = BLUEPRINTS;
 window.RECIPES = RECIPES;
 window.MARKETCFG = MARKETCFG;
 window.STOCKCFG = STOCKCFG;
+window.BLOCKCFG = BLOCKCFG;
+window.STATION_BAY_BASE = STATION_BAY_BASE;
+window.COURIERCFG = COURIERCFG;
 window.CONSUMPTION = CONSUMPTION;
 window.STATION_TIERS = STATION_TIERS;
 window.STATIONCFG = STATIONCFG;

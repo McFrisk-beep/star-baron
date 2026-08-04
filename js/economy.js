@@ -82,6 +82,10 @@ const Economy = {
       seq: s.seq,
       // Phase 4: roll back optimistic Stock.take/put on failed app_trade.
       stock: window.Stock ? JSON.parse(JSON.stringify(Stock.serialize())) : null,
+      // Hauling ledger (client-owned locations for the same positions total).
+      hold: JSON.parse(JSON.stringify(s.hold || { blocks: {}, gear: [] })),
+      stationInv: JSON.parse(JSON.stringify(s.stationInv || {})),
+      shipments: JSON.parse(JSON.stringify(s.shipments || [])),
     };
   },
   _restoreEconomy(snap) {
@@ -89,6 +93,9 @@ const Economy = {
     s.credits = snap.credits;
     s.positions = snap.positions;
     s.avgCost = snap.avgCost;
+    if (snap.hold) s.hold = snap.hold;
+    if (snap.stationInv) s.stationInv = snap.stationInv;
+    if (snap.shipments) s.shipments = snap.shipments;
     s.currentSystem = snap.currentSystem;
     s.travel = snap.travel;
     s.unlockedSystems = snap.unlockedSystems;
@@ -117,6 +124,7 @@ const Economy = {
     if (r.credits != null) s.credits = r.credits;
     if (r.positions) s.positions = r.positions;
     if (r.avgCost) s.avgCost = r.avgCost;
+    if (r.positions && window.Assets) Assets.reconcileFromPositions(s.currentSystem);
     if (r.stats) {
       if (r.stats.trades != null) s.stats.trades = r.stats.trades;
       if (r.stats.biggestTrade != null) s.stats.biggestTrade = r.stats.biggestTrade;
@@ -227,8 +235,13 @@ const Economy = {
     if (st.ships) s.ships = st.ships;
     if (st.mainShip) s.mainShip = st.mainShip;
     if (st.missions) s.missions = st.missions;
+    // Preserve soft/local blackboxes the server ledger doesn't know about yet
+    // (bazaar buys are client-minted; app_commit forces server items).
+    const softSnap = st.items ? { items: s.items, activeBoosts: s.activeBoosts, bazaarBought: s.bazaarBought } : null;
     if (st.items) s.items = st.items;
     if (st.inventory) s.inventory = st.inventory;
+    if (softSnap && window.Store && Store.mergeSoftItems)
+      Store.mergeSoftItems(s, softSnap);
     if (st.reports) s.reports = st.reports;
     if (st.pendingContracts) s.pendingContracts = st.pendingContracts;
     if (st.bazaarBought) s.bazaarBought = st.bazaarBought;
@@ -238,6 +251,9 @@ const Economy = {
     if (st.credits != null) s.credits = st.credits;
     if (st.positions) s.positions = st.positions;
     if (st.avgCost) s.avgCost = st.avgCost;
+    // Server owns the positions total; push any delta into the local bay so the
+    // hauling ledger never disagrees (HAULING.md §4 invariant).
+    if (st.positions && window.Assets) Assets.reconcileFromPositions(s.currentSystem);
     if (st.prestige) s.prestige = st.prestige;
     if (st.routes) s.routes = st.routes;
     if (st.industries) s.industries = st.industries;
@@ -504,7 +520,9 @@ const Economy = {
     if (c && c.craftOnly) return 0; // crafting ingredient — no Exchange bid
     const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
-    const held = this.s().positions[commId] || 0;
+    const s = this.s();
+    // Bay-only: goods in the hold or other stations aren't sellable here.
+    const held = window.Assets ? Assets.bayQty(s.currentSystem, commId) : (s.positions[commId] || 0);
     if (held <= 0 || this.sellPrice(commId) <= 0) return 0;
     return Math.min(held, this.sellCapQty(commId));
   },
@@ -569,10 +587,16 @@ const Economy = {
       if (window.Stock) Stock.putHere(s.currentSystem, commId, qty);
       return { ok: false, msg: "Not enough credits." };
     }
+    // Capacity gate: Exchange deposits into the docked station bay only.
+    if (window.Assets && !Assets.canFit(Assets.bay(s.currentSystem), "block", commId, qty, Assets.bayCapacity(s.currentSystem))) {
+      if (window.Stock) Stock.putHere(s.currentSystem, commId, qty);
+      return { ok: false, msg: "Station bay is full — haul or courier some goods out first." };
+    }
     s.credits -= cost;
     const held = s.positions[commId] || 0, prevCost = s.avgCost[commId] || 0;
     s.positions[commId] = held + qty;
     s.avgCost[commId] = (held * prevCost + cost) / (held + qty);
+    if (window.Assets) Assets.parkBlocks(s.currentSystem, commId, qty);
     this._afterTrade(commId, "buy", qty, cost, price);
     return Object.assign({ ok: true, qty, cost, price, capped }, this._edictReceipt(commId, cat));
   },
@@ -582,9 +606,10 @@ const Economy = {
     if (s.travel) return { ok: false, msg: "Can't trade in transit." };
     const c = COMMODITIES.find(x => x.id === commId);
     if (c && c.craftOnly) return { ok: false, msg: "Crafting stock — the Exchange won't bid on it." };
-    const held = s.positions[commId] || 0;
-    qty = Math.min(Math.floor(qty), held);
-    if (qty <= 0) return { ok: false, msg: "Nothing to sell." };
+    // Exchange sells from the docked bay only (HAULING.md §1).
+    const bayHeld = window.Assets ? Assets.bayQty(s.currentSystem, commId) : (s.positions[commId] || 0);
+    qty = Math.min(Math.floor(qty), bayHeld);
+    if (qty <= 0) return { ok: false, msg: "Nothing in this station's bay to sell." };
     const cat = (c || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return { ok: false, msg: this.banMsg(commId) };
     const capQ = this.sellCapQty(commId);
@@ -597,8 +622,9 @@ const Economy = {
     const proceeds = price * qty - tax;
     const realized = grossRealized - tax;
     s.credits += proceeds;
-    s.positions[commId] = held - qty;
+    s.positions[commId] = Math.max(0, (s.positions[commId] || 0) - qty);
     if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
+    if (window.Assets) Assets.unparkBlocks(s.currentSystem, commId, qty);
     if (window.Stock) Stock.putHere(s.currentSystem, commId, qty);
     this._afterTrade(commId, "sell", qty, proceeds, price, realized);
     return Object.assign({ ok: true, qty, proceeds, price, realized, tax, taxLines, capped }, this._edictReceipt(commId, cat));
@@ -749,19 +775,9 @@ const Economy = {
     return null;
   },
 
-  // Customs scan on arrival: if you're carrying any illicit goods, roll a
-  // seizure and confiscate a slice of one stack. Odds rise with Senate border
-  // edicts and at low-tolerance systems, and fall with Syndicate standing.
-  // Station Customs House / Free Port override scrutiny (docs/STATIONS.md §12).
-  // Returns the seizure event (also emitted on the bus) or null. Reused live + offline.
-  customsScan(sysId) {
-    const s = this.s();
-    const illicit = COMMODITIES.filter(c => c.cat === "illicit" && (s.positions[c.id] || 0) > 0);
-    if (!illicit.length) return null;
-    // Allied / owner walk through a Customs House unscanned.
-    if (window.Stations && Stations.customsExempt(sysId)) return null;
-    const comm = Util.pick(illicit);
-    const held = s.positions[comm.id] || 0;
+  // Shared customs odds (flagship arrival + courier landing). HAULING.md §9.
+  customsChance(sysId) {
+    if (window.Stations && Stations.customsExempt(sysId)) return 0;
     const sys = (window.Galaxy && Galaxy.get(sysId)) || SYSTEMS.find(x => x.id === sysId);
     const tol = (sys && sys.mods && sys.mods.illicit) || 1;
     const baseline = Util.clamp(2 - tol, CUSTOMS.scrutinyClamp[0], CUSTOMS.scrutinyClamp[1]);
@@ -771,18 +787,36 @@ const Economy = {
     if (st && (st.modules.free_port | 0))
       border *= (STATIONCFG.freePortBorderMult != null ? STATIONCFG.freePortBorderMult : 0.4);
     const shield = Math.max(0, Rep.get("syndicate")) / 100 * CUSTOMS.repShield;
-    // Station dial/Free Port = absolute chance input; capitals keep × baseline.
     let chance = stOverride != null
       ? Util.clamp(stOverride + border * 0.5 - shield, 0, CUSTOMS.cap)
       : Util.clamp((CUSTOMS.base + border) * baseline - shield, 0, CUSTOMS.cap);
     if (window.Boosts) chance = Util.clamp(chance * (1 + Boosts.mag("customsSeize")), 0, CUSTOMS.cap);
-    if (Math.random() >= chance) return null;
+    return chance;
+  },
+
+  // Customs scan on arrival: scans the FLAGSHIP HOLD only (bay stock is safe).
+  // Station Customs House / Free Port override scrutiny (docs/STATIONS.md §12).
+  customsScan(sysId) {
+    const s = this.s();
+    // Hold-only: park illicit in a Free Port bay and carry it only when you mean to.
+    const illicit = COMMODITIES.filter(c => c.cat === "illicit"
+      && (window.Assets ? Assets.holdQty(c.id) : (s.positions[c.id] || 0)) > 0);
+    if (!illicit.length) return null;
+    if (window.Stations && Stations.customsExempt(sysId)) return null;
+    const chance = this.customsChance(sysId);
+    if (chance <= 0 || Math.random() >= chance) return null;
+    const comm = Util.pick(illicit);
+    const held = window.Assets ? Assets.holdQty(comm.id) : (s.positions[comm.id] || 0);
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
     const value = Math.round(qty * Market.systemPrice(comm.id, sysId));
-    s.positions[comm.id] = held - qty;
-    if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
+    if (window.Assets) {
+      Assets.withdraw("hold", "block", comm.id, qty);
+    } else {
+      s.positions[comm.id] = held - qty;
+      if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
+    }
     let impoundedTo = null, claimId = null;
-    // Customs House: cargo enters station impound (not destroyed).
+    const st = window.Stations && Stations.get(sysId);
     if (st && (st.modules.customs_house | 0) && st.status === "owned" && window.Stations) {
       const r = Stations.impoundCargo(sysId, comm.id, qty, value, Stations.playerId());
       if (r && r.ok) { impoundedTo = sysId; claimId = r.claimId; }
@@ -804,11 +838,25 @@ const Economy = {
   netWorth() {
     const s = this.s();
     let nw = s.credits;
-    // Value holdings at pre-scarcity spot so a regional shortage can't inflate
-    // peak-net-worth into an early tier unlock via inventory mark-to-market.
-    for (const c of COMMODITIES) { const q = s.positions[c.id] || 0; if (q) nw += q * Market.spot(c.id, s.currentSystem); }
+    // Location-aware: each pile values at its own system's spot (HAULING.md §10).
+    if (window.Assets) {
+      nw += Assets.bagValue(Assets.hold(), s.currentSystem);
+      for (const [sysId, bag] of Object.entries(s.stationInv || {}))
+        nw += Assets.bagValue(bag, sysId);
+      for (const sh of (s.shipments || [])) {
+        if (sh.resolved) continue;
+        nw += Assets.bagValue({ blocks: sh.blocks || {}, gear: sh.gear || [] }, sh.to || s.currentSystem);
+      }
+      // Equipped / listed / stray gear isn't in a bay — still counts.
+      const parked = new Set(Assets.hold().gear);
+      for (const bag of Object.values(s.stationInv || {})) for (const u of (bag.gear || [])) parked.add(u);
+      for (const sh of (s.shipments || [])) if (!sh.resolved) for (const u of (sh.gear || [])) parked.add(u);
+      for (const it of Object.values(s.items || {})) if (it && !parked.has(it.uid)) nw += it.value || 0;
+    } else {
+      for (const c of COMMODITIES) { const q = s.positions[c.id] || 0; if (q) nw += q * Market.spot(c.id, s.currentSystem); }
+      nw += Bazaar.itemsValue();
+    }
     nw += Fleet.fleetValue();
-    nw += Bazaar.itemsValue();
     // Escrowed auction bids still count (docs/STATIONS.md §5.2).
     if (window.Stations) nw += Stations.escrowForNetWorth();
     return nw;

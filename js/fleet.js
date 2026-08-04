@@ -252,7 +252,15 @@ const Fleet = {
     if (sh.status !== "idle") return { ok: false, msg: "Ship is busy." };
     const slots = this.shipDef(sh.type).slots || 2;
     if ((sh.accessories || []).length >= slots) return { ok: false, msg: "No free slots." };
-    // remove from any listing / other ship first (caller ensures it's in inventory)
+    // Pull gear out of the hold/bay so slots free up (HAULING.md).
+    if (window.Assets) {
+      const loc = Assets.gearLocation(itemUid);
+      if (!loc) return { ok: false, msg: "Item isn't in your hold or this bay." };
+      const s = this.s();
+      if (loc !== "hold" && (s.travel || loc !== s.currentSystem))
+        return { ok: false, msg: "Dock where the item is stored to equip it." };
+      Assets.withdraw(loc === "hold" ? "hold" : loc, "gear", itemUid);
+    }
     sh.accessories = sh.accessories || [];
     sh.accessories.push(itemUid);
     return { ok: true };
@@ -268,6 +276,8 @@ const Fleet = {
   _unequipLocal(shipUid, itemUid) {
     const sh = this.ship(shipUid); if (!sh) return { ok: false };
     sh.accessories = (sh.accessories || []).filter(u => u !== itemUid);
+    // Park back into the docked bay (or hold if traveling).
+    if (window.Assets) Assets.parkGear(itemUid, this.s().currentSystem);
     return { ok: true };
   },
   unequip(shipUid, itemUid) {

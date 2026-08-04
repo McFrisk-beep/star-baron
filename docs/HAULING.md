@@ -6,7 +6,9 @@ a bay of your stuff; the Galactic Exchange only trades what's physically in the
 bay you're standing in; and anything you can't carry yourself moves by **Courier**
 — for a fee, over real time, with real risk.
 
-Status: **design, not built.** This doc is the contract for the implementation.
+Status: **built (v1).** Client ledger + Exchange bind + transfer UI + Assets tab +
+Courier. Station bays ride in the save blob (§7 fallback); `public.station_inv`
+is still the upgrade path if blob size bites.
 
 ---
 

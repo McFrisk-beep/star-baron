@@ -15,7 +15,13 @@
 const Orders = {
   s() { return window.Game.state; },
   list() { return this.s().orders || (this.s().orders = []); },
-  add(o) { o.id = "o" + (++this.s().seq); this.list().push(o); return o; },
+  add(o) {
+    o.id = "o" + (++this.s().seq);
+    // Bind to the system where the order was placed (HAULING.md §5).
+    if (!o.systemId) o.systemId = this.s().currentSystem;
+    this.list().push(o);
+    return o;
+  },
   remove(id) { this.s().orders = this.list().filter(o => o.id !== id); },
 
   // The price the player would transact at right now (their docked system).
@@ -23,6 +29,7 @@ const Orders = {
 
   // Check every order against current prices. Fills/fires the ones that crossed
   // and returns events for the UI to surface. No trading happens in transit.
+  // Buy/sell orders only fill at the system they were placed in.
   async process() {
     const s = this.s();
     if (s.travel || !s.orders || !s.orders.length) return [];
@@ -30,6 +37,8 @@ const Orders = {
     for (const o of s.orders) {
       const comm = COMMODITIES.find(c => c.id === o.commId);
       if (!comm) continue;                                   // commodity left config — drop
+      const bound = o.systemId || s.currentSystem;
+      if ((o.kind === "buy" || o.kind === "sell") && bound !== s.currentSystem) { keep.push(o); continue; }
       const p = this.priceNow(o.commId);
       if (o.kind === "alert") {
         if (o.side === "below" ? p <= o.price : p >= o.price) events.push({ type: "alert", comm, side: o.side, price: p });
@@ -42,7 +51,8 @@ const Orders = {
         }
         if (o.qty > 0) keep.push(o);                         // couldn't afford the lot yet — keep the rest
       } else if (o.kind === "sell" && p >= o.price) {
-        const q = Math.min(o.qty, s.positions[o.commId] || 0);
+        const bayQ = window.Assets ? Assets.bayQty(s.currentSystem, o.commId) : (s.positions[o.commId] || 0);
+        const q = Math.min(o.qty, bayQ);
         if (q > 0) {
           const r = await Economy.sell(o.commId, q);
           if (r && r.ok) { events.push({ type: "filled", side: "sell", comm, qty: r.qty, price: r.price, realized: r.realized }); o.qty -= r.qty; }

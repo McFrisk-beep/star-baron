@@ -59,6 +59,7 @@
             <button class="tab" data-page="comms"><span class="tab-ico" aria-hidden="true">📡</span><span class="tab-label" data-i18n="nav.comms">Comms</span><span class="tab-badge hidden" id="tab-comms-badge"></span></button>
             <button class="tab active" data-page="exchange"><span class="tab-ico" aria-hidden="true">📈</span><span class="tab-label" data-i18n="nav.exchange">Exchange</span></button>
           <button class="tab" data-page="fleet"><span class="tab-ico" aria-hidden="true">🚀</span><span class="tab-label" data-i18n="nav.fleet">Fleet</span><span class="tab-badge hidden" id="tab-fleet-badge"></span></button>
+          <button class="tab" data-page="assets"><span class="tab-ico" aria-hidden="true">📦</span><span class="tab-label" data-i18n="nav.assets">Assets</span></button>
           <button class="tab" data-page="starmap"><span class="tab-ico" aria-hidden="true">🗺️</span><span class="tab-label" data-i18n="nav.starmap">Star Map</span></button>
           <button class="tab" data-page="systems"><span class="tab-ico" aria-hidden="true">🪐</span><span class="tab-label" data-i18n="nav.systems">Star Systems</span></button>
           <button class="tab" data-page="bazaar"><span class="tab-ico" aria-hidden="true">🛒</span><span class="tab-label" data-i18n="nav.bazaar">Bazaar</span></button>
@@ -160,8 +161,17 @@
         <div class="fleet-pane hidden" data-fleet-pane="inventory">
           <section class="panel">
             <h2><span data-i18n="fleet.inventory">Inventory</span> <small id="inv-count"></small></h2>
+            <p class="muted-note">Move goods between your flagship hold and the station bay. The Exchange only trades what's in the bay you're docked at.</p>
             <div id="fleet-inventory"></div>
           </section>
+        </div>
+      </section>
+
+      <!-- ASSETS — station bays + courier (docs/HAULING.md §8–9) -->
+      <section class="page hidden" id="page-assets">
+        <div class="panel">
+          <h2><span data-i18n="assets.title">Assets</span> <small id="assets-sub"></small></h2>
+          <div id="assets-body"></div>
         </div>
       </section>
 
@@ -712,6 +722,7 @@
   <script src="js/stations.js"></script>
   <script src="js/items.js"></script>
   <script src="js/fleet.js"></script>
+  <script src="js/assets.js"></script>
   <script src="js/economy.js"></script>
   <script src="js/reputation.js"></script>
   <script src="js/rivals.js"></script>

@@ -183,12 +183,33 @@ const Workshop = {
       for (let i = 0; i < need; i++) if (Math.random() < chance) saved++;
       pay = need - saved;
     }
-    s.positions[commId] = (s.positions[commId] || 0) - pay;
-    if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
+    // Prefer docked bay, then hold (HAULING.md §5 — Workshop draws local stock).
+    let left = pay;
+    if (window.Assets && !s.travel) {
+      const fromBay = Math.min(left, Assets.bayQty(s.currentSystem, commId));
+      if (fromBay > 0) { Assets.withdraw(s.currentSystem, "block", commId, fromBay); left -= fromBay; }
+    }
+    if (window.Assets && left > 0) {
+      const fromHold = Math.min(left, Assets.holdQty(commId));
+      if (fromHold > 0) { Assets.withdraw("hold", "block", commId, fromHold); left -= fromHold; }
+    }
+    if (left > 0) {
+      // Fallback for pre-hauling / remote stock still on positions.
+      s.positions[commId] = Math.max(0, (s.positions[commId] || 0) - left);
+      if (s.positions[commId] <= 0) { s.positions[commId] = 0; s.avgCost[commId] = 0; }
+      if (window.Assets) Assets.reconcileFromPositions(s.currentSystem);
+    }
     return pay;
   },
 
-  haveQty(commId) { return this.s().positions[commId] || 0; },
+  // Crafting can pull from hold + docked bay (not stranded remote stock).
+  haveQty(commId) {
+    if (!window.Assets) return this.s().positions[commId] || 0;
+    const s = this.s();
+    let n = Assets.holdQty(commId);
+    if (!s.travel) n += Assets.bayQty(s.currentSystem, commId);
+    return n;
+  },
 
   // Flavor options the player can afford right now (senate cost factor applied).
   affordableFlavors(recipe) {
@@ -287,10 +308,12 @@ const Workshop = {
     if (recipe.outputType === "gear" && window.Items) {
       const it = Items.gen({ kind: out.kind, rarity: out.rarity });
       s.items[it.uid] = it;
+      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
       label = it.name;
     } else if (recipe.outputType === "blackbox" && window.Items) {
       const it = Items.genBlackbox(out.effectId);
       s.items[it.uid] = it;
+      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
       label = it.name;
     } else if (recipe.outputType === "extractor" && window.Extractors) {
       let scope = out.scope || "all";
