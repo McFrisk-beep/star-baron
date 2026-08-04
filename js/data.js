@@ -931,21 +931,82 @@ const STATIONCFG = {
 };
 
 // Module catalogue. `conflicts` = mutual exclusion; `requires` = other module min level.
+// `blurb` = one-line Stations tab teaser; `detail` = expand-on-click copy.
 const STATION_MODULES = {
-  production_hub: { name: "Production Hub", max: 5, power: [4, 6, 8, 10, 12], cost: [25000, 55000, 110000, 200000, 350000] },
-  refinery:       { name: "Refinery",       max: 1, power: [5], requires: { production_hub: 2 }, cost: [80000] },
-  exchange_hall:  { name: "Exchange Hall",  max: 1, power: [4], cost: [60000] },
-  workshop_annex: { name: "Workshop Annex", max: 3, power: [3, 5, 7], cost: [40000, 90000, 160000] },
-  dry_dock:       { name: "Dry Dock",       max: 1, power: [3], cost: [45000] },
-  charter_office: { name: "Charter Office", max: 1, power: [3], cost: [40000] },
-  contract_office:{ name: "Contract Office",max: 1, power: [4], cost: [70000] },
-  survey_relay:   { name: "Survey Relay",   max: 1, power: [4], cost: [55000] },
-  warehouse:      { name: "Warehouse",      max: 2, power: [2, 3], cost: [30000, 50000] },
-  customs_house:  { name: "Customs House",  max: 1, power: [3], conflicts: ["free_port", "black_market"], cost: [65000] },
-  free_port:      { name: "Free Port",      max: 1, power: [3], conflicts: ["customs_house"], cost: [65000] },
-  black_market:   { name: "Black Market",   max: 1, power: [5], conflicts: ["customs_house"], requires: { exchange_hall: 1 }, cost: [90000] },
-  lane_buoy:      { name: "Lane Buoy",      max: 1, power: [2], cost: [35000] },
-  reactor:        { name: "Reactor",        max: 5, power: [0, 0, 0, 0, 0], cost: [40000, 90000, 160000, 280000, 450000] },
+  production_hub: {
+    name: "Production Hub", max: 5, power: [4, 6, 8, 10, 12],
+    cost: [25000, 55000, 110000, 200000, 350000],
+    blurb: "Produces a commodity into your station hold via staffed bays.",
+    detail: "Assign a system commodity, then occupy bays with extractors (yours) or leave them open for lessees. Owner yield and lease tax both land in the hold — haul deliveries to the sector capital to sell and feed regional stock.",
+  },
+  refinery: {
+    name: "Refinery", max: 1, power: [5], requires: { production_hub: 2 }, cost: [80000],
+    blurb: "Upgrades hub output to a higher-tier good in the same category.",
+    detail: "Requires Production Hub II+. Converts raw Production Hub yield into a refined commodity so each haul carries more value. No further upgrades.",
+  },
+  exchange_hall: {
+    name: "Exchange Hall", max: 1, power: [4], cost: [60000],
+    blurb: "Player marketplace for crafted goods — you take a sale tariff.",
+    detail: "Docked players list gear, ships, extractors, components, blackboxes, and blueprints (not commodities). You set a sale tariff (0–15%). Unsold listings expire and return to the seller.",
+  },
+  workshop_annex: {
+    name: "Workshop Annex", max: 3, power: [3, 5, 7], cost: [40000, 90000, 160000],
+    blurb: "Faster, cheaper crafting while using this station's workshop.",
+    detail: "Applies craft-time and material discounts for work done at this station. Higher levels cut both further at rising power and upkeep. Material quantities always round up.",
+  },
+  dry_dock: {
+    name: "Dry Dock", max: 1, power: [3], cost: [45000],
+    blurb: "Repairs visitor hulls; you take a cut of the fee.",
+    detail: "Opens repair services for docked fleets. The station earns a share of repair bills. No further upgrades.",
+  },
+  charter_office: {
+    name: "Charter Office", max: 1, power: [3], cost: [40000],
+    blurb: "Dispatch trade charters from this station.",
+    detail: "Lets you launch automated charters from here instead of only from capitals — useful when your fleet is already docked at the outpost. No further upgrades.",
+  },
+  contract_office: {
+    name: "Contract Office", max: 1, power: [4], cost: [70000],
+    blurb: "Post haul bounties so others move your hold goods to the capital.",
+    detail: "Escrow credits and post public haul jobs (qty × rate). Contracts appear on the Bazaar board; you cannot fly your own. A small posting fee goes to the controlling faction. Reliability (filled vs expired) shows on the map.",
+  },
+  survey_relay: {
+    name: "Survey Relay", max: 1, power: [4], cost: [55000],
+    blurb: "Shortens expedition cooldown and transit in the area.",
+    detail: "A local survey net: expeditions near this system move faster and cool down sooner. No further upgrades.",
+  },
+  warehouse: {
+    name: "Warehouse", max: 2, power: [2, 3], cost: [30000, 50000],
+    blurb: "Rentable storage slots for docked players.",
+    detail: "Extra hold space others can rent while docked — makes the station a logistics stop. Level II expands capacity at higher power draw.",
+  },
+  customs_house: {
+    name: "Customs House", max: 1, power: [3],
+    conflicts: ["free_port", "black_market"], cost: [65000],
+    blurb: "Public scrutiny dial, impound & ransom — Clean flag.",
+    detail: "Needs Neutral+ with a lawful faction. Set scrutiny (public on the map); Allied/Partner/you skip scans. Seized goods go to impound — sell at capital or ransom. Earns an enforcement subsidy; conflicts with Free Port and Black Market.",
+  },
+  free_port: {
+    name: "Free Port", max: 1, power: [3], conflicts: ["customs_house"], cost: [65000],
+    blurb: "Low-scrutiny haven; illicit traffic concentrates here.",
+    detail: "Suppresses local scrutiny and softens border edicts. Syndicate standing climbs; lawful factions sour. Conflicts with Customs House. Scrutiny stays public on the map.",
+  },
+  black_market: {
+    name: "Black Market", max: 1, power: [5],
+    conflicts: ["customs_house"], requires: { exchange_hall: 1 }, cost: [90000],
+    blurb: "Lets stolen/illicit crafted goods trade in the Exchange Hall.",
+    detail: "Requires Exchange Hall and Syndicate ≥ Friendly. Unlocks blackbox and illicit crafted listings in the Hall. Conflicts with Customs House. No further upgrades.",
+  },
+  lane_buoy: {
+    name: "Lane Buoy", max: 1, power: [2], cost: [35000],
+    blurb: "Cuts travel time to this system for everyone.",
+    detail: "Marks a faster approach lane — inbound travel to this system is shorter for all traffic. No further upgrades.",
+  },
+  reactor: {
+    name: "Reactor", max: 5, power: [0, 0, 0, 0, 0],
+    cost: [40000, 90000, 160000, 280000, 450000],
+    blurb: "Adds power budget so you can run more modules.",
+    detail: "The only module that increases power. Each level adds more watts at steeply rising upkeep — a bet that the modules it enables will out-earn the burn.",
+  },
 };
 
 /* ---- BATTLE DAMAGE --------------------------------------------------------

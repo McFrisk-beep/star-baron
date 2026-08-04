@@ -2108,6 +2108,41 @@ const UI = {
   },
 
   // ===== STATIONS ==========================================================
+  // Next-upgrade line for the module detail panel (lvl = current installed, 0 = none).
+  _stationModNext(id, lvl) {
+    const def = STATION_MODULES[id];
+    if (!def) return "";
+    if (lvl >= def.max) return "Max level reached.";
+    const next = lvl + 1;
+    const rom = "I".repeat(next);
+    if (id === "production_hub") {
+      const row = STATIONCFG.prodHub[next - 1], prev = lvl ? STATIONCFG.prodHub[lvl - 1] : null;
+      const core = `${row.bays} bays · ${row.yield}/cycle yield · ${row.power}pwr · ${Util.credits(row.upkeep)}/cycle upkeep`;
+      return prev
+        ? `Upgrade to ${rom}: ${core} (now ${prev.bays} bays · ${prev.yield}/cycle).`
+        : `Install ${rom}: ${core}.`;
+    }
+    if (id === "workshop_annex") {
+      const row = STATIONCFG.workshop[next - 1], prev = lvl ? STATIONCFG.workshop[lvl - 1] : null;
+      const core = `−${Math.round(row.time * 100)}% craft time · −${Math.round(row.mat * 100)}% materials · ${row.power}pwr · ${Util.credits(row.upkeep)}/cycle`;
+      return prev
+        ? `Upgrade to ${rom}: ${core} (now −${Math.round(prev.time * 100)}% / −${Math.round(prev.mat * 100)}%).`
+        : `Install ${rom}: ${core}.`;
+    }
+    if (id === "reactor") {
+      const row = STATIONCFG.reactor[next - 1], prev = lvl ? STATIONCFG.reactor[lvl - 1] : null;
+      return prev
+        ? `Upgrade to ${rom}: +${row.power} power · ${Util.credits(row.upkeep)}/cycle upkeep (now +${prev.power} / ${Util.credits(prev.upkeep)}).`
+        : `Install ${rom}: +${row.power} power · ${Util.credits(row.upkeep)}/cycle upkeep.`;
+    }
+    if (id === "warehouse") {
+      return next === 1
+        ? "Install I: rentable storage for docked players (2pwr)."
+        : "Upgrade to II: expanded warehouse capacity (3pwr).";
+    }
+    return lvl === 0 ? `Install ${rom} to enable.` : "No further upgrades.";
+  },
+
   renderStations() {
     const body = this.refs.stationsBody, tabs = this.refs.stationsTabs;
     if (!body || !window.Stations) return;
@@ -2128,7 +2163,18 @@ const UI = {
         this.stationsTab = b.dataset.st; this.renderStations();
       };
     }
+    // Preserve in-progress form drafts + open module details across tick re-renders
+    // — but only when re-rendering the same station tab, else stale drafts leak in.
+    const sameTab = body.dataset.st === this.stationsTab;
+    const draftProd = sameTab ? body.querySelector("#st-prod")?.value : undefined;
+    const draftLease = sameTab ? body.querySelector("#st-lease")?.value : undefined;
+    const draftScrutiny = sameTab ? body.querySelector("#st-scrutiny")?.value : undefined;
+    const openMods = sameTab
+      ? new Set([...body.querySelectorAll("details.st-mod[open]")].map(d => d.dataset.mod).filter(Boolean))
+      : new Set();
+
     const st = Stations.get(this.stationsTab); if (!st) return;
+    body.dataset.st = st.systemId;
     const sys = Galaxy.get(st.systemId);
     const sent = (window.Stock && Stock.sentiment[st.sectorId]) ?? STATIONCFG.sentimentStart;
     const free = Stations.powerFree(st), budget = Stations.powerBudget(st), used = Stations.powerUsed(st);
@@ -2150,12 +2196,38 @@ const UI = {
         : "";
       const removeBtn = lvl > 0
         ? `<button class="btn btn-mini btn-warn" data-st-uninstall="${id}">Uninstall</button>` : "";
-      return `<tr><td>${def.name}</td><td class="num">${lvlTxt}</td><td class="num">${id === "reactor" ? "+" + ((STATIONCFG.reactor[lvl - 1] || {}).power || 0) : (def.power[Math.max(0, lvl - 1)] || def.power[0] || 0)}pwr</td>
+      const pwr = id === "reactor"
+        ? "+" + ((STATIONCFG.reactor[lvl - 1] || {}).power || 0)
+        : (def.power[Math.max(0, lvl - 1)] || def.power[0] || 0);
+      const reqBits = def.requires
+        ? Object.entries(def.requires).map(([r, min]) =>
+          `${STATION_MODULES[r]?.name || r} ${"I".repeat(min)}`).join(", ")
+        : "";
+      const conflictBits = (def.conflicts || []).map(c => STATION_MODULES[c]?.name || c).join(", ");
+      const nextLine = this._stationModNext(id, lvl);
+      const openAttr = openMods.has(id) ? " open" : "";
+      return `<tr><td>
+        <details class="st-mod" data-mod="${id}"${openAttr}>
+          <summary>
+            <span class="st-mod-title">${def.name}</span>
+            <span class="st-mod-blurb">${def.blurb || ""}</span>
+            <span class="st-mod-more tip-dim">Click for details</span>
+          </summary>
+          <div class="st-mod-detail">
+            <p>${def.detail || ""}</p>
+            ${reqBits ? `<p class="tip-dim">Requires ${reqBits}.</p>` : ""}
+            ${conflictBits ? `<p class="tip-dim">Conflicts with ${conflictBits}.</p>` : ""}
+            <p class="st-mod-next"><b>Next:</b> ${nextLine}</p>
+          </div>
+        </details>
+      </td><td class="num">${lvlTxt}</td><td class="num">${pwr}pwr</td>
         <td class="actions">${installBtn} ${removeBtn}</td></tr>`;
     }).join("");
 
+    const selectedProd = draftProd != null ? draftProd : (st.prodComm || "");
     const prodOpts = Stations.produceable(st.systemId).map(c =>
-      `<option value="${c.id}" ${st.prodComm === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+      `<option value="${c.id}" ${selectedProd === c.id ? "selected" : ""}>${c.name}</option>`).join("");
+    const leaseVal = draftLease != null ? draftLease : ((st.leaseTaxBps || 0) / 100).toFixed(0);
 
     Stations.syncBays(st);
     const freeEx = (window.Extractors ? Extractors.unequipped() : []).filter(ex =>
@@ -2203,7 +2275,7 @@ const UI = {
           <p class="muted-note">Owner bays pay into the station hold. Lessees keep their share and pay your lease tax into the hold. Haul deliveries to the sector capital.</p>
           <label>Commodity <select id="st-prod">${prodOpts || "<option value=''>—</option>"}</select></label>
           <button class="btn btn-go" id="st-set-prod" ${(st.modules.production_hub | 0) ? "" : "disabled"}>Assign</button>
-          <label>Lease tax % <input type="number" id="st-lease" min="0" max="40" value="${((st.leaseTaxBps || 0) / 100).toFixed(0)}"></label>
+          <label>Lease tax % <input type="number" id="st-lease" min="0" max="40" value="${leaseVal}"></label>
           <button class="btn btn-mini" id="st-set-lease">Set</button>
           <div class="table-wrap" style="margin-top:10px"><table class="market st-bays"><thead><tr><th>Bay</th><th>Occupant</th><th class="num">Yield</th><th></th></tr></thead>
           <tbody>${bayRows}</tbody></table></div>
@@ -2218,7 +2290,7 @@ const UI = {
       </div>
       ${this._renderHallPanel(st)}
       ${this._renderContractOfficePanel(st)}
-      ${this._renderCustomsPanel(st)}`;
+      ${this._renderCustomsPanel(st, draftScrutiny)}`;
 
     body.querySelector("#st-relinquish")?.addEventListener("click", () => {
       const holdV = Stations.holdValue(st);
@@ -2297,7 +2369,7 @@ const UI = {
     this._wireCustomsPanel(body, st);
   },
 
-  _renderCustomsPanel(st) {
+  _renderCustomsPanel(st, draftScrutiny) {
     const hasCustoms = !!(st.modules.customs_house | 0);
     const hasFree = !!(st.modules.free_port | 0);
     if (!hasCustoms && !hasFree) {
@@ -2328,7 +2400,7 @@ const UI = {
     return `<div class="panel st-customs" style="margin-top:14px">
       <h3>Customs House <small>Clean · scrutiny ${st.scrutiny | 0}%</small></h3>
       <p class="muted-note">Public seize chance shown on the map before anyone undocks. Allied / Partner / you are exempt.</p>
-      <label>Scrutiny % <input type="number" id="st-scrutiny" min="0" max="85" value="${st.scrutiny | 0}"></label>
+      <label>Scrutiny % <input type="number" id="st-scrutiny" min="0" max="85" value="${draftScrutiny != null ? draftScrutiny : (st.scrutiny | 0)}"></label>
       <button class="btn btn-mini" id="st-set-scrutiny">Set</button>
       <div class="st-hall-list" style="margin-top:10px">
         <input type="text" id="st-role-pid" placeholder="player id" aria-label="player id">
@@ -3453,7 +3525,13 @@ const UI = {
     this.updateClock();
     if (this.page === "hub") this.renderBoostBar();
     if (this.page === "workshop") this.renderWorkshop();
-    if (this.page === "stations") this.renderStations();
+    // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.
+    if (this.page === "stations") {
+      const body = this.refs.stationsBody;
+      const a = document.activeElement;
+      const holding = a && body && body.contains(a) && /^(SELECT|INPUT|TEXTAREA)$/.test(a.tagName);
+      if (!holding) this.renderStations();
+    }
     if (this.page === "fleet") { this.renderMissions(); this.renderCharters(); }
     if (this.commsTab === "pending" && this.page === "comms") this.renderPendingContracts();
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
