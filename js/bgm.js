@@ -3,7 +3,8 @@
    Starts after the first user gesture (browser autoplay policy). Volume/mute
    come from Game.state.settings.                                                 */
 
-const BGM_PLAYLIST = [];   // [{ url, name }] — overlaid by Content at boot
+// [{ url, name }] — starts from the git-committed default track, overlaid by Content at boot
+const BGM_PLAYLIST = (typeof BGM_PLAYLIST_LOCAL !== "undefined") ? BGM_PLAYLIST_LOCAL.slice() : [];
 
 const Bgm = {
   el: null,

@@ -852,8 +852,9 @@ const StarMap = {
     }));
     const station = { angle: 0, orbit: 0.16, speed: 0.25, img: this.img(ASSET.station(sys.race)) };
     const starImg = this.img(ASSET.star(sys.star));
-    // Admin-uploaded per-system space background takes precedence over the sector nebula.
-    const bgUrl = (window.ASSET_OVERRIDES && ASSET_OVERRIDES[`spacebg:${sys.id}`]) || ASSET.nebula(sys.nebula);
+    // Admin-uploaded (or git-committed default) per-system space background
+    // takes precedence over the sector nebula.
+    const bgUrl = ASSET.spacebg(sys.id) || ASSET.nebula(sys.nebula);
     const neb = this.img(bgUrl);
     const aster = sys.asteroidBelt ? this.img(ASSET.asteroids()) : null;
 
