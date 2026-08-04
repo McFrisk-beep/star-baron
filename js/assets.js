@@ -287,6 +287,10 @@ const Assets = {
     // with the hauling flag.
     if (s._haulingMigrated) {
       for (const sys of Object.keys(s.stationInv)) s.stationInv[sys] = this._bag(s.stationInv[sys]);
+      // Repair: early builds inherited defaultState's migrated flag and skipped
+      // the 6 → STATION_BAY_BASE bump. Fix those once if they never upgraded.
+      if (s.inventory && (s.inventory.capacity | 0) === 6 && !(s.inventory.upgrades | 0))
+        s.inventory.capacity = (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50);
       return s;
     }
     const dest = (typeof s.currentSystem === "string" && s.currentSystem) || "navos";
