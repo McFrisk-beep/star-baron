@@ -123,6 +123,8 @@ const Economy = {
   // overwrites those keys, then merge + re-park so the next trade/pull/commit
   // doesn't erase a paid-for box (applyCommitState had this; _applyServerSlice
   // used by app_pull / bazaar RPCs did not — that was the inventory vanish).
+  // Holds live references, not copies — safe only because every writer below
+  // replaces these keys (s.items = r.items) instead of mutating them in place.
   _softSnap() {
     const s = this.s();
     return {
@@ -131,10 +133,11 @@ const Economy = {
       bazaarBought: s.bazaarBought,
     };
   },
+  // Merge only — parking is a separate step because it has to run after
+  // _restoreEquip. See the parkOrphanGear calls below.
   _restoreSoftItems(prev) {
     if (!prev || !window.Store || !Store.mergeSoftItems) return;
     Store.mergeSoftItems(this.s(), prev);
-    if (window.Assets) Assets.parkOrphanGear(this.s());
   },
 
   _applyServerSlice(r) {
@@ -195,6 +198,11 @@ const Economy = {
     this._restoreSoftItems(soft);
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    // Park AFTER _restoreEquip: parkOrphanGear reads fitted uids off
+    // s.ships[].accessories, which the slice above clears on installs without
+    // docs/sql/equip_persist.sql. Parking first files every fitted accessory
+    // into the bay, then _restoreEquip re-fits it — same uid equipped AND loose.
+    if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
   },
 
@@ -300,6 +308,8 @@ const Economy = {
     }
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    // Park after _restoreEquip — see _applyServerSlice for why.
+    if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
   },
 
