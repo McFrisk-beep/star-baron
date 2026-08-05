@@ -1144,7 +1144,9 @@ const UI = {
       tiles.push({
         key: `b:${id}`, name: c.name, cat: c.cat, qty: q, slots,
         html: `<div class="haul-tile" draggable="true" tabindex="0" data-kind="block" data-id="${id}" data-side="${side}" data-name="${c.name.toLowerCase()}" data-cat="${c.cat}" title="${c.name} · ${q} units · ${slots} slot${slots > 1 ? "s" : ""}">
-          <div class="haul-ico">${c.name.slice(0, 1)}</div>
+          ${this._art(ASSET.commodity(c.id), c.name.slice(0, 1))}
+          <div class="haul-name">${c.name}</div>
+          <div class="haul-cat">${c.cat}</div>
           <div class="haul-qty">${q >= 1000 ? (q / 1000).toFixed(q >= 10000 ? 0 : 1) + "K" : q}</div>
           <div class="haul-fill" style="width:${Math.round(fill * 100)}%"></div>
           <button type="button" class="btn btn-mini haul-move" data-move="${side}:${id}" title="Move">⇄</button>

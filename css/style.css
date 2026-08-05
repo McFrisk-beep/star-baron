@@ -1192,9 +1192,11 @@ body.reduced .floatnav-indicator { transition: none; }
 .haul-tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 4px 4px; text-align: center; cursor: grab; min-height: 72px; }
 .haul-tile:focus { outline: 1px solid var(--accent2); }
 .haul-tile.gear { cursor: default; }
+.haul-tile .item-art, .haul-tile .tintbox.item-art { width: 40px; height: 30px; margin: 0 auto 2px; }
 .haul-ico { font-weight: 800; font-size: 16px; color: var(--accent2); }
 .haul-qty { font-family: var(--mono); font-size: 11px; margin-top: 2px; }
 .haul-name { font-size: 10px; line-height: 1.2; margin: 2px 0; max-height: 2.4em; overflow: hidden; }
+.haul-cat { font-size: 9px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .4px; }
 .haul-fill { height: 3px; background: var(--accent2); border-radius: 2px; margin: 4px auto 0; max-width: 80%; opacity: .7; }
 .haul-acts { display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; margin-top: 4px; }
 .haul-move { margin-top: 4px; }
