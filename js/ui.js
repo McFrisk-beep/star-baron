@@ -1502,7 +1502,9 @@ const UI = {
     };
     root.ondragleave = e => {
       const zone = e.target.closest("[data-courier-zone]");
-      if (zone) zone.classList.remove("courier-drop-hot");
+      // Crossing a child tile fires dragleave on the zone too — only unhighlight
+      // when the pointer actually left it, or the drop target flickers.
+      if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove("courier-drop-hot");
     };
     root.ondrop = e => {
       const zone = e.target.closest("[data-courier-zone]"); if (!zone || !drag) return;
@@ -1511,6 +1513,12 @@ const UI = {
       const to = zone.dataset.courierZone;
       if (to !== drag.zone) this._courierMove(drag.kind, drag.id, drag.zone);
       drag = null;
+    };
+    // Dropping outside a zone never fires ondrop, so clear the drag here or a
+    // stale one keeps highlighting zones on the next dragover.
+    root.ondragend = () => {
+      drag = null;
+      for (const z of root.querySelectorAll(".courier-drop-hot")) z.classList.remove("courier-drop-hot");
     };
     root.onkeydown = e => {
       if (e.key !== "Enter") return;
@@ -1522,6 +1530,11 @@ const UI = {
       this._courier.dest = this.refs.courierDest.value;
       this._renderCourierQuote();
     };
+    // Escape closes, same as every other modal (baron ranks, planet view, senate).
+    // Document-level because the modal isn't focused when it opens.
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && this._courier) this._courierClose();
+    });
     root.onclick = e => {
       if (e.target === root) return this._courierClose();
       if (e.target.closest("#courier-cancel")) return this._courierClose();
