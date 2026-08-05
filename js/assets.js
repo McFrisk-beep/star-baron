@@ -276,6 +276,54 @@ const Assets = {
     return this.deposit(where, "gear", uid, 1, { force: true });
   },
 
+  // Floor for station-bay capacity after hauling: base + purchased upgrades.
+  // Players who bought an Inventory Bay upgrade must not end up worse than a
+  // fresh account (STATION_BAY_BASE); Math.max keeps any larger legacy value.
+  bayCapacityFloor(s) {
+    const base = (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50);
+    const step = (typeof BAZAARCFG !== "undefined" && BAZAARCFG.inventoryUpgradeStep) || 10;
+    const ups = (s && s.inventory && s.inventory.upgrades) | 0;
+    return base + ups * step;
+  },
+  ensureBayCapacity(s) {
+    if (!s || !s.inventory || typeof s.inventory !== "object") return;
+    const floor = this.bayCapacityFloor(s);
+    s.inventory.capacity = Math.max(s.inventory.capacity | 0, floor);
+  },
+
+  // Park unequipped/unlisted items that have no hold/bay/shipment home.
+  // Operates on a passed state so Game.migrate can call it before Game.state exists
+  // (and so mergeSoftItems-restored blackboxes become visible again).
+  parkOrphanGear(state) {
+    const s = state || this.s();
+    if (!s || !s.items || typeof s.items !== "object") return 0;
+    s.hold = this._bag(s.hold);
+    s.stationInv = s.stationInv && typeof s.stationInv === "object" ? s.stationInv : {};
+    const equipped = new Set();
+    for (const sh of s.ships || []) for (const u of (sh.accessories || [])) equipped.add(u);
+    const listed = new Set((s.listings || []).map(l => l && l.itemUid).filter(Boolean));
+    const placed = new Set(s.hold.gear.slice());
+    for (const bag of Object.values(s.stationInv)) for (const u of (bag.gear || [])) placed.add(u);
+    for (const sh of (s.shipments || [])) {
+      if (sh && !sh.resolved) for (const u of (sh.gear || [])) placed.add(u);
+    }
+    let n = 0;
+    const dest = s.travel ? null : ((typeof s.currentSystem === "string" && s.currentSystem) || "navos");
+    for (const it of Object.values(s.items)) {
+      if (!it || !it.uid || equipped.has(it.uid) || listed.has(it.uid) || placed.has(it.uid)) continue;
+      if (dest) {
+        const bay = this._bag(s.stationInv[dest] || this.emptyBag());
+        bay.gear.push(it.uid);
+        s.stationInv[dest] = bay;
+      } else {
+        s.hold.gear.push(it.uid);
+      }
+      placed.add(it.uid);
+      n++;
+    }
+    return n;
+  },
+
   // ---- migration / reset --------------------------------------------------
   // Flat positions → stationInv[currentSystem]; unequipped items → that bay.
   migrateState(s) {
@@ -287,10 +335,8 @@ const Assets = {
     // with the hauling flag.
     if (s._haulingMigrated) {
       for (const sys of Object.keys(s.stationInv)) s.stationInv[sys] = this._bag(s.stationInv[sys]);
-      // Repair: early builds inherited defaultState's migrated flag and skipped
-      // the 6 → STATION_BAY_BASE bump. Fix those once if they never upgraded.
-      if (s.inventory && (s.inventory.capacity | 0) === 6 && !(s.inventory.upgrades | 0))
-        s.inventory.capacity = (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50);
+      this.ensureBayCapacity(s);
+      this.parkOrphanGear(s);
       return s;
     }
     const dest = (typeof s.currentSystem === "string" && s.currentSystem) || "navos";
@@ -302,20 +348,9 @@ const Assets = {
         if (n > 0) bay.blocks[id] = (bay.blocks[id] || 0) + n;
       }
     }
-    // Unequipped gear → bay.
-    const equipped = new Set();
-    for (const sh of s.ships || []) for (const u of (sh.accessories || [])) equipped.add(u);
-    const listed = new Set((s.listings || []).map(l => l && l.itemUid).filter(Boolean));
-    const placed = new Set([...s.hold.gear, ...bay.gear]);
-    for (const bag of Object.values(s.stationInv)) for (const u of (bag.gear || [])) placed.add(u);
-    for (const it of Object.values(s.items || {})) {
-      if (!it || !it.uid || equipped.has(it.uid) || listed.has(it.uid) || placed.has(it.uid)) continue;
-      bay.gear.push(it.uid);
-    }
     s.stationInv[dest] = bay;
-    // New games: bump the old 6-slot default to the hauling base bay size.
-    if (s.inventory && (s.inventory.capacity | 0) === 6 && !(s.inventory.upgrades | 0))
-      s.inventory.capacity = (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50);
+    this.parkOrphanGear(s);          // unequipped gear → bay / hold
+    this.ensureBayCapacity(s);       // base 50 + upgrades×step (never below a fresh account)
     s._haulingMigrated = true;
     return s;
   },

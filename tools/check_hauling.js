@@ -125,17 +125,35 @@ const done = Shipments.resolve(T);
 assert.ok(done.length === 1, "courier arrived");
 assert.strictEqual(Assets.bayQty(other.id, iron), 50, "landed in dest bay");
 
-// Soft-item merge (blackbox persistence)
-const boot = { items: {}, activeBoosts: [], bazaarBought: [] };
+// Soft-item merge (blackbox persistence) — must work with Game.state = null,
+// which is the real Store.load() call site (before main assigns this.state).
+const liveState = ctx.Game.state;
+ctx.Game.state = null;
+const boot = { items: {}, activeBoosts: [], bazaarBought: [], currentSystem: "navos",
+  hold: { blocks: {}, gear: [] }, stationInv: {}, shipments: [], ships: [], listings: [] };
 const local = {
   items: { ib1: { uid: "ib1", kind: "blackbox", consumable: true, effectId: "overclock_core", name: "Overclock Core Blackbox", value: 1000 } },
   activeBoosts: [{ effectId: "smugglers_veil", expiresAt: T + 3600000 }],
   bazaarBought: ["bb-1-0", "acc-other"],
 };
-ctx.Store.mergeSoftItems(boot, local);
+assert.doesNotThrow(() => ctx.Store.mergeSoftItems(boot, local), "mergeSoftItems with Game.state=null");
 assert.ok(boot.items.ib1, "blackbox preserved across bootstrap");
 assert.ok(boot.activeBoosts.some(b => b.effectId === "smugglers_veil"), "boost preserved");
 assert.ok(boot.bazaarBought.includes("bb-1-0"), "slow-shelf mark preserved");
 assert.ok(!boot.bazaarBought.includes("acc-other"), "non-slow marks not forced from local");
+// Orphan parking is Game.migrate's job (after state exists), not mergeSoftItems.
+assert.strictEqual(Assets.parkOrphanGear(boot), 1, "parkOrphanGear places restored box");
+assert.ok(boot.stationInv.navos.gear.includes("ib1"), "box parked in current bay");
+ctx.Game.state = liveState;
+
+// Bay capacity: an upgraded Inventory Bay must not end up worse than a fresh account.
+const upgraded = { inventory: { capacity: 16, upgrades: 1 }, hold: { blocks: {}, gear: [] },
+  stationInv: {}, shipments: [], _haulingMigrated: true, items: {}, ships: [], listings: [] };
+Assets.migrateState(upgraded);
+assert.strictEqual(upgraded.inventory.capacity, 60, "base 50 + 1×10 upgrade");
+const freshish = { inventory: { capacity: 6, upgrades: 0 }, hold: { blocks: {}, gear: [] },
+  stationInv: {}, shipments: [], _haulingMigrated: true, items: {}, ships: [], listings: [] };
+Assets.migrateState(freshish);
+assert.strictEqual(freshish.inventory.capacity, 50, "unupgraded 6 → base 50");
 
 console.log("check_hauling: ledger + courier + blackbox merge ✔");

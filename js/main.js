@@ -219,8 +219,13 @@ const Game = {
     // flag on the loaded save means migration already ran.
     if (!(loaded && loaded._haulingMigrated)) s._haulingMigrated = false;
     if (window.Assets) {
-      try { Assets.migrateState(s); }
-      catch (e) { console.warn("[Game] Assets.migrateState failed:", e); }
+      try {
+        Assets.migrateState(s);
+        // Unconditional: park any item with no hold/bay/shipment home (soft-merge
+        // blackboxes, equip-detach orphans, etc.). Safe before Game.state is set —
+        // parkOrphanGear takes the migrate `s` explicitly.
+        Assets.parkOrphanGear(s);
+      } catch (e) { console.warn("[Game] Assets.migrateState failed:", e); }
     } else {
       s.hold ||= { blocks: {}, gear: [] };
       s.stationInv ||= {};

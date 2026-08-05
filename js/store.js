@@ -131,7 +131,9 @@ const Store = {
   // - blackbox items the client minted (bazaar / survey) but the server never saw
   // - activeBoosts with a later expiry
   // - bazaarBought ids for the slow shelf (bb-*/bp-*) so a bought slot stays bought
-  // Also re-parks any restored blackbox into the hauling ledger if missing.
+  //
+  // No Assets calls here — Store.load runs before Game.state exists. Orphan gear
+  // is parked later by Assets.parkOrphanGear from Game.migrate / applyCommitState.
   mergeSoftItems(target, source) {
     if (!target || !source) return target;
     target.items = target.items || {};
@@ -140,13 +142,6 @@ const Store = {
     for (const [uid, it] of Object.entries(source.items)) {
       if (!isBox(it) || target.items[uid]) continue;
       target.items[uid] = it;
-      if (window.Assets && !Assets.gearLocation(uid)) {
-        // parkGear reads Game.state — temporarily point at target if needed.
-        const prev = window.Game && Game.state;
-        if (window.Game) Game.state = target;
-        try { Assets.parkGear(uid, target.currentSystem); } catch (e) { /* ignore */ }
-        if (window.Game) Game.state = prev;
-      }
     }
     // Keep the longer-lived boost per effectId.
     const byId = new Map();

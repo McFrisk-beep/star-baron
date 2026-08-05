@@ -122,6 +122,13 @@ const Economy = {
     const s = this.s();
     const equip = this._snapEquip();
     if (r.credits != null) s.credits = r.credits;
+    // Apply location before reconcile so a dock RPC's positions delta parks in
+    // the bay you arrived at, not the one you left (applyCommitState order).
+    if (r.currentSystem) s.currentSystem = r.currentSystem;
+    if ("travel" in r || "travelObj" in r) {
+      const tr = r.travelObj || r.travel;
+      s.travel = tr && typeof tr === "object" ? tr : null;
+    }
     if (r.positions) s.positions = r.positions;
     if (r.avgCost) s.avgCost = r.avgCost;
     if (r.positions && window.Assets) Assets.reconcileFromPositions(s.currentSystem);
@@ -129,11 +136,6 @@ const Economy = {
       if (r.stats.trades != null) s.stats.trades = r.stats.trades;
       if (r.stats.biggestTrade != null) s.stats.biggestTrade = r.stats.biggestTrade;
       if (r.stats.contractsDone != null) s.stats.contractsDone = r.stats.contractsDone;
-    }
-    if (r.currentSystem) s.currentSystem = r.currentSystem;
-    if ("travel" in r || "travelObj" in r) {
-      const tr = r.travelObj || r.travel;
-      s.travel = tr && typeof tr === "object" ? tr : null;
     }
     if (r.unlockedSystems) s.unlockedSystems = r.unlockedSystems;
     if (r.ships) s.ships = r.ships;
@@ -242,6 +244,9 @@ const Economy = {
     if (st.inventory) s.inventory = st.inventory;
     if (softSnap && window.Store && Store.mergeSoftItems)
       Store.mergeSoftItems(s, softSnap);
+    // Restored soft blackboxes (and any other orphan gear) need a bay home so
+    // Assets.localGear can see them — mergeSoftItems itself never touches Assets.
+    if (window.Assets) Assets.parkOrphanGear(s);
     if (st.reports) s.reports = st.reports;
     if (st.pendingContracts) s.pendingContracts = st.pendingContracts;
     if (st.bazaarBought) s.bazaarBought = st.bazaarBought;
