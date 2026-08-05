@@ -2002,9 +2002,15 @@ const Stations = {
   },
 
   // Soft NPC tenants for vacant bays — keeps lease tax meaningful in guest mode.
-  // Shared floors skip this: NPC slots would publish over paying lessees.
+  // Shared floors: clear any guest-era NPCs (don't just skip — leaveChance never
+  // runs once fill is off, and stranded npc:true bays keep taxing locally while
+  // every other player sees vacant).
   _fillNpcTenants(st, hourIndex) {
-    if (this.bayShared(st.systemId)) return;
+    if (this.bayShared(st.systemId)) {
+      this.syncBays(st);
+      for (const bay of st.bays || []) if (bay.npc) this._clearBay(st, bay);
+      return;
+    }
     this.syncBays(st);
     if (!st.prodComm || st.status !== "owned") return;
     const taxFrac = Util.clamp((st.leaseTaxBps | 0) / 4000, 0, 1);

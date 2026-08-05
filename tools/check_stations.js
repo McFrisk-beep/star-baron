@@ -861,10 +861,12 @@ target.refitUntil = 0;
   });
   assert.ok(Stations.bayShared(target.systemId), "own published station is a shared floor");
   Stations.syncBays(target);
-  target.bays[0] = { lesseeId: null, extractorId: null, npc: false };
+  // Guest-era NPCs stranded when the floor went shared must clear — not linger
+  // taxing into the hold while other players see vacant.
+  target.bays[0] = { lesseeId: "npc", extractorId: null, npc: true };
   target.bays[1] = { lesseeId: null, extractorId: null, npc: false };
   Stations._fillNpcTenants(target, 1);
-  assert.ok(target.bays.every(b => !b.npc && !b.lesseeId), "no NPC tenants on a shared floor");
+  assert.ok(target.bays.every(b => !b.npc && !b.lesseeId), "shared floor clears stranded NPC tenants");
   // And publish must not ship npc:true even if local state has them (stale fill).
   target.bays[0] = { lesseeId: "npc", extractorId: null, npc: true };
   await Stations.publishOwned();

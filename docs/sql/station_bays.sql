@@ -194,15 +194,17 @@ begin
         merged := merged || jsonb_build_array(jsonb_build_object(
           'lesseeId', s_lid, 'npc', false,
           'taxed_at', s_el->'taxed_at'));
-      elsif c_lid <> '' then
-        -- Same lessee still in the slot → keep taxed_at so an owner publish
-        -- can't reset the produce cooldown (the only replay guard).
+      elsif c_lid <> '' and not c_npc and c_lid <> 'npc' then
+        -- NPC tenants are guest-local only — never accept them into the shared
+        -- column (a publish that races ahead of the directory load can still
+        -- send them). Same lessee still in the slot → keep taxed_at so an
+        -- owner publish can't reset the produce cooldown.
         if s_lid = c_lid and s_el ? 'taxed_at' and s_el->>'taxed_at' is not null then
           merged := merged || jsonb_build_array(jsonb_build_object(
-            'lesseeId', c_lid, 'npc', c_npc, 'taxed_at', s_el->'taxed_at'));
+            'lesseeId', c_lid, 'npc', false, 'taxed_at', s_el->'taxed_at'));
         else
           merged := merged || jsonb_build_array(jsonb_build_object(
-            'lesseeId', c_lid, 'npc', c_npc));
+            'lesseeId', c_lid, 'npc', false));
         end if;
       else
         merged := merged || jsonb_build_array(jsonb_build_object(
