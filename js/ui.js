@@ -3073,10 +3073,11 @@ const UI = {
     }).filter(Boolean);
     const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
     const rows = listings.map(l => {
-      const mine = l.sellerId === Stations.playerId();
+      const mine = Stations.listingMine(l);
       const left = Math.max(0, l.expiresAt - Date.now());
+      const seller = mine ? "your stall" : l.shared ? l.sellerName : "house stall";
       return `<tr>
-        <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)} left</div></td>
+        <td>${l.name}<div class="tip-dim">${l.kind} · ${seller} · ${Util.duration(left)} left</div></td>
         <td class="num">${Util.credits(l.price)}</td>
         <td class="actions">${mine
           ? `<button class="btn btn-mini" data-hall-cancel="${l.id}">Cancel</button>`
@@ -3085,7 +3086,10 @@ const UI = {
     }).join("") || `<tr><td colspan="3" class="muted-note">No listings — be the first stall.</td></tr>`;
     return `<div class="panel st-hall" style="margin-top:14px">
       <h3>Exchange Hall <small>sale tariff ${((st.saleTariffBps || 0) / 100).toFixed(0)}%</small></h3>
-      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must dock here. NPC traders sometimes clear stalls in guest mode.</p>
+      <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must dock here.
+        ${Stations.hallShared(st.systemId)
+          ? "This shelf is shared: other barons stock it and buy from it, and your tariff on every sale lands in the treasury."
+          : "NPC traders sometimes clear stalls in guest mode."}</p>
       <label>Tariff % <input type="number" id="st-tariff" min="0" max="15" value="${((st.saleTariffBps || 0) / 100).toFixed(0)}"></label>
       <button class="btn btn-mini" id="st-set-tariff">Set</button>
       <div class="st-hall-list" style="margin-top:10px">
@@ -3106,27 +3110,28 @@ const UI = {
       Stations.setSaleTariff(st.systemId, pct * 100);
       this.toast(`Sale tariff set to ${pct}%.`, "good"); this.renderStations();
     });
-    body.querySelector("#st-hall-list")?.addEventListener("click", () => {
+    // The hall calls can go to the server now, so every handler awaits.
+    body.querySelector("#st-hall-list")?.addEventListener("click", async () => {
       const raw = body.querySelector("#st-hall-item")?.value || "";
       const price = +body.querySelector("#st-hall-price")?.value || 0;
       const [kind, ref] = raw.split(":");
       if (!kind || !ref) return this.toast("Pick something to list.", "warn");
-      const r = Stations.listHallItem(st.systemId, kind, ref, price);
+      const r = await Stations.listHallItem(st.systemId, kind, ref, price);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
       this.renderStations(); this.updateHeader();
     });
     body.querySelectorAll("[data-hall-cancel]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.cancelHallListing(st.systemId, btn.dataset.hallCancel);
+      btn.onclick = async () => {
+        const r = await Stations.cancelHallListing(st.systemId, btn.dataset.hallCancel);
         if (!r.ok) return this.toast(r.msg, "warn");
-        this.toast("Listing cancelled — item returned.", "info");
+        this.toast(r.cleared ? "Stall cleared — the goods go back to its owner." : "Listing cancelled — item returned.", "info");
         this.renderStations(); this.updateHeader();
       };
     });
     body.querySelectorAll("[data-hall-buy]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.buyHallListing(st.systemId, btn.dataset.hallBuy);
+      btn.onclick = async () => {
+        const r = await Stations.buyHallListing(st.systemId, btn.dataset.hallBuy);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader();

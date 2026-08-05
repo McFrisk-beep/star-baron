@@ -185,7 +185,7 @@ const Cloud = {
       this._user = null; this._pendingRecovery = false;
       this._username = null; this._joinN = null;
       this.playersReady = false; this.pullReady = false; this.pullMissing = false;
-      this.craftMissing = false; this._rpcMissing = {};
+      this.craftMissing = false; this.hallMissing = false; this._rpcMissing = {};
     }
   },
 
@@ -249,6 +249,42 @@ const Cloud = {
   },
   async stationPublish(rows) {
     return this._optional("app_station_publish", { p_stations: rows || [] });
+  },
+
+  // Cross-player Exchange Hall (docs/sql/station_hall.sql). The read is anon
+  // like the directory — a signed-out visitor browses the shelf, they just
+  // can't buy. `hallMissing` latches off THIS call and gates the write RPCs:
+  // phase 4 ships app_station_list_item/buy_item as not-implemented stubs, so
+  // "the function exists" proves nothing. If the shelf can't be read, the
+  // client stays on its local hall instead of posting into a stub.
+  hallMissing: false,
+  async stationHall(systems) {
+    if (!this.enabled || !this.client || this.hallMissing) return null;
+    const list = (systems || []).filter(Boolean).slice(0, 20);
+    if (!list.length) return [];
+    const { data, error } = await this.client.rpc("app_station_hall", { p_systems: list });
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this.hallMissing = true;
+        console.warn("[Cloud] app_station_hall missing — run docs/sql/station_hall.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  hallReady() { return this.enabled && !this.hallMissing && this.signedIn(); },
+  async stationListItem(system, listing) {
+    return this.rpc("app_station_list_item", { p_system: system, p_listing: listing });
+  },
+  async stationBuyItem(system, listingId) {
+    return this.rpc("app_station_buy_item", { p_system: system, p_listing_id: listingId });
+  },
+  async stationCancelListing(listingId) {
+    return this.rpc("app_station_cancel_listing", { p_listing_id: listingId });
+  },
+  async stationSettle() {
+    return this._optional("app_station_settle", {});
   },
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });

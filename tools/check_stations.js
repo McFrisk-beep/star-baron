@@ -7,7 +7,7 @@ const fs = require("fs"), path = require("path"), vm = require("vm"), assert = r
 const ctx = vm.createContext({ console, Math, setTimeout, clearTimeout });
 ctx.window = ctx;
 let T = 1_720_000_000_000;
-ctx.Date = { now: () => T };
+ctx.Date = { now: () => T, parse: Date.parse };   // parse: server rows carry ISO timestamps
 ctx.localStorage = { _d: {}, getItem(k) { return this._d[k] ?? null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } };
 ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 
@@ -197,6 +197,11 @@ ctx.Game.state.credits = 5_000_000;
 const r2 = Stations.openAuction(other.systemId, Stations.openingBid(other));
 assert.ok(!r2.ok, "cap blocks opening a second auction while owning 1");
 
+// Everything from here down runs in one async body: the hall calls can reach
+// the server now, so they're awaited — and every check after them depends on
+// the state they leave behind. Kept at column 0; it's the rest of the file.
+void (async () => {
+
 // ---- Exchange Hall (§9) ---------------------------------------------------
 Stations.vacateBay(target.systemId, 0);
 target.modules = { production_hub: 1 };
@@ -222,18 +227,18 @@ ctx.Game.state.currentSystem = target.systemId;
 // List / cancel extractor
 const hallEx = { uid: "exHall1", type: "jack", scope: "all", name: "Hall Jack", components: [] };
 Extractors.acquire(hallEx);
-const listed = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 900);
+const listed = await Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 900);
 assert.ok(listed.ok, listed.msg);
 assert.ok(!Extractors.get(hallEx.uid), "listing escrows extractor");
 assert.ok(Stations.hallEscrowValue() > 0, "hall escrow in net worth");
-assert.ok(Stations.cancelHallListing(target.systemId, listed.listing.id).ok);
+assert.ok((await Stations.cancelHallListing(target.systemId, listed.listing.id)).ok);
 assert.ok(Extractors.get(hallEx.uid), "cancel restores extractor");
 
 // Tariff on NPC buy
 Stations.setSaleTariff(target.systemId, 1000); // 10%
 assert.strictEqual(target.saleTariffBps, 1000);
 Extractors.acquire(hallEx);
-const listed2 = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 1000);
+const listed2 = await Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 1000);
 assert.ok(listed2.ok, listed2.msg);
 const credBefore = ctx.Game.state.credits;
 const treasBefore = target.treasury | 0;
@@ -248,7 +253,7 @@ assert.ok(!Extractors.get(hallEx.uid), "NPC sale consumes goods");
 
 // Expiry returns goods
 Extractors.acquire(hallEx);
-const listed3 = Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 500);
+const listed3 = await Stations.listHallItem(target.systemId, "extractor", hallEx.uid, 500);
 assert.ok(listed3.ok, listed3.msg);
 listed3.listing.expiresAt = T - 1;
 const expired = Stations._expireHall(target, T);
@@ -259,7 +264,7 @@ assert.ok(Extractors.get(hallEx.uid), "expiry restores seller goods");
 target.modules.black_market = 0;
 ctx.Game.state.items = { bb1: { uid: "bb1", name: "Hot Box", consumable: true, effectId: "smuggle", value: 200 } };
 ctx.Items = { isBlackbox: it => !!(it && it.effectId) };
-const bbBlock = Stations.listHallItem(target.systemId, "blackbox", "bb1", 200);
+const bbBlock = await Stations.listHallItem(target.systemId, "blackbox", "bb1", 200);
 assert.ok(!bbBlock.ok, "blackboxes need a Black Market");
 
 // ---- Contract Office (§11) ------------------------------------------------
@@ -459,93 +464,238 @@ assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit tim
 // ---- shared station record (docs/sql/station_directory.sql) --------------
 // Another baron's claim — and their upgrades — must show up for us and for a
 // signed-out visitor, instead of the local save's vacant "NPC" berth.
-(async () => {
-  const other = Stations.list().find(st => st.status === "npc" && st.systemId !== target.systemId);
-  assert.ok(other, "has a spare NPC station");
-  const vexRow = {
-    system_id: other.systemId, owner_id: "acct-vex", display: "<b>Vex</b>",
-    tier: other.tier, status: "owned",
-    modules: { customs_house: 1, exchange_hall: 1, workshop_annex: 1, production_hub: 1, gremlin_ray: 9 },
-    reactor_level: 2, lease_tax_bps: 1500, sale_tariff_bps: 800, scrutiny: 55, standing: 71,
-    prod_comm: pool[0].id,
-    hall: [{ id: "l1", name: "<img src=x>Void Shield", kind: "gear", price: "120000", expiresAt: T + 3600e3, sellerId: "acct-vex" }],
-    bays: [{ lesseeId: "acct-zed" }, { lesseeId: "" }],
+const heldSt = Stations.list().find(st => st.status === "npc" && st.systemId !== target.systemId);
+assert.ok(heldSt, "has a spare NPC station");
+const vexRow = {
+  system_id: heldSt.systemId, owner_id: "acct-vex", display: "<b>Vex</b>",
+  tier: heldSt.tier, status: "owned",
+  modules: { customs_house: 1, exchange_hall: 1, workshop_annex: 1, production_hub: 1, gremlin_ray: 9 },
+  reactor_level: 2, lease_tax_bps: 1500, sale_tariff_bps: 800, scrutiny: 55, standing: 71,
+  prod_comm: pool[0].id,
+  hall: [{ id: "l1", name: "<img src=x>Void Shield", kind: "gear", price: "120000", expiresAt: T + 3600e3, sellerId: "acct-vex" }],
+  bays: [{ lesseeId: "acct-zed" }, { lesseeId: "" }],
+};
+ctx.Cloud = {
+  _rows: [vexRow],
+  _user: null,
+  user() { return this._user; },
+  signedIn() { return !!this._user; },
+  async stationDirectory() { return this._rows; },
+  async stationPublish(rows) { this.published = rows; return { ok: true, held: rows.length, conflicts: [] }; },
+};
+
+await Stations.refreshDirectory();
+const holder = Stations.remoteHolder(heldSt.systemId);
+assert.ok(holder, "guest sees the remote holder");
+assert.ok(!/[<>&"']/.test(holder.display), `display sanitised, got "${holder.display}"`);
+assert.ok(/Held by/.test(Stations.holderLabel(heldSt)), `holder label, got "${Stations.holderLabel(heldSt)}"`);
+assert.ok(/held by/.test(Stations.holderTag(heldSt)), `holder tag, got "${Stations.holderTag(heldSt)}"`);
+assert.strictEqual(Stations.holderTag(target), "yours", "own station still reads as yours");
+
+// ...and can't be auctioned out from under them.
+const poach = Stations.openAuction(heldSt.systemId, Stations.openingBid(heldSt));
+assert.ok(!poach.ok && /holds this station/.test(poach.msg), `claim blocked, got "${poach.msg}"`);
+
+// Phase A: their upgrades are real to us. view() is the station as it is.
+const v = Stations.view(heldSt.systemId);
+assert.ok(v.remote, "view of a held station is the owner's record");
+assert.strictEqual(v.modules.customs_house, 1, "their modules land");
+assert.ok(!("gremlin_ray" in v.modules), "unknown module ids are dropped on ingest");
+assert.strictEqual(v.saleTariffBps, 800, "their tariff lands");
+assert.strictEqual(v.treasury, 0, "their treasury is never in our copy");
+
+// Effects that are pure reads of the record now apply to a visitor.
+assert.ok(Stations.workshopMatChance(heldSt.systemId) > 0, "their Workshop Annex helps visitors");
+assert.strictEqual(Stations.scrutinyFor(heldSt.systemId), 0.55, "their Customs House sets our scrutiny");
+assert.strictEqual(Stations.customsExempt(heldSt.systemId), false, "a visitor is not exempt from their customs");
+assert.strictEqual(Stations.publicScrutiny(heldSt.systemId).chanceHint, 55, "scrutiny is public before undock");
+const hallChip = Stations.serviceList(heldSt.systemId).find(r => r.id === "exchange_hall");
+assert.ok(hallChip.ok, "their Exchange Hall reads as installed, not 'modules dormant'");
+assert.ok(Stations.canDock(heldSt.systemId).ok, "a live station is dockable even if our copy says npc");
+
+// Their shelf is visible and sanitised. Without the hall SQL (this fake Cloud
+// has no hall RPCs) it stays a display, as it did in phase A.
+const shelf = Stations.hallListings(heldSt.systemId);
+assert.strictEqual(shelf.length, 1, "their listings are visible");
+assert.ok(!/[<>]/.test(shelf[0].name), `listing name sanitised, got "${shelf[0].name}"`);
+assert.strictEqual(shelf[0].price, 120000, "listing price is re-typed to a number");
+const hall = Stations.canUseHall(heldSt.systemId);
+assert.ok(!hall.ok && hall.browse, "no hall SQL → the visitor hall is browse-only");
+assert.ok(!Stations.hubAccess("bazaar", heldSt.systemId).ok, "no trading at their market yet");
+assert.ok(!Stations.hubAccess("stations", heldSt.systemId).ok, "their console is not ours");
+
+// Their hub feeds their hold, not our sector shelf (§4.2).
+const realBasket = Stations._npcBasket;
+const producedFor = [];
+Stations._npcBasket = function (st, h) { producedFor.push(st.systemId); return realBasket.call(this, st, h); };
+Stations.npcProduceHour(11);
+Stations._npcBasket = realBasket;
+assert.ok(producedFor.length, "NPC stations still produce");
+assert.ok(!producedFor.includes(heldSt.systemId), "a held station stops minting NPC supply locally");
+
+// Our own published row must not read as somebody else's.
+ctx.Cloud._user = { id: "acct-me" };
+ctx.Cloud._rows = [{ system_id: heldSt.systemId, owner_id: "acct-me", display: "Me", tier: heldSt.tier, status: "owned" }];
+await Stations.refreshDirectory();
+assert.strictEqual(Stations.remoteHolder(heldSt.systemId), null, "our own row is not a remote holder");
+assert.strictEqual(Stations.holderTag(heldSt), "NPC", "no foreign holder → local view stands");
+
+// Publish sends owner-held stations only, with the record other players read.
+target.status = "refit";
+target.refitUntil = T + 6 * 3600 * 1000;
+await Stations.publishOwned();
+assert.deepStrictEqual([...ctx.Cloud.published].map(r => r.system_id), [target.systemId],
+  "publishes exactly the stations we hold");
+const sent = ctx.Cloud.published[0];
+assert.strictEqual(sent.modules.production_hub, 1, "publishes what's installed");
+assert.strictEqual(+sent.refit_until, target.refitUntil, "refit clock survives as a ms epoch");
+target.status = "owned";
+target.refitUntil = 0;
+
+// ---- shared Exchange Hall (docs/sql/station_hall.sql) --------------------
+// Phase B: the shelf is one shelf. A stall Vex puts up is the stall we buy,
+// the price splits at Vex's tariff, and both sides queue for whoever's away.
+// The fake below is the RPC contract, not the SQL — enough to prove the client
+// never mints goods, never double-books an item, and never trusts a payload.
+{
+  const iso = ms => new Date(ms).toISOString();
+  const srv = {
+    listings: [{
+      id: "srv-1", system_id: heldSt.systemId, seller_id: "acct-vex", seller: "Vex",
+      kind: "extractor", name: "Vex Deep Rig", price: 4000, value: 5000,
+      expires_at: iso(T + 36e5),
+      payload: { uid: "exVex", type: "jack", scope: "all", name: "Vex Deep Rig", components: ["cpVex"] },
+    }],
+    payouts: [],
   };
   ctx.Cloud = {
-    _rows: [vexRow],
-    _user: null,
+    enabled: true, hallMissing: false,
+    _user: { id: "acct-me" },
     user() { return this._user; },
     signedIn() { return !!this._user; },
-    async stationDirectory() { return this._rows; },
+    hallReady() { return this.enabled && !this.hallMissing && this.signedIn(); },
+    async stationDirectory() { return [vexRow]; },
     async stationPublish(rows) { this.published = rows; return { ok: true, held: rows.length, conflicts: [] }; },
+    async stationHall(ids) {
+      return srv.listings.filter(l => ids.includes(l.system_id))
+        .map(({ payload, ...row }) => row);           // payloads never leave on a read
+    },
+    async stationListItem(system, l) {
+      const row = { id: "srv-" + (srv.listings.length + 1), system_id: system, seller_id: "acct-me",
+        seller: "Me", kind: l.kind, name: l.name, price: l.price, value: l.value,
+        expires_at: iso(T + 48 * 36e5), payload: l.payload };
+      srv.listings.push(row);
+      return { ok: true, id: row.id, seller: row.seller, expires_at: row.expires_at, price: row.price };
+    },
+    async stationBuyItem(system, id) {
+      const i = srv.listings.findIndex(l => l.id === id && l.system_id === system);
+      if (i < 0) return { ok: false, error: "Listing gone." };
+      const l = srv.listings.splice(i, 1)[0];
+      const tariff = Math.floor(l.price * 800 / 10000);          // Vex's published 8%
+      srv.payouts.push({ user_id: l.seller_id, amount: l.price - tariff, reason: "sale" });
+      return { ok: true, id: l.id, kind: l.kind, name: l.name, price: l.price, tariff, seller: l.seller, payload: l.payload };
+    },
+    async stationCancelListing(id) {
+      const i = srv.listings.findIndex(l => l.id === id);
+      if (i < 0) return { ok: false, error: "Listing gone." };
+      const l = srv.listings.splice(i, 1)[0];
+      if (l.seller_id !== "acct-me") return { ok: true, cleared: true, name: l.name };
+      return { ok: true, kind: l.kind, name: l.name, payload: l.payload };
+    },
+    async stationSettle() { const out = srv.mine || { payouts: [], items: [] }; srv.mine = null; return { ok: true, ...out }; },
   };
 
   await Stations.refreshDirectory();
-  const holder = Stations.remoteHolder(other.systemId);
-  assert.ok(holder, "guest sees the remote holder");
-  assert.ok(!/[<>&"']/.test(holder.display), `display sanitised, got "${holder.display}"`);
-  assert.ok(/Held by/.test(Stations.holderLabel(other)), `holder label, got "${Stations.holderLabel(other)}"`);
-  assert.ok(/held by/.test(Stations.holderTag(other)), `holder tag, got "${Stations.holderTag(other)}"`);
-  assert.strictEqual(Stations.holderTag(target), "yours", "own station still reads as yours");
+  ctx.Game.state.currentSystem = heldSt.systemId;
+  assert.ok(Stations.hallShared(heldSt.systemId), "a published station's shelf is the shared one");
+  await Stations.refreshHalls([heldSt.systemId]);
+  const open = Stations.hallListings(heldSt.systemId);
+  assert.strictEqual(open.length, 1, "the shared shelf replaces our copy of theirs");
+  assert.strictEqual(open[0].sellerName, "Vex", "a stall says whose it is");
+  assert.ok(Stations.canUseHall(heldSt.systemId).ok, "docked at their station, their hall is usable");
 
-  // ...and can't be auctioned out from under them.
-  const poach = Stations.openAuction(other.systemId, Stations.openingBid(other));
-  assert.ok(!poach.ok && /holds this station/.test(poach.msg), `claim blocked, got "${poach.msg}"`);
+  // Buy across players: we pay, they're queued, and the item is rebuilt here.
+  const cashBefore = ctx.Game.state.credits;
+  const bought = await Stations.buyHallListing(heldSt.systemId, "srv-1");
+  assert.ok(bought.ok, bought.msg);
+  assert.strictEqual(ctx.Game.state.credits, cashBefore - 4000, "buyer pays the shelf price");
+  assert.strictEqual(bought.tariff, 320, "the owner's 8% tariff is split off at the sale");
+  assert.strictEqual(srv.payouts[0].amount, 3680, "the seller is queued their net, not the gross");
+  const got = Object.values(ctx.Game.state.extractors).find(e => e.name === "Vex Deep Rig");
+  assert.ok(got, "the bought extractor lands in our pool");
+  assert.notStrictEqual(got.uid, "exVex", "a foreign uid is re-minted so it can't collide with ours");
+  assert.strictEqual(got.components.length, 0, "fitted components stay in the seller's save");
+  assert.strictEqual(Stations.hallListings(heldSt.systemId).length, 0, "a bought stall leaves the shelf");
+  assert.ok(!(await Stations.buyHallListing(heldSt.systemId, "srv-1")).ok, "the same stall can't be bought twice");
 
-  // Phase A: their upgrades are real to us. view() is the station as it is.
-  const v = Stations.view(other.systemId);
-  assert.ok(v.remote, "view of a held station is the owner's record");
-  assert.strictEqual(v.modules.customs_house, 1, "their modules land");
-  assert.ok(!("gremlin_ray" in v.modules), "unknown module ids are dropped on ingest");
-  assert.strictEqual(v.saleTariffBps, 800, "their tariff lands");
-  assert.strictEqual(v.treasury, 0, "their treasury is never in our copy");
+  // List onto their shelf: escrow is server-side, so it leaves our save.
+  const mine = { uid: "exMine", type: "jack", scope: "all", name: "Our Spare", components: [] };
+  Extractors.acquire(mine);
+  const put = await Stations.listHallItem(heldSt.systemId, "extractor", "exMine", 2500);
+  assert.ok(put.ok, put.msg);
+  assert.ok(!Extractors.get("exMine"), "listing escrows the item off our save");
+  assert.strictEqual(srv.listings.length, 1, "the stall is on their shelf, not in our copy");
+  assert.ok(Stations.hallEscrowValue() >= 2500, "escrowed stalls still count toward net worth");
+  const pulled = await Stations.cancelHallListing(heldSt.systemId, put.listing.id);
+  assert.ok(pulled.ok, pulled.msg);
+  assert.ok(Object.values(ctx.Game.state.extractors).some(e => e.name === "Our Spare"), "cancelling returns the goods");
 
-  // Effects that are pure reads of the record now apply to a visitor.
-  assert.ok(Stations.workshopMatChance(other.systemId) > 0, "their Workshop Annex helps visitors");
-  assert.strictEqual(Stations.scrutinyFor(other.systemId), 0.55, "their Customs House sets our scrutiny");
-  assert.strictEqual(Stations.customsExempt(other.systemId), false, "a visitor is not exempt from their customs");
-  assert.strictEqual(Stations.publicScrutiny(other.systemId).chanceHint, 55, "scrutiny is public before undock");
-  const hallChip = Stations.serviceList(other.systemId).find(r => r.id === "exchange_hall");
-  assert.ok(hallChip.ok, "their Exchange Hall reads as installed, not 'modules dormant'");
-  assert.ok(Stations.canDock(other.systemId).ok, "a live station is dockable even if our copy says npc");
+  // A payload is another player's client talking. Nothing is taken on faith.
+  srv.listings.push({ id: "srv-bad", system_id: heldSt.systemId, seller_id: "acct-vex", seller: "Vex",
+    kind: "gear", name: "Impossible Blade", price: 100, value: 9e9,
+    expires_at: iso(T + 36e5), payload: { uid: "iX", kind: "not_a_slot", rarity: "mythic", value: 9e9 } });
+  await Stations.refreshHalls([heldSt.systemId]);
+  const cashBeforeBad = ctx.Game.state.credits;
+  const bad = await Stations.buyHallListing(heldSt.systemId, "srv-bad");
+  assert.ok(!bad.ok, "a payload that can't be rebuilt is refused");
+  assert.strictEqual(ctx.Game.state.credits, cashBeforeBad, "and nothing is charged for it");
 
-  // Their shelf is visible and sanitised, but not yet buyable (phase B).
-  const shelf = Stations.hallListings(other.systemId);
-  assert.strictEqual(shelf.length, 1, "their listings are visible");
-  assert.ok(!/[<>]/.test(shelf[0].name), `listing name sanitised, got "${shelf[0].name}"`);
-  assert.strictEqual(shelf[0].price, 120000, "listing price is re-typed to a number");
-  const hall = Stations.canUseHall(other.systemId);
-  assert.ok(!hall.ok && hall.browse, "visitor hall is browse-only in phase A");
-  assert.ok(!Stations.hubAccess("bazaar", other.systemId).ok, "no trading at their market yet");
-  assert.ok(!Stations.hubAccess("stations", other.systemId).ok, "their console is not ours");
+  // Settle: sale proceeds are ours, a tariff on our own station is the station's.
+  const treasuryBefore = target.treasury | 0;
+  const cashBeforeSettle = ctx.Game.state.credits;
+  srv.mine = {
+    payouts: [
+      { systemId: heldSt.systemId, amount: 1200, reason: "sale", note: "Our Spare" },
+      { systemId: target.systemId, amount: 400, reason: "tariff", note: "someone else's stall" },
+    ],
+    items: [],
+  };
+  const settled = await Stations.settleHall();
+  assert.strictEqual(ctx.Game.state.credits, cashBeforeSettle + 1200, "sale proceeds reach the seller");
+  assert.strictEqual(target.treasury, treasuryBefore + 400, "our tariff lands in the station treasury, not our wallet");
+  assert.strictEqual(settled.items, 0, "nothing to hand back this time");
 
-  // Their hub feeds their hold, not our sector shelf (§4.2).
-  const realBasket = Stations._npcBasket;
-  const producedFor = [];
-  Stations._npcBasket = function (st, h) { producedFor.push(st.systemId); return realBasket.call(this, st, h); };
-  Stations.npcProduceHour(11);
-  Stations._npcBasket = realBasket;
-  assert.ok(producedFor.length, "NPC stations still produce");
-  assert.ok(!producedFor.includes(other.systemId), "a held station stops minting NPC supply locally");
+  // An item we can't fit is already paid for: it waits in the save, survives a
+  // reload, and lands the moment there's room. It must never just evaporate.
+  ctx.Bazaar.capacity = () => 0;
+  srv.mine = { payouts: [], items: [{ systemId: heldSt.systemId, kind: "gear", name: "Held Blade",
+    payload: { uid: "iBack", kind: Object.keys(ctx.ACCESSORY_KINDS)[0], rarity: "common",
+               name: "Held Blade", primary: { kind: Object.keys(ctx.ACCESSORY_KINDS)[0], amount: 3 } } }] };
+  await Stations.settleHall();
+  assert.strictEqual(Stations.unclaimed.length, 1, "an undeliverable item is parked, not dropped");
+  Stations.hydrate(Stations.serialize());
+  assert.strictEqual(Stations.unclaimed.length, 1, "and it survives a save/load round trip");
+  ctx.Bazaar.capacity = () => 40;
+  assert.strictEqual(Stations.retryUnclaimed(), 1, "it lands once there's room");
+  assert.strictEqual(Stations.unclaimed.length, 0, "and stops waiting");
+  assert.ok(Object.values(ctx.Game.state.items).some(i => i.name === "Held Blade"), "delivered into inventory");
 
-  // Our own published row must not read as somebody else's.
-  ctx.Cloud._user = { id: "acct-me" };
-  ctx.Cloud._rows = [{ system_id: other.systemId, owner_id: "acct-me", display: "Me", tier: other.tier, status: "owned" }];
-  await Stations.refreshDirectory();
-  assert.strictEqual(Stations.remoteHolder(other.systemId), null, "our own row is not a remote holder");
-  assert.strictEqual(Stations.holderTag(other), "NPC", "no foreign holder → local view stands");
+  // NPC buyers were liquidity for a shelf nobody could reach. Not this one.
+  const vexSt = Stations.get(heldSt.systemId);
+  vexSt.hall = [{ id: "local1", sellerId: "player", kind: "extractor", name: "Ghost", price: 100,
+                  value: 100, expiresAt: T + 36e5, payload: { uid: "exGhost", type: "jack", scope: "all" } }];
+  const npcChance = STATIONCFG.hallNpcBuyChance;
+  STATIONCFG.hallNpcBuyChance = 1;
+  assert.strictEqual(Stations._npcBuyHall(vexSt, 7).length, 0, "no NPC buys on a shared shelf");
+  STATIONCFG.hallNpcBuyChance = npcChance;
+  vexSt.hall = [];
 
-  // Publish sends owner-held stations only, with the record other players read.
-  target.status = "refit";
-  target.refitUntil = T + 6 * 3600 * 1000;
-  await Stations.publishOwned();
-  assert.deepStrictEqual([...ctx.Cloud.published].map(r => r.system_id), [target.systemId],
-    "publishes exactly the stations we hold");
-  const sent = ctx.Cloud.published[0];
-  assert.strictEqual(sent.modules.production_hub, 1, "publishes what's installed");
-  assert.strictEqual(+sent.refit_until, target.refitUntil, "refit clock survives as a ms epoch");
-  target.status = "owned";
-  target.refitUntil = 0;
+  // Signed out: the shelf still renders, but it can't be traded on.
+  ctx.Cloud._user = null;
+  const guest = Stations.canUseHall(heldSt.systemId);
+  assert.ok(!guest.ok && guest.browse, "a signed-out visitor browses the shared shelf");
+  assert.ok(!(await Stations.buyHallListing(heldSt.systemId, "srv-bad")).ok, "and can't buy off it");
+}
 
-  console.log("OK check_stations");
+console.log("OK check_stations");
 })().catch(e => { console.error(e); process.exit(1); });

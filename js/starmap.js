@@ -431,12 +431,14 @@ const StarMap = {
         const hallAccess = Stations.canUseHall(sys.id);
         if (hallAccess.ok && st.ownerId !== Stations.playerId()) {
           const listings = Stations.hallListings(sys.id);
-          const tariff = ((st.saleTariffBps || 0) / 100).toFixed(0);
+          // The holder's rate, not our vacant copy's default.
+          const tariff = (((hallAccess.st || st).saleTariffBps || 0) / 100).toFixed(0);
           const rows = listings.map(l => {
             const left = Math.max(0, l.expiresAt - Date.now());
-            const mine = l.sellerId === Stations.playerId();
+            const mine = Stations.listingMine(l);
+            const seller = mine ? "your stall" : l.shared ? l.sellerName : "house stall";
             return `<tr>
-              <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)}</div></td>
+              <td>${l.name}<div class="tip-dim">${l.kind} · ${seller} · ${Util.duration(left)}</div></td>
               <td class="num">${Util.credits(l.price)}</td>
               <td>${mine
                 ? `<button class="btn btn-mini" data-sm-hall-cancel="${l.id}">Cancel</button>`
@@ -470,11 +472,11 @@ const StarMap = {
               <tbody>${rows}</tbody>
             </table></div></div>`;
         } else if (hallAccess.browse) {
-          // Their shelf, read-only: you can see what's on it and what the
-          // tariff is before phase B lets you actually buy off it.
+          // Their shelf, read-only: signed out, or on a project where the hall
+          // SQL isn't live. You see what's on it and what the tariff is.
           const v = hallAccess.st;
-          const rows = (v.hall || []).map(l => `<tr>
-              <td>${l.name}<div class="tip-dim">${l.kind}</div></td>
+          const rows = Stations.hallListings(sys.id).map(l => `<tr>
+              <td>${l.name}<div class="tip-dim">${l.kind}${l.shared ? ` · ${l.sellerName}` : ""}</div></td>
               <td class="num">${Util.credits(l.price)}</td>
             </tr>`).join("") || `<tr><td colspan="2" class="tip-dim">Shelf is empty</td></tr>`;
           stationBlock += `<div class="si-station si-hall"><b>Exchange Hall</b> · tariff ${((v.saleTariffBps || 0) / 100).toFixed(0)}%
@@ -659,27 +661,27 @@ const StarMap = {
     if (stManage) stManage.onclick = () => { this.close(); UI.showPage("stations"); };
 
     const smHallList = document.getElementById("sm-hall-list");
-    if (smHallList) smHallList.onclick = () => {
+    if (smHallList) smHallList.onclick = async () => {
       const raw = document.getElementById("sm-hall-item")?.value || "";
       const price = +document.getElementById("sm-hall-price")?.value || 0;
       const [kind, ref] = raw.split(":");
       if (!kind || !ref) return UI.toast("Pick something to list.", "warn");
-      const r = Stations.listHallItem(sys.id, kind, ref, price);
+      const r = await Stations.listHallItem(sys.id, kind, ref, price);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
       window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
     };
     document.querySelectorAll("[data-sm-hall-cancel]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.cancelHallListing(sys.id, btn.dataset.smHallCancel);
+      btn.onclick = async () => {
+        const r = await Stations.cancelHallListing(sys.id, btn.dataset.smHallCancel);
         if (!r.ok) return UI.toast(r.msg, "warn");
-        UI.toast("Listing cancelled — item returned.", "info");
+        UI.toast(r.cleared ? "Stall cleared — the goods go back to its owner." : "Listing cancelled — item returned.", "info");
         this.renderInfo(sys); UI.updateHeader();
       };
     });
     document.querySelectorAll("[data-sm-hall-buy]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
+      btn.onclick = async () => {
+        const r = await Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
         if (!r.ok) return UI.toast(r.msg, "warn");
         UI.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
         UI.flashCredits(); this.renderInfo(sys); UI.updateHeader();
