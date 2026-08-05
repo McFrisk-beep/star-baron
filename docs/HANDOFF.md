@@ -414,6 +414,8 @@ working" surprise.
 auctions/modules/production/sentiment/Exchange Hall/Contract Office/
 Customs·Free Port + non-capital docking (`js/stations.js`). **Phase 4 server
 stock:** paste `docs/sql/phase4_sector_stock.sql` per `docs/PHASE4_SETUP.md`
-(replaces `app_trade` with shelf lock + scarcity; `app_station_*` stubbed).
+(replaces `app_trade` with shelf lock + scarcity). **Stations alive (§14.1):**
+`station_directory.sql` (A) + `station_hall.sql` (B) + `station_bays.sql` (C) —
+shared ownership record, Exchange Hall, and Production Hub leases across players.
 Sanity: `tools/check_stock_economy.js`, `tools/check_stations.js`,
 `tools/check_customs.js`, `tools/check_scarcity_parity.js`.

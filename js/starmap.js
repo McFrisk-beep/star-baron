@@ -508,56 +508,68 @@ const StarMap = {
               `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
             ).join("")}</div></div>`;
         }
-        // Another baron's production floor — occupancy and terms are public
-        // (§8); leasing a bay from here waits for the station RPCs.
-        if (Stations.isRemote(sys.id)) {
-          const v = Stations.view(sys.id);
-          if ((v.modules.production_hub | 0) && v.prodComm) {
-            const comm = COMMODITIES.find(c => c.id === v.prodComm);
-            const bays = v.bays || [];
+        // Visitor Production Hub bay leases (docs/STATIONS.md §8 / §14.1 phase C).
+        // Shared floors use view(); guest-local other-owned stations use get().
+        {
+          const leaseSt = Stations.isRemote(sys.id) ? Stations.view(sys.id) : st;
+          const canLeaseHere = leaseSt && leaseSt.status === "owned"
+            && (leaseSt.modules.production_hub | 0) && leaseSt.prodComm
+            && !(Stations.ownerHeld(st) && st.ownerId === Stations.playerId());
+          if (canLeaseHere && (docked || Stations.isRemote(sys.id))) {
+            const comm = COMMODITIES.find(c => c.id === leaseSt.prodComm);
+            const taxPct = ((leaseSt.leaseTaxBps || 0) / 100).toFixed(0);
+            const bays = leaseSt.remote
+              ? (leaseSt.bays || [])
+              : (Stations.syncBays(leaseSt), leaseSt.bays || []);
             const taken = bays.filter(b => b.lesseeId).length;
-            stationBlock += `<div class="si-station si-lease"><b>Production bays</b> · ${comm ? comm.name : v.prodComm} · lease tax ${((v.leaseTaxBps || 0) / 100).toFixed(0)}%
-              <div class="tip-dim">${taken} of ${bays.length} bays occupied · leasing from a visited station isn't live yet</div></div>`;
+            const myBays = bays.map((b, i) => ({ b, i }))
+              .filter(x => Stations.bayMine(x.b));
+            // Remote bookkeeping may know an extractor the directory row doesn't.
+            const remoteSlots = (Stations.remoteLeases && Stations.remoteLeases[sys.id]) || {};
+            const vacant = docked ? Stations.leaseableBays(sys.id) : [];
+            const freeEx = docked
+              ? (window.Extractors ? Extractors.unequipped() : [])
+                  .filter(ex => Extractors.canProduce(ex, leaseSt.prodComm))
+              : [];
+            const exOpts = freeEx.map(ex =>
+              `<option value="${ex.uid}">${ex.name}</option>`).join("");
+            let leaseHtml = `<div class="si-station si-lease"><b>Production bays</b> · ${comm ? comm.name : leaseSt.prodComm} · lease tax ${taxPct}%`;
+            leaseHtml += `<div class="tip-dim">${taken} of ${bays.length} bays occupied</div>`;
+            if (!docked && Stations.isRemote(sys.id)) {
+              leaseHtml += `<div class="tip-dim">Dock here to lease a bay</div>`;
+            }
+            if (myBays.length) {
+              leaseHtml += myBays.map(({ b, i }) => {
+                const exUid = b.extractorId || remoteSlots[i];
+                const ex = window.Extractors && Extractors.get(exUid);
+                return `<div class="tip-dim">Bay ${i + 1} · yours · ${ex ? ex.name : "extractor"}
+                  ${docked ? `<button class="btn btn-mini" data-sm-vacate="${i}">Leave</button>` : ""}</div>`;
+              }).join("");
+            }
+            if (docked && vacant.length) {
+              if (Stations.bayShared(sys.id) && !Stations._baysWritable()) {
+                leaseHtml += `<div class="tip-dim">Sign in to lease a bay here</div>`;
+              } else {
+                leaseHtml += vacant.map(({ index }) =>
+                  `<div class="st-hall-list" style="margin-top:6px">Bay ${index + 1}
+                    <select data-sm-lease-ex="${index}" ${exOpts ? "" : "disabled"}>${exOpts || "<option>No free extractor</option>"}</select>
+                    <button class="btn btn-mini btn-go" data-sm-lease="${index}" ${exOpts ? "" : "disabled"}>Lease</button>
+                  </div>`).join("");
+              }
+            } else if (docked && !myBays.length && !vacant.length) {
+              leaseHtml += `<div class="tip-dim">No vacant bays</div>`;
+            }
+            if (docked && !leaseSt.remote) {
+              const pending = (st.pendingCargo && st.pendingCargo[Stations.playerId()]) || {};
+              const pendN = Object.values(pending).reduce((a, q) => a + (q | 0), 0);
+              if (pendN > 0) {
+                leaseHtml += `<div class="tip-dim" style="margin-top:4px">${pendN} units parked — claiming…</div>`;
+                Stations.claimPendingCargo(sys.id);
+              }
+            }
+            leaseHtml += `</div>`;
+            stationBlock += leaseHtml;
           }
-        }
-        // Visitor Production Hub bay leases (docs/STATIONS.md §8).
-        if (docked && st.status === "owned" && st.ownerId !== Stations.playerId()
-            && (st.modules.production_hub | 0) && st.prodComm) {
-          Stations.syncBays(st);
-          const comm = COMMODITIES.find(c => c.id === st.prodComm);
-          const taxPct = ((st.leaseTaxBps || 0) / 100).toFixed(0);
-          const myBays = (st.bays || []).map((b, i) => ({ b, i }))
-            .filter(x => x.b.lesseeId === Stations.playerId() && !x.b.npc);
-          const vacant = Stations.leaseableBays(sys.id);
-          const freeEx = (window.Extractors ? Extractors.unequipped() : [])
-            .filter(ex => Extractors.canProduce(ex, st.prodComm));
-          const exOpts = freeEx.map(ex =>
-            `<option value="${ex.uid}">${ex.name}</option>`).join("");
-          let leaseHtml = `<div class="si-station si-lease"><b>Production bays</b> · ${comm ? comm.name : st.prodComm} · lease tax ${taxPct}%`;
-          if (myBays.length) {
-            leaseHtml += myBays.map(({ b, i }) => {
-              const ex = window.Extractors && Extractors.get(b.extractorId);
-              return `<div class="tip-dim">Bay ${i + 1} · yours · ${ex ? ex.name : "extractor"}
-                <button class="btn btn-mini" data-sm-vacate="${i}">Leave</button></div>`;
-            }).join("");
-          }
-          if (vacant.length) {
-            leaseHtml += vacant.map(({ index }) =>
-              `<div class="st-hall-list" style="margin-top:6px">Bay ${index + 1}
-                <select data-sm-lease-ex="${index}" ${exOpts ? "" : "disabled"}>${exOpts || "<option>No free extractor</option>"}</select>
-                <button class="btn btn-mini btn-go" data-sm-lease="${index}" ${exOpts ? "" : "disabled"}>Lease</button>
-              </div>`).join("");
-          } else if (!myBays.length) {
-            leaseHtml += `<div class="tip-dim">No vacant bays</div>`;
-          }
-          const pending = (st.pendingCargo && st.pendingCargo[Stations.playerId()]) || {};
-          const pendN = Object.values(pending).reduce((a, q) => a + (q | 0), 0);
-          if (pendN > 0) {
-            leaseHtml += `<div class="tip-dim" style="margin-top:4px">${pendN} units parked — claiming…</div>`;
-            Stations.claimPendingCargo(sys.id);
-          }
-          leaseHtml += `</div>`;
-          stationBlock += leaseHtml;
         }
       }
     }
@@ -696,18 +708,18 @@ const StarMap = {
       };
     });
     document.querySelectorAll("[data-sm-lease]").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const i = +btn.dataset.smLease;
         const sel = document.querySelector(`[data-sm-lease-ex="${i}"]`);
-        const r = Stations.leaseBay(sys.id, i, sel && sel.value);
+        const r = await Stations.leaseBay(sys.id, i, sel && sel.value);
         if (!r.ok) return UI.toast(r.msg, "warn");
         UI.toast(`Bay ${i + 1} leased — output after tax lands in your cargo.`, "good");
         window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
       };
     });
     document.querySelectorAll("[data-sm-vacate]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.vacateBay(sys.id, +btn.dataset.smVacate);
+      btn.onclick = async () => {
+        const r = await Stations.vacateBay(sys.id, +btn.dataset.smVacate);
         if (!r.ok) return UI.toast(r.msg, "warn");
         UI.toast("Left the bay — extractor returned.", "info");
         this.renderInfo(sys); UI.updateHeader();

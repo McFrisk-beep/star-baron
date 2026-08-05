@@ -109,11 +109,15 @@ const Stations = {
   // Phase A: read-only. view() below feeds every display and every effect that
   // is a pure read of the record (customs, free port, workshop annex, dry dock,
   // buoys), so docking at another baron's station finally does something.
-  // Phase B: the mutating RPCs — hall buy/list, bay lease, ransom — write back
-  // into these same hall/bays arrays. Until then, look but don't touch.
+  // Phase B: hall buy/list write the shared shelf. Phase C: bay lease/vacate/
+  // produce write the shared bays column and queue the owner's lease tax.
+  // Impound ransom still waits (claims aren't published yet).
   directory: {},        // systemId -> published record
   directoryAt: 0,
   _pubTimer: null,
+  // Extractors we parked in someone else's bay (uid lives only in our save).
+  // systemId -> { bayIndex: extractorUid }
+  remoteLeases: {},
 
   // Cloud identity, used ONLY to recognise our own directory rows. Local
   // ownership keeps using playerId() — that returns "player" in every save, so
@@ -203,8 +207,8 @@ const Stations = {
       const n = this._num(lvl, 0, max, 0) | 0;
       if (n > 0) modules[id] = n;
     }
-    // ponytail: hall/bays are display-only in phase A, so client-trusted is
-    // fine; phase B's buy/lease RPCs must own these arrays server-side.
+    // Hall payloads live in station_listings (phase B); bay occupancy lives in
+    // the shared bays column (phase C). Both are re-typed at this boundary.
     const hall = (Array.isArray(r.hall) ? r.hall : []).slice(0, 40).map(l => ({
       id: this._txt(l && l.id, 40),
       name: this._txt(l && l.name, 48) || "Listing",
@@ -248,10 +252,35 @@ const Stations = {
       }
       this.directory = next;
       this.directoryAt = Date.now();
+      // Owner's local bay array doesn't know about remote lessees — overlay
+      // them so the Stations tab shows occupancy and _playerProduce can skip
+      // double-taxing (they produce themselves via produceRemoteLeases).
+      for (const st of this.ownedBy()) this._mergeRemoteBays(st);
     } catch (e) {
       console.warn("[Stations] directory fetch failed:", e);
     }
     return this.directory;
+  },
+
+  _mergeRemoteBays(st) {
+    const row = this.directory[st.systemId];
+    if (!row || !this.ownerHeld(st)) return;
+    this.syncBays(st);
+    const rem = row.bays || [];
+    for (let i = 0; i < st.bays.length; i++) {
+      const rb = rem[i];
+      if (!rb || !rb.lesseeId || rb.npc) {
+        // Server says vacant and we only had a foreign ghost — clear it.
+        if (st.bays[i] && this._foreignLessee(st.bays[i])) this._clearBay(st, st.bays[i]);
+        continue;
+      }
+      if (rb.lesseeId === this.accountId() || rb.lesseeId === this.playerId()) continue;
+      // Don't overwrite a bay we ourselves occupy locally.
+      if (st.bays[i].lesseeId === this.playerId() && st.bays[i].extractorId) continue;
+      st.bays[i].lesseeId = rb.lesseeId;
+      st.bays[i].extractorId = null;
+      st.bays[i].npc = false;
+    }
   },
 
   async publishOwned() {
@@ -270,11 +299,19 @@ const Stations = {
       // ms epoch — never `| 0` this, 32-bit truncation mangles it.
       refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
       // Shelf and bay occupancy — what makes a visited station look inhabited.
+      // Owner-occupied bays rewrite "player" → account uuid so the shared column
+      // names us the same way a remote lease does. Publish merges foreign
+      // lessees server-side (docs/sql/station_bays.sql) so we can't wipe them.
       hall: (st.hall || []).slice(0, 40).map(l => ({
         id: l.id, name: l.name, kind: l.kind, price: l.price,
         expiresAt: l.expiresAt, sellerId: l.sellerId,
       })),
-      bays: (st.bays || []).slice(0, 12).map(b => ({ lesseeId: b.lesseeId || "", npc: !!b.npc })),
+      bays: (st.bays || []).slice(0, 12).map(b => {
+        let lessee = b.lesseeId || "";
+        if (lessee && !b.npc && lessee === this.playerId() && this.accountId())
+          lessee = this.accountId();
+        return { lesseeId: lessee, npc: !!b.npc };
+      }),
     }));
     try {
       const res = await Cloud.stationPublish(rows);
@@ -425,16 +462,18 @@ const Stations = {
     }
   },
 
-  // Everything the shelf owes us: sale proceeds, tariffs charged on our own
-  // station, and the items behind listings that expired or were cleared.
+  // Everything the shelf (and the bay floor) owes us: sale proceeds, tariffs,
+  // lease-tax cargo into our hold, and items behind listings that expired or
+  // were cleared. One RPC — hall settle was extended in station_bays.sql.
   async settleHall() {
-    if (!this._hallWritable()) return null;
+    if (!(window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.stationSettle)) return null;
+    if (!this._hallWritable() && !(Cloud.baysReady && Cloud.baysReady())) return null;
     let res;
     try { res = await Cloud.stationSettle(); }
-    catch (e) { console.warn("[Stations] hall settle failed:", e); return null; }
+    catch (e) { console.warn("[Stations] settle failed:", e); return null; }
     if (!res || !res.ok) return null;
 
-    let credits = 0, tariffs = 0, items = 0;
+    let credits = 0, tariffs = 0, items = 0, cargo = 0;
     for (const p of Array.isArray(res.payouts) ? res.payouts : []) {
       const amt = Math.max(0, Math.round(+(p && p.amount) || 0));
       if (!amt) continue;
@@ -457,11 +496,32 @@ const Stations = {
       if (!this._deliverListable(back, this.playerId()).ok) this._park(back);
       items++;
     }
-    if (credits || tariffs || items) {
+    // Lease tax is commodities into the station hold (§8), not wallet credits.
+    for (const row of Array.isArray(res.cargo) ? res.cargo : []) {
+      const sid = this._txt(row && row.systemId, 40);
+      const commId = this._txt(row && row.commId, 40);
+      const qty = Math.max(0, Math.min(500, Math.floor(+(row && row.qty) || 0)));
+      if (!sid || !commId || !qty) continue;
+      if (!COMMODITIES.some(c => c.id === commId)) continue;
+      const st = this.get(sid);
+      if (st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+        st.hold[commId] = (st.hold[commId] | 0) + qty;
+        this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
+        cargo += qty;
+      } else {
+        // Lost the station since the tax was queued — residual follows us out.
+        const s = Game.state;
+        const held = s.positions[commId] || 0;
+        s.positions[commId] = held + qty;
+        s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+        cargo += qty;
+      }
+    }
+    if (credits || tariffs || items || cargo) {
       if (window.Economy) Economy.refreshNetWorth();
       if (window.Game) Game.requestSave();
     }
-    return { ok: true, credits, tariffs, items };
+    return { ok: true, credits, tariffs, items, cargo };
   },
 
   // A payload the server held in escrow was authored by another player's client
@@ -1605,6 +1665,22 @@ const Stations = {
   },
 
   // ---- Production Hub bays (docs/STATIONS.md §8) --------------------------
+  // Phase C: on a published station the floor is shared. bayShared() is the
+  // seam — lease/vacate/produce hit the server; an unpublished station (or a
+  // project without station_bays.sql) keeps today's local path untouched.
+  bayShared(systemId) {
+    return !!(this.directory[systemId] && window.Cloud && Cloud.enabled && !Cloud.baysMissing);
+  },
+  _baysWritable() { return !!(window.Cloud && Cloud.baysReady && Cloud.baysReady()); },
+
+  // Local leases key by playerId() ("player"); shared ones by account uuid.
+  bayMine(bay) {
+    if (!bay || !bay.lesseeId || bay.npc) return false;
+    if (bay.lesseeId === this.playerId()) return true;
+    const me = this.accountId();
+    return !!me && bay.lesseeId === me;
+  },
+
   bayCount(st) {
     const hub = st.modules.production_hub | 0;
     if (!hub) return 0;
@@ -1662,30 +1738,71 @@ const Stations = {
     bay.extractorId = extractorUid;
     bay.npc = false;
     if (window.Game) Game.requestSave();
+    this._publishSoon();
     return { ok: true, bay };
   },
 
-  // Non-owner leases a vacant bay with their extractor (output → their cargo, tax to owner).
-  leaseBay(systemId, bayIndex, extractorUid) {
-    const st = this.get(systemId);
-    if (!st || st.status !== "owned") return { ok: false, msg: "Station isn't leasing." };
-    const pid = this.playerId();
-    if (st.ownerId === pid) return { ok: false, msg: "You own this station — occupy a bay instead." };
-    if (!(st.modules.production_hub | 0) || !st.prodComm)
+  // Non-owner leases a vacant bay with their extractor (output → their cargo,
+  // tax to owner). Shared stations go through the RPC; local/guest stays here.
+  async leaseBay(systemId, bayIndex, extractorUid) {
+    const v = this.view(systemId);
+    if (!v || v.status !== "owned") return { ok: false, msg: "Station isn't leasing." };
+    if (this.ownerHeld(this.get(systemId)) && this.get(systemId).ownerId === this.playerId())
+      return { ok: false, msg: "You own this station — occupy a bay instead." };
+    if (v.remote && this.accountId() && v.ownerId === this.accountId())
+      return { ok: false, msg: "You own this station — occupy a bay instead." };
+    if (!(v.modules.production_hub | 0) || !v.prodComm)
       return { ok: false, msg: "No Production Hub commodity assigned." };
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't lease in transit." };
     if (s.currentSystem !== systemId) return { ok: false, msg: "Dock at this station to lease a bay." };
-    this.syncBays(st);
-    const bay = st.bays[bayIndex];
-    if (!bay) return { ok: false, msg: "No such bay." };
-    if (bay.lesseeId) return { ok: false, msg: "Bay is occupied." };
     const ex = window.Extractors && Extractors.get(extractorUid);
     if (!ex) return { ok: false, msg: "Extractor not found." };
     if (Extractors.installedSet().has(extractorUid))
       return { ok: false, msg: "That extractor is already installed elsewhere." };
-    if (!Extractors.canProduce(ex, st.prodComm))
+    if (!Extractors.canProduce(ex, v.prodComm))
       return { ok: false, msg: "This extractor can't produce the hub commodity." };
+
+    if (this.bayShared(systemId)) {
+      if (!this._baysWritable())
+        return { ok: false, msg: "Sign in to lease a bay on a shared station." };
+      let res;
+      try { res = await Cloud.stationLeaseBay(systemId, bayIndex, extractorUid); }
+      catch (e) {
+        console.warn("[Stations] bay lease failed:", e);
+        return { ok: false, msg: "The station floor is unreachable right now." };
+      }
+      if (!res || !res.ok) {
+        void this.refreshDirectory();
+        return { ok: false, msg: (res && res.error) || "Bay is occupied." };
+      }
+      if (!this.remoteLeases[systemId]) this.remoteLeases[systemId] = {};
+      this.remoteLeases[systemId][bayIndex] = extractorUid;
+      // Mirror occupancy into the directory row we already have so the UI
+      // updates without waiting on another round trip.
+      const row = this.directory[systemId];
+      if (row) {
+        const n = this.bayCount(row);
+        if (!Array.isArray(row.bays)) row.bays = [];
+        while (row.bays.length < n) row.bays.push({ lesseeId: "", npc: false });
+        if (row.bays[bayIndex]) {
+          row.bays[bayIndex] = { lesseeId: this.accountId(), npc: false };
+        }
+      }
+      if (window.Game) Game.requestSave();
+      void this.refreshDirectory();
+      return { ok: true, bay: { lesseeId: this.accountId(), extractorId: extractorUid, npc: false }, shared: true };
+    }
+
+    // Local / guest path — mutate our copy of the station.
+    const st = this.get(systemId);
+    if (!st || st.status !== "owned") return { ok: false, msg: "Station isn't leasing." };
+    const pid = this.playerId();
+    if (st.ownerId === pid) return { ok: false, msg: "You own this station — occupy a bay instead." };
+    this.syncBays(st);
+    const bay = st.bays[bayIndex];
+    if (!bay) return { ok: false, msg: "No such bay." };
+    if (bay.lesseeId) return { ok: false, msg: "Bay is occupied." };
     bay.lesseeId = pid;
     bay.extractorId = extractorUid;
     bay.npc = false;
@@ -1693,16 +1810,18 @@ const Stations = {
     return { ok: true, bay };
   },
 
-  // Vacant leaseable bays at a station (visitor UI).
+  // Vacant leaseable bays at a station (visitor UI). Uses view() so a shared
+  // floor's occupancy is the one everyone else sees.
   leaseableBays(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || st.status !== "owned" || !(st.modules.production_hub | 0) || !st.prodComm) return [];
-    this.syncBays(st);
-    return (st.bays || []).map((b, i) => ({ index: i, bay: b }))
+    const bays = st.remote ? (st.bays || []) : (this.syncBays(st), st.bays || []);
+    return bays.map((b, i) => ({ index: i, bay: b }))
       .filter(x => !x.bay.lesseeId);
   },
 
   // Credit leased keep-cargo parked while the lessee was offline / remote.
+  // Guest-local only — on a shared floor the lessee mints keep themselves.
   claimPendingCargo(systemId) {
     const st = this.get(systemId);
     if (!st || !st.pendingCargo) return { ok: true, claimed: {} };
@@ -1725,7 +1844,58 @@ const Stations = {
     return { ok: true, claimed };
   },
 
-  vacateBay(systemId, bayIndex) {
+  async vacateBay(systemId, bayIndex) {
+    // Shared remote lease — clear the slot server-side and free our extractor.
+    if (this.bayShared(systemId) && this.remoteLeases[systemId]
+        && this.remoteLeases[systemId][bayIndex] != null) {
+      if (!this._baysWritable()) return { ok: false, msg: "Sign in to leave a shared bay." };
+      let res;
+      try { res = await Cloud.stationVacateBay(systemId, bayIndex); }
+      catch (e) {
+        console.warn("[Stations] bay vacate failed:", e);
+        return { ok: false, msg: "The station floor is unreachable right now." };
+      }
+      if (!res || !res.ok) {
+        // Already gone (owner evicted / station released) — free the extractor.
+        if (res && /empty|Not your bay|No station/i.test(res.error || "")) {
+          delete this.remoteLeases[systemId][bayIndex];
+          if (!Object.keys(this.remoteLeases[systemId]).length) delete this.remoteLeases[systemId];
+          if (window.Game) Game.requestSave();
+          void this.refreshDirectory();
+          return { ok: true };
+        }
+        return { ok: false, msg: (res && res.error) || "Bay is empty." };
+      }
+      delete this.remoteLeases[systemId][bayIndex];
+      if (!Object.keys(this.remoteLeases[systemId]).length) delete this.remoteLeases[systemId];
+      const row = this.directory[systemId];
+      if (row && row.bays && row.bays[bayIndex])
+        row.bays[bayIndex] = { lesseeId: "", npc: false };
+      if (window.Game) Game.requestSave();
+      void this.refreshDirectory();
+      return { ok: true, shared: true };
+    }
+
+    // Owner evicting a remote lessee from a shared floor.
+    if (this.bayShared(systemId)) {
+      const st = this.get(systemId);
+      if (st && this.ownerHeld(st) && st.ownerId === this.playerId() && this._baysWritable()) {
+        let res;
+        try { res = await Cloud.stationVacateBay(systemId, bayIndex); }
+        catch (e) {
+          console.warn("[Stations] bay vacate failed:", e);
+          return { ok: false, msg: "The station floor is unreachable right now." };
+        }
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Bay is empty." };
+        this.syncBays(st);
+        if (st.bays[bayIndex]) this._clearBay(st, st.bays[bayIndex]);
+        if (window.Game) Game.requestSave();
+        this._publishSoon();
+        void this.refreshDirectory();
+        return { ok: true, shared: true };
+      }
+    }
+
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     this.syncBays(st);
@@ -1738,6 +1908,86 @@ const Stations = {
     this._clearBay(st, bay);
     if (window.Game) Game.requestSave();
     return { ok: true };
+  },
+
+  // Extractors locked into remote (shared) bays — installedSet reads this.
+  remoteLeaseExtractorIds() {
+    const ids = [];
+    for (const slots of Object.values(this.remoteLeases || {})) {
+      for (const uid of Object.values(slots || {})) if (uid) ids.push(uid);
+    }
+    return ids;
+  },
+
+  // Drop a remote lease bookkeeping entry when the directory says we're gone
+  // (owner evicted, station released, or we lost the race). Extractor frees.
+  reconcileRemoteLeases() {
+    let changed = false;
+    for (const [sid, slots] of Object.entries(this.remoteLeases || {})) {
+      const row = this.directory[sid];
+      for (const idx of Object.keys(slots)) {
+        const i = +idx;
+        const bay = row && Array.isArray(row.bays) ? row.bays[i] : null;
+        if (!bay || !this.bayMine(bay)) {
+          delete slots[idx];
+          changed = true;
+        }
+      }
+      if (!Object.keys(slots).length) {
+        delete this.remoteLeases[sid];
+        changed = true;
+      }
+    }
+    if (changed && window.Game) Game.requestSave();
+    return changed;
+  },
+
+  // Lessee-side production on a shared floor. We mint keep into our cargo; the
+  // RPC queues tax commodities for the owner. Owner-side _playerProduce skips
+  // foreign lessees so the same bay isn't taxed twice.
+  async produceRemoteLeases(hourIndex) {
+    if (!this._baysWritable()) return 0;
+    let total = 0;
+    for (const [sid, slots] of Object.entries(this.remoteLeases || {})) {
+      if (!this.bayShared(sid)) continue;
+      const v = this.view(sid);
+      if (!v || v.status !== "owned" || !v.prodComm) continue;
+      if (v.status === "refit") continue;
+      for (const [idx, exUid] of Object.entries(slots)) {
+        const i = +idx;
+        const bay = (v.bays || [])[i];
+        if (!bay || !this.bayMine(bay)) continue;
+        const fake = { lesseeId: this.accountId(), extractorId: exUid, npc: false };
+        const gross = this._bayGross(v, fake);
+        if (gross <= 0) continue;
+        let res;
+        try { res = await Cloud.stationBayProduce(sid, i, gross); }
+        catch (e) {
+          console.warn("[Stations] bay produce failed:", e);
+          continue;
+        }
+        if (!res || !res.ok) {
+          // Evicted / cycle already claimed — drop bookkeeping if the bay isn't ours.
+          if (res && /Not your bay|No such bay|isn't producing/i.test(res.error || "")) {
+            delete slots[idx];
+          }
+          continue;
+        }
+        const keep = Math.max(0, Math.min(300, Math.floor(+(res.keep) || 0)));
+        const commId = COMMODITIES.some(c => c.id === res.commId) ? res.commId : v.prodComm;
+        if (keep > 0 && window.Game) {
+          const s = Game.state;
+          const held = s.positions[commId] || 0;
+          s.positions[commId] = held + keep;
+          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + keep) : 0;
+          if (window.Assets) Assets.parkBlocks(sid, commId, keep);
+        }
+        total += keep;
+      }
+      if (!Object.keys(slots).length) delete this.remoteLeases[sid];
+    }
+    if (total && window.Game) Game.requestSave();
+    return total;
   },
 
   // Soft NPC tenants for vacant bays — keeps lease tax meaningful in guest mode.
@@ -1781,6 +2031,17 @@ const Stations = {
     return Math.max(0, gross);
   },
 
+  // True when this lessee is another signed-in baron (uuid), not us / NPC /
+  // local "player". On a shared floor they produce themselves via
+  // produceRemoteLeases; double-taxing here would mint free stock for the owner.
+  _foreignLessee(bay) {
+    if (!bay || !bay.lesseeId || bay.npc) return false;
+    if (bay.lesseeId === this.playerId()) return false;
+    if (this.accountId() && bay.lesseeId === this.accountId()) return false;
+    // UUIDs from the shared column; local guest lessees are short names like "bob".
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(bay.lesseeId);
+  },
+
   // Owner + lessee bay production for one hour.
   _playerProduce(st, hourIndex) {
     if (st.status === "refit") return 0;
@@ -1792,12 +2053,17 @@ const Stations = {
     let total = 0;
     let ownerStaffed = 0;
     const pid = this.playerId();
+    const shared = this.bayShared(st.systemId);
     for (const bay of st.bays) {
       if (!bay.lesseeId) continue;
+      // Shared floor: foreign lessees report their own cycle + tax RPC.
+      if (shared && this._foreignLessee(bay)) continue;
       const gross = this._bayGross(st, bay);
       if (gross <= 0) continue;
       total += gross;
-      const isOwner = bay.lesseeId === st.ownerId && !bay.npc;
+      const isOwner = (bay.lesseeId === st.ownerId || bay.lesseeId === pid
+        || (this.accountId() && bay.lesseeId === this.accountId())) && !bay.npc
+        && st.ownerId === pid;
       if (isOwner) {
         ownerStaffed++;
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
@@ -1816,7 +2082,7 @@ const Stations = {
         s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
         if (window.Assets) Assets.parkBlocks(st.systemId, st.prodComm, keep);
       } else {
-        // Remote / third-party lessee — park keep until they claim.
+        // Remote / third-party lessee (guest-local) — park keep until they claim.
         if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
         const bag = st.pendingCargo[bay.lesseeId] || (st.pendingCargo[bay.lesseeId] = {});
         bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;
@@ -2247,9 +2513,16 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
-    // Hourly: refresh who holds what, and re-stamp our own rows so an active
-    // owner never ages out of the directory's 30-day staleness window.
-    void this.refreshDirectory().then(() => this.publishOwned());
+    // Hourly: refresh who holds what, re-stamp our own rows so an active owner
+    // never ages out of the directory's 30-day window, then run our remote
+    // leases (keep locally, tax queued for the owner) and claim anything owed.
+    void this.refreshDirectory()
+      .then(() => this.publishOwned())
+      .then(() => {
+        this.reconcileRemoteLeases();
+        return this.produceRemoteLeases(hourIndex);
+      })
+      .then(() => this.settleHall());
   },
 
   _warnStages(st, sentiment) {
@@ -2456,6 +2729,7 @@ const Stations = {
       ledger: this.ledger,
       lastWarn: this.lastWarn,
       unclaimed: this.unclaimed,
+      remoteLeases: this.remoteLeases,
     };
   },
 
@@ -2477,6 +2751,24 @@ const Stations = {
         return payload ? { kind, name: this._txt(e.name, 48) || "Listing", payload } : null;
       })
       .filter(Boolean);
+    // Extractors we left in someone else's bay. Uids must still exist in our
+    // pool; a missing extractor just drops the lease bookkeeping (the server
+    // slot is reconciled on the next directory refresh).
+    this.remoteLeases = {};
+    const rawLeases = (snap.remoteLeases && typeof snap.remoteLeases === "object")
+      ? snap.remoteLeases : {};
+    for (const [sid, slots] of Object.entries(rawLeases)) {
+      if (!sid || typeof slots !== "object" || !slots) continue;
+      const clean = {};
+      for (const [idx, uid] of Object.entries(slots)) {
+        const i = +idx;
+        if (!Number.isFinite(i) || i < 0 || i > 11) continue;
+        const id = this._txt(uid, 40);
+        if (!id) continue;
+        clean[i] = id;
+      }
+      if (Object.keys(clean).length) this.remoteLeases[this._txt(sid, 40)] = clean;
+    }
     // Coerce each station at the trust boundary.
     for (const [id, st] of Object.entries(this.byId)) {
       if (!st || typeof st !== "object") { delete this.byId[id]; continue; }

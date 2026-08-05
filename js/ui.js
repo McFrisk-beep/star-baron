@@ -2750,7 +2750,10 @@ const UI = {
         who = `<b>You</b> · ${ex ? ex.name : "extractor"}`;
         acts = `<button class="btn btn-mini" data-st-vacate="${i}">Remove</button>`;
       } else {
-        who = `<b>Lessee</b> ${bay.lesseeId}`;
+        const tag = Stations._foreignLessee && Stations._foreignLessee(bay)
+          ? "Baron"
+          : bay.lesseeId;
+        who = `<b>Lessee</b> ${tag}`;
         acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
       }
       const y = bay.lesseeId ? Stations._bayGross(st, bay) : 0;
@@ -2861,8 +2864,8 @@ const UI = {
       };
     });
     body.querySelectorAll("[data-st-vacate]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.vacateBay(st.systemId, +btn.dataset.stVacate);
+      btn.onclick = async () => {
+        const r = await Stations.vacateBay(st.systemId, +btn.dataset.stVacate);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast("Bay cleared.", "info"); this.renderStations();
       };

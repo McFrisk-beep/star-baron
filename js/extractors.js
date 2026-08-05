@@ -28,6 +28,11 @@ const Extractors = {
           if (bay && bay.extractorId && this.pool()[bay.extractorId]) set.add(bay.extractorId);
         }
       }
+      // Shared-floor leases: the extractor lives only in our save, keyed off
+      // remoteLeases — the server column has occupancy, not the uid.
+      for (const uid of Stations.remoteLeaseExtractorIds()) {
+        if (this.pool()[uid]) set.add(uid);
+      }
     }
     return set;
   },

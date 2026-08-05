@@ -185,7 +185,8 @@ const Cloud = {
       this._user = null; this._pendingRecovery = false;
       this._username = null; this._joinN = null;
       this.playersReady = false; this.pullReady = false; this.pullMissing = false;
-      this.craftMissing = false; this.hallMissing = false; this._rpcMissing = {};
+      this.craftMissing = false; this.hallMissing = false; this.baysMissing = false;
+      this._rpcMissing = {};
     }
   },
 
@@ -285,6 +286,36 @@ const Cloud = {
   },
   async stationSettle() {
     return this._optional("app_station_settle", {});
+  },
+
+  // Cross-player Production Hub bays (docs/sql/station_bays.sql). Latches off
+  // the lease RPC the same way hallMissing latches off the shelf read — phase 4
+  // ships app_station_lease_bay as a not-implemented stub, so "the function
+  // exists" proves nothing. A project without this SQL keeps local-only leases.
+  baysMissing: false,
+  async stationLeaseBay(system, bay, extractor) {
+    if (this.baysMissing) return { ok: false, error: "Station bays not live on server yet." };
+    try {
+      return await this.rpc("app_station_lease_bay", {
+        p_system: system, p_bay: bay | 0, p_extractor: extractor || "",
+      });
+    } catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.baysMissing = true;
+        console.warn("[Cloud] app_station_lease_bay missing — run docs/sql/station_bays.sql");
+        return { ok: false, error: "Station bays not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  baysReady() { return this.enabled && !this.baysMissing && this.signedIn(); },
+  async stationVacateBay(system, bay) {
+    return this.rpc("app_station_vacate_bay", { p_system: system, p_bay: bay | 0 });
+  },
+  async stationBayProduce(system, bay, gross) {
+    return this.rpc("app_station_bay_produce", {
+      p_system: system, p_bay: bay | 0, p_gross: gross | 0,
+    });
   },
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
