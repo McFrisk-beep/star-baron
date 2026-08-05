@@ -474,6 +474,9 @@ const Game = {
         // owed, read the shelves we can see. Needs the directory first — a
         // station is only shared once its owner has published it.
         .then(() => Stations.syncHall())
+        // Shared bay floor (phase C): drop leases the directory says we lost
+        // (evicted / station released). Tax cargo arrives via settleHall above.
+        .then(() => { Stations.reconcileRemoteLeases(); })
         .finally(() => {
           if (!window.UI) return;
           if (UI.page === "systems") UI.renderSystems();

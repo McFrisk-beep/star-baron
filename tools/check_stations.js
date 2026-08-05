@@ -116,8 +116,12 @@ const del = Stations.deliver(target.systemId, pool[0].id, qty);
 assert.ok(del.ok, del.msg);
 assert.ok(Stock.available(target.sectorId, pool[0].id) >= stockBefore, "delivery restocks sector");
 
+// leaseBay / vacateBay are async (shared-floor RPCs). Everything from here
+// down runs in one async body — hall + bay checks await the same way.
+void (async () => {
+
 // Vacate returns extractor to pool
-assert.ok(Stations.vacateBay(target.systemId, 0).ok);
+assert.ok((await Stations.vacateBay(target.systemId, 0)).ok);
 assert.ok(Extractors.unequipped().some(e => e.uid === ex.uid), "vacated extractor free again");
 
 // Lease path: another owner's hub, local player leases (must be docked there)
@@ -129,9 +133,9 @@ otherHub.prodComm = pool[0].id;
 otherHub.leaseTaxBps = 1000; // 10%
 otherHub.hold = {};
 Stations.syncBays(otherHub);
-assert.ok(!Stations.leaseBay(otherHub.systemId, 0, ex.uid).ok, "lease requires docking");
+assert.ok(!(await Stations.leaseBay(otherHub.systemId, 0, ex.uid)).ok, "lease requires docking");
 ctx.Game.state.currentSystem = otherHub.systemId;
-const lease = Stations.leaseBay(otherHub.systemId, 0, ex.uid);
+const lease = await Stations.leaseBay(otherHub.systemId, 0, ex.uid);
 assert.ok(lease.ok, lease.msg);
 assert.ok(Stations.leaseableBays(otherHub.systemId).every(x => x.index !== 0), "leased bay not listed vacant");
 ctx.Game.state.positions = {};
@@ -143,7 +147,7 @@ assert.strictEqual(otherHub.hold[pool[0].id] | 0, tax, "lease tax → station ho
 assert.strictEqual(ctx.Game.state.positions[pool[0].id] | 0, keep, "lessee keeps residual in cargo");
 
 // Third-party lessee: keep parks in pendingCargo (not dropped on the floor)
-Stations.vacateBay(otherHub.systemId, 0);
+await Stations.vacateBay(otherHub.systemId, 0);
 Extractors.acquire(ex);
 otherHub.hold = {};
 otherHub.bays[0] = { lesseeId: "bob", extractorId: ex.uid, npc: false };
@@ -162,7 +166,7 @@ const claimed = Stations.claimPendingCargo(otherHub.systemId);
 Stations.playerId = realPid;
 assert.strictEqual(claimed.claimed[pool[0].id] | 0, rKeep, "claimPendingCargo pays lessee");
 assert.strictEqual(ctx.Game.state.positions[pool[0].id] | 0, rKeep);
-Stations.vacateBay(otherHub.systemId, 0);
+await Stations.vacateBay(otherHub.systemId, 0);
 otherHub.ownerId = null; otherHub.status = "npc"; otherHub.modules = {}; otherHub.bays = [];
 otherHub.pendingCargo = {};
 ctx.Game.state.currentSystem = sec.capital;
@@ -197,13 +201,8 @@ ctx.Game.state.credits = 5_000_000;
 const r2 = Stations.openAuction(other.systemId, Stations.openingBid(other));
 assert.ok(!r2.ok, "cap blocks opening a second auction while owning 1");
 
-// Everything from here down runs in one async body: the hall calls can reach
-// the server now, so they're awaited — and every check after them depends on
-// the state they leave behind. Kept at column 0; it's the rest of the file.
-void (async () => {
-
 // ---- Exchange Hall (§9) ---------------------------------------------------
-Stations.vacateBay(target.systemId, 0);
+await Stations.vacateBay(target.systemId, 0);
 target.modules = { production_hub: 1 };
 target.reactorLevel = 2; // budget covers hub(4) + hall(4)
 ctx.Game.state.credits = 5_000_000;
@@ -695,6 +694,187 @@ target.refitUntil = 0;
   const guest = Stations.canUseHall(heldSt.systemId);
   assert.ok(!guest.ok && guest.browse, "a signed-out visitor browses the shared shelf");
   assert.ok(!(await Stations.buyHallListing(heldSt.systemId, "srv-bad")).ok, "and can't buy off it");
+}
+
+// ---- shared Production Hub bays (docs/sql/station_bays.sql) --------------
+// Phase C: leasing a bay on Vex's station writes the shared bays column, the
+// lessee mints keep locally, and tax commodities queue for the owner.
+{
+  const floor = {
+    // Start vacant — Vex has a hub and a commodity, nobody in the bays yet.
+    bays: [{ lesseeId: "", npc: false }, { lesseeId: "", npc: false }],
+    tax: [],
+  };
+  vexRow.bays = floor.bays;
+  vexRow.modules = { customs_house: 1, exchange_hall: 1, workshop_annex: 1, production_hub: 1 };
+  vexRow.prod_comm = pool[0].id;
+  vexRow.lease_tax_bps = 1000;
+
+  ctx.Cloud = {
+    enabled: true, hallMissing: false, baysMissing: false,
+    _user: { id: "acct-me" },
+    user() { return this._user; },
+    signedIn() { return !!this._user; },
+    hallReady() { return this.enabled && !this.hallMissing && this.signedIn(); },
+    baysReady() { return this.enabled && !this.baysMissing && this.signedIn(); },
+    async stationDirectory() {
+      return [{ ...vexRow, bays: floor.bays.map(b => ({ ...b })) }];
+    },
+    async stationPublish(rows) { this.published = rows; return { ok: true, held: rows.length, conflicts: [] }; },
+    async stationHall() { return []; },
+    async stationSettle() {
+      const cargo = floor.tax.splice(0, floor.tax.length);
+      return { ok: true, payouts: [], items: [], cargo };
+    },
+    async stationLeaseBay(system, bay) {
+      if (system !== heldSt.systemId) return { ok: false, error: "No station." };
+      if (bay < 0 || bay >= floor.bays.length) return { ok: false, error: "No such bay." };
+      if (floor.bays[bay].lesseeId) return { ok: false, error: "Bay is occupied." };
+      if (floor.bays.some(b => b.lesseeId === "acct-me"))
+        return { ok: false, error: "You already lease a bay here." };
+      floor.bays[bay] = { lesseeId: "acct-me", npc: false };
+      return { ok: true, bay, prodComm: vexRow.prod_comm, leaseTaxBps: 1000, lesseeId: "acct-me" };
+    },
+    async stationVacateBay(system, bay) {
+      if (!floor.bays[bay] || !floor.bays[bay].lesseeId)
+        return { ok: false, error: "Bay is empty." };
+      if (floor.bays[bay].lesseeId !== "acct-me" && this._user?.id !== "acct-vex")
+        return { ok: false, error: "Not your bay." };
+      floor.bays[bay] = { lesseeId: "", npc: false };
+      return { ok: true, bay };
+    },
+    async stationBayProduce(system, bay, gross) {
+      const b = floor.bays[bay];
+      if (!b || b.lesseeId !== "acct-me") return { ok: false, error: "Not your bay." };
+      const g = Math.max(0, Math.min(300, gross | 0));
+      const tax = Math.floor(g * 1000 / 10000);
+      const keep = g - tax;
+      if (tax > 0) floor.tax.push({ systemId: system, commId: vexRow.prod_comm, qty: tax });
+      b.taxed_at = true;
+      return { ok: true, bay, commId: vexRow.prod_comm, gross: g, tax, keep, leaseTaxBps: 1000 };
+    },
+  };
+
+  await Stations.refreshDirectory();
+  ctx.Game.state.currentSystem = heldSt.systemId;
+  assert.ok(Stations.bayShared(heldSt.systemId), "a published station's floor is the shared one");
+  assert.ok(Stations._baysWritable(), "signed in → bay RPCs are live");
+
+  const bayEx = { uid: "exBay", type: "jack", scope: "all", name: "Bay Rig", components: [] };
+  Extractors.acquire(bayEx);
+  assert.ok(Extractors.unequipped().some(e => e.uid === "exBay"), "extractor free before lease");
+
+  const leased = await Stations.leaseBay(heldSt.systemId, 0, "exBay");
+  assert.ok(leased.ok, leased.msg);
+  assert.ok(leased.shared, "remote lease went through the RPC");
+  assert.strictEqual(floor.bays[0].lesseeId, "acct-me", "server occupancy names us");
+  assert.ok(Extractors.installedSet().has("exBay"), "remote lease locks the extractor");
+  assert.ok(!Extractors.unequipped().some(e => e.uid === "exBay"), "leased extractor not free");
+  assert.ok(Stations.leaseableBays(heldSt.systemId).every(x => x.index !== 0),
+    "occupied shared bay not listed vacant");
+  assert.ok(!(await Stations.leaseBay(heldSt.systemId, 1, "exBay")).ok,
+    "one lease per baron — second bay refused");
+
+  // Produce: keep lands in our cargo; tax queues for Vex.
+  ctx.Game.state.positions = {};
+  const made = await Stations.produceRemoteLeases(1);
+  assert.ok(made > 0, "lessee keep is minted locally");
+  assert.strictEqual(ctx.Game.state.positions[pool[0].id] | 0, made, "keep → our cargo");
+  assert.strictEqual(floor.tax.length, 1, "tax is queued for the owner");
+  assert.ok(floor.tax[0].qty > 0 && floor.tax[0].qty < made, "tax is a cut of gross, not the whole");
+
+  // Owner claims tax cargo into their station hold via settle.
+  // We play as Vex for the claim — hand the station to ourselves briefly.
+  const taxQty = floor.tax[0].qty;
+  target.hold = {};
+  // Settle as us claiming cargo for a station we own: park tax against target.
+  floor.tax[0].systemId = target.systemId;
+  const holdBefore = target.hold[pool[0].id] | 0;
+  const settledBay = await Stations.settleHall();
+  assert.strictEqual(settledBay.cargo, taxQty, "settle returns lease-tax cargo");
+  assert.strictEqual(target.hold[pool[0].id] | 0, holdBefore + taxQty, "tax lands in the station hold");
+
+  // Leave: extractor returns, slot opens.
+  assert.ok((await Stations.vacateBay(heldSt.systemId, 0)).ok);
+  assert.ok(Extractors.unequipped().some(e => e.uid === "exBay"), "vacating frees the extractor");
+  assert.strictEqual(floor.bays[0].lesseeId, "", "server slot is vacant again");
+  assert.ok(!Stations.remoteLeases[heldSt.systemId], "remote lease bookkeeping cleared");
+
+  // Owner _playerProduce must not double-tax a foreign uuid lessee.
+  floor.bays[0] = { lesseeId: "acct-zed", npc: false };
+  await Stations.refreshDirectory();
+  // Give ourselves the station so _playerProduce runs on a shared floor.
+  heldSt.ownerId = Stations.playerId();
+  heldSt.status = "owned";
+  heldSt.modules = { production_hub: 1 };
+  heldSt.prodComm = pool[0].id;
+  heldSt.leaseTaxBps = 1000;
+  heldSt.hold = {};
+  Stations.syncBays(heldSt);
+  heldSt.bays[0] = { lesseeId: "acct-zed", extractorId: null, npc: false };
+  Stations.directory[heldSt.systemId] = Stations._ingest({
+    ...vexRow, owner_id: "acct-me", bays: floor.bays,
+  });
+  // bayShared checks directory — force it present.
+  assert.ok(Stations.bayShared(heldSt.systemId), "shared while we hold + directory row");
+  const skipped = Stations._playerProduce(heldSt, 9);
+  assert.strictEqual(heldSt.hold[pool[0].id] | 0, 0, "foreign lessee is not taxed locally");
+  assert.strictEqual(skipped, 0, "and contributes no local yield");
+  // Restore.
+  Object.assign(heldSt, {
+    ownerId: null, status: "npc", modules: {}, prodComm: null, bays: [], hold: {},
+  });
+  await Stations.refreshDirectory();
+
+  // Without the bay SQL the floor stays local-only (same latch as the hall).
+  assert.ok(Stations.bayShared(heldSt.systemId), "bay SQL live → shared floor");
+  ctx.Cloud.baysMissing = true;
+  assert.ok(!Stations.bayShared(heldSt.systemId), "missing bay SQL → no shared floor");
+  ctx.Cloud.baysMissing = false;
+
+  // reconcileRemoteLeases must not free extractors when we can't see the floor.
+  Stations.remoteLeases = { [heldSt.systemId]: { 0: "exBay" } };
+  Extractors.acquire(bayEx);
+  const savedDirAt = Stations.directoryAt;
+  Stations.directoryAt = 0;
+  assert.strictEqual(Stations.reconcileRemoteLeases(), false, "no directory → keep leases");
+  assert.ok(Stations.remoteLeases[heldSt.systemId], "lease bookkeeping survives a cold directory");
+  Stations.directoryAt = savedDirAt;
+  const savedUser = ctx.Cloud._user;
+  ctx.Cloud._user = null;
+  assert.strictEqual(Stations.reconcileRemoteLeases(), false, "signed out → keep leases");
+  assert.ok(Stations.remoteLeases[heldSt.systemId], "lease bookkeeping survives sign-out");
+  ctx.Cloud._user = savedUser;
+
+  // NPC tenants stay off a shared floor — filling them would publish over lessees.
+  floor.bays = [{ lesseeId: "acct-zed", npc: false }, { lesseeId: "", npc: false }];
+  await Stations.refreshDirectory();
+  target.status = "owned";
+  target.ownerId = Stations.playerId();
+  target.modules = { production_hub: 1 };
+  target.prodComm = pool[0].id;
+  Stations.directory[target.systemId] = Stations._ingest({
+    system_id: target.systemId, owner_id: "acct-me", display: "Me",
+    tier: target.tier, status: "owned", modules: { production_hub: 1 },
+    reactor_level: 0, lease_tax_bps: 1000, sale_tariff_bps: 500, scrutiny: 10,
+    standing: 60, prod_comm: pool[0].id, bays: [{ lesseeId: "" }, { lesseeId: "" }],
+  });
+  assert.ok(Stations.bayShared(target.systemId), "own published station is a shared floor");
+  Stations.syncBays(target);
+  // Guest-era NPCs stranded when the floor went shared must clear — not linger
+  // taxing into the hold while other players see vacant.
+  target.bays[0] = { lesseeId: "npc", extractorId: null, npc: true };
+  target.bays[1] = { lesseeId: null, extractorId: null, npc: false };
+  Stations._fillNpcTenants(target, 1);
+  assert.ok(target.bays.every(b => !b.npc && !b.lesseeId), "shared floor clears stranded NPC tenants");
+  // And publish must not ship npc:true even if local state has them (stale fill).
+  target.bays[0] = { lesseeId: "npc", extractorId: null, npc: true };
+  await Stations.publishOwned();
+  const pubBay = (ctx.Cloud.published || []).find(r => r.system_id === target.systemId);
+  assert.ok(pubBay, "publish includes our station");
+  assert.ok(!pubBay.bays.some(b => b.npc), "publish strips NPC slots on a shared floor");
+  delete Stations.directory[target.systemId];
+  Stations.remoteLeases = {};
 }
 
 console.log("OK check_stations");
