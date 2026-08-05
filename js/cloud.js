@@ -293,27 +293,29 @@ const Cloud = {
   // ships app_station_lease_bay as a not-implemented stub, so "the function
   // exists" proves nothing. A project without this SQL keeps local-only leases.
   baysMissing: false,
-  async stationLeaseBay(system, bay, extractor) {
+  async _bayRpc(name, args) {
     if (this.baysMissing) return { ok: false, error: "Station bays not live on server yet." };
-    try {
-      return await this.rpc("app_station_lease_bay", {
-        p_system: system, p_bay: bay | 0, p_extractor: extractor || "",
-      });
-    } catch (e) {
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
       if (this._isMissingRpc(e)) {
         this.baysMissing = true;
-        console.warn("[Cloud] app_station_lease_bay missing — run docs/sql/station_bays.sql");
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_bays.sql");
         return { ok: false, error: "Station bays not live on server yet." };
       }
       throw e;
     }
   },
   baysReady() { return this.enabled && !this.baysMissing && this.signedIn(); },
+  async stationLeaseBay(system, bay, extractor) {
+    return this._bayRpc("app_station_lease_bay", {
+      p_system: system, p_bay: bay | 0, p_extractor: extractor || "",
+    });
+  },
   async stationVacateBay(system, bay) {
-    return this.rpc("app_station_vacate_bay", { p_system: system, p_bay: bay | 0 });
+    return this._bayRpc("app_station_vacate_bay", { p_system: system, p_bay: bay | 0 });
   },
   async stationBayProduce(system, bay, gross) {
-    return this.rpc("app_station_bay_produce", {
+    return this._bayRpc("app_station_bay_produce", {
       p_system: system, p_bay: bay | 0, p_gross: gross | 0,
     });
   },

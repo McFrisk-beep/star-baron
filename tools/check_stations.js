@@ -831,6 +831,48 @@ target.refitUntil = 0;
   ctx.Cloud.baysMissing = true;
   assert.ok(!Stations.bayShared(heldSt.systemId), "missing bay SQL → no shared floor");
   ctx.Cloud.baysMissing = false;
+
+  // reconcileRemoteLeases must not free extractors when we can't see the floor.
+  Stations.remoteLeases = { [heldSt.systemId]: { 0: "exBay" } };
+  Extractors.acquire(bayEx);
+  const savedDirAt = Stations.directoryAt;
+  Stations.directoryAt = 0;
+  assert.strictEqual(Stations.reconcileRemoteLeases(), false, "no directory → keep leases");
+  assert.ok(Stations.remoteLeases[heldSt.systemId], "lease bookkeeping survives a cold directory");
+  Stations.directoryAt = savedDirAt;
+  const savedUser = ctx.Cloud._user;
+  ctx.Cloud._user = null;
+  assert.strictEqual(Stations.reconcileRemoteLeases(), false, "signed out → keep leases");
+  assert.ok(Stations.remoteLeases[heldSt.systemId], "lease bookkeeping survives sign-out");
+  ctx.Cloud._user = savedUser;
+
+  // NPC tenants stay off a shared floor — filling them would publish over lessees.
+  floor.bays = [{ lesseeId: "acct-zed", npc: false }, { lesseeId: "", npc: false }];
+  await Stations.refreshDirectory();
+  target.status = "owned";
+  target.ownerId = Stations.playerId();
+  target.modules = { production_hub: 1 };
+  target.prodComm = pool[0].id;
+  Stations.directory[target.systemId] = Stations._ingest({
+    system_id: target.systemId, owner_id: "acct-me", display: "Me",
+    tier: target.tier, status: "owned", modules: { production_hub: 1 },
+    reactor_level: 0, lease_tax_bps: 1000, sale_tariff_bps: 500, scrutiny: 10,
+    standing: 60, prod_comm: pool[0].id, bays: [{ lesseeId: "" }, { lesseeId: "" }],
+  });
+  assert.ok(Stations.bayShared(target.systemId), "own published station is a shared floor");
+  Stations.syncBays(target);
+  target.bays[0] = { lesseeId: null, extractorId: null, npc: false };
+  target.bays[1] = { lesseeId: null, extractorId: null, npc: false };
+  Stations._fillNpcTenants(target, 1);
+  assert.ok(target.bays.every(b => !b.npc && !b.lesseeId), "no NPC tenants on a shared floor");
+  // And publish must not ship npc:true even if local state has them (stale fill).
+  target.bays[0] = { lesseeId: "npc", extractorId: null, npc: true };
+  await Stations.publishOwned();
+  const pubBay = (ctx.Cloud.published || []).find(r => r.system_id === target.systemId);
+  assert.ok(pubBay, "publish includes our station");
+  assert.ok(!pubBay.bays.some(b => b.npc), "publish strips NPC slots on a shared floor");
+  delete Stations.directory[target.systemId];
+  Stations.remoteLeases = {};
 }
 
 console.log("OK check_stations");

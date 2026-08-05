@@ -46,12 +46,16 @@ create index if not exists station_bay_tax_unclaimed_idx
 alter table public.station_bay_tax enable row level security;
 
 -- Bay count from Production Hub level (mirrors STATIONCFG.prodHub).
+-- Numeric guard: a malformed modules value must return 0, not throw a 500.
 create or replace function public._station_bay_count(p_modules jsonb)
 returns int
 language sql
 immutable
 as $$
-  select case greatest(0, least(5, coalesce((p_modules->>'production_hub')::int, 0)))
+  select case greatest(0, least(5, coalesce(
+    case when (p_modules->>'production_hub') ~ '^[0-9]+$'
+         then (p_modules->>'production_hub')::int
+         else 0 end, 0)))
     when 1 then 2
     when 2 then 3
     when 3 then 4
@@ -177,8 +181,10 @@ begin
       end if;
 
       -- Keep a server-side foreign lessee when the owner's save shows vacant
-      -- (they don't have the other baron's extractor in their copy).
-      keep_srv := (c_lid = '' and not c_npc)
+      -- OR an NPC placeholder. Guest-local NPC tenants must never overwrite a
+      -- paying baron — the client used to publish npc:true into every empty
+      -- slot and wipe real leases on the next autosave.
+      keep_srv := (c_lid = '' or c_npc or c_lid = 'npc')
                   and s_lid <> '' and not s_npc
                   and s_lid is distinct from uid::text
                   and s_lid <> 'player'
@@ -189,8 +195,15 @@ begin
           'lesseeId', s_lid, 'npc', false,
           'taxed_at', s_el->'taxed_at'));
       elsif c_lid <> '' then
-        merged := merged || jsonb_build_array(jsonb_build_object(
-          'lesseeId', c_lid, 'npc', c_npc));
+        -- Same lessee still in the slot → keep taxed_at so an owner publish
+        -- can't reset the produce cooldown (the only replay guard).
+        if s_lid = c_lid and s_el ? 'taxed_at' and s_el->>'taxed_at' is not null then
+          merged := merged || jsonb_build_array(jsonb_build_object(
+            'lesseeId', c_lid, 'npc', c_npc, 'taxed_at', s_el->'taxed_at'));
+        else
+          merged := merged || jsonb_build_array(jsonb_build_object(
+            'lesseeId', c_lid, 'npc', c_npc));
+        end if;
       else
         merged := merged || jsonb_build_array(jsonb_build_object(
           'lesseeId', '', 'npc', false));
@@ -276,12 +289,13 @@ security definer
 set search_path = public
 as $$
 declare
-  uid   uuid := auth.uid();
-  st    public.stations%rowtype;
-  n     int;
-  bays  jsonb;
-  el    jsonb;
-  lid   text;
+  uid    uuid := auth.uid();
+  st     public.stations%rowtype;
+  n      int;
+  v_bays jsonb;   -- never name a local `bays`: it shadows the column and the
+                  -- UPDATE below throws "column reference is ambiguous"
+  el     jsonb;
+  lid    text;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
   if p_system is null or length(p_system) > 40 then
@@ -310,8 +324,8 @@ begin
     return jsonb_build_object('ok', false, 'error', 'No such bay.');
   end if;
 
-  bays := public._station_bays_pad(st.bays, n);
-  el := bays -> p_bay;
+  v_bays := public._station_bays_pad(st.bays, n);
+  el := v_bays -> p_bay;
   lid := coalesce(el->>'lesseeId', '');
   if lid <> '' then
     return jsonb_build_object('ok', false, 'error', 'Bay is occupied.');
@@ -319,16 +333,16 @@ begin
 
   -- One lease per baron per station — keeps a whale from parking every bay.
   if exists (
-    select 1 from jsonb_array_elements(bays) x
+    select 1 from jsonb_array_elements(v_bays) x
      where coalesce(x->>'lesseeId', '') = uid::text
   ) then
     return jsonb_build_object('ok', false, 'error', 'You already lease a bay here.');
   end if;
 
-  bays := jsonb_set(bays, array[p_bay::text],
+  v_bays := jsonb_set(v_bays, array[p_bay::text],
     jsonb_build_object('lesseeId', uid::text, 'npc', false), true);
 
-  update public.stations set bays = bays, updated_at = now() where system_id = p_system;
+  update public.stations set bays = v_bays, updated_at = now() where system_id = p_system;
 
   return jsonb_build_object(
     'ok', true,
@@ -351,12 +365,12 @@ security definer
 set search_path = public
 as $$
 declare
-  uid  uuid := auth.uid();
-  st   public.stations%rowtype;
-  n    int;
-  bays jsonb;
-  el   jsonb;
-  lid  text;
+  uid    uuid := auth.uid();
+  st     public.stations%rowtype;
+  n      int;
+  v_bays jsonb;
+  el     jsonb;
+  lid    text;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
   if p_system is null or length(p_system) > 40 then
@@ -376,8 +390,8 @@ begin
     return jsonb_build_object('ok', false, 'error', 'Bay is empty.');
   end if;
 
-  bays := public._station_bays_pad(st.bays, n);
-  el := bays -> p_bay;
+  v_bays := public._station_bays_pad(st.bays, n);
+  el := v_bays -> p_bay;
   lid := coalesce(el->>'lesseeId', '');
   if lid = '' then
     return jsonb_build_object('ok', false, 'error', 'Bay is empty.');
@@ -386,10 +400,10 @@ begin
     return jsonb_build_object('ok', false, 'error', 'Not your bay.');
   end if;
 
-  bays := jsonb_set(bays, array[p_bay::text],
+  v_bays := jsonb_set(v_bays, array[p_bay::text],
     jsonb_build_object('lesseeId', '', 'npc', false), true);
 
-  update public.stations set bays = bays, updated_at = now() where system_id = p_system;
+  update public.stations set bays = v_bays, updated_at = now() where system_id = p_system;
 
   return jsonb_build_object('ok', true, 'bay', p_bay);
 end;
@@ -413,7 +427,7 @@ declare
   uid    uuid := auth.uid();
   st     public.stations%rowtype;
   n      int;
-  bays   jsonb;
+  v_bays jsonb;
   el     jsonb;
   lid    text;
   gross  int;
@@ -446,8 +460,8 @@ begin
     return jsonb_build_object('ok', false, 'error', 'No such bay.');
   end if;
 
-  bays := public._station_bays_pad(st.bays, n);
-  el := bays -> p_bay;
+  v_bays := public._station_bays_pad(st.bays, n);
+  el := v_bays -> p_bay;
   lid := coalesce(el->>'lesseeId', '');
   if lid is distinct from uid::text then
     return jsonb_build_object('ok', false, 'error', 'Not your bay.');
@@ -484,9 +498,9 @@ begin
     values (st.owner_id, p_system, left(st.prod_comm, 40), tax, uid);
   end if;
 
-  bays := jsonb_set(bays, array[p_bay::text],
+  v_bays := jsonb_set(v_bays, array[p_bay::text],
     jsonb_build_object('lesseeId', uid::text, 'npc', false, 'taxed_at', now()), true);
-  update public.stations set bays = bays, updated_at = now() where system_id = p_system;
+  update public.stations set bays = v_bays, updated_at = now() where system_id = p_system;
 
   return jsonb_build_object(
     'ok', true,

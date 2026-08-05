@@ -37,8 +37,25 @@ equilibrium from the client sim will not run on the server.
 | `app_trade` (replaced) | Locks shelf row, clamps buy qty to units, applies scarcity, mutates units. Returns `stockUnits` + `sectorId` for client resync. |
 | `app_sector_stock` | Full shelf snapshot for login / catch-up hydrate. |
 | `app_stock_tick` | Coarse hourly consumption + NPC elastic backstop (optional cron). |
-| `app_station_*` | **Stubs** — return “not live yet”. Client Stations loop unchanged. |
+| `app_station_*` | Directory / hall / bays LIVE once their SQL is pasted (§14.1). Remaining stubs: bid, auction, module, policy, withdraw. |
 | `app_commit` | Still must **not** trust client `state.stock` (stock is not in the save slice). |
+
+### Stations alive (§14.1) — paste after phase 4
+
+5. `docs/sql/station_directory.sql` — phase A (public station record)  
+6. `docs/sql/station_hall.sql` — phase B (shared Exchange Hall)  
+7. `docs/sql/station_bays.sql` — phase C (shared Production Hub bays)
+
+After pasting `station_bays.sql`, call each RPC once as a signed-in user (the
+functions *create* fine even when a local variable shadows a column — that only
+surfaces at call time):
+
+```sql
+-- Expect ok:false with a real error string, not "column reference is ambiguous"
+select public.app_station_lease_bay('navos', 0, '');
+select public.app_station_vacate_bay('navos', 0);
+select public.app_station_bay_produce('navos', 0, 10);
+```
 
 ## Client behaviour
 

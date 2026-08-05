@@ -307,6 +307,10 @@ const Stations = {
         expiresAt: l.expiresAt, sellerId: l.sellerId,
       })),
       bays: (st.bays || []).slice(0, 12).map(b => {
+        // NPC tenants are guest-local only — never publish them onto a shared
+        // floor where they'd overwrite a paying lessee on the next autosave.
+        if (b.npc && this.bayShared(st.systemId))
+          return { lesseeId: "", npc: false };
         let lessee = b.lesseeId || "";
         if (lessee && !b.npc && lessee === this.playerId() && this.accountId())
           lessee = this.accountId();
@@ -1876,10 +1880,14 @@ const Stations = {
       return { ok: true, shared: true };
     }
 
-    // Owner evicting a remote lessee from a shared floor.
+    // Owner evicting a remote lessee from a shared floor. Must go through the
+    // RPC — clearing the local copy alone toasts "Bay cleared" and the lessee
+    // reappears on the next directory merge.
     if (this.bayShared(systemId)) {
       const st = this.get(systemId);
-      if (st && this.ownerHeld(st) && st.ownerId === this.playerId() && this._baysWritable()) {
+      if (st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+        if (!this._baysWritable())
+          return { ok: false, msg: "Sign in to manage shared bays." };
         let res;
         try { res = await Cloud.stationVacateBay(systemId, bayIndex); }
         catch (e) {
@@ -1921,7 +1929,11 @@ const Stations = {
 
   // Drop a remote lease bookkeeping entry when the directory says we're gone
   // (owner evicted, station released, or we lost the race). Extractor frees.
+  // Guarded hard: signed out, or a failed/empty directory refresh, must not
+  // discard the map — that frees extractors locally while the server slot
+  // stays leased (save-data loss).
   reconcileRemoteLeases() {
+    if (!this.accountId() || !this.directoryAt) return false;
     let changed = false;
     for (const [sid, slots] of Object.entries(this.remoteLeases || {})) {
       const row = this.directory[sid];
@@ -1952,7 +1964,6 @@ const Stations = {
       if (!this.bayShared(sid)) continue;
       const v = this.view(sid);
       if (!v || v.status !== "owned" || !v.prodComm) continue;
-      if (v.status === "refit") continue;
       for (const [idx, exUid] of Object.entries(slots)) {
         const i = +idx;
         const bay = (v.bays || [])[i];
@@ -1991,7 +2002,9 @@ const Stations = {
   },
 
   // Soft NPC tenants for vacant bays — keeps lease tax meaningful in guest mode.
+  // Shared floors skip this: NPC slots would publish over paying lessees.
   _fillNpcTenants(st, hourIndex) {
+    if (this.bayShared(st.systemId)) return;
     this.syncBays(st);
     if (!st.prodComm || st.status !== "owned") return;
     const taxFrac = Util.clamp((st.leaseTaxBps | 0) / 4000, 0, 1);
