@@ -118,9 +118,32 @@ const Economy = {
     if (snap.seq != null) s.seq = snap.seq;
     if (snap.stock && window.Stock) Stock.hydrate(snap.stock);
   },
+  // Soft/local blackboxes (+ activeBoosts + bb-/bp- buy marks) live only on the
+  // client — server items/bazaarBought never see them. Snapshot before a slice
+  // overwrites those keys, then merge + re-park so the next trade/pull/commit
+  // doesn't erase a paid-for box (applyCommitState had this; _applyServerSlice
+  // used by app_pull / bazaar RPCs did not — that was the inventory vanish).
+  // Holds live references, not copies — safe only because every writer below
+  // replaces these keys (s.items = r.items) instead of mutating them in place.
+  _softSnap() {
+    const s = this.s();
+    return {
+      items: s.items,
+      activeBoosts: s.activeBoosts,
+      bazaarBought: s.bazaarBought,
+    };
+  },
+  // Merge only — parking is a separate step because it has to run after
+  // _restoreEquip. See the parkOrphanGear calls below.
+  _restoreSoftItems(prev) {
+    if (!prev || !window.Store || !Store.mergeSoftItems) return;
+    Store.mergeSoftItems(this.s(), prev);
+  },
+
   _applyServerSlice(r) {
     const s = this.s();
     const equip = this._snapEquip();
+    const soft = this._softSnap();
     if (r.credits != null) s.credits = r.credits;
     // Apply location before reconcile so a dock RPC's positions delta parks in
     // the bay you arrived at, not the one you left (applyCommitState order).
@@ -171,8 +194,15 @@ const Economy = {
       Stock.applyTradeDelta(r.sectorId, r.commodity, r.stockUnits);
     if (window.Stock && r.stockUnitsBySector)
       Stock.applyServerUnits(r.stockUnitsBySector, r.stockLastTickAt);
+    // After server keys land (items + bazaarBought), reunite soft blackboxes.
+    this._restoreSoftItems(soft);
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    // Park AFTER _restoreEquip: parkOrphanGear reads fitted uids off
+    // s.ships[].accessories, which the slice above clears on installs without
+    // docs/sql/equip_persist.sql. Parking first files every fitted accessory
+    // into the bay, then _restoreEquip re-fits it — same uid equipped AND loose.
+    if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
   },
 
@@ -231,6 +261,8 @@ const Economy = {
     if (!st || typeof st !== "object") return;
     const s = this.s();
     const equip = this._snapEquip();
+    // Snapshot before any server key overwrites soft/local blackbox state.
+    const soft = this._softSnap();
     if (st.currentSystem) s.currentSystem = st.currentSystem;
     s.travel = st.travel && typeof st.travel === "object" ? st.travel : null;
     if (st.unlockedSystems) s.unlockedSystems = st.unlockedSystems;
@@ -239,17 +271,14 @@ const Economy = {
     if (st.missions) s.missions = st.missions;
     // Preserve soft/local blackboxes the server ledger doesn't know about yet
     // (bazaar buys are client-minted; app_commit forces server items).
-    const softSnap = st.items ? { items: s.items, activeBoosts: s.activeBoosts, bazaarBought: s.bazaarBought } : null;
     if (st.items) s.items = st.items;
     if (st.inventory) s.inventory = st.inventory;
-    if (softSnap && window.Store && Store.mergeSoftItems)
-      Store.mergeSoftItems(s, softSnap);
-    // Restored soft blackboxes (and any other orphan gear) need a bay home so
-    // Assets.localGear can see them — mergeSoftItems itself never touches Assets.
-    if (window.Assets) Assets.parkOrphanGear(s);
     if (st.reports) s.reports = st.reports;
     if (st.pendingContracts) s.pendingContracts = st.pendingContracts;
+    // Apply server bazaarBought BEFORE soft merge — merge unions bb-/bp- marks
+    // from the snapshot. Writing it after merge used to wipe a just-bought slot.
     if (st.bazaarBought) s.bazaarBought = st.bazaarBought;
+    this._restoreSoftItems(soft);
     if (st.reputation) s.reputation = st.reputation;
     if (st.seq != null) s.seq = st.seq;
     // Phase 3 protected economy
@@ -279,6 +308,8 @@ const Economy = {
     }
     this.repairCosmeticNames();
     this._restoreEquip(equip);
+    // Park after _restoreEquip — see _applyServerSlice for why.
+    if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
   },
 

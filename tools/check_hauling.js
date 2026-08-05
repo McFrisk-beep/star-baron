@@ -146,6 +146,65 @@ assert.strictEqual(Assets.parkOrphanGear(boot), 1, "parkOrphanGear places restor
 assert.ok(boot.stationInv.navos.gear.includes("ib1"), "box parked in current bay");
 ctx.Game.state = liveState;
 
+// _applyServerSlice / applyCommitState must keep soft blackboxes across RPC echoes.
+// Regression: trade/pull used _applyServerSlice without mergeSoftItems, so a
+// bazaar blackbox vanished from inventory on the next app_pull.
+ctx.Game.state.items = {
+  ib2: { uid: "ib2", kind: "blackbox", consumable: true, effectId: "overclock_core",
+    name: "Overclock Core Blackbox", value: 1000 },
+};
+ctx.Game.state.activeBoosts = [{ effectId: "smugglers_veil", expiresAt: T + 3600000 }];
+ctx.Game.state.bazaarBought = ["bb-9-0"];
+ctx.Game.state.stationInv = { navos: { blocks: {}, gear: ["ib2"] } };
+ctx.Game.state.hold = { blocks: {}, gear: [] };
+Economy._applyServerSlice({
+  ok: true, credits: ctx.Game.state.credits, items: {}, bazaarBought: [],
+  inventory: { capacity: 50, upgrades: 0 },
+});
+assert.ok(ctx.Game.state.items.ib2, "blackbox survives _applyServerSlice");
+assert.ok(ctx.Game.state.bazaarBought.includes("bb-9-0"), "bb buy mark survives _applyServerSlice");
+assert.ok(ctx.Game.state.activeBoosts.some(b => b.effectId === "smugglers_veil"), "boost survives slice");
+assert.ok(
+  (ctx.Game.state.stationInv.navos && ctx.Game.state.stationInv.navos.gear.includes("ib2"))
+    || ctx.Game.state.hold.gear.includes("ib2"),
+  "blackbox still parked after slice");
+// applyCommitState: server bazaarBought must not wipe soft marks after merge.
+ctx.Game.state.items = { ib3: { uid: "ib3", kind: "blackbox", consumable: true, effectId: "tax_ghost",
+  name: "Tax Ghost Blackbox", value: 800 } };
+ctx.Game.state.bazaarBought = ["bb-10-1"];
+ctx.Game.state.stationInv = { navos: { blocks: {}, gear: [] } };
+Economy.applyCommitState({ items: {}, bazaarBought: ["acc-server"], inventory: { capacity: 50, upgrades: 0 } });
+assert.ok(ctx.Game.state.items.ib3, "blackbox survives applyCommitState");
+assert.ok(ctx.Game.state.bazaarBought.includes("bb-10-1"), "soft bb mark kept after commit");
+assert.ok(ctx.Game.state.bazaarBought.includes("acc-server"), "server marks kept too");
+assert.ok(ctx.Game.state.stationInv.navos.gear.includes("ib3"), "orphan box re-parked on commit");
+
+// Equipped gear must not be duplicated into the bay by the orphan-parking pass.
+// parkOrphanGear reads fitted uids off s.ships[].accessories; a server slice
+// clears those on installs without equip_persist.sql, so parking before
+// _restoreEquip filed every fitted accessory in the bay AND left it equipped.
+for (const [label, apply] of [
+  ["_applyServerSlice", r => Economy._applyServerSlice({ ok: true, ...r })],
+  ["applyCommitState", r => Economy.applyCommitState(r)],
+]) {
+  ctx.Game.state.items = { acc9: { uid: "acc9", kind: "shield", name: "Test Shield", rarity: "common", value: 500 } };
+  ctx.Game.state.ships = [{ uid: "sh9", type: "mule", name: "Rig", status: "idle", accessories: ["acc9"], dmg: 0 }];
+  ctx.Game.state.stationInv = { navos: { blocks: {}, gear: [] } };
+  ctx.Game.state.hold = { blocks: {}, gear: [] };
+  // Server echoes the ship back with the fitment dropped — the case _snapEquip exists for.
+  apply({
+    ships: [{ uid: "sh9", type: "mule", name: "Rig", status: "idle", accessories: [], dmg: 0 }],
+    items: { acc9: { uid: "acc9", kind: "shield", name: "Test Shield", rarity: "common", value: 500 } },
+    inventory: { capacity: 50, upgrades: 0 },
+  });
+  const fitted = ctx.Game.state.ships[0].accessories.includes("acc9");
+  const loose = (ctx.Game.state.stationInv.navos.gear || []).includes("acc9")
+    || ctx.Game.state.hold.gear.includes("acc9");
+  assert.ok(fitted, `${label}: fitment restored`);
+  assert.ok(!loose, `${label}: equipped accessory not also parked loose in the bay`);
+}
+ctx.Game.state.ships = [{ uid: "sh1", type: "mule", name: "Test", status: "idle", accessories: [], dmg: 0 }];
+
 // Bay capacity: an upgraded Inventory Bay must not end up worse than a fresh account.
 const upgraded = { inventory: { capacity: 16, upgrades: 1 }, hold: { blocks: {}, gear: [] },
   stationInv: {}, shipments: [], _haulingMigrated: true, items: {}, ships: [], listings: [] };
