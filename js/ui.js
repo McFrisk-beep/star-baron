@@ -175,7 +175,9 @@ const UI = {
       return;
     }
     const s = this.s();
-    const st = s.travel ? null : Stations.get(s.currentSystem);
+    // view(): docked at another baron's station, this is their record — their
+    // modules, their tariffs, their scrutiny — not our vacant copy of it.
+    const st = s.travel ? null : Stations.view(s.currentSystem);
     if (!st) {
       panel.classList.add("hidden");
       this._renderHubCouriers();

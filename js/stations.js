@@ -101,11 +101,17 @@ const Stations = {
     return (info && info.stations) || 1;
   },
 
-  // ---- shared ownership directory (docs/sql/station_directory.sql) --------
-  // Ownership itself is still local, so without a published row every *other*
-  // client — and every signed-out visitor — drew a claimed station as "NPC".
-  // This is display + a claim guard only; auctions/modules stay client-side.
-  directory: {},        // systemId -> { ownerId, display, tier, status }
+  // ---- shared station record (docs/sql/station_directory.sql) -------------
+  // A station's whole record lived only in its owner's save, so every other
+  // client — and every signed-out visitor — drew a claimed, fully upgraded
+  // station as a vacant NPC berth. The directory is that record, published.
+  //
+  // Phase A: read-only. view() below feeds every display and every effect that
+  // is a pure read of the record (customs, free port, workshop annex, dry dock,
+  // buoys), so docking at another baron's station finally does something.
+  // Phase B: the mutating RPCs — hall buy/list, bay lease, ransom — write back
+  // into these same hall/bays arrays. Until then, look but don't touch.
+  directory: {},        // systemId -> published record
   directoryAt: 0,
   _pubTimer: null,
 
@@ -126,9 +132,48 @@ const Stations = {
     return me && row.ownerId === me ? null : row;
   },
 
+  // The station as it actually is right now: our own record when we hold it (or
+  // when nobody has published one), otherwise the owner's published record.
+  // EVERY display and effect path reads this. Every mutation path keeps using
+  // get(), which is always the local record we're allowed to write.
+  view(systemId) {
+    const st = this.get(systemId);
+    if (!st || this.ownerHeld(st)) return st;
+    const rem = this.remoteHolder(systemId);
+    if (!rem) return st;
+    return {
+      ...st,
+      ownerId: rem.ownerId,
+      ownerDisplay: rem.display,
+      status: rem.status,
+      tier: rem.tier || st.tier,
+      modules: rem.modules,
+      reactorLevel: rem.reactorLevel,
+      leaseTaxBps: rem.leaseTaxBps,
+      saleTariffBps: rem.saleTariffBps,
+      scrutiny: rem.scrutiny,
+      standing: rem.standing,
+      prodComm: rem.prodComm,
+      refitUntil: rem.refitUntil,
+      hall: rem.hall,
+      bays: rem.bays,
+      // Not published: treasury, hold, contracts, impound. Ours are empty and
+      // must stay that way — a visitor's copy is not a place to bank anything.
+      treasury: 0,
+      hold: {},
+      contracts: [],
+      impoundClaims: [],
+      remote: true,
+    };
+  },
+
+  // True when this dock belongs to another baron (their record, not ours).
+  isRemote(systemId) { return !!this.remoteHolder(systemId) && !this.ownerHeld(this.get(systemId)); },
+
   // One place answers "who holds this?" for every readout.
   holderLabel(st) {
     if (!st) return "NPC-held";
+    if (st.remote) return `Held by ${st.ownerDisplay}`;
     if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "Yours" : "Player-held";
     const rem = this.remoteHolder(st.systemId);
     return rem ? `Held by ${rem.display}` : "NPC-held";
@@ -136,9 +181,58 @@ const Stations = {
   // Compact form for the star map / systems list ("NPC" reads as a tag there).
   holderTag(st) {
     if (!st) return "NPC";
+    if (st.remote) return `held by ${st.ownerDisplay}`;
     if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "yours" : "player-held";
     const rem = this.remoteHolder(st.systemId);
     return rem ? `held by ${rem.display}` : "NPC";
+  },
+
+  // Another player's client wrote this row, and it lands in innerHTML and in
+  // effect math — so it's a trust boundary, same as save data. Every field is
+  // re-typed and clamped here; nothing downstream re-checks.
+  _txt(v, max = 40) { return String(v == null ? "" : v).replace(/[<>&"']/g, "").slice(0, max); },
+  _num(v, lo, hi, dflt) {
+    const n = +v;
+    return Number.isFinite(n) ? Util.clamp(n, lo, hi) : dflt;
+  },
+  _ingest(r) {
+    const modules = {};
+    for (const [id, lvl] of Object.entries((r.modules && typeof r.modules === "object") ? r.modules : {})) {
+      if (!STATION_MODULES[id]) continue;   // unknown module ids can't reach the UI
+      const max = (STATION_MODULES[id].power || []).length || 1;
+      const n = this._num(lvl, 0, max, 0) | 0;
+      if (n > 0) modules[id] = n;
+    }
+    // ponytail: hall/bays are display-only in phase A, so client-trusted is
+    // fine; phase B's buy/lease RPCs must own these arrays server-side.
+    const hall = (Array.isArray(r.hall) ? r.hall : []).slice(0, 40).map(l => ({
+      id: this._txt(l && l.id, 40),
+      name: this._txt(l && l.name, 48) || "Listing",
+      kind: ["gear", "blackbox", "extractor", "component", "ship", "blueprint"].includes(l && l.kind) ? l.kind : "gear",
+      price: this._num(l && l.price, 0, 1e12, 0),
+      expiresAt: this._num(l && l.expiresAt, 0, 8.64e15, 0),
+      sellerId: this._txt(l && l.sellerId, 64),
+    }));
+    const bays = (Array.isArray(r.bays) ? r.bays : []).slice(0, 12).map(b => ({
+      lesseeId: this._txt(b && b.lesseeId, 64),
+      npc: !!(b && b.npc),
+    }));
+    return {
+      ownerId: String(r.owner_id),
+      display: this._txt(r.display, 24) || "Baron",
+      tier: STATION_TIERS[r.tier] ? r.tier : "Berth",
+      status: r.status === "refit" ? "refit" : "owned",
+      modules,
+      reactorLevel: this._num(r.reactor_level, 0, STATIONCFG.reactor.length, 0) | 0,
+      leaseTaxBps: this._num(r.lease_tax_bps, 0, 10000, 1000) | 0,
+      saleTariffBps: this._num(r.sale_tariff_bps, 0, 10000, 500) | 0,
+      scrutiny: this._num(r.scrutiny, 0, 100, 10) | 0,
+      standing: this._num(r.standing, 0, 100, STATIONCFG.standingStart),
+      prodComm: COMMODITIES.some(c => c.id === r.prod_comm) ? r.prod_comm : null,
+      refitUntil: r.refit_until ? Date.parse(r.refit_until) || 0 : 0,
+      hall,
+      bays,
+    };
   },
 
   async refreshDirectory() {
@@ -150,10 +244,7 @@ const Stations = {
       for (const r of rows || []) {
         const id = r && r.system_id ? String(r.system_id) : "";
         if (!id || !r.owner_id) continue;
-        // Remote text lands in innerHTML — names are server-generated but this
-        // is still a trust boundary, so strip markup chars and clamp length.
-        const display = String(r.display || "Baron").replace(/[<>&"']/g, "").slice(0, 24) || "Baron";
-        next[id] = { ownerId: String(r.owner_id), display, tier: r.tier || "", status: r.status || "owned" };
+        next[id] = this._ingest(r);
       }
       this.directory = next;
       this.directoryAt = Date.now();
@@ -165,7 +256,26 @@ const Stations = {
 
   async publishOwned() {
     if (!(window.Cloud && Cloud.stationPublish && Cloud.signedIn && Cloud.signedIn())) return null;
-    const rows = this.ownedBy().map(st => ({ system_id: st.systemId, tier: st.tier, status: st.status }));
+    const rows = this.ownedBy().map(st => ({
+      system_id: st.systemId,
+      tier: st.tier,
+      status: st.status,
+      modules: st.modules || {},
+      reactor_level: st.reactorLevel | 0,
+      lease_tax_bps: st.leaseTaxBps | 0,
+      sale_tariff_bps: st.saleTariffBps | 0,
+      scrutiny: st.scrutiny | 0,
+      standing: Math.round(st.standing || 0),
+      prod_comm: st.prodComm || "",
+      // ms epoch — never `| 0` this, 32-bit truncation mangles it.
+      refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
+      // Shelf and bay occupancy — what makes a visited station look inhabited.
+      hall: (st.hall || []).slice(0, 40).map(l => ({
+        id: l.id, name: l.name, kind: l.kind, price: l.price,
+        expiresAt: l.expiresAt, sellerId: l.sellerId,
+      })),
+      bays: (st.bays || []).slice(0, 12).map(b => ({ lesseeId: b.lesseeId || "", npc: !!b.npc })),
+    }));
     try {
       const res = await Cloud.stationPublish(rows);
       if (res && res.ok) await this.refreshDirectory();
@@ -408,7 +518,7 @@ const Stations = {
   },
 
   canDock(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return { ok: false, msg: "No station here." };
     if (this.roleOf(systemId) === "barred") return { ok: false, msg: "Docking denied — you are barred." };
     if (st.status === "cooldown") return { ok: false, msg: "Station is offline after a revolt." };
@@ -442,7 +552,7 @@ const Stations = {
       return { ok: true };
     }
 
-    const st = this.get(sysId);
+    const st = this.view(sysId);
     if (!st) return { ok: false, reason: "No station services here" };
     const owned = this.ownerHeld(st);
     const mine = owned && st.ownerId === this.playerId();
@@ -470,6 +580,9 @@ const Stations = {
       case "exchange":
         return { ok: false, reason: "Commodity exchange is at sector capitals" };
       case "bazaar":
+        // Phase A publishes another baron's station read-only: you see it, its
+        // modules affect your dock, but nothing here may move their goods yet.
+        if (st.remote) return { ok: false, reason: `${st.ownerDisplay}'s market — trading here isn't live yet` };
         if (mod("charter_office") || mod("contract_office") || mod("black_market") || mod("exchange_hall"))
           return { ok: true };
         return { ok: false, reason: "Needs Exchange Hall, Charter, or Contract Office" };
@@ -494,7 +607,7 @@ const Stations = {
         { id: "fleet", label: "Fleet Bay", ok: true },
       ];
     }
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return [];
     const refit = st.status === "refit";
     const owned = this.ownerHeld(st);
@@ -523,7 +636,7 @@ const Stations = {
   },
 
   customsExempt(systemId, pid = this.playerId()) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.customs_house | 0)) return false;
     const role = this.roleOf(systemId, pid);
     return role === "owner" || role === "partner" || role === "allied";
@@ -531,7 +644,7 @@ const Stations = {
 
   // Public scrutiny readout shown before undock (never hidden).
   publicScrutiny(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return null;
     if (st.modules.free_port | 0) {
       const pct = Math.round((CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35) * 100);
@@ -551,10 +664,13 @@ const Stations = {
 
   // Visitors must be docked at the station (non-capital docking is live).
   canUseHall(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (st && st.status === "refit" && (st.modules.exchange_hall | 0))
       return { ok: false, msg: `Station is in refit — ${Util.duration(this.refitLeft(st))} left.` };
     if (!this.hasHall(st)) return { ok: false, msg: "No Exchange Hall here." };
+    // Phase A: their shelf is visible, but buying and listing would only move
+    // goods in our own copy of their station. Phase B routes it through an RPC.
+    if (st.remote) return { ok: false, msg: `${st.ownerDisplay}'s hall — visitor trading isn't live yet.`, browse: true, st };
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
     if (st.ownerId === this.playerId()) return { ok: true, st };
@@ -563,7 +679,7 @@ const Stations = {
   },
 
   hallListings(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     return (st && Array.isArray(st.hall)) ? st.hall : [];
   },
 
@@ -1621,6 +1737,10 @@ const Stations = {
   npcProduceHour(hourIndex) {
     let produced = 0;
     for (const st of this.list()) {
+      // Held by another baron: their Production Hub fills their hold, and only
+      // reaches the shelf when they haul it to a capital (§4.2). Our local copy
+      // must stop quietly minting NPC supply on their behalf.
+      if (this.isRemote(st.systemId)) continue;
       if (st.status === "owned" || st.status === "refit") {
         // Player hubs don't feed sector stock directly.
         if (st.status === "owned") this._fillNpcTenants(st, hourIndex);
@@ -1781,14 +1901,14 @@ const Stations = {
 
   // ---- Workshop Annex discount (option 3: stochastic per unit) -----------
   workshopMatChance(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.workshop_annex | 0)) return 0;
     if (st.status === "refit") return 0;
     const row = STATIONCFG.workshop[(st.modules.workshop_annex) - 1];
     return row ? row.mat : 0;
   },
   workshopTimeFactor(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.workshop_annex | 0)) return 1;
     if (st.status === "refit") return 1;
     const row = STATIONCFG.workshop[(st.modules.workshop_annex) - 1];
@@ -1797,7 +1917,7 @@ const Stations = {
 
   // Customs scrutiny override for a system (null = baseline capital formula).
   scrutinyFor(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return null;
     if (st.modules.free_port)
       return Math.max(0, (CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35));

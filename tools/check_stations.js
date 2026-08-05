@@ -456,14 +456,23 @@ rehydrated.refitUntil = NaN;
 Stations.hydrate(Stations.serialize());
 assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit timer releases station");
 
-// ---- shared ownership directory (docs/sql/station_directory.sql) ----------
-// Another baron's claim must show up for us — and for a signed-out visitor —
-// instead of the local save's "NPC".
+// ---- shared station record (docs/sql/station_directory.sql) --------------
+// Another baron's claim — and their upgrades — must show up for us and for a
+// signed-out visitor, instead of the local save's vacant "NPC" berth.
 (async () => {
   const other = Stations.list().find(st => st.status === "npc" && st.systemId !== target.systemId);
   assert.ok(other, "has a spare NPC station");
+  const vexRow = {
+    system_id: other.systemId, owner_id: "acct-vex", display: "<b>Vex</b>",
+    tier: other.tier, status: "owned",
+    modules: { customs_house: 1, exchange_hall: 1, workshop_annex: 1, production_hub: 1, gremlin_ray: 9 },
+    reactor_level: 2, lease_tax_bps: 1500, sale_tariff_bps: 800, scrutiny: 55, standing: 71,
+    prod_comm: pool[0].id,
+    hall: [{ id: "l1", name: "<img src=x>Void Shield", kind: "gear", price: "120000", expiresAt: T + 3600e3, sellerId: "acct-vex" }],
+    bays: [{ lesseeId: "acct-zed" }, { lesseeId: "" }],
+  };
   ctx.Cloud = {
-    _rows: [{ system_id: other.systemId, owner_id: "acct-vex", display: "<b>Vex</b>", tier: other.tier, status: "owned" }],
+    _rows: [vexRow],
     _user: null,
     user() { return this._user; },
     signedIn() { return !!this._user; },
@@ -483,6 +492,42 @@ assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit tim
   const poach = Stations.openAuction(other.systemId, Stations.openingBid(other));
   assert.ok(!poach.ok && /holds this station/.test(poach.msg), `claim blocked, got "${poach.msg}"`);
 
+  // Phase A: their upgrades are real to us. view() is the station as it is.
+  const v = Stations.view(other.systemId);
+  assert.ok(v.remote, "view of a held station is the owner's record");
+  assert.strictEqual(v.modules.customs_house, 1, "their modules land");
+  assert.ok(!("gremlin_ray" in v.modules), "unknown module ids are dropped on ingest");
+  assert.strictEqual(v.saleTariffBps, 800, "their tariff lands");
+  assert.strictEqual(v.treasury, 0, "their treasury is never in our copy");
+
+  // Effects that are pure reads of the record now apply to a visitor.
+  assert.ok(Stations.workshopMatChance(other.systemId) > 0, "their Workshop Annex helps visitors");
+  assert.strictEqual(Stations.scrutinyFor(other.systemId), 0.55, "their Customs House sets our scrutiny");
+  assert.strictEqual(Stations.customsExempt(other.systemId), false, "a visitor is not exempt from their customs");
+  assert.strictEqual(Stations.publicScrutiny(other.systemId).chanceHint, 55, "scrutiny is public before undock");
+  const hallChip = Stations.serviceList(other.systemId).find(r => r.id === "exchange_hall");
+  assert.ok(hallChip.ok, "their Exchange Hall reads as installed, not 'modules dormant'");
+  assert.ok(Stations.canDock(other.systemId).ok, "a live station is dockable even if our copy says npc");
+
+  // Their shelf is visible and sanitised, but not yet buyable (phase B).
+  const shelf = Stations.hallListings(other.systemId);
+  assert.strictEqual(shelf.length, 1, "their listings are visible");
+  assert.ok(!/[<>]/.test(shelf[0].name), `listing name sanitised, got "${shelf[0].name}"`);
+  assert.strictEqual(shelf[0].price, 120000, "listing price is re-typed to a number");
+  const hall = Stations.canUseHall(other.systemId);
+  assert.ok(!hall.ok && hall.browse, "visitor hall is browse-only in phase A");
+  assert.ok(!Stations.hubAccess("bazaar", other.systemId).ok, "no trading at their market yet");
+  assert.ok(!Stations.hubAccess("stations", other.systemId).ok, "their console is not ours");
+
+  // Their hub feeds their hold, not our sector shelf (§4.2).
+  const realBasket = Stations._npcBasket;
+  const producedFor = [];
+  Stations._npcBasket = function (st, h) { producedFor.push(st.systemId); return realBasket.call(this, st, h); };
+  Stations.npcProduceHour(11);
+  Stations._npcBasket = realBasket;
+  assert.ok(producedFor.length, "NPC stations still produce");
+  assert.ok(!producedFor.includes(other.systemId), "a held station stops minting NPC supply locally");
+
   // Our own published row must not read as somebody else's.
   ctx.Cloud._user = { id: "acct-me" };
   ctx.Cloud._rows = [{ system_id: other.systemId, owner_id: "acct-me", display: "Me", tier: other.tier, status: "owned" }];
@@ -490,10 +535,17 @@ assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit tim
   assert.strictEqual(Stations.remoteHolder(other.systemId), null, "our own row is not a remote holder");
   assert.strictEqual(Stations.holderTag(other), "NPC", "no foreign holder → local view stands");
 
-  // Publish sends owner-held stations only.
+  // Publish sends owner-held stations only, with the record other players read.
+  target.status = "refit";
+  target.refitUntil = T + 6 * 3600 * 1000;
   await Stations.publishOwned();
   assert.deepStrictEqual([...ctx.Cloud.published].map(r => r.system_id), [target.systemId],
     "publishes exactly the stations we hold");
+  const sent = ctx.Cloud.published[0];
+  assert.strictEqual(sent.modules.production_hub, 1, "publishes what's installed");
+  assert.strictEqual(+sent.refit_until, target.refitUntil, "refit clock survives as a ms epoch");
+  target.status = "owned";
+  target.refitUntil = 0;
 
   console.log("OK check_stations");
 })().catch(e => { console.error(e); process.exit(1); });

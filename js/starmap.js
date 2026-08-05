@@ -291,22 +291,26 @@ const StarMap = {
     const dirTxt = idx > 0.06 ? `<span class="up">▲ rising</span>` : idx < -0.06 ? `<span class="down">▼ falling</span>` : "stable";
     let extra = "";
     if (!sys.capital && window.Stations) {
-      const st = Stations.get(sys.id);
+      const local = Stations.get(sys.id);
+      const st = Stations.view(sys.id);
       if (st) {
         const auc = Stations.getAuction(sys.id);
         const sent = window.Stock ? Stock.sentiment[st.sectorId] : null;
         const band = sent == null ? "" : sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
         const hallN = (st.modules.exchange_hall | 0) ? (st.hall || []).length : -1;
         const office = (st.modules.contract_office | 0);
-        const rel = office ? Stations.reliability(st) : null;
+        // Reliability is a running tally of *our* record of their postings —
+        // meaningless for a station we only see published.
+        const rel = office && !st.remote ? Stations.reliability(st) : null;
         const officeTxt = !office ? "" : ` · Contract Office${rel == null ? "" : ` ${Math.round(rel * 100)}%`}`;
         const scr = Stations.publicScrutiny(sys.id);
         const scrTxt = scr && scr.chanceHint != null ? ` · scrutiny ${scr.chanceHint}%` : "";
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
-          (st.status === "owned" ? " · owned"
+          (st.remote ? ` · ${Stations.holderTag(local)}`
+            : st.status === "owned" ? " · owned"
             : st.status === "refit" ? ` · owned · refit ${Util.duration(Stations.refitLeft(st))}`
             : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}`
-            : ` · ${Stations.holderTag(st)}`) +
+            : ` · ${Stations.holderTag(local)}`) +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
           officeTxt + scrTxt +
@@ -401,11 +405,24 @@ const StarMap = {
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "npc" || (st.status === "cooldown" && Date.now() >= st.cooldownUntil)) {
           // Another baron may hold it even though our own save says NPC — the
-          // directory is the only cross-player view of ownership.
+          // published record is the only cross-player view of a station.
           const rem = Stations.remoteHolder(sys.id);
-          stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · ${rem ? `Held by ${rem.display}` : "NPC"}
-            ${rem ? "" : `<button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>`}
-            ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          if (rem) {
+            const v = Stations.view(sys.id);
+            const mods = Object.keys(v.modules || {}).length;
+            const left = Stations.refitLeft(v);
+            const comm = v.prodComm && COMMODITIES.find(c => c.id === v.prodComm);
+            stationBlock = `<div class="si-station"><b>${st.name}</b> · ${v.tier} · Held by ${rem.display}
+              <div class="tip-dim">standing ${Math.round(v.standing)} · ${mods} module${mods === 1 ? "" : "s"} installed`
+              + (comm ? ` · producing ${comm.name}` : "")
+              + (left > 0 ? ` · <span class="st-refit">refit ${Util.duration(left)}</span>` : "")
+              + `</div>
+              ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          } else {
+            stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
+              <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>
+              ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          }
         } else if (st.status === "cooldown") {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
@@ -452,6 +469,20 @@ const StarMap = {
               <thead><tr><th>Listing</th><th class="num">Price</th><th></th></tr></thead>
               <tbody>${rows}</tbody>
             </table></div></div>`;
+        } else if (hallAccess.browse) {
+          // Their shelf, read-only: you can see what's on it and what the
+          // tariff is before phase B lets you actually buy off it.
+          const v = hallAccess.st;
+          const rows = (v.hall || []).map(l => `<tr>
+              <td>${l.name}<div class="tip-dim">${l.kind}</div></td>
+              <td class="num">${Util.credits(l.price)}</td>
+            </tr>`).join("") || `<tr><td colspan="2" class="tip-dim">Shelf is empty</td></tr>`;
+          stationBlock += `<div class="si-station si-hall"><b>Exchange Hall</b> · tariff ${((v.saleTariffBps || 0) / 100).toFixed(0)}%
+            <div class="tip-dim">${hallAccess.msg}</div>
+            <div class="table-wrap" style="margin-top:6px"><table class="market">
+              <thead><tr><th>Listing</th><th class="num">Price</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div></div>`;
         } else if ((st.modules.exchange_hall | 0) && !hallAccess.ok && st.ownerId !== Stations.playerId()) {
           stationBlock += `<div class="si-station si-hall tip-dim">Exchange Hall — ${hallAccess.msg}</div>`;
         }
@@ -474,6 +505,18 @@ const StarMap = {
             <div class="system-services">${svcs.map(r =>
               `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
             ).join("")}</div></div>`;
+        }
+        // Another baron's production floor — occupancy and terms are public
+        // (§8); leasing a bay from here waits for the station RPCs.
+        if (Stations.isRemote(sys.id)) {
+          const v = Stations.view(sys.id);
+          if ((v.modules.production_hub | 0) && v.prodComm) {
+            const comm = COMMODITIES.find(c => c.id === v.prodComm);
+            const bays = v.bays || [];
+            const taken = bays.filter(b => b.lesseeId).length;
+            stationBlock += `<div class="si-station si-lease"><b>Production bays</b> · ${comm ? comm.name : v.prodComm} · lease tax ${((v.leaseTaxBps || 0) / 100).toFixed(0)}%
+              <div class="tip-dim">${taken} of ${bays.length} bays occupied · leasing from a visited station isn't live yet</div></div>`;
+          }
         }
         // Visitor Production Hub bay leases (docs/STATIONS.md §8).
         if (docked && st.status === "owned" && st.ownerId !== Stations.playerId()
