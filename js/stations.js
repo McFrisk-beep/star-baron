@@ -101,6 +101,487 @@ const Stations = {
     return (info && info.stations) || 1;
   },
 
+  // ---- shared station record (docs/sql/station_directory.sql) -------------
+  // A station's whole record lived only in its owner's save, so every other
+  // client — and every signed-out visitor — drew a claimed, fully upgraded
+  // station as a vacant NPC berth. The directory is that record, published.
+  //
+  // Phase A: read-only. view() below feeds every display and every effect that
+  // is a pure read of the record (customs, free port, workshop annex, dry dock,
+  // buoys), so docking at another baron's station finally does something.
+  // Phase B: the mutating RPCs — hall buy/list, bay lease, ransom — write back
+  // into these same hall/bays arrays. Until then, look but don't touch.
+  directory: {},        // systemId -> published record
+  directoryAt: 0,
+  _pubTimer: null,
+
+  // Cloud identity, used ONLY to recognise our own directory rows. Local
+  // ownership keeps using playerId() — that returns "player" in every save, so
+  // switching it to the account id would orphan every station already claimed.
+  // ponytail: two ids until app_station_* own the ledger; then playerId() goes.
+  accountId() {
+    const u = (window.Cloud && typeof Cloud.user === "function") ? Cloud.user() : null;
+    return u ? String(u.id || u.email || "") : "";
+  },
+
+  // The holder as seen by everyone else. null when that's us or nobody.
+  remoteHolder(systemId) {
+    const row = this.directory[systemId];
+    if (!row || !row.ownerId) return null;
+    const me = this.accountId();
+    return me && row.ownerId === me ? null : row;
+  },
+
+  // The station as it actually is right now: our own record when we hold it (or
+  // when nobody has published one), otherwise the owner's published record.
+  // EVERY display and effect path reads this. Every mutation path keeps using
+  // get(), which is always the local record we're allowed to write.
+  view(systemId) {
+    const st = this.get(systemId);
+    if (!st || this.ownerHeld(st)) return st;
+    const rem = this.remoteHolder(systemId);
+    if (!rem) return st;
+    return {
+      ...st,
+      ownerId: rem.ownerId,
+      ownerDisplay: rem.display,
+      status: rem.status,
+      tier: rem.tier || st.tier,
+      modules: rem.modules,
+      reactorLevel: rem.reactorLevel,
+      leaseTaxBps: rem.leaseTaxBps,
+      saleTariffBps: rem.saleTariffBps,
+      scrutiny: rem.scrutiny,
+      standing: rem.standing,
+      prodComm: rem.prodComm,
+      refitUntil: rem.refitUntil,
+      hall: rem.hall,
+      bays: rem.bays,
+      // Not published: treasury, hold, contracts, impound. Ours are empty and
+      // must stay that way — a visitor's copy is not a place to bank anything.
+      treasury: 0,
+      hold: {},
+      contracts: [],
+      impoundClaims: [],
+      remote: true,
+    };
+  },
+
+  // True when this dock belongs to another baron (their record, not ours).
+  isRemote(systemId) { return !!this.remoteHolder(systemId) && !this.ownerHeld(this.get(systemId)); },
+
+  // One place answers "who holds this?" for every readout.
+  holderLabel(st) {
+    if (!st) return "NPC-held";
+    if (st.remote) return `Held by ${st.ownerDisplay}`;
+    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "Yours" : "Player-held";
+    const rem = this.remoteHolder(st.systemId);
+    return rem ? `Held by ${rem.display}` : "NPC-held";
+  },
+  // Compact form for the star map / systems list ("NPC" reads as a tag there).
+  holderTag(st) {
+    if (!st) return "NPC";
+    if (st.remote) return `held by ${st.ownerDisplay}`;
+    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "yours" : "player-held";
+    const rem = this.remoteHolder(st.systemId);
+    return rem ? `held by ${rem.display}` : "NPC";
+  },
+
+  // Another player's client wrote this row, and it lands in innerHTML and in
+  // effect math — so it's a trust boundary, same as save data. Every field is
+  // re-typed and clamped here; nothing downstream re-checks.
+  _txt(v, max = 40) { return String(v == null ? "" : v).replace(/[<>&"']/g, "").slice(0, max); },
+  _num(v, lo, hi, dflt) {
+    const n = +v;
+    return Number.isFinite(n) ? Util.clamp(n, lo, hi) : dflt;
+  },
+  _ingest(r) {
+    const modules = {};
+    for (const [id, lvl] of Object.entries((r.modules && typeof r.modules === "object") ? r.modules : {})) {
+      if (!STATION_MODULES[id]) continue;   // unknown module ids can't reach the UI
+      const max = (STATION_MODULES[id].power || []).length || 1;
+      const n = this._num(lvl, 0, max, 0) | 0;
+      if (n > 0) modules[id] = n;
+    }
+    // ponytail: hall/bays are display-only in phase A, so client-trusted is
+    // fine; phase B's buy/lease RPCs must own these arrays server-side.
+    const hall = (Array.isArray(r.hall) ? r.hall : []).slice(0, 40).map(l => ({
+      id: this._txt(l && l.id, 40),
+      name: this._txt(l && l.name, 48) || "Listing",
+      kind: this.hallKinds.includes(l && l.kind) ? l.kind : "gear",
+      price: this._num(l && l.price, 0, 1e12, 0),
+      expiresAt: this._num(l && l.expiresAt, 0, 8.64e15, 0),
+      sellerId: this._txt(l && l.sellerId, 64),
+    }));
+    const bays = (Array.isArray(r.bays) ? r.bays : []).slice(0, 12).map(b => ({
+      lesseeId: this._txt(b && b.lesseeId, 64),
+      npc: !!(b && b.npc),
+    }));
+    return {
+      ownerId: String(r.owner_id),
+      display: this._txt(r.display, 24) || "Baron",
+      tier: STATION_TIERS[r.tier] ? r.tier : "Berth",
+      status: r.status === "refit" ? "refit" : "owned",
+      modules,
+      reactorLevel: this._num(r.reactor_level, 0, STATIONCFG.reactor.length, 0) | 0,
+      leaseTaxBps: this._num(r.lease_tax_bps, 0, 10000, 1000) | 0,
+      saleTariffBps: this._num(r.sale_tariff_bps, 0, 10000, 500) | 0,
+      scrutiny: this._num(r.scrutiny, 0, 100, 10) | 0,
+      standing: this._num(r.standing, 0, 100, STATIONCFG.standingStart),
+      prodComm: COMMODITIES.some(c => c.id === r.prod_comm) ? r.prod_comm : null,
+      refitUntil: r.refit_until ? Date.parse(r.refit_until) || 0 : 0,
+      hall,
+      bays,
+    };
+  },
+
+  async refreshDirectory() {
+    if (!(window.Cloud && Cloud.stationDirectory)) return this.directory;
+    try {
+      const rows = await Cloud.stationDirectory();
+      if (!rows) return this.directory;
+      const next = {};
+      for (const r of rows || []) {
+        const id = r && r.system_id ? String(r.system_id) : "";
+        if (!id || !r.owner_id) continue;
+        next[id] = this._ingest(r);
+      }
+      this.directory = next;
+      this.directoryAt = Date.now();
+    } catch (e) {
+      console.warn("[Stations] directory fetch failed:", e);
+    }
+    return this.directory;
+  },
+
+  async publishOwned() {
+    if (!(window.Cloud && Cloud.stationPublish && Cloud.signedIn && Cloud.signedIn())) return null;
+    const rows = this.ownedBy().map(st => ({
+      system_id: st.systemId,
+      tier: st.tier,
+      status: st.status,
+      modules: st.modules || {},
+      reactor_level: st.reactorLevel | 0,
+      lease_tax_bps: st.leaseTaxBps | 0,
+      sale_tariff_bps: st.saleTariffBps | 0,
+      scrutiny: st.scrutiny | 0,
+      standing: Math.round(st.standing || 0),
+      prod_comm: st.prodComm || "",
+      // ms epoch — never `| 0` this, 32-bit truncation mangles it.
+      refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
+      // Shelf and bay occupancy — what makes a visited station look inhabited.
+      hall: (st.hall || []).slice(0, 40).map(l => ({
+        id: l.id, name: l.name, kind: l.kind, price: l.price,
+        expiresAt: l.expiresAt, sellerId: l.sellerId,
+      })),
+      bays: (st.bays || []).slice(0, 12).map(b => ({ lesseeId: b.lesseeId || "", npc: !!b.npc })),
+    }));
+    try {
+      const res = await Cloud.stationPublish(rows);
+      if (res && res.ok) await this.refreshDirectory();
+      // A conflict means someone else claimed it first server-side. Local play
+      // is unaffected (nothing is server-authoritative yet) — the directory just
+      // keeps showing them as the holder.
+      if (res && res.conflicts && res.conflicts.length) {
+        console.warn("[Stations] already claimed elsewhere:", res.conflicts.join(", "));
+      }
+      return res;
+    } catch (e) {
+      console.warn("[Stations] directory publish failed:", e);
+      return null;
+    }
+  },
+
+  // Ownership changes are bursty (auction close → save → tick); coalesce them.
+  _publishSoon() {
+    if (!(window.Cloud && Cloud.signedIn && Cloud.signedIn())) return;
+    clearTimeout(this._pubTimer);
+    this._pubTimer = setTimeout(() => { void this.publishOwned(); }, 1500);
+  },
+
+  // ---- shared Exchange Hall (docs/sql/station_hall.sql) -------------------
+  // Phase B. Phase A made another baron's shelf visible; the shelf itself was
+  // still a copy in each client, so buying from it moved nothing. Here the
+  // shelf moves to the server: one baron's listing is the object another baron
+  // buys, the price splits at the owner's published tariff, and both sides are
+  // queued for whoever is offline. The local st.hall stays as the signed-out
+  // shelf — a guest still gets a hall, it's just theirs alone.
+  hallKinds: ["gear", "blackbox", "extractor", "component", "ship", "blueprint"],
+  hallRemote: {},   // systemId -> [listing] (server shelf; payloads stay server-side)
+  unclaimed: [],    // settled items that wouldn't fit yet — already ours, never dropped
+
+  // Shared once the owner has published the station and the hall SQL is live.
+  // Readable signed out (the RPC is anon, like the directory); acting on it
+  // needs an account, because the payout queue is keyed by one.
+  hallShared(systemId) {
+    return !!(this.directory[systemId] && window.Cloud && Cloud.enabled && !Cloud.hallMissing);
+  },
+  _hallWritable() { return !!(window.Cloud && Cloud.hallReady && Cloud.hallReady()); },
+
+  // Local stalls are keyed by playerId() ("player" in every save); shared ones
+  // by the account uuid. One question, one answer.
+  listingMine(l) {
+    if (!l) return false;
+    if (!l.shared) return l.sellerId === this.playerId();
+    const me = this.accountId();
+    return !!me && l.sellerId === me;
+  },
+
+  // Same trust boundary as a directory row — another player's client wrote it.
+  _ingestListing(r) {
+    return {
+      id: this._txt(r.id, 64),
+      sellerId: this._txt(r.seller_id, 64),
+      sellerName: this._txt(r.seller, 24) || "Baron",
+      kind: this.hallKinds.includes(r.kind) ? r.kind : "gear",
+      name: this._txt(r.name, 48) || "Listing",
+      price: this._num(r.price, 0, 1e12, 0),
+      value: this._num(r.value, 0, 1e12, 0),
+      expiresAt: r.expires_at ? Date.parse(r.expires_at) || 0 : 0,
+      shared: true,
+    };
+  },
+
+  // Which shelves we care about: where we're standing, plus our own stations
+  // (other barons put stalls up on those and we need to see them).
+  hallSystems() {
+    const s = window.Game && Game.state;
+    const ids = this.ownedBy().map(st => st.systemId);
+    if (s && s.currentSystem) ids.push(s.currentSystem);
+    return [...new Set(ids)].filter(id => this.hallShared(id));
+  },
+
+  async refreshHalls(systemIds) {
+    if (!(window.Cloud && Cloud.stationHall)) return this.hallRemote;
+    const ids = [...new Set(systemIds || [])].filter(id => this.hallShared(id));
+    if (!ids.length) return this.hallRemote;
+    try {
+      const rows = await Cloud.stationHall(ids);
+      if (!rows) return this.hallRemote;
+      for (const id of ids) this.hallRemote[id] = [];
+      for (const r of rows) {
+        const id = r && r.system_id ? String(r.system_id) : "";
+        if (!this.hallRemote[id]) continue;
+        this.hallRemote[id].push(this._ingestListing(r));
+      }
+    } catch (e) {
+      console.warn("[Stations] hall fetch failed:", e);
+    }
+    return this.hallRemote;
+  },
+
+  // One pass: move any stalls still sitting in our save up to the shared shelf,
+  // collect what we're owed, then re-read the shelves we're looking at.
+  async syncHall() {
+    if (this._hallWritable()) {
+      await this._migrateLocalHall();
+      await this.settleHall();
+    }
+    return this.refreshHalls(this.hallSystems());
+  },
+
+  // Our stalls used to live in our own save, where nobody else could ever buy
+  // them — and a copy left behind after the move would be the same item twice.
+  // Only what the server accepts is dropped locally.
+  async _migrateLocalHall() {
+    for (const st of this.list()) {
+      if (!this.hallShared(st.systemId) || !Array.isArray(st.hall) || !st.hall.length) continue;
+      const keep = [];
+      for (const l of st.hall) {
+        if (!this.listingMine(l) || !l.payload) { keep.push(l); continue; }
+        const res = await this._postListing(st.systemId, l.kind, l.price, l);
+        if (!res.ok) keep.push(l);
+      }
+      if (keep.length !== st.hall.length) {
+        st.hall = keep;
+        if (window.Game) Game.requestSave();
+      }
+    }
+  },
+
+  async _postListing(systemId, kind, price, taken) {
+    try {
+      const res = await Cloud.stationListItem(systemId, {
+        kind, name: taken.name, price,
+        value: Math.max(0, Math.round(+taken.value || 0)),
+        payload: taken.payload,
+      });
+      if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "The hall refused that listing." };
+      const listing = {
+        id: this._txt(res.id, 64),
+        sellerId: this.accountId(),
+        sellerName: this._txt(res.seller, 24) || "You",
+        kind, name: taken.name, price,
+        value: Math.max(0, Math.round(+taken.value || 0)),
+        expiresAt: res.expires_at ? Date.parse(res.expires_at) || 0
+                                  : Date.now() + (STATIONCFG.hallListMs || 48 * 3600 * 1000),
+        shared: true,
+      };
+      (this.hallRemote[systemId] = this.hallRemote[systemId] || []).push(listing);
+      return { ok: true, listing };
+    } catch (e) {
+      console.warn("[Stations] hall list failed:", e);
+      return { ok: false, msg: "The hall is unreachable right now." };
+    }
+  },
+
+  // Everything the shelf owes us: sale proceeds, tariffs charged on our own
+  // station, and the items behind listings that expired or were cleared.
+  async settleHall() {
+    if (!this._hallWritable()) return null;
+    let res;
+    try { res = await Cloud.stationSettle(); }
+    catch (e) { console.warn("[Stations] hall settle failed:", e); return null; }
+    if (!res || !res.ok) return null;
+
+    let credits = 0, tariffs = 0, items = 0;
+    for (const p of Array.isArray(res.payouts) ? res.payouts : []) {
+      const amt = Math.max(0, Math.round(+(p && p.amount) || 0));
+      if (!amt) continue;
+      const st = this.get(this._txt(p.systemId, 40));
+      // A tariff is the station's income, not the owner's pocket money (§9) —
+      // unless we've since lost the station, in which case it follows us out.
+      if (p.reason === "tariff" && st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+        st.treasury += amt;
+        this._ledger(st, amt, "hall_tariff", this._txt(p.note, 48));
+        tariffs += amt;
+      } else {
+        Game.state.credits += amt;
+        credits += amt;
+        if (st) this._ledger(st, amt, "hall_payout", this._txt(p.note, 48));
+      }
+    }
+    for (const row of Array.isArray(res.items) ? res.items : []) {
+      const back = this._ingestBought(row);
+      if (!back) continue;
+      if (!this._deliverListable(back, this.playerId()).ok) this._park(back);
+      items++;
+    }
+    if (credits || tariffs || items) {
+      if (window.Economy) Economy.refreshNetWorth();
+      if (window.Game) Game.requestSave();
+    }
+    return { ok: true, credits, tariffs, items };
+  },
+
+  // A payload the server held in escrow was authored by another player's client
+  // and lands in our inventory and our net worth. Nothing is taken on faith:
+  // every object is rebuilt field by field against the catalogs, uids are
+  // re-minted so they can't collide with ours, and values are recomputed.
+  _cleanPayload(kind, p) {
+    if (!p || typeof p !== "object") return null;
+    const uid = pre => pre + (++Game.state.seq);
+    if (kind === "blackbox") {
+      const e = BLACKBOX_EFFECTS.find(x => x.id === p.effectId);
+      if (!e) return null;
+      return {
+        uid: uid("i"), kind: "blackbox", rarity: "rare", name: `${e.name} Blackbox`,
+        consumable: true, effectId: e.id, primary: null, bonus: null,
+        value: (window.Items && Items.blackboxValue) ? Items.blackboxValue(e) : 2000,
+      };
+    }
+    if (kind === "gear") {
+      if (!ACCESSORY_KINDS[p.kind] || !RARITIES.some(r => r.id === p.rarity)) return null;
+      const it = {
+        uid: uid("i"), kind: p.kind, rarity: p.rarity,
+        name: this._txt(p.name, 48) || "Salvaged Part",
+        primary: this._cleanStat(p.primary), bonus: this._cleanStat(p.bonus),
+      };
+      if (!it.primary) return null;
+      it.value = (window.Items && Items.value) ? Items.value(it) : this._num(p.value, 0, 1e9, 0);
+      return it;
+    }
+    if (kind === "extractor") {
+      if (!EXTRACTORCFG.types[p.type]) return null;
+      const scope = String(p.scope || "");
+      const okScope = p.type === "specialized" ? COMMODITIES.some(c => c.id === scope)
+        : p.type === "semi" ? COMMODITIES.some(c => c.cat === scope)
+        : true;
+      if (!okScope) return null;
+      // Fitted components stay behind: `components` holds uids into the
+      // seller's pool, and those objects aren't part of the sale.
+      return {
+        uid: uid("ex"), type: p.type, scope: p.type === "jack" ? "all" : scope,
+        name: this._txt(p.name, 48) || "Extractor", components: [],
+      };
+    }
+    if (kind === "component") {
+      if (!COMPONENTCFG.kinds[p.kind] || !RARITIES.some(r => r.id === p.rarity)) return null;
+      return {
+        uid: uid("cp"), kind: p.kind, rarity: p.rarity,
+        amount: this._num(p.amount, 0, 100, 0),
+        name: this._txt(p.name, 48) || COMPONENTCFG.kinds[p.kind].label,
+      };
+    }
+    if (kind === "ship") {
+      const def = window.Fleet && Fleet.shipDef(p.type);
+      if (!def) return null;
+      // The hull only. Accessories and yard refits live in the seller's save
+      // (state.items / state.shipVariants) and don't cross with the sale.
+      return {
+        uid: uid("s"), type: def.id, cls: def.cls,
+        name: this._txt(p.name, 32) || def.name, status: "idle",
+        accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0,
+      };
+    }
+    if (kind === "blueprint") {
+      const r = (typeof RECIPES !== "undefined" ? RECIPES : []).find(x => x.id === p.recipeId);
+      return r ? { recipeId: r.id } : null;
+    }
+    return null;
+  },
+  _cleanStat(st) {
+    if (!st || typeof st !== "object" || !ACCESSORY_KINDS[st.kind]) return null;
+    const k = ACCESSORY_KINDS[st.kind];
+    return { stat: k.stat, kind: st.kind, pct: !!k.pct, amount: this._num(st.amount, 0, k.pct ? 1 : 1e5, 0) };
+  },
+
+  // A settled row (bought, reclaimed) → the listing shape _deliverListable eats.
+  _ingestBought(row) {
+    if (!row) return null;
+    const kind = this.hallKinds.includes(row.kind) ? row.kind : "";
+    const payload = kind && this._cleanPayload(kind, row.payload);
+    if (!payload) return null;
+    return {
+      id: this._txt(row.id, 64), kind,
+      name: this._txt(row.name, 48) || "Listing",
+      payload, value: kind === "blueprint" ? 8000 : (payload.value || 0),
+    };
+  },
+
+  // Room to receive, checked BEFORE the RPC: the server hands the payload over
+  // once and the row is gone, so "inventory full" must fail on our side first.
+  _roomFor(kind) {
+    if (kind === "gear" || kind === "blackbox") {
+      if (window.Bazaar && Bazaar.inventoryUsed() >= Bazaar.capacity())
+        return { ok: false, msg: "Inventory full." };
+    }
+    if (kind === "ship") {
+      const cap = window.Economy ? Economy.fleetCap() : 99;
+      if (((Game.state.ships || []).length) >= cap) return { ok: false, msg: "Fleet at capacity." };
+    }
+    return { ok: true };
+  },
+
+  // Settled but undeliverable — already paid for, so it waits in the save
+  // instead of evaporating, and lands the moment there's room.
+  _park(entry) {
+    this.unclaimed.push({ kind: entry.kind, name: entry.name, payload: entry.payload });
+    if (window.UI && UI.toast) UI.toast(`${entry.name} is waiting — no room for it yet.`, "warn");
+  },
+  retryUnclaimed() {
+    if (!this.unclaimed.length) return 0;
+    const keep = [];
+    let got = 0;
+    for (const e of this.unclaimed) {
+      if (this._deliverListable(e, this.playerId()).ok) got++;
+      else keep.push(e);
+    }
+    this.unclaimed = keep;
+    if (got && window.Game) Game.requestSave();
+    return got;
+  },
+
   // ---- power / modules ---------------------------------------------------
   basePower(st) { return this.tierInfo(st.tier).power; },
   reactorPower(st) {
@@ -320,7 +801,7 @@ const Stations = {
   },
 
   canDock(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return { ok: false, msg: "No station here." };
     if (this.roleOf(systemId) === "barred") return { ok: false, msg: "Docking denied — you are barred." };
     if (st.status === "cooldown") return { ok: false, msg: "Station is offline after a revolt." };
@@ -354,7 +835,7 @@ const Stations = {
       return { ok: true };
     }
 
-    const st = this.get(sysId);
+    const st = this.view(sysId);
     if (!st) return { ok: false, reason: "No station services here" };
     const owned = this.ownerHeld(st);
     const mine = owned && st.ownerId === this.playerId();
@@ -382,6 +863,9 @@ const Stations = {
       case "exchange":
         return { ok: false, reason: "Commodity exchange is at sector capitals" };
       case "bazaar":
+        // Phase A publishes another baron's station read-only: you see it, its
+        // modules affect your dock, but nothing here may move their goods yet.
+        if (st.remote) return { ok: false, reason: `${st.ownerDisplay}'s market — trading here isn't live yet` };
         if (mod("charter_office") || mod("contract_office") || mod("black_market") || mod("exchange_hall"))
           return { ok: true };
         return { ok: false, reason: "Needs Exchange Hall, Charter, or Contract Office" };
@@ -406,7 +890,7 @@ const Stations = {
         { id: "fleet", label: "Fleet Bay", ok: true },
       ];
     }
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return [];
     const refit = st.status === "refit";
     const owned = this.ownerHeld(st);
@@ -435,7 +919,7 @@ const Stations = {
   },
 
   customsExempt(systemId, pid = this.playerId()) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.customs_house | 0)) return false;
     const role = this.roleOf(systemId, pid);
     return role === "owner" || role === "partner" || role === "allied";
@@ -443,7 +927,7 @@ const Stations = {
 
   // Public scrutiny readout shown before undock (never hidden).
   publicScrutiny(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return null;
     if (st.modules.free_port | 0) {
       const pct = Math.round((CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35) * 100);
@@ -463,20 +947,34 @@ const Stations = {
 
   // Visitors must be docked at the station (non-capital docking is live).
   canUseHall(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (st && st.status === "refit" && (st.modules.exchange_hall | 0))
       return { ok: false, msg: `Station is in refit — ${Util.duration(this.refitLeft(st))} left.` };
     if (!this.hasHall(st)) return { ok: false, msg: "No Exchange Hall here." };
+    // Another baron's shelf is only tradeable once it's the *same* shelf for
+    // both of us. Without the hall SQL, or signed out, it stays a display.
+    if (this.hallShared(systemId)) {
+      if (!this._hallWritable())
+        return { ok: false, msg: "Sign in to trade on a shared hall.", browse: true, st };
+    } else if (st.remote) {
+      return { ok: false, msg: `${st.ownerDisplay}'s hall — visitor trading isn't live yet.`, browse: true, st };
+    }
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
-    if (st.ownerId === this.playerId()) return { ok: true, st };
+    if (!st.remote && st.ownerId === this.playerId()) return { ok: true, st };
     if (s.currentSystem === systemId) return { ok: true, st };
     return { ok: false, msg: "Dock at this station to use the Exchange Hall." };
   },
 
   hallListings(systemId) {
-    const st = this.get(systemId);
-    return (st && Array.isArray(st.hall)) ? st.hall : [];
+    const st = this.view(systemId);
+    const local = (st && Array.isArray(st.hall)) ? st.hall : [];
+    // Until the shelf has actually been read, the local one is all we know.
+    // After that it's authoritative — except for our own stalls that haven't
+    // made it up yet (a full shelf), which would otherwise just vanish.
+    if (this.hallShared(systemId) && this.hallRemote[systemId])
+      return this.hallRemote[systemId].concat(local.filter(l => this.listingMine(l)));
+    return local;
   },
 
   _listingValue(listing) {
@@ -493,12 +991,18 @@ const Stations = {
     return 0;
   },
 
-  // Escrowed hall goods still count toward net worth (like auction bids).
+  // Escrowed hall goods still count toward net worth (like auction bids) —
+  // including the ones now sitting in server-side escrow on a shared shelf.
   hallEscrowValue(pid = this.playerId()) {
     let n = 0;
     for (const st of this.list()) {
       for (const l of st.hall || []) if (l.sellerId === pid) n += this._listingValue(l);
     }
+    if (pid !== this.playerId()) return n;
+    for (const rows of Object.values(this.hallRemote)) {
+      for (const l of rows || []) if (this.listingMine(l)) n += +l.value || 0;
+    }
+    for (const e of this.unclaimed) n += this._listingValue(e);
     return n;
   },
 
@@ -619,7 +1123,7 @@ const Stations = {
     return { ok: false, msg: "Unsupported listing type." };
   },
 
-  listHallItem(systemId, kind, ref, price) {
+  async listHallItem(systemId, kind, ref, price) {
     const access = this.canUseHall(systemId);
     if (!access.ok) return access;
     const st = access.st;
@@ -630,6 +1134,18 @@ const Stations = {
     if (price < (STATIONCFG.hallMinPrice || 50)) return { ok: false, msg: `Price at least ${STATIONCFG.hallMinPrice}c.` };
     const taken = this._takeListable(kind, ref);
     if (!taken.ok) return taken;
+    // Shared shelf: the item goes into server-side escrow, not into our save.
+    // If the post fails it comes straight back — it must never be in neither.
+    if (this.hallShared(systemId)) {
+      const res = await this._postListing(systemId, kind, price, taken);
+      if (!res.ok) {
+        this._restoreListable({ kind, payload: taken.payload }, this.playerId());
+        if (window.Game) Game.requestSave();
+        return res;
+      }
+      if (window.Game) Game.requestSave();
+      return res;
+    }
     if (!Array.isArray(st.hall)) st.hall = [];
     const now = Date.now();
     const listing = {
@@ -649,7 +1165,9 @@ const Stations = {
     return { ok: true, listing };
   },
 
-  cancelHallListing(systemId, listingId) {
+  async cancelHallListing(systemId, listingId) {
+    const shared = (this.hallRemote[systemId] || []).find(l => l.id === listingId);
+    if (shared) return this._cancelShared(systemId, shared);
     const st = this.get(systemId);
     if (!st || !Array.isArray(st.hall)) return { ok: false, msg: "No listing." };
     const idx = st.hall.findIndex(l => l.id === listingId);
@@ -663,9 +1181,46 @@ const Stations = {
     return { ok: true };
   },
 
-  buyHallListing(systemId, listingId) {
+  // Pull our own stall off a shared shelf; a station owner may also clear
+  // someone else's, and then the goods go back to whoever put them up.
+  async _cancelShared(systemId, listing) {
+    if (!this._hallWritable()) return { ok: false, msg: "Sign in to manage shared listings." };
+    if (!this.listingMine(listing)) {
+      const st = this.get(systemId);
+      if (!(st && this.ownerHeld(st) && st.ownerId === this.playerId()))
+        return { ok: false, msg: "Not your listing." };
+    }
+    let res;
+    try { res = await Cloud.stationCancelListing(listing.id); }
+    catch (e) {
+      console.warn("[Stations] hall cancel failed:", e);
+      return { ok: false, msg: "The hall is unreachable right now." };
+    }
+    if (!res || !res.ok) {
+      await this.refreshHalls([systemId]);
+      return { ok: false, msg: (res && res.error) || "Listing gone." };
+    }
+    this._dropShared(systemId, listing.id);
+    if (res.payload) {
+      const back = this._ingestBought({ id: listing.id, kind: res.kind, name: res.name, payload: res.payload });
+      if (back && !this._deliverListable(back, this.playerId()).ok) this._park(back);
+    }
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return { ok: true, cleared: !!res.cleared };
+  },
+
+  _dropShared(systemId, listingId) {
+    const rows = this.hallRemote[systemId];
+    if (!rows) return;
+    this.hallRemote[systemId] = rows.filter(l => l.id !== listingId);
+  },
+
+  async buyHallListing(systemId, listingId) {
     const access = this.canUseHall(systemId);
     if (!access.ok) return access;
+    const shared = (this.hallRemote[systemId] || []).find(l => l.id === listingId);
+    if (shared) return this._buyShared(systemId, shared);
     const st = access.st;
     const idx = (st.hall || []).findIndex(l => l.id === listingId);
     if (idx < 0) return { ok: false, msg: "Listing gone." };
@@ -694,6 +1249,54 @@ const Stations = {
     if (window.Economy) Economy.refreshNetWorth();
     if (window.Game) Game.requestSave();
     return { ok: true, listing, tariff, paid: listing.price };
+  },
+
+  // The shared-shelf buy. The server takes the listing off the shelf, splits
+  // the price at the owner's tariff, queues both sides and hands us the item —
+  // so the only thing left to do here is have somewhere to put it and pay.
+  // ponytail: the debit is ours because credits still are. A tab closed in the
+  // half-second between the RPC returning and delivery loses the item (nothing
+  // is charged for it). Both go away in phase D, when the debit moves inside
+  // the same transaction; an ack RPC before then would buy little.
+  async _buyShared(systemId, listing) {
+    if (!this._hallWritable()) return { ok: false, msg: "Sign in to buy here." };
+    if (this.listingMine(listing)) return { ok: false, msg: "That's your listing." };
+    const s = Game.state;
+    if (s.credits < listing.price) return { ok: false, msg: "Not enough credits." };
+    const room = this._roomFor(listing.kind);
+    if (!room.ok) return room;
+
+    let res;
+    try { res = await Cloud.stationBuyItem(systemId, listing.id); }
+    catch (e) {
+      console.warn("[Stations] hall buy failed:", e);
+      return { ok: false, msg: "The hall is unreachable right now." };
+    }
+    if (!res || !res.ok) {
+      // Someone got there first, or it expired between render and click.
+      this._dropShared(systemId, listing.id);
+      void this.refreshHalls([systemId]);
+      return { ok: false, msg: (res && res.error) || "Listing gone." };
+    }
+    const bought = this._ingestBought(res);
+    this._dropShared(systemId, listing.id);
+    // Paid at the server's price, not the one our stale row was showing.
+    const paid = this._num(res.price, 0, 1e12, listing.price);
+    s.credits -= paid;
+    if (!bought) {
+      // The escrowed payload didn't survive re-typing: we own a thing we can't
+      // build. Refund rather than silently charge for nothing.
+      s.credits += paid;
+      console.warn("[Stations] unusable payload from hall listing", listing.id);
+      return { ok: false, msg: "That listing was malformed — nothing was charged." };
+    }
+    if (!this._deliverListable(bought, this.playerId()).ok) this._park(bought);
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return {
+      ok: true, listing: { ...listing, name: bought.name }, paid,
+      tariff: this._num(res.tariff, 0, 1e12, 0), seller: this._txt(res.seller, 24),
+    };
   },
 
   // Claim any pending sale proceeds (multiplayer / identity handoff).
@@ -728,6 +1331,10 @@ const Stations = {
   },
 
   _npcBuyHall(st, hourIndex) {
+    // NPC buyers are liquidity for a shelf nobody else can reach. Once the
+    // shelf is shared, real barons are the liquidity — minting a sale here
+    // would pay the seller for goods that are still on the server's shelf.
+    if (this.hallShared(st.systemId)) return [];
     if (!Array.isArray(st.hall) || !st.hall.length) return [];
     const sold = [];
     const chance = STATIONCFG.hallNpcBuyChance || 0.12;
@@ -1275,6 +1882,8 @@ const Stations = {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     if (this.ownerHeld(st)) return { ok: false, msg: "Already owned." };
+    const rem = this.remoteHolder(systemId);
+    if (rem) return { ok: false, msg: `${rem.display} holds this station.` };
     if (st.status === "cooldown" && Date.now() < st.cooldownUntil)
       return { ok: false, msg: "Station is cooling down after a revolt." };
     if (this.auctions[systemId] && this.auctions[systemId].status === "open")
@@ -1398,6 +2007,7 @@ const Stations = {
     st.delivered = 0;
     st.cooldownUntil = 0;
     if (window.Game) Game.requestSave();
+    this._publishSoon();
     return { ok: true, st };
   },
 
@@ -1452,6 +2062,7 @@ const Stations = {
     delete this.access[st.systemId];
     this._cancelAuction(systemId);
     if (window.Game) Game.requestSave();
+    this._publishSoon();
     return { ok: true, st, treasury, holdCredits };
   },
 
@@ -1476,6 +2087,7 @@ const Stations = {
       st.delivered = 0;
       // Winning credits sunk to controlling faction (credit sink — keep it).
       this._ledger(st, auc.highBid, "auction_win", "paid to controlling faction");
+      this._publishSoon();
       auc.status = "closed";
       if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(auc.highBid)}.`, "ok");
       if (window.Story && Story.inbox) {
@@ -1528,6 +2140,10 @@ const Stations = {
   npcProduceHour(hourIndex) {
     let produced = 0;
     for (const st of this.list()) {
+      // Held by another baron: their Production Hub fills their hold, and only
+      // reaches the shelf when they haul it to a capital (§4.2). Our local copy
+      // must stop quietly minting NPC supply on their behalf.
+      if (this.isRemote(st.systemId)) continue;
       if (st.status === "owned" || st.status === "refit") {
         // Player hubs don't feed sector stock directly.
         if (st.status === "owned") this._fillNpcTenants(st, hourIndex);
@@ -1631,6 +2247,9 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
+    // Hourly: refresh who holds what, and re-stamp our own rows so an active
+    // owner never ages out of the directory's 30-day staleness window.
+    void this.refreshDirectory().then(() => this.publishOwned());
   },
 
   _warnStages(st, sentiment) {
@@ -1679,19 +2298,20 @@ const Stations = {
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
+    this._publishSoon();
     if (window.UI && UI.toast) UI.toast(`Revolt! You lost ${st.name}. Modules remain for the next owner.`, "bad", 10000);
   },
 
   // ---- Workshop Annex discount (option 3: stochastic per unit) -----------
   workshopMatChance(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.workshop_annex | 0)) return 0;
     if (st.status === "refit") return 0;
     const row = STATIONCFG.workshop[(st.modules.workshop_annex) - 1];
     return row ? row.mat : 0;
   },
   workshopTimeFactor(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st || !(st.modules.workshop_annex | 0)) return 1;
     if (st.status === "refit") return 1;
     const row = STATIONCFG.workshop[(st.modules.workshop_annex) - 1];
@@ -1700,7 +2320,7 @@ const Stations = {
 
   // Customs scrutiny override for a system (null = baseline capital formula).
   scrutinyFor(systemId) {
-    const st = this.get(systemId);
+    const st = this.view(systemId);
     if (!st) return null;
     if (st.modules.free_port)
       return Math.max(0, (CUSTOMS.base || 0.1) * (STATIONCFG.freePortScrutinyMult || 0.35));
@@ -1818,6 +2438,7 @@ const Stations = {
       if (st.hall && st.hall.length) this._expireHall(st, now);
     }
     this.claimHallPayouts();
+    this.retryUnclaimed();
   },
 
   _ledger(st, amount, kind, note) {
@@ -1834,6 +2455,7 @@ const Stations = {
       access: this.access,
       ledger: this.ledger,
       lastWarn: this.lastWarn,
+      unclaimed: this.unclaimed,
     };
   },
 
@@ -1844,6 +2466,17 @@ const Stations = {
     this.access = (snap.access && typeof snap.access === "object") ? snap.access : {};
     this.ledger = (snap.ledger && typeof snap.ledger === "object") ? snap.ledger : {};
     this.lastWarn = (snap.lastWarn && typeof snap.lastWarn === "object") ? snap.lastWarn : {};
+    // Items the hall already settled to us that had nowhere to go. They're paid
+    // for, so they're rebuilt from the catalogs on load like any other payload —
+    // a corrupt entry is dropped, never handed to the inventory as-is.
+    this.unclaimed = (Array.isArray(snap.unclaimed) ? snap.unclaimed : [])
+      .slice(0, 60)
+      .map(e => {
+        const kind = e && this.hallKinds.includes(e.kind) ? e.kind : "";
+        const payload = kind && this._cleanPayload(kind, e.payload);
+        return payload ? { kind, name: this._txt(e.name, 48) || "Listing", payload } : null;
+      })
+      .filter(Boolean);
     // Coerce each station at the trust boundary.
     for (const [id, st] of Object.entries(this.byId)) {
       if (!st || typeof st !== "object") { delete this.byId[id]; continue; }

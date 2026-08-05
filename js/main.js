@@ -464,6 +464,33 @@ const Game = {
       });
       Bus.on("prestige", () => { if (Cloud.signedIn && Cloud.signedIn()) Barons.publish(); });
     }
+    if (window.Stations) {
+      // Who holds which station — the only cross-player view of ownership.
+      // Guests read it too (anon RPC), so a signed-out visitor stops seeing
+      // every claimed station as NPC.
+      const syncStations = () => Stations.refreshDirectory()
+        .then(() => Stations.publishOwned())
+        // The shared shelf (phase B): move our stalls up, collect what we're
+        // owed, read the shelves we can see. Needs the directory first — a
+        // station is only shared once its owner has published it.
+        .then(() => Stations.syncHall())
+        .finally(() => {
+          if (!window.UI) return;
+          if (UI.page === "systems") UI.renderSystems();
+          const openSys = window.StarMap && StarMap.open && StarMap.current && Galaxy.get(StarMap.current);
+          if (openSys) StarMap.renderInfo(openSys);
+        });
+      void syncStations();
+      Bus.on("auth", syncStations);
+      // Arriving somewhere is the one moment the shelf in front of us matters.
+      Bus.on("dock", () => {
+        const sys = Game.state && Game.state.currentSystem;
+        if (!sys || !Stations.hallShared(sys)) return;
+        void Stations.refreshHalls([sys]).then(() => {
+          if (window.StarMap && StarMap.open && StarMap.current === sys) StarMap.renderInfo(Galaxy.get(sys));
+        });
+      });
+    }
     if (window.SenateWorld) SenateWorld.init();   // shared, galaxy-wide senate agenda (Supabase cron)
 
     // When the tab is backgrounded we suspend ALL work (timers + the star-map

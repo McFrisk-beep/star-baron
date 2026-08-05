@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Signed-in docking at system hubs:** paste `docs/sql/station_dock_unlock.sql` (or re-run the `app_dock` block in `phase1_players.sql`) so claimable hubs auto-unlock on dock. **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed.
+**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Signed-in docking at system hubs:** paste `docs/sql/station_dock_unlock.sql` (or re-run the `app_dock` block in `phase1_players.sql`) so claimable hubs auto-unlock on dock. **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed. **Stations alive to other players (§14.1):** paste `docs/sql/station_directory.sql` — phase A publishes each station's public record, so a claimed station shows its holder and upgrades instead of "NPC", and its modules affect visitors who dock there. Then `docs/sql/station_hall.sql` — phase B makes the Exchange Hall one shared shelf: barons list and buy across saves, the owner's tariff is split off at the sale, and both sides queue for whoever is offline.
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -355,7 +355,7 @@ Lease tax above a fair-rate threshold feeds the Station Standing penalty (§6.2)
 
 ## 9. Exchange Hall — the player marketplace
 
-**Client status:** live in guest mode (`Stations.listHallItem` / `buyHallListing` / `_npcBuyHall`). Owners manage via the Stations tab; visitors use the Star Map system panel while docked at the sector capital (non-capital docking lands with Customs/Free Port). NPC buyers (`hallNpcBuyChance`) clear stalls so guest solo play has liquidity. Customs House without Black Market blocks blackbox listings.
+**Client status:** live in guest mode (`Stations.listHallItem` / `buyHallListing` / `_npcBuyHall`), and **live across players** on a published station once `docs/sql/station_hall.sql` is applied (§14.1 phase B) — same three calls, routed to the shared shelf. Owners manage via the Stations tab; visitors use the Star Map system panel while docked at the sector capital (non-capital docking lands with Customs/Free Port). NPC buyers (`hallNpcBuyChance`) clear stalls so guest solo play has liquidity, and stand down on a shared shelf where real barons are the liquidity. Customs House without Black Market blocks blackbox listings.
 
 Stations do **not** trade commodities. The Exchange Hall trades everything else: gear, accessories, crafted ships, extractors, components, blackboxes, blueprints.
 
@@ -478,11 +478,34 @@ sector_stock      sector_id, comm_id, units, updated_at   -- LIVE
 market_listings   station_id, seller_id, item jsonb, price, expires_at
 ```
 
-**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`; stubs: `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`, `app_station_list_item`, `app_station_buy_item`.
+### 14.1 Making a station alive to other players
+
+A station's whole record — owner, modules, tariffs, scrutiny, shelf, bays — lived only in its owner's save, so everyone else saw a vacant NPC berth. Landing that in phases, because the transactional half needs the record to exist first:
+
+| Phase | What lands | State |
+|---|---|---|
+| **A** | Public station record + every effect that's a pure read of it | **live** — `docs/sql/station_directory.sql` |
+| **B** | Exchange Hall: list + buy across players, tariff to the owner's treasury, payout queue | **live** — `docs/sql/station_hall.sql` |
+| **C** | Production bays: lease, produce, lease tax at source | after B |
+| **D** | Contract Office postings on the shared board; treasury / upkeep / standing server-side; then auctions | after C |
+
+**Phase A (live):** `docs/sql/station_directory.sql` — adds `owner_display`, `updated_at`, `hall` and `bays` to `stations`, plus `app_station_directory` (anon + authenticated read) and `app_station_publish` (authenticated write). Owners publish their held stations; every client reads them through `Stations.view(systemId)`, which returns the owner's record in place of the local vacant one. Consequences that follow immediately, because the client already computes them from `modules`: their **Customs House** scans you and their **Free Port** doesn't, their **Workshop Annex** speeds your crafting, their **Dry Dock** / **Survey Relay** / **Lane Buoy** apply at your dock, their scrutiny is public before you undock, and their hub stops minting NPC supply into the shared shelf (§4.2). Their shelf and bay occupancy are visible read-only. Claims are first-come, released on relinquish/revolt, and a row unrefreshed for 30 days ages out so an abandoned save can't lock a station out of the auction pool. Treasury and hold stay unpublished until the server owns the transactions that move them.
+
+**Phase B (live):** `docs/sql/station_hall.sql` — the shelf itself moves to the server, so a stall one baron puts up is the stall another baron buys. `station_listings` holds the listing *and the item* while it sits in escrow; `station_payouts` is the queue that pays whoever was offline when the sale happened. `app_station_hall` reads a shelf (anon, like the directory — a signed-out visitor browses but can't trade), `app_station_list_item` / `app_station_buy_item` / `app_station_cancel_listing` move goods, and `app_station_settle` hands back what's owed in one round trip: sale proceeds and tariffs as credits, plus the payloads behind stalls that expired or were cleared.
+
+The server owns the listing row, the 48h expiry clock, the tariff split at the moment of sale, and the payout queue. It does **not** own player credits: the buyer's client debits itself once the RPC returns. A tampered client could take an item without paying; it can't fabricate one, spend someone else's escrow, or pay itself. The debit moves inside the transaction in phase D, when treasury and upkeep become server-side.
+
+Client side, `Stations.hallShared(systemId)` is the seam: a published station's shelf comes from `hallRemote`, an unpublished one (offline, signed out, or a project without this SQL) keeps using the local `st.hall` exactly as before. Stalls still sitting in a save are pushed up on first sync — never copied, so an item is never in both places. NPC hall buyers stop on a shared shelf: they were liquidity for a shelf nobody else could reach, and real barons are that now. Items arriving with nowhere to go (inventory full) wait in `Stations.unclaimed`, which survives a save and lands them on the next tick — they're already paid for.
+
+Payloads are a trust boundary in both directions: another player's client authored them, so every object is rebuilt field by field against the catalogs on arrival, uids are re-minted so they can't collide with ours, and values are recomputed rather than read. A ship crosses as a bare hull — accessories and yard refits live in `state.items` / `state.shipVariants` and aren't part of the sale — and an extractor crosses without its fitted components for the same reason.
+
+**Phase C onward:** bay lease and impound ransom are still client-side mutations of the visitor's copy. Each phase replaces one with an RPC that writes back into the shared `bays` column and queues the owner's cut.
+
+**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`, `app_station_directory` + `app_station_publish` (LIVE), `app_station_hall` + `app_station_list_item` + `app_station_buy_item` + `app_station_cancel_listing` + `app_station_settle` (LIVE); stubs: `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`.
 
 **Cron (hourly):** `app_stock_tick` for consumption + NPC elastic backstop (optional). Full sentiment/revolt/auction close still client-side until station RPCs land.
 
-**RLS:** public read on `stations`, `sector_stock`. Writes gated by SECURITY DEFINER RPCs.
+**RLS:** public read on `stations`, `sector_stock`. `station_listings` and `station_payouts` have RLS on with **no** policies — an escrowed payload is never directly selectable. Writes gated by SECURITY DEFINER RPCs.
 
 **Critical:** stock decrements and scarcity pricing live **inside** `app_trade`. Do not fork a parallel client path for signed-in players.
 

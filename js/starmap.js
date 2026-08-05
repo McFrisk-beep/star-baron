@@ -291,21 +291,26 @@ const StarMap = {
     const dirTxt = idx > 0.06 ? `<span class="up">▲ rising</span>` : idx < -0.06 ? `<span class="down">▼ falling</span>` : "stable";
     let extra = "";
     if (!sys.capital && window.Stations) {
-      const st = Stations.get(sys.id);
+      const local = Stations.get(sys.id);
+      const st = Stations.view(sys.id);
       if (st) {
         const auc = Stations.getAuction(sys.id);
         const sent = window.Stock ? Stock.sentiment[st.sectorId] : null;
         const band = sent == null ? "" : sent >= 60 ? "Steady" : sent >= 40 ? "Uneasy" : sent >= 20 ? "Strained" : "Critical";
         const hallN = (st.modules.exchange_hall | 0) ? (st.hall || []).length : -1;
         const office = (st.modules.contract_office | 0);
-        const rel = office ? Stations.reliability(st) : null;
+        // Reliability is a running tally of *our* record of their postings —
+        // meaningless for a station we only see published.
+        const rel = office && !st.remote ? Stations.reliability(st) : null;
         const officeTxt = !office ? "" : ` · Contract Office${rel == null ? "" : ` ${Math.round(rel * 100)}%`}`;
         const scr = Stations.publicScrutiny(sys.id);
         const scrTxt = scr && scr.chanceHint != null ? ` · scrutiny ${scr.chanceHint}%` : "";
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
-          (st.status === "owned" ? " · owned"
+          (st.remote ? ` · ${Stations.holderTag(local)}`
+            : st.status === "owned" ? " · owned"
             : st.status === "refit" ? ` · owned · refit ${Util.duration(Stations.refitLeft(st))}`
-            : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
+            : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}`
+            : ` · ${Stations.holderTag(local)}`) +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
           officeTxt + scrTxt +
@@ -399,9 +404,25 @@ const StarMap = {
             <button class="btn btn-go" id="sm-st-bid" data-min="${min}">Bid ${Util.credits(min)}</button>
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "npc" || (st.status === "cooldown" && Date.now() >= st.cooldownUntil)) {
-          stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
-            <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>
-            ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          // Another baron may hold it even though our own save says NPC — the
+          // published record is the only cross-player view of a station.
+          const rem = Stations.remoteHolder(sys.id);
+          if (rem) {
+            const v = Stations.view(sys.id);
+            const mods = Object.keys(v.modules || {}).length;
+            const left = Stations.refitLeft(v);
+            const comm = v.prodComm && COMMODITIES.find(c => c.id === v.prodComm);
+            stationBlock = `<div class="si-station"><b>${st.name}</b> · ${v.tier} · Held by ${rem.display}
+              <div class="tip-dim">standing ${Math.round(v.standing)} · ${mods} module${mods === 1 ? "" : "s"} installed`
+              + (comm ? ` · producing ${comm.name}` : "")
+              + (left > 0 ? ` · <span class="st-refit">refit ${Util.duration(left)}</span>` : "")
+              + `</div>
+              ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          } else {
+            stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
+              <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>
+              ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
+          }
         } else if (st.status === "cooldown") {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
@@ -410,12 +431,14 @@ const StarMap = {
         const hallAccess = Stations.canUseHall(sys.id);
         if (hallAccess.ok && st.ownerId !== Stations.playerId()) {
           const listings = Stations.hallListings(sys.id);
-          const tariff = ((st.saleTariffBps || 0) / 100).toFixed(0);
+          // The holder's rate, not our vacant copy's default.
+          const tariff = (((hallAccess.st || st).saleTariffBps || 0) / 100).toFixed(0);
           const rows = listings.map(l => {
             const left = Math.max(0, l.expiresAt - Date.now());
-            const mine = l.sellerId === Stations.playerId();
+            const mine = Stations.listingMine(l);
+            const seller = mine ? "your stall" : l.shared ? l.sellerName : "house stall";
             return `<tr>
-              <td>${l.name}<div class="tip-dim">${l.kind} · ${Util.duration(left)}</div></td>
+              <td>${l.name}<div class="tip-dim">${l.kind} · ${seller} · ${Util.duration(left)}</div></td>
               <td class="num">${Util.credits(l.price)}</td>
               <td>${mine
                 ? `<button class="btn btn-mini" data-sm-hall-cancel="${l.id}">Cancel</button>`
@@ -448,6 +471,20 @@ const StarMap = {
               <thead><tr><th>Listing</th><th class="num">Price</th><th></th></tr></thead>
               <tbody>${rows}</tbody>
             </table></div></div>`;
+        } else if (hallAccess.browse) {
+          // Their shelf, read-only: signed out, or on a project where the hall
+          // SQL isn't live. You see what's on it and what the tariff is.
+          const v = hallAccess.st;
+          const rows = Stations.hallListings(sys.id).map(l => `<tr>
+              <td>${l.name}<div class="tip-dim">${l.kind}${l.shared ? ` · ${l.sellerName}` : ""}</div></td>
+              <td class="num">${Util.credits(l.price)}</td>
+            </tr>`).join("") || `<tr><td colspan="2" class="tip-dim">Shelf is empty</td></tr>`;
+          stationBlock += `<div class="si-station si-hall"><b>Exchange Hall</b> · tariff ${((v.saleTariffBps || 0) / 100).toFixed(0)}%
+            <div class="tip-dim">${hallAccess.msg}</div>
+            <div class="table-wrap" style="margin-top:6px"><table class="market">
+              <thead><tr><th>Listing</th><th class="num">Price</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table></div></div>`;
         } else if ((st.modules.exchange_hall | 0) && !hallAccess.ok && st.ownerId !== Stations.playerId()) {
           stationBlock += `<div class="si-station si-hall tip-dim">Exchange Hall — ${hallAccess.msg}</div>`;
         }
@@ -470,6 +507,18 @@ const StarMap = {
             <div class="system-services">${svcs.map(r =>
               `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
             ).join("")}</div></div>`;
+        }
+        // Another baron's production floor — occupancy and terms are public
+        // (§8); leasing a bay from here waits for the station RPCs.
+        if (Stations.isRemote(sys.id)) {
+          const v = Stations.view(sys.id);
+          if ((v.modules.production_hub | 0) && v.prodComm) {
+            const comm = COMMODITIES.find(c => c.id === v.prodComm);
+            const bays = v.bays || [];
+            const taken = bays.filter(b => b.lesseeId).length;
+            stationBlock += `<div class="si-station si-lease"><b>Production bays</b> · ${comm ? comm.name : v.prodComm} · lease tax ${((v.leaseTaxBps || 0) / 100).toFixed(0)}%
+              <div class="tip-dim">${taken} of ${bays.length} bays occupied · leasing from a visited station isn't live yet</div></div>`;
+          }
         }
         // Visitor Production Hub bay leases (docs/STATIONS.md §8).
         if (docked && st.status === "owned" && st.ownerId !== Stations.playerId()
@@ -612,27 +661,27 @@ const StarMap = {
     if (stManage) stManage.onclick = () => { this.close(); UI.showPage("stations"); };
 
     const smHallList = document.getElementById("sm-hall-list");
-    if (smHallList) smHallList.onclick = () => {
+    if (smHallList) smHallList.onclick = async () => {
       const raw = document.getElementById("sm-hall-item")?.value || "";
       const price = +document.getElementById("sm-hall-price")?.value || 0;
       const [kind, ref] = raw.split(":");
       if (!kind || !ref) return UI.toast("Pick something to list.", "warn");
-      const r = Stations.listHallItem(sys.id, kind, ref, price);
+      const r = await Stations.listHallItem(sys.id, kind, ref, price);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Listed ${r.listing.name} for ${Util.credits(r.listing.price)}.`, "good");
       window.Game.requestSave(); this.renderInfo(sys); UI.updateHeader();
     };
     document.querySelectorAll("[data-sm-hall-cancel]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.cancelHallListing(sys.id, btn.dataset.smHallCancel);
+      btn.onclick = async () => {
+        const r = await Stations.cancelHallListing(sys.id, btn.dataset.smHallCancel);
         if (!r.ok) return UI.toast(r.msg, "warn");
-        UI.toast("Listing cancelled — item returned.", "info");
+        UI.toast(r.cleared ? "Stall cleared — the goods go back to its owner." : "Listing cancelled — item returned.", "info");
         this.renderInfo(sys); UI.updateHeader();
       };
     });
     document.querySelectorAll("[data-sm-hall-buy]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
+      btn.onclick = async () => {
+        const r = await Stations.buyHallListing(sys.id, btn.dataset.smHallBuy);
         if (!r.ok) return UI.toast(r.msg, "warn");
         UI.toast(`Bought ${r.listing.name} for ${Util.credits(r.paid)}.`, "good");
         UI.flashCredits(); this.renderInfo(sys); UI.updateHeader();
