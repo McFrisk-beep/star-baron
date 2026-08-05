@@ -16,6 +16,11 @@ const Game = {
       currentSystem: "navos",
       positions: {},
       avgCost: {},
+      // Hauling ledger (docs/HAULING.md) — positions is the derived total.
+      hold: { blocks: {}, gear: [] },
+      stationInv: {},
+      shipments: [],
+      _haulingMigrated: true,
       mainShip: { type: "pinnace" },
       ships: [{ uid: "s1", type: "mule", cls: "transport", name: "Old Faithful",
         status: "idle", accessories: [], mercenary: false, expiresAt: null, retrieveCost: 0 }],
@@ -24,7 +29,7 @@ const Game = {
       knownRecipes: [],   // recipe ids unlocked by blueprints (Workshop)
       craftedOnce: [],    // one-of-a-kind recipes already completed
       workshop: { upgrades: 0, queue: [] },
-      inventory: { capacity: 6, upgrades: 0 },
+      inventory: { capacity: (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50), upgrades: 0 },
       bazaar: { mercs: [], contracts: [], accessories: [], blackboxes: [], blueprints: [], extractors: [], components: [], flagships: [], yard: [] },
       shipVariants: {},   // ship uid → { v: SHIP_VARIANTS id, name } — the yard refit a hull was bought with
       pendingContracts: [],
@@ -209,6 +214,23 @@ const Game = {
     s.reputation = Object.assign(Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])), loaded.reputation || {});
     // Repair Phase-2/3 stub names ("Battleship", "Shield uncommon") left in old saves.
     if (window.Economy && Economy.repairCosmeticNames) Economy.repairCosmeticNames(s);
+    // Flat positions/items → hold + station bays (docs/HAULING.md §4).
+    // Don't inherit defaultState's `_haulingMigrated: true` — only an explicit
+    // flag on the loaded save means migration already ran.
+    if (!(loaded && loaded._haulingMigrated)) s._haulingMigrated = false;
+    if (window.Assets) {
+      try {
+        Assets.migrateState(s);
+        // Unconditional: park any item with no hold/bay/shipment home (soft-merge
+        // blackboxes, equip-detach orphans, etc.). Safe before Game.state is set —
+        // parkOrphanGear takes the migrate `s` explicitly.
+        Assets.parkOrphanGear(s);
+      } catch (e) { console.warn("[Game] Assets.migrateState failed:", e); }
+    } else {
+      s.hold ||= { blocks: {}, gear: [] };
+      s.stationInv ||= {};
+      s.shipments = Array.isArray(s.shipments) ? s.shipments : [];
+    }
     return s;
   },
 
@@ -352,6 +374,8 @@ const Game = {
     }
     // Workshop is client-local (not on the Phase-3 ledger yet).
     if (window.Workshop) Workshop.resolve(now);
+    // Courier manifests use absolute timestamps — bank arrivals while away.
+    if (window.Shipments) Shipments.resolve(now);
     Wars.tick(now);               // resolve a faction war that ended while away
     if (window.Senate) Senate.resolve(now);   // run the daily senate votes while away
     Rivals.tick(now);             // catch the leaderboard up over offline time
@@ -491,10 +515,12 @@ const Game = {
         const chartered = Charters.resolve(now);
         const made = Industries.resolve(now);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
-        if (surveyed.length || chartered.length || made.length || crafted.length) this.requestSave();
-      } else if (window.Workshop) {
-        const crafted = Workshop.resolve(now);
-        if (crafted.length) this.requestSave();
+        const shipped = window.Shipments ? Shipments.resolve(now) : [];
+        if (surveyed.length || chartered.length || made.length || crafted.length || shipped.length) this.requestSave();
+      } else {
+        const shipped = window.Shipments ? Shipments.resolve(now) : [];
+        const crafted = window.Workshop ? Workshop.resolve(now) : [];
+        if (shipped.length || crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
       Rivals.tick(now);
@@ -518,7 +544,8 @@ const Game = {
       }).catch(e => console.warn("[Orders] process failed:", e));
       const made = Industries.resolve(now);
       const crafted = window.Workshop ? Workshop.resolve(now) : [];
-      if (surveyed.length || chartered.length || made.length || crafted.length || senateBills.length) this.requestSave();
+      const shipped = window.Shipments ? Shipments.resolve(now) : [];
+      if (surveyed.length || chartered.length || made.length || crafted.length || shipped.length || senateBills.length) this.requestSave();
     }
     UI.tick();
   },

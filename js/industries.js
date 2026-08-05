@@ -169,6 +169,8 @@ const Industries = {
         const held = s.positions[ind.commodity] || 0, prev = s.avgCost[ind.commodity] || 0;
         s.positions[ind.commodity] = held + qty;
         s.avgCost[ind.commodity] = (held + qty) > 0 ? (held * prev) / (held + qty) : 0;
+        // Land at the planet's system bay — go get it (HAULING.md §5).
+        if (window.Assets) Assets.parkBlocks(ind.systemId, ind.commodity, qty);
         const tax = Math.ceil(y.gross * y.rate) * cycles;
         made.push({ commodity: ind.commodity, qty, gross: y.gross * cycles, tax, rate: y.rate, edicts: this.edictTaxLines(sys, planet) });
       }

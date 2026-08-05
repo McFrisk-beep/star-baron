@@ -343,7 +343,7 @@ const Stations = {
     const sysId = systemId || (s && s.currentSystem);
     if (!sysId || !page) return { ok: true };
     // Always-on: navigation, personal fleet, galactic meta.
-    if (/^(starmap|systems|barons|comms|ach|hub|senate|fleet)$/.test(page)) return { ok: true };
+    if (/^(starmap|systems|barons|comms|ach|hub|senate|fleet|assets)$/.test(page)) return { ok: true };
 
     if (this.isCapital(sysId)) {
       if (page === "stations") {
@@ -1110,6 +1110,7 @@ const Stations = {
       const held = s.positions[commId] || 0;
       s.positions[commId] = held + n;
       s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + n) : 0;
+      if (window.Assets) Assets.parkBlocks(systemId, commId, n);
       claimed[commId] = n;
     }
     delete st.pendingCargo[pid];
@@ -1206,6 +1207,7 @@ const Stations = {
         s.positions[st.prodComm] = held + keep;
         // Soft income at zero cost basis (same as industry minting).
         s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
+        if (window.Assets) Assets.parkBlocks(st.systemId, st.prodComm, keep);
       } else {
         // Remote / third-party lessee — park keep until they claim.
         if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
@@ -1780,6 +1782,7 @@ const Stations = {
     st.treasury += c.ransom;
     st.impoundHold[c.commId] = have - c.qty;
     s.positions[c.commId] = (s.positions[c.commId] | 0) + c.qty;
+    if (window.Assets) Assets.parkBlocks(systemId, c.commId, c.qty);
     st.impoundClaims.splice(idx, 1);
     this._ledger(st, c.ransom, "ransom", `${c.qty}× ${c.commId}`);
     // Paying a bribe helps Syndicate; owner taking it costs lawful standing.

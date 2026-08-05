@@ -49,6 +49,7 @@ const UI = {
       fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
       fleetInventory: $("fleet-inventory"), invCount: $("inv-count"),
+      assetsBody: $("assets-body"), assetsSub: $("assets-sub"),
       systemList: $("system-list"), bazaarBody: $("bazaar-body"),
       rank: $("hud-rank"), lbList: $("lb-list"), lbSub: $("lb-sub"), baronTrack: $("baron-track"),
       lbPrev: $("lb-prev"), lbNext: $("lb-next"), lbPageLabel: $("lb-page-label"),
@@ -116,6 +117,7 @@ const UI = {
     this.updateNavIndicator();
     this.applyPageBg(name);
     if (name === "fleet") { this.showFleetTab(this.fleetTab || "logistics"); this.renderFleet(); }
+    else if (name === "assets") this.renderAssets();
     else if (name === "bazaar") this.renderBazaar();
     else if (name === "systems") this.renderSystems();
     else if (name === "barons") {
@@ -177,12 +179,17 @@ const UI = {
       : Stations.ownerHeld(st) ? (mine ? "Yours" : "Player-held") : "NPC-held";
 
     const svcs = Stations.serviceList(st.systemId).filter(r => r.id !== "exchange");
+    const ships = (window.Shipments ? Shipments.active() : []).map(sh => {
+      const leftMs = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
+      return `<div class="haul-ship-line">→ ${this.sysName(sh.to)} · ${sh.slots} slots · ${Util.duration(leftMs)}</div>`;
+    }).join("");
     body.innerHTML = `
       <p><b>${st.name}</b> <span class="muted-note">${st.tier} · ${sys ? sys.name : st.systemId} · ${status}</span></p>
       ${left > 0 ? `<p class="muted-note">Production and visitor services are paused for the refit. Docking, undocking and travel are unaffected.</p>` : ""}
       <div class="system-services">${svcs.map(r =>
         `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
-      ).join("")}</div>`;
+      ).join("")}</div>
+      ${ships ? `<div class="haul-shipments"><b>Couriers in flight</b>${ships}</div>` : ""}`;
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -725,12 +732,15 @@ const UI = {
 
     for (const c of COMMODITIES) {
       const r = this.rows[c.id]; if (!r) continue;
-      const q = this.s().positions[c.id] || 0;
+      // Exchange shows bay stock (what's sellable here); total is in the tooltip.
+      const bayQ = window.Assets ? Assets.bayQty(sys, c.id) : (this.s().positions[c.id] || 0);
+      const totalQ = this.s().positions[c.id] || 0;
+      const q = bayQ;
       const stocked = Market.stocks(c.id, sys);
       const shelf = window.Stock ? Stock.availableHere(sys, c.id) : null;
-      // Hide unstocked rows unless you hold some (so you can still sell).
-      r.tr.classList.toggle("hidden", !stocked && !q);
-      if (!stocked && !q) continue;
+      // Hide unstocked rows unless you hold some (bay or elsewhere).
+      r.tr.classList.toggle("hidden", !stocked && !totalQ);
+      if (!stocked && !totalQ) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
       if (shelf != null) r.price.title = `Sector stock: ${shelf} units`;
@@ -741,6 +751,7 @@ const UI = {
       r.chg.className = "num chg " + (pct > 0.1 ? "up" : pct < -0.1 ? "down" : "");
       r.trend.innerHTML = this.spark(Market.history(c.id), pct >= 0);
       r.held.textContent = q ? q : "·";
+      r.held.title = totalQ > q ? `${q} in bay · ${totalQ} total` : (q ? "In this station's bay" : "");
       if (q) { const cost = this.s().avgCost[c.id] || 0, upl = (p - cost) * q;
         r.pnl.textContent = (upl >= 0 ? "+" : "") + Util.credits(upl); r.pnl.className = "num pnl " + (upl >= 0 ? "up" : "down"); }
       else { r.pnl.textContent = "·"; r.pnl.className = "num pnl"; }
@@ -1078,55 +1089,299 @@ const UI = {
   },
 
   renderInventory() {
-    const inv = Bazaar.inventoryItems(), listed = this.s().listings;
-    this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
-    let html = "";
-    if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories or blackboxes in the Bazaar, or win them from contracts &amp; surveys.</p>`;
-    if (inv.length > 1) html += this.bzTools([["Sort", "sort.inv", this.fleetSort.inv,
-      [["value", "Value"], ["rarity", "Rarity"], ["kind", "Type"], ["name", "Name"]]]]);
-    if (inv.length) {
-      html += `<div class="buy-grid">` + [...inv].sort(this.invSorter(this.fleetSort.inv)).map(it => {
-        const box = Items.isBlackbox(it);
-        const kind = ACCESSORY_KINDS[it.kind], letter = box ? "B" : ((kind && kind.label) || it.kind || "?");
-        const art = box ? this._art(ASSET.blackbox(it.effectId, it.uid), letter)
-          : this._art(ASSET.accessory(it.kind, it.uid), letter);
-        const rarLabel = box ? "consumable" : ((Items.rarity(it.rarity) || {}).label || "");
-        const act = box
-          ? `<button class="btn btn-mini btn-go" data-use="${it.uid}">Use</button>`
-          : `<button class="btn btn-mini" data-equip="${it.uid}">Equip</button>`;
-        return `<div class="buy-card inv-card" style="border-color:${this.rarityColor(it.rarity)}">
-          ${art}
-          <div class="bc-name">${it.name}</div>
-          <div class="rar" style="color:${this.rarityColor(it.rarity)}">${rarLabel}</div>
-          <div class="bc-stats">${Items.label(it)}</div>
-          <div class="item-acts inv-acts">
-            <span class="item-val">${Util.credits(it.value)}c</span>
-            ${act}
-            <button class="btn btn-mini" data-sellnow="${it.uid}">Sell ${Util.credits(Math.round(it.value * BAZAARCFG.itemResaleMult))}c</button>
-          </div></div>`;
-      }).join("") + `</div>`;
-    }
+    if (!window.Assets) return this._renderInventoryLegacy();
+    const s = this.s();
+    const hold = Assets.hold();
+    const holdUsed = Assets.slotsUsed(hold), holdCap = Assets.holdCapacity();
+    const docked = !s.travel && s.currentSystem;
+    const bay = docked ? Assets.bay(s.currentSystem) : null;
+    const bayUsed = bay ? Assets.slotsUsed(bay) : 0;
+    const bayCap = docked ? Assets.bayCapacity(s.currentSystem) : 0;
+    const sysName = docked ? this.sysName(s.currentSystem) : "";
+    this.refs.invCount.textContent = `hold ${holdUsed}/${holdCap}` + (docked ? ` · bay ${bayUsed}/${bayCap}` : "");
+
+    const capClass = (u, c) => u > c ? "overfull" : (u >= c * 0.85 ? "nearfull" : "");
+    let html = `<div class="haul-transfer">
+      <div class="haul-panel" data-haul="hold">
+        <div class="haul-head ${capClass(holdUsed, holdCap)}">Flagship Hold <b>${holdUsed}/${holdCap}</b></div>
+        <div class="haul-tools"><input type="search" class="haul-filter" data-filter="hold" placeholder="filter…" aria-label="Filter hold"/></div>
+        <div class="haul-grid" id="haul-hold">${this._haulTiles(hold, "hold")}</div>
+      </div>
+      <div class="haul-swap" aria-hidden="true">⇄</div>
+      <div class="haul-panel" data-haul="bay">
+        <div class="haul-head ${docked ? capClass(bayUsed, bayCap) : ""}">${docked ? `${sysName} Bay <b>${bayUsed}/${bayCap}</b>` : "Station Bay"}</div>
+        ${docked
+          ? `<div class="haul-tools"><input type="search" class="haul-filter" data-filter="bay" placeholder="filter…" aria-label="Filter bay"/></div>
+             <div class="haul-grid" id="haul-bay">${this._haulTiles(bay, "bay")}</div>`
+          : `<p class="muted-note haul-dock-note">Dock at a station to access its bay.</p>`}
+      </div>
+    </div>`;
+
+    const listed = s.listings || [];
     if (listed.length) {
       html += `<div class="inv-sub">Listed on the market</div><div class="buy-grid">` + listed.map(l => {
-        const it = this.s().items[l.itemUid]; if (!it) return "";
+        const it = s.items[l.itemUid]; if (!it) return "";
         const kind = ACCESSORY_KINDS[it.kind], letter = (kind && kind.label) || it.kind || "?";
         return `<div class="buy-card inv-card listed" style="border-color:${this.rarityColor(it.rarity)}">
           ${this._art(ASSET.accessory(it.kind, it.uid), letter)}
           <div class="bc-name">${it.name}</div>
           <div class="rar">listed · ${Util.credits(l.listPrice)}c</div>
-          <div class="bc-stats">${Items.label(it)}</div>
           <div class="item-acts inv-acts"><button class="btn btn-mini" data-cancel="${l.itemUid}">Cancel listing</button></div></div>`;
       }).join("") + `</div>`;
     }
     this.refs.fleetInventory.innerHTML = html;
-    this.refs.fleetInventory.onchange = e => this.onFleetSort(e);
-    this.refs.fleetInventory.onclick = e => {
-      const eq = e.target.closest("[data-equip]"), use = e.target.closest("[data-use]");
+    this._bindHaulTransfer(docked);
+  },
+
+  _haulTiles(bag, side) {
+    bag = bag || { blocks: {}, gear: [] };
+    const tiles = [];
+    for (const [id, q] of Object.entries(bag.blocks || {})) {
+      if (!(q > 0)) continue;
+      const c = COMMODITIES.find(x => x.id === id); if (!c) continue;
+      const slots = Assets.blockSlots(q, id);
+      const fill = ((q % Assets.blockSize(id)) / Assets.blockSize(id)) || 1;
+      tiles.push({
+        key: `b:${id}`, name: c.name, cat: c.cat, qty: q, slots,
+        html: `<div class="haul-tile" draggable="true" tabindex="0" data-kind="block" data-id="${id}" data-side="${side}" data-name="${c.name.toLowerCase()}" data-cat="${c.cat}" title="${c.name} · ${q} units · ${slots} slot${slots > 1 ? "s" : ""}">
+          <div class="haul-ico">${c.name.slice(0, 1)}</div>
+          <div class="haul-qty">${q >= 1000 ? (q / 1000).toFixed(q >= 10000 ? 0 : 1) + "K" : q}</div>
+          <div class="haul-fill" style="width:${Math.round(fill * 100)}%"></div>
+          <button type="button" class="btn btn-mini haul-move" data-move="${side}:${id}" title="Move">⇄</button>
+        </div>`,
+      });
+    }
+    for (const uid of bag.gear || []) {
+      const it = this.s().items[uid]; if (!it) continue;
+      const box = Items.isBlackbox(it);
+      const kind = ACCESSORY_KINDS[it.kind], letter = box ? "B" : ((kind && kind.label) || it.kind || "?");
+      const art = box ? this._art(ASSET.blackbox(it.effectId, it.uid), letter)
+        : this._art(ASSET.accessory(it.kind, it.uid), letter);
+      const act = box
+        ? `<button class="btn btn-mini btn-go" data-use="${it.uid}">Use</button>`
+        : `<button class="btn btn-mini" data-equip="${it.uid}">Equip</button>`;
+      tiles.push({
+        key: `g:${uid}`, name: it.name, cat: "gear", qty: 1, slots: 1,
+        html: `<div class="haul-tile gear" draggable="true" tabindex="0" data-kind="gear" data-id="${uid}" data-side="${side}" data-name="${(it.name || "").toLowerCase()}" data-cat="gear" style="border-color:${this.rarityColor(it.rarity)}" title="${it.name}">
+          ${art}
+          <div class="haul-name">${it.name}</div>
+          <div class="haul-acts">${act}
+            <button type="button" class="btn btn-mini haul-move" data-move-gear="${side}:${uid}" title="Move">⇄</button>
+            <button class="btn btn-mini" data-sellnow="${it.uid}">Sell</button>
+          </div>
+        </div>`,
+      });
+    }
+    if (!tiles.length) return `<p class="muted-note">Empty.</p>`;
+    return tiles.map(t => t.html).join("");
+  },
+
+  _bindHaulTransfer(docked) {
+    const root = this.refs.fleetInventory;
+    const filter = (side, q) => {
+      const grid = root.querySelector(side === "hold" ? "#haul-hold" : "#haul-bay");
+      if (!grid) return;
+      q = (q || "").toLowerCase();
+      for (const t of grid.querySelectorAll(".haul-tile")) {
+        const name = t.dataset.name || "", cat = t.dataset.cat || "";
+        t.classList.toggle("hidden", !!(q && !name.includes(q) && !cat.includes(q)));
+      }
+    };
+    root.oninput = e => {
+      const f = e.target.closest(".haul-filter");
+      if (f) filter(f.dataset.filter, f.value);
+    };
+    const moveBlock = (fromSide, id) => {
+      if (!docked) return this.toast("Dock to transfer.", "warn");
+      const from = fromSide === "hold" ? "hold" : this.s().currentSystem;
+      const to = fromSide === "hold" ? this.s().currentSystem : "hold";
+      const bag = fromSide === "hold" ? Assets.hold() : Assets.bay(this.s().currentSystem);
+      const have = bag.blocks[id] || 0;
+      if (have <= 0) return;
+      const block = Assets.blockSize(id);
+      const ans = prompt(`Move how many? (have ${have}; one block = ${block})`, String(Math.min(have, block)));
+      if (ans == null) return;
+      const qty = Math.floor(+ans || 0);
+      if (qty <= 0) return;
+      const r = Assets.transfer(from, to, "block", id, qty);
+      if (!r.ok) return this.toast(r.msg || "Can't move.", "warn");
+      window.Game.requestSave(); this.renderInventory(); this.updateHeader();
+    };
+    const moveGear = (fromSide, uid) => {
+      if (!docked) return this.toast("Dock to transfer.", "warn");
+      const from = fromSide === "hold" ? "hold" : this.s().currentSystem;
+      const to = fromSide === "hold" ? this.s().currentSystem : "hold";
+      const r = Assets.transfer(from, to, "gear", uid, 1);
+      if (!r.ok) return this.toast(r.msg || "Can't move.", "warn");
+      window.Game.requestSave(); this.renderInventory(); this.updateHeader();
+    };
+    root.onclick = e => {
+      const use = e.target.closest("[data-use]"), eq = e.target.closest("[data-equip]");
       const sn = e.target.closest("[data-sellnow]"), ca = e.target.closest("[data-cancel]");
+      const mb = e.target.closest("[data-move]"), mg = e.target.closest("[data-move-gear]");
       if (use) this._useBlackbox(use.dataset.use);
       else if (eq) this.openEquipForItem(eq.dataset.equip);
       else if (sn) { void this._sellItemClick(sn.dataset.sellnow); }
       else if (ca) { Bazaar.cancelListing(ca.dataset.cancel); this.toast("Listing cancelled.", "info"); window.Game.requestSave(); this.renderInventory(); }
+      else if (mb) { const [side, id] = mb.dataset.move.split(":"); moveBlock(side, id); }
+      else if (mg) { const [side, uid] = mg.dataset.moveGear.split(":"); moveGear(side, uid); }
+    };
+    // Desktop drag-and-drop between panels.
+    let drag = null;
+    root.ondragstart = e => {
+      const t = e.target.closest(".haul-tile"); if (!t) return;
+      drag = { kind: t.dataset.kind, id: t.dataset.id, side: t.dataset.side };
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", t.dataset.id); } catch (err) { /* ignore */ }
+    };
+    root.ondragover = e => {
+      const panel = e.target.closest(".haul-panel"); if (!panel || !drag || !docked) return;
+      e.preventDefault();
+      panel.classList.add("haul-drop");
+    };
+    root.ondragleave = e => {
+      const panel = e.target.closest(".haul-panel"); if (panel) panel.classList.remove("haul-drop");
+    };
+    root.ondrop = e => {
+      const panel = e.target.closest(".haul-panel"); if (!panel || !drag || !docked) return;
+      e.preventDefault();
+      panel.classList.remove("haul-drop");
+      const toSide = panel.dataset.haul;
+      if (toSide === drag.side) return;
+      if (drag.kind === "gear") moveGear(drag.side, drag.id);
+      else moveBlock(drag.side, drag.id);
+      drag = null;
+    };
+    root.onkeydown = e => {
+      if (e.key !== "Enter") return;
+      const t = e.target.closest(".haul-tile"); if (!t) return;
+      if (t.dataset.kind === "gear") moveGear(t.dataset.side, t.dataset.id);
+      else moveBlock(t.dataset.side, t.dataset.id);
+    };
+  },
+
+  // ---- Assets tab (HAULING.md §8) ----------------------------------------
+  renderAssets() {
+    const body = this.refs.assetsBody, sub = this.refs.assetsSub;
+    if (!body || !window.Assets) return;
+    const rows = Assets.summaryRows();
+    const holdUsed = Assets.slotsUsed(Assets.hold());
+    let totalSlots = holdUsed, totalVal = Assets.bagValue(Assets.hold(), this.s().currentSystem);
+    for (const r of rows) { totalSlots += r.slots; totalVal += r.value; }
+    if (sub) sub.textContent = `${rows.length} systems · ${totalSlots} slots · ${Util.credits(totalVal)}c`;
+
+    const active = (window.Shipments ? Shipments.active() : []);
+    let html = "";
+    if (active.length) {
+      html += `<div class="assets-couriers"><h3>Couriers in flight</h3>` + active.map(sh => {
+        const left = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
+        return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(left)} · risk ${(sh.riskPct * 100).toFixed(0)}%</div>`;
+      }).join("") + `</div>`;
+    }
+
+    html += `<div class="assets-hold muted-note">Flagship hold: <b>${holdUsed}/${Assets.holdCapacity()}</b> slots · open Fleet → Inventory to transfer.</div>`;
+
+    if (!rows.length && !holdUsed) {
+      html += `<p class="muted-note">No station bays yet. Buy on the Exchange — goods land in the bay you're docked at.</p>`;
+      body.innerHTML = html;
+      return;
+    }
+
+    html += `<ul class="assets-list">` + rows.map(r => {
+      const sys = (window.Galaxy && Galaxy.get(r.systemId)) || SYSTEMS.find(x => x.id === r.systemId);
+      const sector = (sys && (sys.sector || sys.region)) || "";
+      const inbound = (r.inbound || []).map(sh => {
+        const left = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
+        return `<span class="assets-inbound">⏳ inbound ${Util.duration(left)}</span>`;
+      }).join(" ");
+      return `<li class="assets-row" data-assets="${r.systemId}">
+        <button type="button" class="assets-row-btn" data-expand="${r.systemId}">
+          <span class="assets-name">${this.sysName(r.systemId)}</span>
+          <span class="assets-meta">${sector}</span>
+          <span class="assets-slots">${r.slots} slots</span>
+          <span class="assets-val">${Util.credits(r.value)}c</span>
+          ${r.here ? `<span class="assets-here">● you are here</span>` : ""}
+          ${r.illicit ? `<span class="assets-illicit">⚠ illicit</span>` : ""}
+          ${inbound}
+        </button>
+        <div class="assets-detail hidden" id="assets-d-${r.systemId}"></div>
+      </li>`;
+    }).join("") + `</ul>`;
+
+    body.innerHTML = html;
+    body.onclick = e => {
+      const exp = e.target.closest("[data-expand]");
+      if (exp) return this._toggleAssetsDetail(exp.dataset.expand);
+      const add = e.target.closest("[data-manifest]");
+      if (add) return this._openManifest(add.dataset.manifest);
+    };
+  },
+
+  _toggleAssetsDetail(sysId) {
+    const el = document.getElementById("assets-d-" + sysId);
+    if (!el) return;
+    const open = el.classList.toggle("hidden");
+    if (open) return; // just closed
+    const bag = Assets.bay(sysId);
+    const tiles = this._haulTiles(bag, "bay");
+    const dests = (window.Shipments ? Shipments.destinations() : []).filter(d => d !== sysId);
+    el.innerHTML = `<div class="haul-grid">${tiles}</div>
+      <div class="assets-manifest">
+        <button type="button" class="btn btn-go" data-manifest="${sysId}" ${dests.length ? "" : "disabled"}>Add to courier manifest</button>
+        <span class="muted-note">${dests.length ? "Ship goods to another station you already use." : "Visit another station first — couriers only consolidate a footprint."}</span>
+      </div>`;
+    // Strip interactive move/use from the glance tiles (Assets tab is read + manifest).
+    for (const b of el.querySelectorAll("[data-move],[data-move-gear],[data-use],[data-equip],[data-sellnow]")) b.remove();
+    for (const t of el.querySelectorAll(".haul-tile")) { t.removeAttribute("draggable"); t.tabIndex = -1; }
+  },
+
+  _openManifest(fromId) {
+    if (!window.Shipments) return;
+    const dests = Shipments.destinations().filter(d => d !== fromId);
+    if (!dests.length) return this.toast("No courier destinations yet.", "warn");
+    const bay = Assets.bay(fromId);
+    const blocks = {};
+    for (const [id, q] of Object.entries(bay.blocks || {})) if (q > 0) blocks[id] = q;
+    const gear = (bay.gear || []).slice();
+    if (!Object.keys(blocks).length && !gear.length) return this.toast("Bay is empty.", "warn");
+    const dest = prompt(`Courier destination system id:\n${dests.map(d => `${d} (${this.sysName(d)})`).join("\n")}`, dests[0]);
+    if (!dest || !dests.includes(dest)) return;
+    const q = Shipments.quote(fromId, dest, blocks, gear);
+    if (!confirm(`Dispatch entire bay to ${this.sysName(dest)}?\n${q.slots} slots · fee ${Util.credits(q.fee)}c · ETA ${Util.duration(q.etaMs)} · risk ${(q.riskPct * 100).toFixed(0)}%`)) return;
+    const r = Shipments.dispatch(fromId, dest, blocks, gear);
+    if (!r.ok) return this.toast(r.msg || "Courier refused.", "warn");
+    this.toast(`Courier away — ${Util.credits(q.fee)}c.`, "good");
+    this.flashCredits(); window.Game.requestSave();
+    this.renderAssets(); this.renderHubDock(); this.updateHeader();
+  },
+
+  _renderInventoryLegacy() {
+    const inv = Bazaar.inventoryItems(), listed = this.s().listings;
+    this.refs.invCount.textContent = `${Bazaar.inventoryUsed()}/${Bazaar.capacity()}`;
+    let html = "";
+    if (!inv.length && !listed.length) html = `<p class="muted-note">Empty. Buy accessories or blackboxes in the Bazaar, or win them from contracts &amp; surveys.</p>`;
+    if (inv.length) {
+      html += `<div class="buy-grid">` + [...inv].map(it => {
+        const box = Items.isBlackbox(it);
+        const kind = ACCESSORY_KINDS[it.kind], letter = box ? "B" : ((kind && kind.label) || it.kind || "?");
+        const art = box ? this._art(ASSET.blackbox(it.effectId, it.uid), letter)
+          : this._art(ASSET.accessory(it.kind, it.uid), letter);
+        const act = box
+          ? `<button class="btn btn-mini btn-go" data-use="${it.uid}">Use</button>`
+          : `<button class="btn btn-mini" data-equip="${it.uid}">Equip</button>`;
+        return `<div class="buy-card inv-card" style="border-color:${this.rarityColor(it.rarity)}">
+          ${art}<div class="bc-name">${it.name}</div>
+          <div class="item-acts inv-acts">${act}
+            <button class="btn btn-mini" data-sellnow="${it.uid}">Sell</button></div></div>`;
+      }).join("") + `</div>`;
+    }
+    this.refs.fleetInventory.innerHTML = html;
+    this.refs.fleetInventory.onclick = e => {
+      const eq = e.target.closest("[data-equip]"), use = e.target.closest("[data-use]");
+      const sn = e.target.closest("[data-sellnow]");
+      if (use) this._useBlackbox(use.dataset.use);
+      else if (eq) this.openEquipForItem(eq.dataset.equip);
+      else if (sn) { void this._sellItemClick(sn.dataset.sellnow); }
     };
   },
   _useBlackbox(uid) {
@@ -1134,7 +1389,10 @@ const UI = {
     const r = Boosts.use(uid);
     if (!r.ok) return this.toast(r.msg || "Can't use.", "warn");
     this.toast(`${r.effect.name} active — ${r.effect.desc}`, "good");
+    // Flush immediately — activeBoosts is client-owned but a refresh before the
+    // 5s cloud debounce used to wipe the buff (bootstrap always took the server).
     window.Game.requestSave();
+    if (window.Store && Store.flush && window.Game) void Store.flush(Game.state);
     this.renderInventory();
     this.renderBoostBar();
   },
@@ -1557,7 +1815,7 @@ const UI = {
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Blackboxes <small>consumable timed buffs — Use from Inventory</small></h2>${restockNote}<div class="item-grid">${boxes}</div></div>
              <div class="panel"><h2>Blueprints <small>unlock Workshop recipes</small></h2>${restockNote}<div class="item-grid">${bps}</div></div>
-             <div class="panel"><h2>Inventory Bay</h2><p>Capacity <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b>. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
+             <div class="panel"><h2>Station Bay</h2><p>Bay capacity <b>${(this.s().inventory && this.s().inventory.capacity) || 50}</b> slots at every station. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv" data-cost="${invCost}">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
              <div class="panel"><h2>Components <small>fit into an extractor to boost yield / cut cycle time</small></h2><div class="item-grid">${comp}</div></div>`,
@@ -1715,7 +1973,10 @@ const UI = {
         const id = el.getAttribute(`data-${attr}`);
         const r = await fn(id);
         if (!r.ok) return this.toast(r.msg, "warn");
-        this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.updateHeader();
+        this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave();
+        // Blackbox buys are soft/local — flush so a quick refresh keeps the item.
+        if (attr === "buyblackbox" && window.Store && Store.flush && window.Game) void Store.flush(Game.state);
+        this.renderBazaar(); this.updateHeader();
         return;
       }
     }
@@ -3588,6 +3849,7 @@ const UI = {
     this.updateHeader();
     this.updateClock();
     if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); }
+    if (this.page === "assets" && window.Shipments && Shipments.active().length) this.renderAssets();
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.
     if (this.page === "stations") {

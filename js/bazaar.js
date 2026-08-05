@@ -371,10 +371,27 @@ const Bazaar = {
   listedSet() { return new Set(this.s().listings.map(l => l.itemUid)); },
   inventoryItems() {
     const eq = this.equippedSet(), li = this.listedSet();
+    // With hauling, only gear in the hold or the docked bay is "in inventory".
+    if (window.Assets) {
+      return Assets.localGear().filter(it => !eq.has(it.uid) && !li.has(it.uid));
+    }
     return Object.values(this.s().items).filter(it => !eq.has(it.uid) && !li.has(it.uid));
   },
-  inventoryUsed() { return this.inventoryItems().length; },
-  capacity() { return this.s().inventory.capacity; },
+  inventoryUsed() {
+    if (window.Assets) {
+      const s = this.s();
+      if (s.travel) return Assets.slotsUsed(Assets.hold());
+      return Assets.slotsUsed(Assets.bay(s.currentSystem));
+    }
+    return this.inventoryItems().length;
+  },
+  capacity() {
+    if (window.Assets) {
+      const s = this.s();
+      return s.travel ? Assets.holdCapacity() : Assets.bayCapacity(s.currentSystem);
+    }
+    return this.s().inventory.capacity;
+  },
 
   // ---- generators ---------------------------------------------------------
   genMerc(now) {
@@ -654,8 +671,31 @@ const Bazaar = {
     s.credits -= price;
     s.mainShip = { type: def.id };
     if (offer) s.bazaar.flagships = (s.bazaar.flagships || []).filter(o => o.id !== offerId);
+    // Downsizing never deletes cargo — spill hold overflow into the local bay
+    // (overfull bay is allowed; HAULING.md §3).
+    if (window.Assets && !s.travel) this._spillHoldToBay(s.currentSystem);
     Economy.refreshNetWorth();
     return { ok: true };
+  },
+  _spillHoldToBay(systemId) {
+    if (!window.Assets || !systemId) return;
+    const hold = Assets.hold(), cap = Assets.holdCapacity();
+    while (Assets.slotsUsed(hold) > cap) {
+      // Prefer moving a commodity block, then gear.
+      const ids = Object.keys(hold.blocks).filter(id => (hold.blocks[id] || 0) > 0);
+      if (ids.length) {
+        const id = ids[0];
+        const size = Assets.blockSize(id);
+        const qty = Math.min(hold.blocks[id], size);
+        Assets.transfer("hold", systemId, "block", id, qty);
+        continue;
+      }
+      if (hold.gear.length) {
+        Assets.transfer("hold", systemId, "gear", hold.gear[0], 1);
+        continue;
+      }
+      break;
+    }
   },
   buyMain(catalogId, offerId) {
     if (!this.authoritative()) return this._buyMainLocal(catalogId, offerId);
@@ -706,6 +746,7 @@ const Bazaar = {
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
     s.items[offer.item.uid] = offer.item;
+    if (window.Assets) Assets.parkGear(offer.item.uid, s.currentSystem);
     b.accessories = b.accessories.filter(a => a.id !== offerId);
     this._markBought(offerId);
     Economy.refreshNetWorth();
@@ -721,6 +762,7 @@ const Bazaar = {
   },
 
   // Soft/local like dossiers — blackboxes aren't on the server ledger yet.
+  // Client merge on commit/bootstrap keeps them across cloud sync (see Store.mergeSoftItems).
   buyBlackbox(offerId) {
     const b = this.bz(); const s = this.s();
     const offer = (b.blackboxes || []).find(a => a.id === offerId);
@@ -730,6 +772,7 @@ const Bazaar = {
     if (price > s.credits) return { ok: false, msg: "Not enough credits." };
     s.credits -= price;
     s.items[offer.item.uid] = offer.item;
+    if (window.Assets) Assets.parkGear(offer.item.uid, s.currentSystem);
     b.blackboxes = b.blackboxes.filter(a => a.id !== offerId);
     this._markBought(offerId);
     Economy.refreshNetWorth();
@@ -924,6 +967,14 @@ const Bazaar = {
   _sellNowLocal(itemUid) {
     const it = this.s().items[itemUid]; if (!it) return { ok: false };
     if (this.equippedSet().has(itemUid)) return { ok: false, msg: "Unequip it first." };
+    if (window.Assets) {
+      const loc = Assets.gearLocation(itemUid);
+      if (!loc) return { ok: false, msg: "Item isn't in a bay you can access." };
+      const s = this.s();
+      if (loc !== "hold" && (s.travel || loc !== s.currentSystem))
+        return { ok: false, msg: "Dock where the item is stored to sell it." };
+      Assets.withdraw(loc === "hold" ? "hold" : loc, "gear", itemUid);
+    }
     const credits = Math.round(it.value * BAZAARCFG.itemResaleMult);
     this.s().credits += credits; delete this.s().items[itemUid];
     Economy.refreshNetWorth();
