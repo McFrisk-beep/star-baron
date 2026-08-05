@@ -21,6 +21,7 @@ const UI = {
   _pending: null,        // pending contract awaiting ship selection
   _equipItem: null,
   charterPick: { shipUids: [], durationMin: 60, band: "safe" },
+  _courier: null,        // { fromId, blocks, gear, dest } — open courier cart modal
   lbOffset: null,        // Barons page start index; null = center on you
 
   s() { return window.Game.state; },
@@ -74,6 +75,10 @@ const UI = {
       mission: $("mission-modal"), mmTitle: $("mm-title"), mmBody: $("mm-body"),
       mmLaunch: $("mm-launch"), mmCancel: $("mm-cancel"),
       equip: $("equip-modal"), eqTitle: $("eq-title"), eqBody: $("eq-body"), eqCancel: $("eq-cancel"),
+      courier: $("courier-modal"), courierFrom: $("courier-from"), courierAvail: $("courier-avail"),
+      courierCart: $("courier-cart"), courierCartSlots: $("courier-cart-slots"),
+      courierDest: $("courier-dest"), courierQuote: $("courier-quote"),
+      courierCancel: $("courier-cancel"), courierSend: $("courier-send"),
       baronRanks: $("baron-ranks-modal"), baronRanksBody: $("baron-ranks-body"), baronRanksClose: $("baron-ranks-close"),
       survey: $("survey-modal"), svTitle: $("sv-title"), svBody: $("sv-body"), svStart: $("sv-start"), svCancel: $("sv-cancel"),
       incident: $("incident-modal"), incIcon: $("inc-icon"), incTitle: $("inc-title"), incText: $("inc-text"),
@@ -82,6 +87,7 @@ const UI = {
       ordAdd: $("ord-add"), ordersList: $("orders-list"),
       boostBar: $("boost-bar"), boostEmpty: $("boost-empty"),
       hubDock: $("hub-dock"), hubDockBody: $("hub-dock-body"),
+      hubCouriers: $("hub-couriers"), hubCouriersBody: $("hub-couriers-body"),
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
@@ -135,7 +141,7 @@ const UI = {
     else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); }
+    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this._renderHubCouriers(); }
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
@@ -164,10 +170,17 @@ const UI = {
   // it's a refit with a clock on it, not a station that's permanently shut.
   renderHubDock() {
     const panel = this.refs.hubDock, body = this.refs.hubDockBody;
-    if (!panel || !body || !window.Stations || !window.Galaxy) return;
+    if (!panel || !body || !window.Stations || !window.Galaxy) {
+      this._renderHubCouriers();
+      return;
+    }
     const s = this.s();
     const st = s.travel ? null : Stations.get(s.currentSystem);
-    if (!st) { panel.classList.add("hidden"); return; }
+    if (!st) {
+      panel.classList.add("hidden");
+      this._renderHubCouriers();
+      return;
+    }
     panel.classList.remove("hidden");
 
     const sys = Galaxy.get(st.systemId);
@@ -179,17 +192,29 @@ const UI = {
       : Stations.ownerHeld(st) ? (mine ? "Yours" : "Player-held") : "NPC-held";
 
     const svcs = Stations.serviceList(st.systemId).filter(r => r.id !== "exchange");
-    const ships = (window.Shipments ? Shipments.active() : []).map(sh => {
-      const leftMs = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
-      return `<div class="haul-ship-line">→ ${this.sysName(sh.to)} · ${sh.slots} slots · ${Util.duration(leftMs)}</div>`;
-    }).join("");
     body.innerHTML = `
       <p><b>${st.name}</b> <span class="muted-note">${st.tier} · ${sys ? sys.name : st.systemId} · ${status}</span></p>
       ${left > 0 ? `<p class="muted-note">Production and visitor services are paused for the refit. Docking, undocking and travel are unaffected.</p>` : ""}
       <div class="system-services">${svcs.map(r =>
         `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
-      ).join("")}</div>
-      ${ships ? `<div class="haul-shipments"><b>Couriers in flight</b>${ships}</div>` : ""}`;
+      ).join("")}</div>`;
+    this._renderHubCouriers();
+  },
+
+  // In-flight courier lines on Hub — shown even while traveling (dock panel hides).
+  _renderHubCouriers() {
+    const panel = this.refs.hubCouriers, body = this.refs.hubCouriersBody;
+    if (!panel || !body) return;
+    const ships = window.Shipments ? Shipments.active() : [];
+    if (!ships.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
+    panel.classList.remove("hidden");
+    body.innerHTML = ships.map(sh => {
+      const leftMs = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
+      const risk = sh.illicit
+        ? ` · illicit · piracy ${(sh.riskPct * 100).toFixed(0)}%`
+        : ` · piracy ${(sh.riskPct * 100).toFixed(0)}%`;
+      return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(leftMs)}${risk} · fee ${Util.credits(sh.fee)}c</div>`;
+    }).join("");
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -1327,7 +1352,7 @@ const UI = {
     const dests = (window.Shipments ? Shipments.destinations() : []).filter(d => d !== sysId);
     el.innerHTML = `<div class="haul-grid">${tiles}</div>
       <div class="assets-manifest">
-        <button type="button" class="btn btn-go" data-manifest="${sysId}" ${dests.length ? "" : "disabled"}>Add to courier manifest</button>
+        <button type="button" class="btn btn-go" data-manifest="${sysId}" ${dests.length ? "" : "disabled"}>Open courier cart</button>
         <span class="muted-note">${dests.length ? "Ship goods to another station you already use." : "Visit another station first — couriers only consolidate a footprint."}</span>
       </div>`;
     // Strip interactive move/use from the glance tiles (Assets tab is read + manifest).
@@ -1335,24 +1360,191 @@ const UI = {
     for (const t of el.querySelectorAll(".haul-tile")) { t.removeAttribute("draggable"); t.tabIndex = -1; }
   },
 
+  // Courier cart modal (HAULING.md §9) — replaces browser prompt/confirm.
   _openManifest(fromId) {
-    if (!window.Shipments) return;
+    if (!window.Shipments || !this.refs.courier) return;
     const dests = Shipments.destinations().filter(d => d !== fromId);
     if (!dests.length) return this.toast("No courier destinations yet.", "warn");
     const bay = Assets.bay(fromId);
+    const empty = !Object.values(bay.blocks || {}).some(q => q > 0) && !(bay.gear || []).length;
+    if (empty) return this.toast("Bay is empty.", "warn");
+    this._courier = { fromId, blocks: {}, gear: [], dest: dests[0] };
+    this.refs.courierFrom.textContent = `From ${this.sysName(fromId)} — drag goods into the cart, pick a destination, Send.`;
+    const sel = this.refs.courierDest;
+    sel.innerHTML = dests.map(d =>
+      `<option value="${d}">${this.sysName(d)}</option>`).join("");
+    sel.value = dests[0];
+    this.refs.courier.classList.remove("hidden");
+    this._renderCourierCart();
+    this._bindCourierCart();
+  },
+
+  _courierClose() {
+    this._courier = null;
+    if (this.refs.courier) this.refs.courier.classList.add("hidden");
+  },
+
+  // Bay minus what's already in the cart.
+  _courierAvailable() {
+    const c = this._courier; if (!c) return { blocks: {}, gear: [] };
+    const bay = Assets.bay(c.fromId);
     const blocks = {};
-    for (const [id, q] of Object.entries(bay.blocks || {})) if (q > 0) blocks[id] = q;
-    const gear = (bay.gear || []).slice();
-    if (!Object.keys(blocks).length && !gear.length) return this.toast("Bay is empty.", "warn");
-    const dest = prompt(`Courier destination system id:\n${dests.map(d => `${d} (${this.sysName(d)})`).join("\n")}`, dests[0]);
-    if (!dest || !dests.includes(dest)) return;
-    const q = Shipments.quote(fromId, dest, blocks, gear);
-    if (!confirm(`Dispatch entire bay to ${this.sysName(dest)}?\n${q.slots} slots · fee ${Util.credits(q.fee)}c · ETA ${Util.duration(q.etaMs)} · risk ${(q.riskPct * 100).toFixed(0)}%`)) return;
-    const r = Shipments.dispatch(fromId, dest, blocks, gear);
+    for (const [id, q] of Object.entries(bay.blocks || {})) {
+      const left = (q || 0) - (c.blocks[id] || 0);
+      if (left > 0) blocks[id] = left;
+    }
+    const inCart = new Set(c.gear);
+    return { blocks, gear: (bay.gear || []).filter(u => !inCart.has(u)) };
+  },
+
+  _courierTile(kind, id, qty, zone) {
+    if (kind === "block") {
+      const c = COMMODITIES.find(x => x.id === id); if (!c) return "";
+      const q = qty || 0;
+      const qtyLabel = q >= 1000 ? (q / 1000).toFixed(q >= 10000 ? 0 : 1) + "K" : q;
+      return `<div class="haul-tile" draggable="true" tabindex="0" data-kind="block" data-id="${id}" data-zone="${zone}" title="${c.name} · ${q}">
+        ${this._art(ASSET.commodity(c.id), c.name.slice(0, 1))}
+        <div class="haul-name">${c.name}</div>
+        <div class="haul-cat">${c.cat}${c.cat === "illicit" ? " ⚠" : ""}</div>
+        <div class="haul-qty">${qtyLabel}</div>
+      </div>`;
+    }
+    const it = this.s().items[id]; if (!it) return "";
+    const box = window.Items && Items.isBlackbox(it);
+    const letter = box ? "B" : ((ACCESSORY_KINDS[it.kind] || {}).label || it.kind || "?");
+    const art = box ? this._art(ASSET.blackbox(it.effectId, it.uid), letter)
+      : this._art(ASSET.accessory(it.kind, it.uid), letter);
+    return `<div class="haul-tile gear" draggable="true" tabindex="0" data-kind="gear" data-id="${id}" data-zone="${zone}" style="border-color:${this.rarityColor(it.rarity)}" title="${it.name}">
+      ${art}
+      <div class="haul-name">${it.name}</div>
+    </div>`;
+  },
+
+  _renderCourierCart() {
+    const c = this._courier, r = this.refs;
+    if (!c || !r.courierAvail) return;
+    const avail = this._courierAvailable();
+    const aHtml = Object.entries(avail.blocks).map(([id, q]) => this._courierTile("block", id, q, "avail")).join("")
+      + avail.gear.map(uid => this._courierTile("gear", uid, 1, "avail")).join("");
+    const cHtml = Object.entries(c.blocks).filter(([, q]) => q > 0).map(([id, q]) => this._courierTile("block", id, q, "cart")).join("")
+      + c.gear.map(uid => this._courierTile("gear", uid, 1, "cart")).join("");
+    r.courierAvail.innerHTML = aHtml || `<p class="muted-note">Nothing left in the bay.</p>`;
+    r.courierCart.innerHTML = cHtml || `<p class="muted-note courier-cart-empty">Drop goods here to build the manifest.</p>`;
+    const slots = Assets.slotsUsed({ blocks: c.blocks, gear: c.gear });
+    if (r.courierCartSlots) r.courierCartSlots.textContent = `${slots} slot${slots === 1 ? "" : "s"}`;
+    this._renderCourierQuote();
+  },
+
+  _renderCourierQuote() {
+    const c = this._courier, el = this.refs.courierQuote, send = this.refs.courierSend;
+    if (!c || !el) return;
+    const empty = !Object.values(c.blocks).some(q => q > 0) && !c.gear.length;
+    if (!c.dest || empty) {
+      el.innerHTML = `<p class="muted-note">Add goods and pick a destination to see fee, ETA, and risk.</p>`;
+      if (send) send.disabled = true;
+      return;
+    }
+    const q = Shipments.quote(c.fromId, c.dest, c.blocks, c.gear);
+    const canPay = q.fee <= this.s().credits;
+    let riskHtml = `<span class="courier-risk">Piracy / smuggling <b>${(q.riskPct * 100).toFixed(0)}%</b></span>`;
+    if (q.illicit) {
+      riskHtml += `<span class="courier-risk courier-customs">Customs seizure <b>${(q.customsRisk * 100).toFixed(0)}%</b></span>`;
+    }
+    el.innerHTML = `
+      <div class="courier-quote-row">
+        <span>Fee <b class="${canPay ? "" : "down"}">${Util.credits(q.fee)}c</b></span>
+        <span>ETA <b>${Util.duration(q.etaMs)}</b></span>
+        <span>Slots <b>${q.slots}</b></span>
+        <span>Value <b>${Util.credits(q.value)}c</b></span>
+      </div>
+      <div class="courier-quote-row">${riskHtml}</div>
+      ${q.illicit ? `<p class="muted-note">Illicit cargo — customs rolls on arrival at ${this.sysName(c.dest)}.</p>` : ""}
+      ${canPay ? "" : `<p class="down">Not enough credits (have ${Util.credits(this.s().credits)}c).</p>`}`;
+    if (send) send.disabled = !canPay;
+  },
+
+  _courierMove(kind, id, fromZone) {
+    const c = this._courier; if (!c) return;
+    const toCart = fromZone === "avail";
+    if (kind === "block") {
+      if (toCart) {
+        const left = (this._courierAvailable().blocks[id] || 0);
+        if (left <= 0) return;
+        c.blocks[id] = (c.blocks[id] || 0) + left;
+      } else {
+        delete c.blocks[id];
+      }
+    } else {
+      if (toCart) {
+        if (!c.gear.includes(id) && this._courierAvailable().gear.includes(id)) c.gear.push(id);
+      } else {
+        c.gear = c.gear.filter(u => u !== id);
+      }
+    }
+    this._renderCourierCart();
+  },
+
+  _bindCourierCart() {
+    const root = this.refs.courier;
+    if (!root || root._courierBound) return;
+    root._courierBound = true;
+    let drag = null;
+    root.ondragstart = e => {
+      const t = e.target.closest(".haul-tile"); if (!t || !this._courier) return;
+      drag = { kind: t.dataset.kind, id: t.dataset.id, zone: t.dataset.zone };
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", t.dataset.id); } catch (err) { /* ignore */ }
+    };
+    root.ondragover = e => {
+      const zone = e.target.closest("[data-courier-zone]"); if (!zone || !drag) return;
+      e.preventDefault();
+      zone.classList.add("courier-drop-hot");
+    };
+    root.ondragleave = e => {
+      const zone = e.target.closest("[data-courier-zone]");
+      if (zone) zone.classList.remove("courier-drop-hot");
+    };
+    root.ondrop = e => {
+      const zone = e.target.closest("[data-courier-zone]"); if (!zone || !drag) return;
+      e.preventDefault();
+      zone.classList.remove("courier-drop-hot");
+      const to = zone.dataset.courierZone;
+      if (to !== drag.zone) this._courierMove(drag.kind, drag.id, drag.zone);
+      drag = null;
+    };
+    root.onkeydown = e => {
+      if (e.key !== "Enter") return;
+      const t = e.target.closest(".haul-tile");
+      if (t && this._courier) this._courierMove(t.dataset.kind, t.dataset.id, t.dataset.zone);
+    };
+    this.refs.courierDest.onchange = () => {
+      if (!this._courier) return;
+      this._courier.dest = this.refs.courierDest.value;
+      this._renderCourierQuote();
+    };
+    root.onclick = e => {
+      if (e.target === root) return this._courierClose();
+      if (e.target.closest("#courier-cancel")) return this._courierClose();
+      if (e.target.closest("#courier-send")) return this._sendCourier();
+      const t = e.target.closest(".haul-tile");
+      if (t && this._courier) this._courierMove(t.dataset.kind, t.dataset.id, t.dataset.zone);
+    };
+  },
+
+  _sendCourier() {
+    const c = this._courier; if (!c || !window.Shipments) return;
+    const r = Shipments.dispatch(c.fromId, c.dest, c.blocks, c.gear);
     if (!r.ok) return this.toast(r.msg || "Courier refused.", "warn");
-    this.toast(`Courier away — ${Util.credits(q.fee)}c.`, "good");
-    this.flashCredits(); window.Game.requestSave();
-    this.renderAssets(); this.renderHubDock(); this.updateHeader();
+    const q = r.quote;
+    this.toast(`Courier away to ${this.sysName(c.dest)} — ${Util.credits(q.fee)}c · ETA ${Util.duration(q.etaMs)}.`, "good");
+    this.flashCredits();
+    this._courierClose();
+    window.Game.requestSave();
+    this.renderAssets();
+    this.renderHubDock();
+    this._renderHubCouriers();
+    this.updateHeader();
+    if (this.page !== "hub") this.toast("Track the run on Hub → Couriers.", "info", 3500);
   },
 
   _renderInventoryLegacy() {
@@ -3840,6 +4032,16 @@ const UI = {
       this.updateHeader();
       if (this.page === "barons") this.renderLeaderboard();
     });
+    Bus.on("shipment", ev => {
+      if (ev && ev.kind === "dispatch") {
+        this._renderHubCouriers();
+        if (this.page === "assets") this.renderAssets();
+      } else if (ev && (ev.kind === "arrival" || ev.kind === "incident")) {
+        this._renderHubCouriers();
+        if (this.page === "assets") this.renderAssets();
+        if (ev.text) this.toast(ev.text, ev.kind === "incident" ? "warn" : "good", 4500);
+      }
+    });
   },
   audioSafe(t) { try { window.Game.audio(t); } catch (e) {} },
 
@@ -3848,7 +4050,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); }
+    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this._renderHubCouriers(); }
     if (this.page === "assets" && window.Shipments && Shipments.active().length) this.renderAssets();
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.

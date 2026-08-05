@@ -80,6 +80,10 @@
           <h2>Dock Status <small>where you're berthed</small></h2>
           <div id="hub-dock-body"></div>
         </div>
+        <div class="panel hub-couriers hidden" id="hub-couriers">
+          <h2>Couriers <small>in flight</small></h2>
+          <div id="hub-couriers-body"></div>
+        </div>
         <div class="panel hub-boosts" id="hub-boosts">
           <h2>Active Boosts <small>blackbox effects</small></h2>
           <div class="boost-bar" id="boost-bar"></div>
@@ -421,6 +425,31 @@
   <div class="modal-backdrop hidden" id="equip-modal">
     <div class="modal"><h3 id="eq-title">Equip Accessory</h3><div id="eq-body"></div>
       <button class="btn" id="eq-cancel">Cancel</button></div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="courier-modal">
+    <div class="modal modal-wide courier-modal">
+      <h3>Courier Manifest</h3>
+      <p class="muted-note" id="courier-from">From —</p>
+      <div class="courier-layout">
+        <div class="courier-col">
+          <div class="haul-head">Available at bay</div>
+          <div class="haul-grid courier-drop" id="courier-avail" data-courier-zone="avail"></div>
+        </div>
+        <div class="courier-col">
+          <div class="haul-head">Courier cart <b id="courier-cart-slots">0 slots</b></div>
+          <div class="haul-grid courier-drop courier-cart" id="courier-cart" data-courier-zone="cart"></div>
+        </div>
+      </div>
+      <label class="courier-dest">Destination
+        <select id="courier-dest" aria-label="Courier destination"></select>
+      </label>
+      <div class="courier-quote" id="courier-quote"></div>
+      <div class="settings-actions">
+        <button type="button" class="btn" id="courier-cancel">Cancel</button>
+        <button type="button" class="btn btn-go btn-cta" id="courier-send">Send</button>
+      </div>
+    </div>
   </div>
 
   <div class="modal-backdrop hidden" id="baron-ranks-modal">

@@ -501,7 +501,10 @@ const Shipments = {
       const c = COMMODITIES.find(x => x.id === id);
       return c && c.cat === "illicit" && (blocks[id] || 0) > 0;
     });
-    return { fee, slots, etaMs: eta, riskPct: risk, value, illicit, dist };
+    // Customs odds at the destination — only meaningful when illicit is aboard.
+    const customsRisk = illicit && window.Economy && Economy.customsChance
+      ? Economy.customsChance(toId) : 0;
+    return { fee, slots, etaMs: eta, riskPct: risk, customsRisk, value, illicit, dist };
   },
 
   dispatch(fromId, toId, blocks, gear) {
