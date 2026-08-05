@@ -456,4 +456,44 @@ rehydrated.refitUntil = NaN;
 Stations.hydrate(Stations.serialize());
 assert.strictEqual(Stations.get(target.systemId).status, "owned", "NaN refit timer releases station");
 
-console.log("OK check_stations");
+// ---- shared ownership directory (docs/sql/station_directory.sql) ----------
+// Another baron's claim must show up for us — and for a signed-out visitor —
+// instead of the local save's "NPC".
+(async () => {
+  const other = Stations.list().find(st => st.status === "npc" && st.systemId !== target.systemId);
+  assert.ok(other, "has a spare NPC station");
+  ctx.Cloud = {
+    _rows: [{ system_id: other.systemId, owner_id: "acct-vex", display: "<b>Vex</b>", tier: other.tier, status: "owned" }],
+    _user: null,
+    user() { return this._user; },
+    signedIn() { return !!this._user; },
+    async stationDirectory() { return this._rows; },
+    async stationPublish(rows) { this.published = rows; return { ok: true, held: rows.length, conflicts: [] }; },
+  };
+
+  await Stations.refreshDirectory();
+  const holder = Stations.remoteHolder(other.systemId);
+  assert.ok(holder, "guest sees the remote holder");
+  assert.ok(!/[<>&"']/.test(holder.display), `display sanitised, got "${holder.display}"`);
+  assert.ok(/Held by/.test(Stations.holderLabel(other)), `holder label, got "${Stations.holderLabel(other)}"`);
+  assert.ok(/held by/.test(Stations.holderTag(other)), `holder tag, got "${Stations.holderTag(other)}"`);
+  assert.strictEqual(Stations.holderTag(target), "yours", "own station still reads as yours");
+
+  // ...and can't be auctioned out from under them.
+  const poach = Stations.openAuction(other.systemId, Stations.openingBid(other));
+  assert.ok(!poach.ok && /holds this station/.test(poach.msg), `claim blocked, got "${poach.msg}"`);
+
+  // Our own published row must not read as somebody else's.
+  ctx.Cloud._user = { id: "acct-me" };
+  ctx.Cloud._rows = [{ system_id: other.systemId, owner_id: "acct-me", display: "Me", tier: other.tier, status: "owned" }];
+  await Stations.refreshDirectory();
+  assert.strictEqual(Stations.remoteHolder(other.systemId), null, "our own row is not a remote holder");
+  assert.strictEqual(Stations.holderTag(other), "NPC", "no foreign holder → local view stands");
+
+  // Publish sends owner-held stations only.
+  await Stations.publishOwned();
+  assert.deepStrictEqual([...ctx.Cloud.published].map(r => r.system_id), [target.systemId],
+    "publishes exactly the stations we hold");
+
+  console.log("OK check_stations");
+})().catch(e => { console.error(e); process.exit(1); });

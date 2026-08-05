@@ -464,6 +464,21 @@ const Game = {
       });
       Bus.on("prestige", () => { if (Cloud.signedIn && Cloud.signedIn()) Barons.publish(); });
     }
+    if (window.Stations) {
+      // Who holds which station — the only cross-player view of ownership.
+      // Guests read it too (anon RPC), so a signed-out visitor stops seeing
+      // every claimed station as NPC.
+      const syncStations = () => Stations.refreshDirectory()
+        .then(() => Stations.publishOwned())
+        .finally(() => {
+          if (!window.UI) return;
+          if (UI.page === "systems") UI.renderSystems();
+          const openSys = window.StarMap && StarMap.open && StarMap.current && Galaxy.get(StarMap.current);
+          if (openSys) StarMap.renderInfo(openSys);
+        });
+      void syncStations();
+      Bus.on("auth", syncStations);
+    }
     if (window.SenateWorld) SenateWorld.init();   // shared, galaxy-wide senate agenda (Supabase cron)
 
     // When the tab is backgrounded we suspend ALL work (timers + the star-map

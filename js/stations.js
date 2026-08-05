@@ -101,6 +101,94 @@ const Stations = {
     return (info && info.stations) || 1;
   },
 
+  // ---- shared ownership directory (docs/sql/station_directory.sql) --------
+  // Ownership itself is still local, so without a published row every *other*
+  // client — and every signed-out visitor — drew a claimed station as "NPC".
+  // This is display + a claim guard only; auctions/modules stay client-side.
+  directory: {},        // systemId -> { ownerId, display, tier, status }
+  directoryAt: 0,
+  _pubTimer: null,
+
+  // Cloud identity, used ONLY to recognise our own directory rows. Local
+  // ownership keeps using playerId() — that returns "player" in every save, so
+  // switching it to the account id would orphan every station already claimed.
+  // ponytail: two ids until app_station_* own the ledger; then playerId() goes.
+  accountId() {
+    const u = (window.Cloud && typeof Cloud.user === "function") ? Cloud.user() : null;
+    return u ? String(u.id || u.email || "") : "";
+  },
+
+  // The holder as seen by everyone else. null when that's us or nobody.
+  remoteHolder(systemId) {
+    const row = this.directory[systemId];
+    if (!row || !row.ownerId) return null;
+    const me = this.accountId();
+    return me && row.ownerId === me ? null : row;
+  },
+
+  // One place answers "who holds this?" for every readout.
+  holderLabel(st) {
+    if (!st) return "NPC-held";
+    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "Yours" : "Player-held";
+    const rem = this.remoteHolder(st.systemId);
+    return rem ? `Held by ${rem.display}` : "NPC-held";
+  },
+  // Compact form for the star map / systems list ("NPC" reads as a tag there).
+  holderTag(st) {
+    if (!st) return "NPC";
+    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "yours" : "player-held";
+    const rem = this.remoteHolder(st.systemId);
+    return rem ? `held by ${rem.display}` : "NPC";
+  },
+
+  async refreshDirectory() {
+    if (!(window.Cloud && Cloud.stationDirectory)) return this.directory;
+    try {
+      const rows = await Cloud.stationDirectory();
+      if (!rows) return this.directory;
+      const next = {};
+      for (const r of rows || []) {
+        const id = r && r.system_id ? String(r.system_id) : "";
+        if (!id || !r.owner_id) continue;
+        // Remote text lands in innerHTML — names are server-generated but this
+        // is still a trust boundary, so strip markup chars and clamp length.
+        const display = String(r.display || "Baron").replace(/[<>&"']/g, "").slice(0, 24) || "Baron";
+        next[id] = { ownerId: String(r.owner_id), display, tier: r.tier || "", status: r.status || "owned" };
+      }
+      this.directory = next;
+      this.directoryAt = Date.now();
+    } catch (e) {
+      console.warn("[Stations] directory fetch failed:", e);
+    }
+    return this.directory;
+  },
+
+  async publishOwned() {
+    if (!(window.Cloud && Cloud.stationPublish && Cloud.signedIn && Cloud.signedIn())) return null;
+    const rows = this.ownedBy().map(st => ({ system_id: st.systemId, tier: st.tier, status: st.status }));
+    try {
+      const res = await Cloud.stationPublish(rows);
+      if (res && res.ok) await this.refreshDirectory();
+      // A conflict means someone else claimed it first server-side. Local play
+      // is unaffected (nothing is server-authoritative yet) — the directory just
+      // keeps showing them as the holder.
+      if (res && res.conflicts && res.conflicts.length) {
+        console.warn("[Stations] already claimed elsewhere:", res.conflicts.join(", "));
+      }
+      return res;
+    } catch (e) {
+      console.warn("[Stations] directory publish failed:", e);
+      return null;
+    }
+  },
+
+  // Ownership changes are bursty (auction close → save → tick); coalesce them.
+  _publishSoon() {
+    if (!(window.Cloud && Cloud.signedIn && Cloud.signedIn())) return;
+    clearTimeout(this._pubTimer);
+    this._pubTimer = setTimeout(() => { void this.publishOwned(); }, 1500);
+  },
+
   // ---- power / modules ---------------------------------------------------
   basePower(st) { return this.tierInfo(st.tier).power; },
   reactorPower(st) {
@@ -1275,6 +1363,8 @@ const Stations = {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     if (this.ownerHeld(st)) return { ok: false, msg: "Already owned." };
+    const rem = this.remoteHolder(systemId);
+    if (rem) return { ok: false, msg: `${rem.display} holds this station.` };
     if (st.status === "cooldown" && Date.now() < st.cooldownUntil)
       return { ok: false, msg: "Station is cooling down after a revolt." };
     if (this.auctions[systemId] && this.auctions[systemId].status === "open")
@@ -1398,6 +1488,7 @@ const Stations = {
     st.delivered = 0;
     st.cooldownUntil = 0;
     if (window.Game) Game.requestSave();
+    this._publishSoon();
     return { ok: true, st };
   },
 
@@ -1452,6 +1543,7 @@ const Stations = {
     delete this.access[st.systemId];
     this._cancelAuction(systemId);
     if (window.Game) Game.requestSave();
+    this._publishSoon();
     return { ok: true, st, treasury, holdCredits };
   },
 
@@ -1476,6 +1568,7 @@ const Stations = {
       st.delivered = 0;
       // Winning credits sunk to controlling faction (credit sink — keep it).
       this._ledger(st, auc.highBid, "auction_win", "paid to controlling faction");
+      this._publishSoon();
       auc.status = "closed";
       if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(auc.highBid)}.`, "ok");
       if (window.Story && Story.inbox) {
@@ -1631,6 +1724,9 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
+    // Hourly: refresh who holds what, and re-stamp our own rows so an active
+    // owner never ages out of the directory's 30-day staleness window.
+    void this.refreshDirectory().then(() => this.publishOwned());
   },
 
   _warnStages(st, sentiment) {
@@ -1679,6 +1775,7 @@ const Stations = {
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
+    this._publishSoon();
     if (window.UI && UI.toast) UI.toast(`Revolt! You lost ${st.name}. Modules remain for the next owner.`, "bad", 10000);
   },
 

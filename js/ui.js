@@ -184,12 +184,11 @@ const UI = {
     panel.classList.remove("hidden");
 
     const sys = Galaxy.get(st.systemId);
-    const mine = st.ownerId === Stations.playerId() && Stations.ownerHeld(st);
     const left = Stations.refitLeft(st);
     const status = left > 0
       ? `<span class="st-refit">Refit — back online in <b>${Util.duration(left)}</b></span>`
       : st.status === "cooldown" ? `<span class="st-refit">Offline after a revolt</span>`
-      : Stations.ownerHeld(st) ? (mine ? "Yours" : "Player-held") : "NPC-held";
+      : Stations.holderLabel(st);
 
     const svcs = Stations.serviceList(st.systemId).filter(r => r.id !== "exchange");
     body.innerHTML = `
@@ -2324,7 +2323,7 @@ const UI = {
         const li = this.el("li", "system" + (here ? " here" : ""));
         const own = st.status === "owned" ? "owned"
           : st.status === "refit" ? `refit · ${Util.duration(Stations.refitLeft(st))} left`
-          : st.status === "cooldown" ? "cooldown" : "NPC";
+          : st.status === "cooldown" ? "cooldown" : Stations.holderTag(st);
         li.innerHTML =
           `<div class="system-head"><b>${st.name}</b>` +
           `<span class="dist" title="${g.name}">${sec ? sec.name : g.sectorId} · ${st.tier} · ${own}</span>` +

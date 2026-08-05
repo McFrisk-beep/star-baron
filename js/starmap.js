@@ -305,7 +305,8 @@ const StarMap = {
         extra = `<br><span class="tip-dim">${st.name} · ${st.tier}` +
           (st.status === "owned" ? " · owned"
             : st.status === "refit" ? ` · owned · refit ${Util.duration(Stations.refitLeft(st))}`
-            : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}` : " · NPC") +
+            : auc && auc.status === "open" ? ` · auction ${Util.credits(auc.highBid)}`
+            : ` · ${Stations.holderTag(st)}`) +
           (band ? ` · ${band}` : "") +
           (hallN >= 0 ? ` · Exchange Hall${hallN ? ` (${hallN})` : ""}` : "") +
           officeTxt + scrTxt +
@@ -399,8 +400,11 @@ const StarMap = {
             <button class="btn btn-go" id="sm-st-bid" data-min="${min}">Bid ${Util.credits(min)}</button>
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "npc" || (st.status === "cooldown" && Date.now() >= st.cooldownUntil)) {
-          stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · NPC
-            <button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>
+          // Another baron may hold it even though our own save says NPC — the
+          // directory is the only cross-player view of ownership.
+          const rem = Stations.remoteHolder(sys.id);
+          stationBlock = `<div class="si-station"><b>${st.name}</b> · ${st.tier} · ${rem ? `Held by ${rem.display}` : "NPC"}
+            ${rem ? "" : `<button class="btn btn-go" id="sm-st-auction" data-min="${openMin}">Open auction · ${Util.credits(openMin)}</button>`}
             ${isAdmin ? `<button class="btn btn-mini" id="sm-st-admin-claim">Admin claim</button>` : ""}</div>`;
         } else if (st.status === "cooldown") {
           stationBlock = `<div class="si-station"><b>${st.name}</b> · cooling down ${Util.duration(st.cooldownUntil - Date.now())}

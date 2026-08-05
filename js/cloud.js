@@ -230,6 +230,26 @@ const Cloud = {
       throw e;
     }
   },
+  // Shared station ownership directory (docs/sql/station_directory.sql).
+  // Anon-readable on purpose: a signed-out visitor must see who holds a station
+  // instead of the local save's "NPC". Missing SQL latches → everyone falls back
+  // to the local-only view.
+  async stationDirectory() {
+    if (!this.enabled || !this.client || this._rpcMissing.app_station_directory) return null;
+    const { data, error } = await this.client.rpc("app_station_directory");
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this._rpcMissing.app_station_directory = true;
+        console.warn("[Cloud] app_station_directory missing — run docs/sql/station_directory.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  async stationPublish(rows) {
+    return this._optional("app_station_publish", { p_stations: rows || [] });
+  },
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

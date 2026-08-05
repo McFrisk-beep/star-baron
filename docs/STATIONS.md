@@ -1,6 +1,6 @@
 # Space Stations & the Supply Economy
 
-**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Signed-in docking at system hubs:** paste `docs/sql/station_dock_unlock.sql` (or re-run the `app_dock` block in `phase1_players.sql`) so claimable hubs auto-unlock on dock. **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed.
+**Status:** client guest path live (Phases 1–6 + bays/leases + Workshop Annex + Exchange Hall §9 + Contract Office §11 + Customs/Free Port §12 with non-capital docking). **Signed-in docking at system hubs:** paste `docs/sql/station_dock_unlock.sql` (or re-run the `app_dock` block in `phase1_players.sql`) so claimable hubs auto-unlock on dock. **Phase 4 server stock:** paste `docs/sql/phase4_sector_stock.sql` (see `docs/PHASE4_SETUP.md`) — replaces `app_trade` with stock lock + scarcity; station `app_station_*` RPCs stubbed. **Cross-player ownership display:** paste `docs/sql/station_directory.sql` so a claimed station shows its holder instead of "NPC" to other players and to signed-out visitors.
 **Depends on:** shared server-authoritative state (Phase 4) for multiplayer authority
 **Touches:** `market.js`, `galaxy.js`, `economy.js`, `stock.js`, `stations.js`, `workshop.js`, `ui.js`, `starmap.js`, plus SQL stubs
 
@@ -478,7 +478,9 @@ sector_stock      sector_id, comm_id, units, updated_at   -- LIVE
 market_listings   station_id, seller_id, item jsonb, price, expires_at
 ```
 
-**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`; stubs: `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`, `app_station_list_item`, `app_station_buy_item`.
+**Live (ownership directory paste):** `docs/sql/station_directory.sql` — adds `owner_display` / `updated_at` to `stations`, plus `app_station_directory` (anon + authenticated read) and `app_station_publish` (authenticated write). Ownership itself is still each client's save; this is the shared "who holds this station" row so a claimed station stops rendering as **NPC** for other players and for signed-out visitors. Claims are first-come, rows released on relinquish/revolt, and a row unrefreshed for 30 days ages out so an abandoned save can't lock a station out of the auction pool.
+
+**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`, `app_station_directory` + `app_station_publish` (LIVE); stubs: `app_station_bid`, `app_station_auction_open`, `app_station_module_install`, `app_station_set_policy`, `app_station_withdraw`, `app_station_lease_bay`, `app_station_list_item`, `app_station_buy_item`.
 
 **Cron (hourly):** `app_stock_tick` for consumption + NPC elastic backstop (optional). Full sentiment/revolt/auction close still client-side until station RPCs land.
 
