@@ -65,11 +65,12 @@ const Assets = {
     return Math.max(0, Math.floor(base * (1 + (Fleet.mainBonus("cargo") || 0))));
   },
   // Station bay capacity = Inventory Bay upgrade (BAZAARCFG), base STATION_BAY_BASE.
+  // Defensive Math.max against a server slice that rewrote inventory.capacity
+  // without the hauling floor — ensureBayCapacity at boot is belt-and-braces.
   bayCapacity(systemId) {
     const s = this.s();
-    const inv = s.inventory || {};
-    const cap = Math.max(0, inv.capacity | 0);
-    return cap || (typeof STATION_BAY_BASE !== "undefined" ? STATION_BAY_BASE : 50);
+    const cap = Math.max(0, (s.inventory && s.inventory.capacity) | 0);
+    return Math.max(cap, this.bayCapacityFloor(s));
   },
   holdFree() { return this.holdCapacity() - this.slotsUsed(this.hold()); },
   bayFree(systemId) { return this.bayCapacity(systemId) - this.slotsUsed(this.bay(systemId)); },

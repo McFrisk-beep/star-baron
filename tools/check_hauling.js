@@ -156,4 +156,8 @@ const freshish = { inventory: { capacity: 6, upgrades: 0 }, hold: { blocks: {}, 
 Assets.migrateState(freshish);
 assert.strictEqual(freshish.inventory.capacity, 50, "unupgraded 6 → base 50");
 
+// bayCapacity() floors at read time even if a server slice stomped inventory.capacity.
+ctx.Game.state.inventory = { capacity: 16, upgrades: 1 };
+assert.strictEqual(Assets.bayCapacity("navos"), 60, "bayCapacity floors stale server capacity");
+
 console.log("check_hauling: ledger + courier + blackbox merge ✔");
