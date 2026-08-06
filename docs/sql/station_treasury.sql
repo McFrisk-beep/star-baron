@@ -228,8 +228,9 @@ begin
 
   paid := app._credit_user(l.seller_id, net, now_ms);
   if not paid then
+    -- note carries listing id so refund can reverse the exact row
     insert into public.station_payouts (user_id, system_id, amount, reason, note)
-    values (l.seller_id, p_system, net, 'sale', l.name);
+    values (l.seller_id, p_system, net, 'sale', l.id::text);
   end if;
 
   if tariff > 0 and st.owner_id is not null then
@@ -250,9 +251,17 @@ $$;
 -- Inverse of app_station_buy_item: claw tariff from treasury, reverse seller
 -- net (delete unclaimed payout or debit wallet), credit buyer full price.
 -- Status 'refunded' is not reclaimed by app_station_settle's back CTE.
+--
+-- Conservation note: if the seller already spent the proceeds, `_debit_user`
+-- takes what it can and queues the shortfall as reason 'refund_owed' so the
+-- rest is clawed on their next settle — buyer is always made whole.
 alter table public.station_listings drop constraint if exists station_listings_status_check;
 alter table public.station_listings add constraint station_listings_status_check
   check (status in ('open','sold','cancelled','reclaimed','refunded'));
+
+alter table public.station_payouts drop constraint if exists station_payouts_reason_check;
+alter table public.station_payouts add constraint station_payouts_reason_check
+  check (reason in ('sale', 'tariff', 'haul_refund', 'refund_owed'));
 
 create or replace function public.app_station_buy_refund(p_listing_id text)
 returns jsonb
@@ -271,6 +280,8 @@ declare
   tariff   bigint;
   net      bigint;
   deleted  int;
+  taken    bigint;
+  shortfall bigint;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
   if p_listing_id !~ '^[0-9a-fA-F-]{36}$' then
@@ -290,20 +301,25 @@ begin
   tariff := floor(l.price * bps / 10000.0);
   net    := l.price - tariff;
 
-  -- Prefer deleting an unclaimed sale payout; else claw from the seller's wallet.
+  -- Prefer deleting the unclaimed sale payout for this listing; else claw wallet.
   delete from public.station_payouts
    where id = (
      select id from public.station_payouts
       where user_id = l.seller_id and system_id = l.system_id
         and reason = 'sale' and claimed_at is null and amount = net
-        and coalesce(note, '') = coalesce(l.name, '')
-      order by created_at desc nulls last
+        and (note = l.id::text or note = coalesce(l.name, ''))
+      order by case when note = l.id::text then 0 else 1 end, created_at desc nulls last
       limit 1
       for update
    );
   get diagnostics deleted = row_count;
   if deleted = 0 and net > 0 then
-    perform app._debit_user(l.seller_id, net, now_ms);
+    taken := app._debit_user(l.seller_id, net, now_ms);
+    shortfall := net - coalesce(taken, 0);
+    if shortfall > 0 then
+      insert into public.station_payouts (user_id, system_id, amount, reason, note)
+      values (l.seller_id, l.system_id, shortfall, 'refund_owed', l.id::text);
+    end if;
   end if;
 
   if tariff > 0 then
@@ -354,6 +370,8 @@ begin
   loop
     if row.reason = 'sale' then
       perform app._credit_user(uid, row.amount, now_ms);
+    elsif row.reason = 'refund_owed' then
+      perform app._debit_user(uid, row.amount, now_ms);
     elsif row.reason = 'tariff' then
       update public.stations
          set treasury = treasury + row.amount, updated_at = now()

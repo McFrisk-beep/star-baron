@@ -395,6 +395,7 @@ const Cloud = {
     return this._contractsRpc("app_station_expire_hauls", { p_system: system });
   },
   async stationHoldDeposit(system, deltas) {
+    // Draw-only — production is deposited by app_station_after_hour.
     return this._contractsRpc("app_station_hold_deposit", {
       p_system: system, p_deltas: deltas || {},
     });

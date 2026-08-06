@@ -48,7 +48,7 @@ alter table public.station_hauls enable row level security;
 
 alter table public.station_payouts drop constraint if exists station_payouts_reason_check;
 alter table public.station_payouts add constraint station_payouts_reason_check
-  check (reason in ('sale', 'tariff', 'haul_refund'));
+  check (reason in ('sale', 'tariff', 'haul_refund', 'refund_owed'));
 
 -- Hold helpers — stations.hold is { comm_id: qty }.
 create or replace function public._station_hold_get(p_hold jsonb, p_comm text)
@@ -755,6 +755,10 @@ begin
   loop
     if row.reason in ('sale', 'haul_refund') then
       perform app._credit_user(uid, row.amount, now_ms);
+    elsif row.reason = 'refund_owed' then
+      -- Seller shortfall from a hall buy refund — claw what we can; claim anyway
+      -- so a forever-broke wallet doesn't strand the row.
+      perform app._debit_user(uid, row.amount, now_ms);
     elsif row.reason = 'tariff' then
       update public.stations
          set treasury = treasury + row.amount, updated_at = now()
@@ -805,15 +809,14 @@ $$;
 
 grant execute on function public.app_station_settle() to authenticated;
 
--- Owner top-up / draw from stations.hold. Production hub output and capital
--- deliveries go through here so the Contract Office escrow has real units to
--- take — hold_bootstrap is one-shot and cancel/fail refunds only restore what
--- was already posted.
+-- Draw from stations.hold (capital deliveries). Production top-up is derived
+-- server-side in app_station_after_hour — this RPC only accepts negative
+-- deltas so a client can't mint cargo into an authoritative hold.
 create or replace function public.app_station_hold_deposit(p_system text, p_deltas jsonb)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, app
+set search_path = public, app, market
 as $$
 declare
   uid    uuid := auth.uid();
@@ -823,6 +826,9 @@ declare
   delta  int;
   have   int;
   next_h jsonb;
+  raw    int;
+  comm   record;
+  nkeys  int := 0;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
   if p_system is null or length(p_system) > 40 then
@@ -840,25 +846,33 @@ begin
   next_h := coalesce(st.hold, '{}'::jsonb);
   for k, v in select key, value from jsonb_each_text(p_deltas)
   loop
+    nkeys := nkeys + 1;
+    if nkeys > 12 then
+      return jsonb_build_object('ok', false, 'error', 'Bad hold delta.');
+    end if;
     if k is null or length(k) > 40 then
       return jsonb_build_object('ok', false, 'error', 'Unknown commodity.');
     end if;
+    select * into comm from market.commodity(left(k, 40));
+    if comm.id is null or coalesce(comm.craft_only, false) then
+      return jsonb_build_object('ok', false, 'error', 'Unknown commodity.');
+    end if;
     begin
-      delta := greatest(-500, least(500, coalesce(v::int, 0)));
+      raw := v::int;
     exception when others then
       return jsonb_build_object('ok', false, 'error', 'Bad hold delta.');
     end;
-    if delta = 0 then continue; end if;
-    if delta > 0 then
-      next_h := public._station_hold_add(next_h, k, delta);
-    else
-      have := public._station_hold_get(next_h, k);
-      if have < -delta then
-        return jsonb_build_object('ok', false, 'error',
-          format('Only %s in station hold.', have));
-      end if;
-      next_h := public._station_hold_take(next_h, k, -delta);
+    -- Draw-only: reject deposits and out-of-range takes (no silent clamp).
+    if raw >= 0 or raw < -500 then
+      return jsonb_build_object('ok', false, 'error', 'Bad hold delta.');
     end if;
+    delta := raw;
+    have := public._station_hold_get(next_h, comm.id);
+    if have < -delta then
+      return jsonb_build_object('ok', false, 'error',
+        format('Only %s in station hold.', have));
+    end if;
+    next_h := public._station_hold_take(next_h, comm.id, -delta);
   end loop;
 
   update public.stations set hold = next_h, updated_at = now()

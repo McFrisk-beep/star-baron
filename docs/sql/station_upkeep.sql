@@ -1,12 +1,15 @@
 -- Station standing + upkeep (docs/STATIONS.md §14.1) — phase D2
--- Requires: station_treasury.sql (treasury, app._credit_user, app._lock_state).
+-- Requires: station_treasury.sql (treasury, app._credit_user, app._lock_state),
+--           station_bays.sql (_station_bay_count), station_contracts.sql
+--           (_station_hold_add — production deposits into hold here).
 -- Safe to re-run (create or replace / if not exists).
 --
 -- Phase D0 made treasury authoritative; standing and upkeep were still client-side.
 -- This paste moves the hourly standing/upkeep cycle server-side for published
 -- stations: the owner reports delivered units; the server applies standing
--- deltas, debits treasury or owner credits for upkeep, and credits customs
--- subsidies. Revolt rolls stay client-side for now.
+-- deltas, debits treasury or owner credits for upkeep, credits customs
+-- subsidies, and deposits baseline Production Hub output into stations.hold.
+-- Revolt rolls stay client-side for now.
 
 -- ---------------------------------------------------------------------------
 -- Tier / upkeep helpers — mirror js/data.js STATION_TIERS + STATIONCFG.
@@ -80,15 +83,25 @@ returns int language sql immutable as $$
     and not coalesce((b->>'npc')::boolean, false);
 $$;
 
+-- Hub total yield (mirrors STATIONCFG.prodHub). Per-bay = yield / bay_count.
+create or replace function public._station_hub_yield(p_hub int)
+returns int language sql immutable as $$
+  select case greatest(0, least(5, coalesce(p_hub, 0)))
+    when 1 then 60 when 2 then 140 when 3 then 260 when 4 then 420 when 5 then 640
+    else 0 end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- After stock hour: standing + upkeep for the caller's published stations.
 -- p_reports: [{ "system_id": "...", "delivered": 40, "expected": 42 }, ...]
+-- Also deposits baseline Production Hub output into stations.hold so the
+-- Contract Office escrow grows without a client-trusted deposit RPC.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_after_hour(p_reports jsonb)
 returns jsonb
 language plpgsql
 security definer
-set search_path = public, app
+set search_path = public, app, market
 as $$
 declare
   uid       uuid := auth.uid();
@@ -105,10 +118,16 @@ declare
   hub       int;
   staffed   int;
   bay_n     int;
+  bay_cap   int;
   staff_fac numeric;
   paid      boolean;
   synced    jsonb;
   tick_at   timestamptz;
+  produced  int;
+  per_bay   numeric;
+  strike    boolean;
+  comm      record;
+  next_h    jsonb;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
   if jsonb_typeof(coalesce(p_reports, 'null'::jsonb)) <> 'array' then
@@ -140,6 +159,10 @@ begin
     if st.upkeep_paid_through is not null and st.upkeep_paid_through >= tick_at then
       continue;
     end if;
+
+    -- Strike uses standing *before* this hour's delivery deltas (client
+    -- produces in npcProduceHour before afterStockHour updates standing).
+    strike := coalesce(st.standing, 60) < 20;
 
     standing := coalesce(st.standing, 60);
     if delivered >= expected then standing := standing + 4;
@@ -176,8 +199,25 @@ begin
 
     standing := greatest(0, least(100, standing));
 
+    -- Baseline Production Hub output → hold (jack yield; no client quantity).
+    next_h := coalesce(st.hold, '{}'::jsonb);
+    produced := 0;
+    if hub > 0 and staffed > 0 and coalesce(nullif(trim(st.prod_comm), ''), '') <> '' then
+      select * into comm from market.commodity(left(st.prod_comm, 40));
+      if comm.id is not null and not coalesce(comm.craft_only, false) then
+        bay_cap := greatest(1, public._station_bay_count(st.modules));
+        per_bay := public._station_hub_yield(hub)::numeric / bay_cap;
+        produced := greatest(0, floor(per_bay * staffed));
+        if strike then produced := floor(produced / 2); end if;
+        if produced > 0 then
+          next_h := public._station_hold_add(next_h, comm.id, produced);
+        end if;
+      end if;
+    end if;
+
     update public.stations set
       standing = standing,
+      hold = next_h,
       upkeep_paid_through = tick_at,
       updated_at = now()
     where system_id = sid;
@@ -189,7 +229,8 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
            'system_id', system_id,
            'treasury', floor(treasury),
-           'standing', round(standing))), '[]'::jsonb)
+           'standing', round(standing),
+           'hold', hold)), '[]'::jsonb)
     into synced
     from public.stations
    where owner_id = uid and status in ('owned', 'refit');

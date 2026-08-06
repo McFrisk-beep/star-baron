@@ -515,6 +515,7 @@ const Stations = {
         credits += amt;
         if (st) this._ledger(st, amt, "hall_payout", this._txt(p.note, 48));
       }
+      // refund_owed is a seller debit — already applied server-side; skip local credit.
     }
     for (const row of Array.isArray(res.items) ? res.items : []) {
       const back = this._ingestBought(row);
@@ -2573,7 +2574,6 @@ const Stations = {
     const taxBps = Util.clamp(st.leaseTaxBps | 0, 0, 4000);
     let total = 0;
     let ownerStaffed = 0;
-    let holdIn = 0;
     const pid = this.playerId();
     const shared = this.bayShared(st.systemId);
     for (const bay of st.bays) {
@@ -2589,14 +2589,12 @@ const Stations = {
       if (isOwner) {
         ownerStaffed++;
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
-        holdIn += gross;
         continue;
       }
       const taxQty = Math.floor(gross * taxBps / 10000);
       const keep = gross - taxQty;
       if (taxQty > 0) {
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
-        holdIn += taxQty;
       }
       if (keep <= 0) continue;
       if (bay.npc) continue; // NPC keeps residual off-map
@@ -2618,15 +2616,9 @@ const Stations = {
     const staffFactor = Math.max(0.35, ownerStaffed / Math.max(1, st.bays.length));
     st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub
       * (1 + this.tierInfo(st.tier).rank * 0.15) * staffFactor);
-    // Shared Contract Office hold is server-authoritative — top it up so posts
-    // aren't stuck on the one-shot publish bootstrap.
-    if (holdIn > 0 && this.contractsShared(st.systemId) && this._contractsWritable()
-        && window.Cloud && Cloud.stationHoldDeposit) {
-      const deltas = { [st.prodComm]: holdIn };
-      void Cloud.stationHoldDeposit(st.systemId, deltas).then(res => {
-        if (res && res.ok) this._applyHoldFromServer(st, res.hold);
-      }).catch(e => console.warn("[Stations] hold deposit failed:", e));
-    }
+    // Shared hold grows in app_station_after_hour (server-derived baseline).
+    // Local hold still updates above for the Stations tab; after_hour sync
+    // replaces it. No client deposit — that was a mint vector.
     return total;
   },
 
