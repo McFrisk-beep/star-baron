@@ -1414,13 +1414,6 @@ const Stations = {
     return { ok: true, listing, tariff, paid: listing.price };
   },
 
-  // The shared-shelf buy. The server takes the listing off the shelf, splits
-  // the price at the owner's tariff, queues both sides and hands us the item —
-  // so the only thing left to do here is have somewhere to put it and pay.
-  // ponytail: the debit is ours because credits still are. A tab closed in the
-  // half-second between the RPC returning and delivery loses the item (nothing
-  // is charged for it). Both go away in phase D, when the debit moves inside
-  // the same transaction; an ack RPC before then would buy little.
   // The shared-shelf buy. The server takes the listing off the shelf, debits
   // the buyer's wallet, splits the tariff into the station treasury, pays (or
   // queues) the seller, and hands us the item.
@@ -2717,7 +2710,7 @@ const Stations = {
     return this.auctions[systemId] || null;
   },
 
-  openAuction(systemId, bid) {
+  async openAuction(systemId, bid) {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     if (this.ownerHeld(st)) return { ok: false, msg: "Already owned." };
@@ -2737,7 +2730,8 @@ const Stations = {
     bid = Math.floor(+bid || min);
     if (bid < min) return { ok: false, msg: `Opening bid is ${Util.credits(min)}.` };
     if (this.auctionsShared()) {
-      return Cloud.stationAuctionOpen(systemId, bid).then(res => {
+      try {
+        const res = await Cloud.stationAuctionOpen(systemId, bid);
         if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Couldn't open auction." };
         const auc = this._ingestAuction({
           system_id: systemId,
@@ -2750,10 +2744,10 @@ const Stations = {
         if (window.Game) Game.requestSave();
         if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "good");
         return { ok: true, auction: auc };
-      }).catch(e => {
+      } catch (e) {
         console.warn("[Stations] auction open failed:", e);
         return { ok: false, msg: "Couldn't reach the auction ledger." };
-      });
+      }
     }
     const s = Game.state;
     const escrowed = this.escrowTotal(pid);
@@ -2778,7 +2772,7 @@ const Stations = {
     return { ok: true, auction: this.auctions[systemId] };
   },
 
-  bid(systemId, amount) {
+  async bid(systemId, amount) {
     const auc = this.getAuction(systemId);
     if (!auc || auc.status !== "open") return { ok: false, msg: "No open auction." };
     const st = this.get(systemId);
@@ -2792,7 +2786,8 @@ const Stations = {
     const min = auc.highBid + STATIONCFG.minBidIncrement;
     if (amount < min) return { ok: false, msg: `Bid at least ${Util.credits(min)}.` };
     if (this.auctionsShared()) {
-      return Cloud.stationBid(systemId, amount).then(res => {
+      try {
+        const res = await Cloud.stationBid(systemId, amount);
         if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Bid refused." };
         auc.highBid = Math.floor(+res.high_bid || amount);
         auc.highBidder = me || pid;
@@ -2801,10 +2796,10 @@ const Stations = {
         if (window.Economy) Economy.refreshNetWorth();
         if (window.Game) Game.requestSave();
         return { ok: true, auction: auc };
-      }).catch(e => {
+      } catch (e) {
         console.warn("[Stations] bid failed:", e);
         return { ok: false, msg: "Couldn't reach the auction ledger." };
-      });
+      }
     }
     const s = Game.state;
     // If we're already high bidder, only need the delta escrowed.

@@ -57,9 +57,13 @@ assert.ok(!Galaxy.list.some(s => !s.capital && / (Station|Spire|Platform)$/.test
 assert.strictEqual(Stations.tierInfo("Anchorage").power + STATIONCFG.reactor[4].power, 25,
   "Anchorage + Reactor V = 25 power");
 
+// openAuction / bid / leaseBay / vacateBay / deliver are async. Everything from
+// here down runs in one async body so awaits stay valid under CJS.
+void (async () => {
+
 const openMin = Stations.openingBid(target);
 const before = ctx.Game.state.credits;
-const r0 = Stations.openAuction(target.systemId, openMin);
+const r0 = await Stations.openAuction(target.systemId, openMin);
 assert.ok(r0.ok, r0.msg);
 assert.strictEqual(ctx.Game.state.credits, before - openMin, "bid escrowed");
 assert.ok(Stations.escrowTotal() === openMin, "escrow tracked");
@@ -69,7 +73,7 @@ assert.ok(Economy.netWorth() >= before - 1, "escrow counts toward net worth");
 const auc = Stations.getAuction(target.systemId);
 auc.closesAt = T + 10 * 60 * 1000; // 10 min left
 const raise = openMin + STATIONCFG.minBidIncrement;
-const r1 = Stations.bid(target.systemId, raise);
+const r1 = await Stations.bid(target.systemId, raise);
 assert.ok(r1.ok, r1.msg);
 assert.ok(auc.closesAt >= T + STATIONCFG.antiSnipeMs - 1, "anti-snipe extended");
 
@@ -112,10 +116,6 @@ assert.ok(made > 0 && (target.hold[pool[0].id] | 0) === made, "owner bay output 
 const sec = Galaxy.sector(target.sectorId);
 ctx.Game.state.currentSystem = sec.capital;
 const qty = target.hold[pool[0].id];
-
-// leaseBay / vacateBay / deliver are async (shared-floor RPCs). Everything from
-// here down runs in one async body — hall + bay checks await the same way.
-void (async () => {
 
 const del = await Stations.deliver(target.systemId, pool[0].id, qty);
 assert.ok(del.ok, del.msg);
@@ -199,7 +199,7 @@ assert.ok(blocked || Stations.powerFree(target) >= 0, "power budget enforced");
 // Cap: Baron can only own 1
 const other = Stations.list().find(st => st.systemId !== target.systemId);
 ctx.Game.state.credits = 5_000_000;
-const r2 = Stations.openAuction(other.systemId, Stations.openingBid(other));
+const r2 = await Stations.openAuction(other.systemId, Stations.openingBid(other));
 assert.ok(!r2.ok, "cap blocks opening a second auction while owning 1");
 
 // ---- Exchange Hall (§9) ---------------------------------------------------
@@ -430,7 +430,7 @@ assert.ok(!svcHub.ok && /refit/i.test(svcHub.reason), "service chip reads refit,
 assert.strictEqual(Stations._playerProduce(target, 7), 0, "no production during refit");
 
 // Nobody can auction a station out from under a refitting owner.
-const grab = Stations.openAuction(target.systemId, Stations.openingBid(target));
+const grab = await Stations.openAuction(target.systemId, Stations.openingBid(target));
 assert.ok(!grab.ok, "refit station is not auctionable");
 
 // Owner actions that must keep working while offline.
@@ -488,7 +488,7 @@ assert.ok(/held by/.test(Stations.holderTag(heldSt)), `holder tag, got "${Statio
 assert.strictEqual(Stations.holderTag(target), "yours", "own station still reads as yours");
 
 // ...and can't be auctioned out from under them.
-const poach = Stations.openAuction(heldSt.systemId, Stations.openingBid(heldSt));
+const poach = await Stations.openAuction(heldSt.systemId, Stations.openingBid(heldSt));
 assert.ok(!poach.ok && /holds this station/.test(poach.msg), `claim blocked, got "${poach.msg}"`);
 
 // Phase A: their upgrades are real to us. view() is the station as it is.
