@@ -344,6 +344,54 @@ const Cloud = {
     return this._treasuryRpc("app_station_set_policy", { p_system: system, p_policy: policy || {} });
   },
 
+  // Cross-player Contract Office (docs/sql/station_contracts.sql).
+  contractsMissing: false,
+  async _contractsRpc(name, args) {
+    if (this.contractsMissing) return { ok: false, error: "Station contracts not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.contractsMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_contracts.sql");
+        return { ok: false, error: "Station contracts not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  contractsReady() { return this.enabled && !this.contractsMissing && this.signedIn(); },
+  async stationHauls(systems) {
+    if (!this.enabled || !this.client || this.contractsMissing) return null;
+    const list = (systems || []).filter(Boolean).slice(0, 20);
+    if (!list.length) return [];
+    const { data, error } = await this.client.rpc("app_station_hauls", { p_systems: list });
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this.contractsMissing = true;
+        console.warn("[Cloud] app_station_hauls missing — run docs/sql/station_contracts.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  async stationPostHaul(system, commId, qty, rate) {
+    return this._contractsRpc("app_station_post_haul", {
+      p_system: system, p_comm_id: commId, p_qty: qty | 0, p_rate: rate | 0,
+    });
+  },
+  async stationCancelHaul(haulId) {
+    return this._contractsRpc("app_station_cancel_haul", { p_haul_id: haulId });
+  },
+  async stationClaimHaul(haulId) {
+    return this._contractsRpc("app_station_claim_haul", { p_haul_id: haulId });
+  },
+  async stationSettleHaul(haulId, outcome) {
+    return this._contractsRpc("app_station_settle_haul", { p_haul_id: haulId, p_outcome: outcome });
+  },
+  async stationExpireHauls(system) {
+    return this._contractsRpc("app_station_expire_hauls", { p_system: system });
+  },
+
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

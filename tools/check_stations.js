@@ -279,7 +279,7 @@ const haulComm = pool[0].id;
 target.hold[haulComm] = 100;
 const stockCapBefore = Stock.available(target.sectorId, haulComm);
 const credPost = ctx.Game.state.credits;
-const posted = Stations.postHaul(target.systemId, haulComm, 40, 50);
+const posted = await Stations.postHaul(target.systemId, haulComm, 40, 50);
 assert.ok(posted.ok, posted.msg);
 assert.strictEqual(target.hold[haulComm], 60, "post reserves hold goods");
 const escrow = 40 * 50;
@@ -288,19 +288,16 @@ assert.strictEqual(ctx.Game.state.credits, credPost - escrow - fee, "escrow + fe
 assert.ok(Stations.contractEscrowValue() >= escrow, "haul escrow in net worth");
 assert.ok(Stations.boardContracts().some(c => c.id === posted.contract.id), "board lists haul");
 
-// Owner cannot fly own haul
-const selfFly = Stations.claimHaulForLaunch(posted.contract.id);
+const selfFly = await Stations.claimHaulForLaunch(posted.contract.id);
 assert.ok(!selfFly.ok, "owner blocked from own haul");
 
-// Cancel refunds
-assert.ok(Stations.cancelHaul(target.systemId, posted.contract.id).ok);
+assert.ok((await Stations.cancelHaul(target.systemId, posted.contract.id)).ok);
 assert.strictEqual(target.hold[haulComm], 100, "cancel restores hold");
 assert.strictEqual(ctx.Game.state.credits, credPost - fee, "cancel refunds escrow not fee");
 
-// NPC fill delivers to sector stock
 target.hold[haulComm] = 80;
 ctx.Game.state.credits = 5_000_000;
-const posted2 = Stations.postHaul(target.systemId, haulComm, 20, 30);
+const posted2 = await Stations.postHaul(target.systemId, haulComm, 20, 30);
 assert.ok(posted2.ok, posted2.msg);
 posted2.contract.createdAt = T - (STATIONCFG.contractNpcFillAfterMs + 1000);
 const origFill = STATIONCFG.contractNpcFillChance;
@@ -311,22 +308,20 @@ assert.strictEqual(npcFilled.length, 1, "NPC fills haul");
 assert.ok(Stock.available(target.sectorId, haulComm) >= stockCapBefore + 20, "NPC haul restocks sector");
 assert.strictEqual(Stations.reliability(target), 1, "reliability 100% after fill");
 
-// Player settle success (mission path stub): goods → stock, no escrow refund
 target.hold[haulComm] = 40;
 ctx.Game.state.credits = 5_000_000;
-const posted3 = Stations.postHaul(target.systemId, haulComm, 15, 25);
+const posted3 = await Stations.postHaul(target.systemId, haulComm, 15, 25);
 assert.ok(posted3.ok, posted3.msg);
 posted3.contract.status = "active";
 const stockMid = Stock.available(target.sectorId, haulComm);
-const settle = Stations.settleHaul(posted3.contract.id, "success");
+const settle = await Stations.settleHaul(posted3.contract.id, "success");
 assert.ok(settle.ok, settle.msg);
 assert.ok(Stock.available(target.sectorId, haulComm) >= stockMid + 15, "mission success restocks");
 assert.ok(!(target.contracts || []).some(c => c.id === posted3.contract.id), "settled haul removed");
 
-// Expiry refunds + reliability hit
 target.hold[haulComm] = 50;
 ctx.Game.state.credits = 5_000_000;
-const posted4 = Stations.postHaul(target.systemId, haulComm, 10, 20);
+const posted4 = await Stations.postHaul(target.systemId, haulComm, 10, 20);
 assert.ok(posted4.ok, posted4.msg);
 posted4.contract.expiresAt = T - 1;
 const haulExp = Stations._expireHauls(target, T);
@@ -910,6 +905,169 @@ target.refitUntil = 0;
   assert.ok(!pubBay.bays.some(b => b.npc), "publish strips NPC slots on a shared floor");
   delete Stations.directory[target.systemId];
   Stations.remoteLeases = {};
+}
+
+// ---- shared Contract Office (docs/sql/station_contracts.sql) --------------
+// Phase D1: hauls are one board. Posting escrows hold server-side; bounty and
+// fees debit the wallet; claim/settle are exclusive across players.
+{
+  const iso = ms => new Date(ms).toISOString();
+  const commId = pool[0].id;
+  const haulId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+  const floor = {
+    hauls: [{
+      id: haulId, system_id: heldSt.systemId, owner_id: "acct-vex", owner: "Vex",
+      tier: heldSt.tier, comm_id: commId, qty: 30, rate: 40, escrow: 1200,
+      created_at: iso(T - 3600e3), expires_at: iso(T + 36e6), filled: 2, expired: 1,
+    }],
+    hold: { [commId]: 500 },
+    payouts: [],
+  };
+  vexRow.modules = { ...vexRow.modules, contract_office: 1 };
+  vexRow.contract_filled = 2;
+  vexRow.contract_expired = 1;
+
+  ctx.Cloud = {
+    enabled: true, hallMissing: false, treasuryMissing: false, contractsMissing: false,
+    baysMissing: false,
+    _user: { id: "acct-me" },
+    user() { return this._user; },
+    signedIn() { return !!this._user; },
+    contractsReady() { return this.enabled && !this.contractsMissing && this.signedIn(); },
+    treasuryReady() { return this.enabled && !this.treasuryMissing && this.signedIn(); },
+    hallReady() { return this.enabled && !this.hallMissing && this.signedIn(); },
+    baysReady() { return this.enabled && !this.baysMissing && this.signedIn(); },
+    async stationDirectory() {
+      return [{ ...vexRow, contract_filled: 2, contract_expired: 1 }];
+    },
+    async stationPublish(rows) {
+      return { ok: true, held: rows.length, conflicts: [], treasuries: [] };
+    },
+    async stationHall() { return []; },
+    async stationHauls(ids) {
+      return floor.hauls.filter(h => ids.includes(h.system_id) && !h._gone);
+    },
+    async stationClaimHaul(id) {
+      const h = floor.hauls.find(x => x.id === id);
+      if (!h || h._gone || h.owner_id === this._user.id)
+        return { ok: false, error: "Haul no longer available." };
+      h._status = "active";
+      h.taken_by = this._user.id;
+      return { ok: true, contract: {
+        id: h.id, commId: h.comm_id, qty: h.qty, rate: h.rate, escrow: h.escrow,
+        status: "active", ownerId: h.owner_id,
+        createdAt: Date.parse(h.created_at), expiresAt: Date.parse(h.expires_at),
+      }, systemId: h.system_id };
+    },
+    async stationSettleHaul(id, outcome) {
+      const h = floor.hauls.find(x => x.id === id);
+      if (!h || h._gone) return { ok: false, error: "Haul gone." };
+      if (outcome === "success") {
+        ctx.Game.state.credits += h.escrow;
+        h._gone = true;
+        vexRow.contract_filled = 3;
+        return { ok: true, outcome, credits: ctx.Game.state.credits,
+          contract_filled: 3, contract_expired: 1 };
+      }
+      return { ok: false, error: "Not your haul." };
+    },
+    async stationPostHaul(system, comm, qty, rate) {
+      if (system !== target.systemId) return { ok: false, error: "Not your station." };
+      const escrow = qty * rate;
+      const fee = Math.floor(escrow * 500 / 10000);
+      if (ctx.Game.state.credits < escrow + fee) return { ok: false, error: "Not enough credits." };
+      if ((floor.hold[comm] | 0) < qty) return { ok: false, error: "Only 0 in station hold." };
+      ctx.Game.state.credits -= escrow + fee;
+      floor.hold[comm] -= qty;
+      const id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+      floor.hauls.push({
+        id, system_id: system, owner_id: "acct-me", owner: "Me", tier: target.tier,
+        comm_id: comm, qty, rate, escrow,
+        created_at: iso(T), expires_at: iso(T + 36e6), filled: 0, expired: 0,
+      });
+      return { ok: true, id, fee, credits: ctx.Game.state.credits, hold: { ...floor.hold },
+        contract: { id, commId: comm, qty, rate, escrow, fee,
+          createdAt: T, expiresAt: T + 36e6 } };
+    },
+    async stationCancelHaul(id) {
+      const h = floor.hauls.find(x => x.id === id);
+      if (!h || h._gone || h.owner_id !== "acct-me") return { ok: false, error: "Posting gone." };
+      ctx.Game.state.credits += h.escrow;
+      floor.hold[h.comm_id] = (floor.hold[h.comm_id] | 0) + h.qty;
+      h._gone = true;
+      return { ok: true, credits: ctx.Game.state.credits, hold: { ...floor.hold } };
+    },
+    async stationExpireHauls() { return { ok: true, expired: 0 }; },
+    async stationSettle() {
+      return { ok: true, payouts: [], items: [], cargo: [], credits: ctx.Game.state.credits };
+    },
+  };
+
+  await Stations.refreshDirectory();
+  assert.ok(Stations.contractsShared(heldSt.systemId), "a published contract office is shared");
+  assert.ok(Stations.hasContractOffice(Stations.view(heldSt.systemId)), "remote module reads as installed");
+
+  await Stations.refreshHauls([heldSt.systemId]);
+  const board = Stations.boardContracts();
+  assert.ok(board.some(j => j.id === haulId), "Vex haul appears on the shared board");
+  assert.strictEqual(Stations.view(heldSt.systemId).contractStats.filled, 2, "reliability stats land");
+
+  const claimed = await Stations.claimHaulForLaunch(haulId);
+  assert.ok(claimed.ok, claimed.msg);
+  assert.ok(!Stations.boardContracts().some(j => j.id === haulId), "claimed haul leaves the board");
+  assert.ok(Stations.findHaul(haulId), "haul index kept until settle");
+
+  const cashBefore = ctx.Game.state.credits;
+  const stockBefore = Stock.available(heldSt.sectorId, commId);
+  const settled = await Stations.settleHaul(haulId, "success");
+  assert.ok(settled.ok, settled.msg);
+  assert.strictEqual(ctx.Game.state.credits, cashBefore + 1200, "hauler paid from server escrow");
+  assert.ok(Stock.available(heldSt.sectorId, commId) >= stockBefore + 30, "success restocks sector");
+  assert.strictEqual(Stations.get(heldSt.systemId).contractStats.filled, 3,
+    "filled stat bumps on the station record after settle");
+
+  // Owner post/cancel on our published station routes through the server.
+  target.modules.contract_office = 1;
+  target.hold = { [commId]: 80 };
+  floor.hold = { [commId]: 80 };
+  Stations.directory[target.systemId] = Stations._ingest({
+    system_id: target.systemId, owner_id: "acct-me", display: "Me", tier: target.tier,
+    status: "owned", modules: { contract_office: 1 }, reactor_level: 0,
+    lease_tax_bps: 1000, sale_tariff_bps: 500, scrutiny: 10, standing: 60,
+    contract_filled: 0, contract_expired: 0,
+  });
+  assert.ok(Stations.contractsShared(target.systemId), "own published station shares contracts");
+  const cashPost = ctx.Game.state.credits;
+  const posted = await Stations.postHaul(target.systemId, commId, 20, 25);
+  assert.ok(posted.ok, posted.msg);
+  assert.strictEqual(target.hold[commId], 60, "post debits hold via server sync");
+  assert.ok(Stations.boardContracts().some(j => j.id === posted.contract.id), "our haul is on the board");
+  const selfFly = await Stations.claimHaulForLaunch(posted.contract.id);
+  assert.ok(!selfFly.ok, "owner blocked from own haul");
+  const cancelled = await Stations.cancelHaul(target.systemId, posted.contract.id);
+  assert.ok(cancelled.ok);
+  assert.strictEqual(target.hold[commId], 80, "cancel restores hold");
+  assert.ok(ctx.Game.state.credits >= cashPost - Math.floor(20 * 25 * 500 / 10000),
+    "cancel refunds bounty (fee stays spent)");
+
+  // NPC fill stands down on a shared floor.
+  const npcPost = await Stations.postHaul(target.systemId, commId, 10, 20);
+  assert.ok(npcPost.ok, npcPost.msg);
+  const origChance = STATIONCFG.contractNpcFillChance;
+  STATIONCFG.contractNpcFillChance = 1;
+  assert.strictEqual(Stations._npcFillHauls(target, 3).length, 0, "no NPC fill on shared contracts");
+  STATIONCFG.contractNpcFillChance = origChance;
+  await Stations.cancelHaul(target.systemId, npcPost.contract.id);
+  delete Stations.directory[target.systemId];
+
+  ctx.Cloud.contractsMissing = true;
+  assert.ok(!Stations.contractsShared(heldSt.systemId), "missing SQL → local-only contracts");
+  ctx.Cloud.contractsMissing = false;
+
+  ctx.Cloud._user = null;
+  assert.ok(!Stations.boardContracts().length || !Stations._contractsWritable(),
+    "signed out: no writable contract RPCs");
+  assert.ok(!(await Stations.claimHaulForLaunch(haulId)).ok, "signed out can't claim");
 }
 
 console.log("OK check_stations");

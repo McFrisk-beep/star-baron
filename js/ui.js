@@ -3035,19 +3035,19 @@ const UI = {
   },
 
   _wireContractOfficePanel(body, st) {
-    body.querySelector("#st-haul-post")?.addEventListener("click", () => {
+    body.querySelector("#st-haul-post")?.addEventListener("click", async () => {
       const commId = body.querySelector("#st-haul-comm")?.value;
       const qty = +body.querySelector("#st-haul-qty")?.value || 0;
       const rate = +body.querySelector("#st-haul-rate")?.value || 0;
-      const r = Stations.postHaul(st.systemId, commId, qty, rate);
+      const r = await Stations.postHaul(st.systemId, commId, qty, rate);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Haul posted — escrowed ${Util.credits(r.contract.escrow)} (+${Util.credits(r.fee)} fee).`, "good");
       this.flashCredits(); this.renderStations(); this.updateHeader();
       if (this.page === "bazaar") this.renderBazaar();
     });
     body.querySelectorAll("[data-st-haul-cancel]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
+      btn.onclick = async () => {
+        const r = await Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast("Haul cancelled — goods and bounty returned.", "info");
         this.flashCredits(); this.renderStations(); this.updateHeader();

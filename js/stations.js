@@ -167,6 +167,7 @@ const Stations = {
       standing: rem.standing,
       prodComm: rem.prodComm,
       refitUntil: rem.refitUntil,
+      contractStats: rem.contractStats,
       hall: rem.hall,
       bays: rem.bays,
       // Not published: treasury, hold, contracts, impound. Ours are empty and
@@ -244,6 +245,10 @@ const Stations = {
       refitUntil: r.refit_until ? Date.parse(r.refit_until) || 0 : 0,
       hall,
       bays,
+      contractStats: {
+        filled: this._num(r.contract_filled, 0, 1e6, 0) | 0,
+        expired: this._num(r.contract_expired, 0, 1e6, 0) | 0,
+      },
     };
   },
 
@@ -308,6 +313,7 @@ const Stations = {
       refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
       // One-time bootstrap when the server treasury is still zero (phase D0).
       treasury_bootstrap: this.treasuryShared(st.systemId) ? Math.max(0, Math.floor(+st.treasury || 0)) : 0,
+      hold_bootstrap: this.contractsShared(st.systemId) ? (st.hold || {}) : {},
       // Shelf and bay occupancy — what makes a visited station look inhabited.
       // Owner-occupied bays rewrite "player" → account uuid so the shared column
       // names us the same way a remote lease does. Publish merges foreign
@@ -1470,7 +1476,95 @@ const Stations = {
     return (stats.filled | 0) / tot;
   },
 
+  // ---- shared Contract Office (docs/sql/station_contracts.sql) ------------
+  haulRemote: {},   // systemId -> [contract]
+  haulIndex: {},    // id -> { st, contract }
+
+  contractsShared(systemId) {
+    return !!(this.directory[systemId] && window.Cloud && Cloud.enabled && !Cloud.contractsMissing);
+  },
+  _contractsWritable() { return !!(window.Cloud && Cloud.contractsReady && Cloud.contractsReady()); },
+
+  haulSystems() {
+    const ids = this.ownedBy().map(st => st.systemId);
+    for (const sid of Object.keys(this.directory)) {
+      if (this.contractsShared(sid)) ids.push(sid);
+    }
+    return [...new Set(ids)].filter(id => this.contractsShared(id));
+  },
+
+  _ingestHaulRow(r) {
+    const sid = this._txt(r.system_id, 40);
+    const st = sid && this.get(sid);
+    if (!st) return null;
+    const contract = {
+      id: this._txt(r.id, 64),
+      commId: this._txt(r.comm_id, 40),
+      qty: this._num(r.qty, 1, 500, 0) | 0,
+      rate: this._num(r.rate, 5, 1e9, 0) | 0,
+      escrow: this._num(r.escrow, 0, 1e12, 0) | 0,
+      status: "open",
+      ownerId: String(r.owner_id || ""),
+      createdAt: r.created_at ? Date.parse(r.created_at) || 0 : 0,
+      expiresAt: r.expires_at ? Date.parse(r.expires_at) || 0 : 0,
+      systemId: sid,
+      shared: true,
+    };
+    if (!contract.id || !COMMODITIES.some(c => c.id === contract.commId)) return null;
+    if (r.filled != null || r.expired != null) {
+      st.contractStats = {
+        filled: this._num(r.filled, 0, 1e6, 0) | 0,
+        expired: this._num(r.expired, 0, 1e6, 0) | 0,
+      };
+    }
+    return { st, contract };
+  },
+
+  async refreshHauls(systemIds) {
+    if (!(window.Cloud && Cloud.stationHauls)) return this.haulRemote;
+    const ids = [...new Set(systemIds || [])].filter(id => this.contractsShared(id));
+    if (!ids.length) return this.haulRemote;
+    try {
+      const rows = await Cloud.stationHauls(ids);
+      if (!rows) return this.haulRemote;
+      for (const id of ids) this.haulRemote[id] = [];
+      for (const key of Object.keys(this.haulIndex)) {
+        const hit = this.haulIndex[key];
+        if (hit && ids.includes(hit.contract.systemId)) delete this.haulIndex[key];
+      }
+      for (const r of rows) {
+        const hit = this._ingestHaulRow(r);
+        if (!hit) continue;
+        (this.haulRemote[hit.contract.systemId] = this.haulRemote[hit.contract.systemId] || [])
+          .push(hit.contract);
+        this.haulIndex[hit.contract.id] = hit;
+      }
+    } catch (e) {
+      console.warn("[Stations] haul fetch failed:", e);
+    }
+    return this.haulRemote;
+  },
+
+  async syncContracts() {
+    if (!this._contractsWritable()) return this.refreshHauls([]);
+    for (const st of this.ownedBy()) {
+      if (this.contractsShared(st.systemId)) void Cloud.stationExpireHauls(st.systemId);
+    }
+    return this.refreshHauls(this.haulSystems());
+  },
+
+  _applyHoldFromServer(st, hold) {
+    if (!st || !hold || typeof hold !== "object") return;
+    const next = {};
+    for (const [k, v] of Object.entries(hold)) {
+      if (COMMODITIES.some(c => c.id === k)) next[k] = Math.max(0, Math.floor(+v || 0));
+    }
+    st.hold = next;
+  },
+
   findHaul(contractId) {
+    const hit = this.haulIndex[contractId];
+    if (hit) return hit;
     for (const st of this.list()) {
       const c = (st.contracts || []).find(x => x.id === contractId);
       if (c) return { st, contract: c };
@@ -1518,21 +1612,31 @@ const Stations = {
   },
 
   boardContracts(now = Date.now()) {
-    const out = [];
+    const out = [], seen = new Set();
+    for (const rows of Object.values(this.haulRemote)) {
+      for (const c of rows) {
+        if (!c || c.status !== "open" || now >= c.expiresAt || seen.has(c.id)) continue;
+        const st = this.get(c.systemId);
+        if (!st || !this.hasContractOffice(this.view(c.systemId))) continue;
+        seen.add(c.id);
+        out.push(this._toBoardJob(st, c));
+      }
+    }
     for (const st of this.list()) {
+      if (this.contractsShared(st.systemId)) continue;
       if (!this.hasContractOffice(st)) continue;
       for (const c of st.contracts || []) {
-        if (c.status !== "open") continue;
-        if (now >= c.expiresAt) continue;
+        if (c.status !== "open" || now >= c.expiresAt || seen.has(c.id)) continue;
+        seen.add(c.id);
         out.push(this._toBoardJob(st, c));
       }
     }
     return out;
   },
 
-  postHaul(systemId, commId, qty, rate) {
+  async postHaul(systemId, commId, qty, rate) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
+    if (!st || !this._mine(st) || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
     if (st.status === "refit")
       return { ok: false, msg: `Station is in refit — ${Util.duration(this.refitLeft(st))} left.` };
@@ -1544,6 +1648,36 @@ const Stations = {
     if (qty < 1) return { ok: false, msg: "Need at least 1 unit." };
     if (rate < (STATIONCFG.contractMinRate || 5))
       return { ok: false, msg: `Rate at least ${STATIONCFG.contractMinRate}c/unit.` };
+    if (this.contractsShared(systemId) && this._contractsWritable()) {
+      try {
+        const res = await Cloud.stationPostHaul(systemId, commId, qty, rate);
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Posting refused." };
+        if (res.credits != null) Game.state.credits = +res.credits;
+        this._applyHoldFromServer(st, res.hold);
+        const c = res.contract || {};
+        const contract = {
+          id: this._txt(c.id, 64),
+          commId, qty, rate,
+          escrow: this._num(c.escrow, 0, 1e12, qty * rate) | 0,
+          fee: this._num(res.fee, 0, 1e12, 0) | 0,
+          ownerId: this.playerId(),
+          status: "open",
+          createdAt: this._num(c.createdAt, 0, 8.64e15, Date.now()),
+          expiresAt: this._num(c.expiresAt, 0, 8.64e15, Date.now() + (STATIONCFG.contractListMs || 0)),
+          systemId,
+          shared: true,
+        };
+        this.haulIndex[contract.id] = { st, contract };
+        (this.haulRemote[systemId] = this.haulRemote[systemId] || []).push(contract);
+        this._ledger(st, -contract.escrow, "haul_post", `${qty}× ${commId} @ ${rate}`);
+        if (contract.fee > 0) this._ledger(st, -contract.fee, "haul_fee", "faction posting fee");
+        if (window.Game) Game.requestSave();
+        return { ok: true, contract, fee: contract.fee };
+      } catch (e) {
+        console.warn("[Stations] post haul failed:", e);
+        return { ok: false, msg: "Couldn't reach the contract board." };
+      }
+    }
     const have = st.hold[commId] | 0;
     if (qty > have) return { ok: false, msg: `Only ${have} in station hold.` };
     const escrow = qty * rate;
@@ -1557,7 +1691,7 @@ const Stations = {
     const contract = {
       id: "sc" + (++s.seq),
       commId, qty, rate, escrow, fee,
-      ownerId: this.playerId(), // station owner at post — survives revolt for refunds
+      ownerId: this.playerId(),
       status: "open",
       createdAt: now,
       expiresAt: now + (STATIONCFG.contractListMs || 36 * 3600 * 1000),
@@ -1570,15 +1704,137 @@ const Stations = {
     return { ok: true, contract, fee };
   },
 
-  cancelHaul(systemId, contractId) {
+  async cancelHaul(systemId, contractId) {
+    const hit = this.haulIndex[contractId];
+    if (hit && hit.contract.shared) {
+      if (!this._contractsWritable()) return { ok: false, msg: "Sign in to manage shared hauls." };
+      try {
+        const res = await Cloud.stationCancelHaul(contractId);
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Posting gone." };
+        const st = hit.st;
+        if (res.credits != null) Game.state.credits = +res.credits;
+        this._applyHoldFromServer(st, res.hold);
+        this._dropHaul(contractId, systemId);
+        this._ledger(st, hit.contract.escrow | 0, "haul_refund", contractId);
+        if (window.Game) Game.requestSave();
+        return { ok: true };
+      } catch (e) {
+        console.warn("[Stations] cancel haul failed:", e);
+        return { ok: false, msg: "Couldn't reach the contract board." };
+      }
+    }
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     const idx = (st.contracts || []).findIndex(c => c.id === contractId);
     if (idx < 0) return { ok: false, msg: "Posting gone." };
     const c = st.contracts[idx];
     if (c.status !== "open") return { ok: false, msg: "Already in flight." };
     st.contracts.splice(idx, 1);
     this._refundHaul(st, c);
+    if (window.Game) Game.requestSave();
+    return { ok: true };
+  },
+
+  _dropHaulBoard(contractId, systemId) {
+    const rows = this.haulRemote[systemId];
+    if (rows) this.haulRemote[systemId] = rows.filter(c => c.id !== contractId);
+  },
+
+  _dropHaul(contractId, systemId) {
+    delete this.haulIndex[contractId];
+    this._dropHaulBoard(contractId, systemId);
+  },
+
+  async claimHaulForLaunch(contractId) {
+    const found = this.findHaul(contractId);
+    if (!found || found.contract.status !== "open")
+      return { ok: false, msg: "Haul no longer available." };
+    const { st, contract } = found;
+    if (!this.hasContractOffice(this.view(st.systemId)) && st.status !== "owned")
+      return { ok: false, msg: "Haul no longer available." };
+    if (this._mine(st))
+      return { ok: false, msg: "Can't fly your own station haul." };
+    if (contract.shared && this._contractsWritable()) {
+      try {
+        const res = await Cloud.stationClaimHaul(contractId);
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Haul no longer available." };
+        contract.status = "active";
+        contract.takenAt = Date.now();
+        contract.takenBy = this.playerId();
+        this.haulIndex[contractId] = { st, contract };
+        this._dropHaulBoard(contractId, st.systemId);
+        const job = this._toBoardJob(st, contract);
+        job.status = "taken";
+        job.haulShared = true;
+        if (window.Game) Game.requestSave();
+        return { ok: true, contract: job };
+      } catch (e) {
+        console.warn("[Stations] claim haul failed:", e);
+        return { ok: false, msg: "Couldn't reach the contract board." };
+      }
+    }
+    contract.status = "active";
+    contract.takenAt = Date.now();
+    contract.takenBy = this.playerId();
+    const job = this._toBoardJob(st, contract);
+    job.status = "taken";
+    if (window.Game) Game.requestSave();
+    return { ok: true, contract: job };
+  },
+
+  async settleHaul(contractId, outcome) {
+    const found = this.findHaul(contractId);
+    if (!found) return { ok: false, msg: "Haul gone." };
+    const { st, contract } = found;
+    if (contract.status !== "active" && contract.status !== "open")
+      return { ok: false, msg: "Already settled." };
+    if (contract.shared && this._contractsWritable()) {
+      try {
+        const res = await Cloud.stationSettleHaul(contractId, outcome);
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Settle refused." };
+        if (res.credits != null) Game.state.credits = +res.credits;
+        if (this._mine(st)) this._applyHoldFromServer(st, res.hold);
+        if (res.contract_filled != null || res.contract_expired != null) {
+          st.contractStats = {
+            filled: Math.max(0, Math.floor(+res.contract_filled || 0)),
+            expired: Math.max(0, Math.floor(+res.contract_expired || 0)),
+          };
+        }
+        if (outcome === "success") {
+          Stock.put(st.sectorId, contract.commId, contract.qty);
+          if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
+        }
+        this._dropHaul(contractId, st.systemId);
+        const idx = (st.contracts || []).indexOf(contract);
+        if (idx >= 0) st.contracts.splice(idx, 1);
+        if (window.Economy) Economy.refreshNetWorth();
+        if (window.Game) Game.requestSave();
+        return { ok: true, credits: res.credits };
+      } catch (e) {
+        console.warn("[Stations] settle haul failed:", e);
+        return { ok: false, msg: "Couldn't reach the contract board." };
+      }
+    }
+    return this._settleHaulLocal(found, outcome);
+  },
+
+  _settleHaulLocal(found, outcome) {
+    const { st, contract } = found;
+    st.contractStats = st.contractStats || { filled: 0, expired: 0 };
+    const idx = (st.contracts || []).indexOf(contract);
+    if (outcome === "success") {
+      Stock.put(st.sectorId, contract.commId, contract.qty);
+      st.delivered = (st.delivered | 0) + (contract.qty | 0);
+      st.contractStats.filled = (st.contractStats.filled | 0) + 1;
+      this._ledger(st, 0, "haul_filled", `${contract.qty}× ${contract.commId}`);
+    } else if (outcome === "fail" || outcome === "abandon") {
+      this._refundHaul(st, contract);
+    } else if (outcome === "expire") {
+      this._refundHaul(st, contract);
+      st.contractStats.expired = (st.contractStats.expired | 0) + 1;
+    }
+    if (idx >= 0) st.contracts.splice(idx, 1);
+    if (window.Economy) Economy.refreshNetWorth();
     if (window.Game) Game.requestSave();
     return { ok: true };
   },
@@ -1592,55 +1848,15 @@ const Stations = {
       st.pendingPayouts = st.pendingPayouts || {};
       st.pendingPayouts[payTo] = (st.pendingPayouts[payTo] | 0) + (c.escrow | 0);
     }
-    // ponytail: if payTo is missing (legacy save), escrow is burned — better than pendingPayouts[null]
     this._ledger(st, c.escrow | 0, "haul_refund", c.id);
   },
 
-  claimHaulForLaunch(contractId) {
-    const found = this.findHaul(contractId);
-    if (!found || found.contract.status !== "open")
-      return { ok: false, msg: "Haul no longer available." };
-    const { st, contract } = found;
-    if (!this.hasContractOffice(st) && st.status !== "owned")
-      return { ok: false, msg: "Haul no longer available." };
-    if (st.ownerId === this.playerId())
-      return { ok: false, msg: "Can't fly your own station haul." };
-    contract.status = "active";
-    contract.takenAt = Date.now();
-    contract.takenBy = this.playerId();
-    const job = this._toBoardJob(st, contract);
-    job.status = "taken";
-    if (window.Game) Game.requestSave();
-    return { ok: true, contract: job };
-  },
-
-  // Mission success / fail / abandon → deliver goods or refund bounty.
-  settleHaul(contractId, outcome) {
-    const found = this.findHaul(contractId);
-    if (!found) return { ok: false, msg: "Haul gone." };
-    const { st, contract } = found;
-    if (contract.status !== "active" && contract.status !== "open") return { ok: false, msg: "Already settled." };
-    st.contractStats = st.contractStats || { filled: 0, expired: 0 };
-    const idx = st.contracts.indexOf(contract);
-    if (outcome === "success") {
-      Stock.put(st.sectorId, contract.commId, contract.qty);
-      st.delivered = (st.delivered | 0) + (contract.qty | 0);
-      st.contractStats.filled = (st.contractStats.filled | 0) + 1;
-      this._ledger(st, 0, "haul_filled", `${contract.qty}× ${contract.commId}`);
-      // Escrow already paid to hauler via Missions reward.
-    } else if (outcome === "fail" || outcome === "abandon") {
-      this._refundHaul(st, contract);
-    } else if (outcome === "expire") {
-      this._refundHaul(st, contract);
-      st.contractStats.expired = (st.contractStats.expired | 0) + 1;
-    }
-    if (idx >= 0) st.contracts.splice(idx, 1);
-    if (window.Economy) Economy.refreshNetWorth();
-    if (window.Game) Game.requestSave();
-    return { ok: true };
-  },
-
   _expireHauls(st, now = Date.now()) {
+    if (this.contractsShared(st.systemId)) {
+      if (this._contractsWritable() && this._mine(st)) void Cloud.stationExpireHauls(st.systemId)
+        .then(() => this.refreshHauls([st.systemId]));
+      return [];
+    }
     if (!Array.isArray(st.contracts) || !st.contracts.length) return [];
     const kept = [], expired = [];
     for (const c of st.contracts) {
@@ -1656,7 +1872,7 @@ const Stations = {
   },
 
   _npcFillHauls(st, hourIndex) {
-    if (!Array.isArray(st.contracts) || !st.contracts.length) return [];
+    if (this.contractsShared(st.systemId)) return [];
     const chance = STATIONCFG.contractNpcFillChance || 0.08;
     const after = STATIONCFG.contractNpcFillAfterMs || 4 * 3600 * 1000;
     const now = Date.now();
@@ -1726,6 +1942,19 @@ const Stations = {
       if (!st || !this._mine(st)) continue;
       if (row.treasury != null) st.treasury = Math.max(0, Math.floor(+row.treasury || 0));
       if (row.standing != null) st.standing = Util.clamp(+row.standing, 0, 100);
+      if (row.hold && typeof row.hold === "object") {
+        const hold = {};
+        for (const [k, v] of Object.entries(row.hold)) {
+          if (COMMODITIES.some(c => c.id === k)) hold[k] = Math.max(0, Math.floor(+v || 0));
+        }
+        st.hold = hold;
+      }
+      if (row.contract_filled != null || row.contract_expired != null) {
+        st.contractStats = {
+          filled: Math.max(0, Math.floor(+row.contract_filled || 0)),
+          expired: Math.max(0, Math.floor(+row.contract_expired || 0)),
+        };
+      }
     }
   },
 

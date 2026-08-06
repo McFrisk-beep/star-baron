@@ -877,17 +877,16 @@ const Bazaar = {
   // ---- contracts ----------------------------------------------------------
   // Claim a job at Launch time only (View Contract does not reserve it).
   // Accepts a board-open job or a legacy pendingContracts entry.
-  claimForLaunch(contract) {
+  async claimForLaunch(contract) {
     const s = this.s();
     const id = contract && contract.id;
     if (!id) return { ok: false, msg: "Invalid contract." };
     const pending = s.pendingContracts || [];
     const held = pending.find(c => c.id === id);
     if (held) return { ok: true, contract: held, fromPending: true };
-    // Station Contract Office hauls — claim on the station ledger, not bought-set.
     if ((contract && contract.source === "station") || (id && String(id).startsWith("sc"))) {
       if (!window.Stations) return { ok: false, msg: "Contract no longer available." };
-      const r = Stations.claimHaulForLaunch(id);
+      const r = await Stations.claimHaulForLaunch(id);
       if (!r.ok) return r;
       const b = this.bz();
       b.contracts = (b.contracts || []).filter(x => x.id !== id);
