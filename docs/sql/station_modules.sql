@@ -482,42 +482,5 @@ begin
 end;
 $$;
 
--- Refund buyer when a sold listing payload can't be delivered client-side.
-create or replace function public.app_station_buy_refund(p_listing_id text)
-returns jsonb
-language plpgsql
-security definer
-set search_path = public, app
-as $$
-declare
-  uid      uuid := auth.uid();
-  now_ms   bigint := app._now_ms();
-  l        public.station_listings%rowtype;
-  pstate   jsonb;
-  credits  double precision;
-begin
-  if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
-  if p_listing_id !~ '^[0-9a-fA-F-]{36}$' then
-    return jsonb_build_object('ok', false, 'error', 'Listing gone.');
-  end if;
-
-  select * into l from public.station_listings
-   where id = p_listing_id::uuid and buyer_id = uid and status = 'sold'
-     and settled_at > now() - interval '5 minutes'
-   for update;
-  if not found then
-    return jsonb_build_object('ok', false, 'error', 'Nothing to refund.');
-  end if;
-
-  update public.station_listings set status = 'cancelled' where id = l.id;
-
-  pstate  := app._lock_state(now_ms);
-  credits := coalesce((pstate->>'credits')::float8, 0) + l.price;
-  pstate  := jsonb_set(pstate, '{credits}', to_jsonb(credits));
-  perform app._write_state(pstate, now_ms);
-
-  return jsonb_build_object('ok', true, 'credits', credits, 'refunded', l.price);
-end;
-$$;
-
-grant execute on function public.app_station_buy_refund(text) to authenticated;
+-- app_station_buy_refund lives in station_treasury.sql (D0) next to
+-- app_station_buy_item — do not redefine it here.

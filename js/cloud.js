@@ -394,6 +394,11 @@ const Cloud = {
   async stationExpireHauls(system) {
     return this._contractsRpc("app_station_expire_hauls", { p_system: system });
   },
+  async stationHoldDeposit(system, deltas) {
+    return this._contractsRpc("app_station_hold_deposit", {
+      p_system: system, p_deltas: deltas || {},
+    });
+  },
 
   // Standing + upkeep cycle (docs/sql/station_upkeep.sql) — phase D2.
   async stationAfterHour(reports) {

@@ -34,6 +34,7 @@ const Game = {
       shipVariants: {},   // ship uid → { v: SHIP_VARIANTS id, name } — the yard refit a hull was bought with
       pendingContracts: [],
       bazaarBought: [],
+      pendingHaulSettles: [],
       travel: null,
       seq: 1,
       unlockedSystems: SYSTEMS.filter(s => s.unlock === 0).map(s => s.id),
@@ -96,6 +97,16 @@ const Game = {
       delete s.avgCost; s.avgCost = (loaded.avgCost && typeof loaded.avgCost === "object") ? loaded.avgCost : {};
     }
     s.missions ||= []; s.reports ||= []; s.listings ||= []; s.orders ||= []; s.expeditions ||= []; s.surveyed ||= {}; s.industries ||= []; s.extractors ||= {}; s.components ||= {}; s.items ||= {};
+    // Shared haul settle retries — trust boundary (localStorage / cloud sync).
+    s.pendingHaulSettles = (Array.isArray(s.pendingHaulSettles) ? s.pendingHaulSettles : [])
+      .filter(p => p && typeof p.contractId === "string" && p.contractId.length <= 64
+        && (p.outcome === "success" || p.outcome === "fail" || p.outcome === "abandon"))
+      .slice(0, 20)
+      .map(p => ({
+        contractId: p.contractId,
+        outcome: p.outcome,
+        attempts: Math.max(0, Math.min(20, p.attempts | 0)),
+      }));
     // Trade routes retired → Charter Contracts. Free any hull left on a route.
     if (Array.isArray(s.ships)) for (const sh of s.ships) if (sh.status === "trading") sh.status = "idle";
     delete s.routes;

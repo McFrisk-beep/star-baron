@@ -39,6 +39,32 @@ begin
 end;
 $$;
 
+-- Debit another baron's wallet (refund clawback). Clamps at zero; returns the
+-- amount actually removed so a broke seller can't strand the refund.
+create or replace function app._debit_user(p_uid uuid, p_amount bigint, p_now_ms bigint)
+returns bigint
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  st jsonb;
+  credits double precision;
+  take bigint;
+begin
+  if p_uid is null or p_amount <= 0 then return 0; end if;
+  select state into st from public.players where user_id = p_uid for update;
+  if st is null then return 0; end if;
+  credits := coalesce((st->>'credits')::float8, 0);
+  take := least(p_amount, greatest(0, floor(credits)::bigint));
+  if take <= 0 then return 0; end if;
+  st := jsonb_set(st, '{credits}', to_jsonb(credits - take));
+  st := jsonb_set(st, '{lastSeenAt}', to_jsonb(p_now_ms));
+  update public.players set state = st, updated_at = now() where user_id = p_uid;
+  return take;
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Withdraw: treasury → owner wallet. Both rows locked in one transaction.
 -- ---------------------------------------------------------------------------
@@ -217,6 +243,84 @@ begin
     'price', l.price, 'tariff', tariff, 'seller', l.seller_display,
     'payload', l.payload, 'credits', credits
   );
+end;
+$$;
+
+-- Refund buyer when a sold listing payload can't be delivered client-side.
+-- Inverse of app_station_buy_item: claw tariff from treasury, reverse seller
+-- net (delete unclaimed payout or debit wallet), credit buyer full price.
+-- Status 'refunded' is not reclaimed by app_station_settle's back CTE.
+alter table public.station_listings drop constraint if exists station_listings_status_check;
+alter table public.station_listings add constraint station_listings_status_check
+  check (status in ('open','sold','cancelled','reclaimed','refunded'));
+
+create or replace function public.app_station_buy_refund(p_listing_id text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  uid      uuid := auth.uid();
+  now_ms   bigint := app._now_ms();
+  l        public.station_listings%rowtype;
+  st       public.stations%rowtype;
+  pstate   jsonb;
+  credits  double precision;
+  bps      int;
+  tariff   bigint;
+  net      bigint;
+  deleted  int;
+begin
+  if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
+  if p_listing_id !~ '^[0-9a-fA-F-]{36}$' then
+    return jsonb_build_object('ok', false, 'error', 'Listing gone.');
+  end if;
+
+  select * into l from public.station_listings
+   where id = p_listing_id::uuid and buyer_id = uid and status = 'sold'
+     and settled_at > now() - interval '5 minutes'
+   for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'Nothing to refund.');
+  end if;
+
+  select * into st from public.stations where system_id = l.system_id for update;
+  bps    := greatest(0, least(1500, coalesce(st.sale_tariff_bps, 0)));
+  tariff := floor(l.price * bps / 10000.0);
+  net    := l.price - tariff;
+
+  -- Prefer deleting an unclaimed sale payout; else claw from the seller's wallet.
+  delete from public.station_payouts
+   where id = (
+     select id from public.station_payouts
+      where user_id = l.seller_id and system_id = l.system_id
+        and reason = 'sale' and claimed_at is null and amount = net
+        and coalesce(note, '') = coalesce(l.name, '')
+      order by created_at desc nulls last
+      limit 1
+      for update
+   );
+  get diagnostics deleted = row_count;
+  if deleted = 0 and net > 0 then
+    perform app._debit_user(l.seller_id, net, now_ms);
+  end if;
+
+  if tariff > 0 then
+    update public.stations
+       set treasury = greatest(0, treasury - tariff), updated_at = now()
+     where system_id = l.system_id;
+  end if;
+
+  update public.station_listings set status = 'refunded' where id = l.id;
+
+  pstate  := app._lock_state(now_ms);
+  credits := coalesce((pstate->>'credits')::float8, 0) + l.price;
+  pstate  := jsonb_set(pstate, '{credits}', to_jsonb(credits));
+  perform app._write_state(pstate, now_ms);
+
+  return jsonb_build_object('ok', true, 'credits', credits, 'refunded', l.price,
+                            'tariff', tariff, 'net', net);
 end;
 $$;
 
@@ -493,5 +597,6 @@ $$;
 grant execute on function public.app_station_withdraw(text, numeric) to authenticated;
 grant execute on function public.app_station_set_policy(text, jsonb) to authenticated;
 grant execute on function public.app_station_buy_item(text, text) to authenticated;
+grant execute on function public.app_station_buy_refund(text) to authenticated;
 grant execute on function public.app_station_settle() to authenticated;
 grant execute on function public.app_station_publish(jsonb) to authenticated;

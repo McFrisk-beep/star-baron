@@ -112,13 +112,14 @@ assert.ok(made > 0 && (target.hold[pool[0].id] | 0) === made, "owner bay output 
 const sec = Galaxy.sector(target.sectorId);
 ctx.Game.state.currentSystem = sec.capital;
 const qty = target.hold[pool[0].id];
-const del = Stations.deliver(target.systemId, pool[0].id, qty);
+
+// leaseBay / vacateBay / deliver are async (shared-floor RPCs). Everything from
+// here down runs in one async body — hall + bay checks await the same way.
+void (async () => {
+
+const del = await Stations.deliver(target.systemId, pool[0].id, qty);
 assert.ok(del.ok, del.msg);
 assert.ok(Stock.available(target.sectorId, pool[0].id) >= stockBefore, "delivery restocks sector");
-
-// leaseBay / vacateBay are async (shared-floor RPCs). Everything from here
-// down runs in one async body — hall + bay checks await the same way.
-void (async () => {
 
 // Vacate returns extractor to pool
 assert.ok((await Stations.vacateBay(target.systemId, 0)).ok);

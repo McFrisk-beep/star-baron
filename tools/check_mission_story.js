@@ -50,7 +50,9 @@ const contract = {
   danger: "safe", minFirepower: 0, cargoRequired: 0, durationMs: 1000,
   reward: { credits: 500, itemChance: 0, stockChance: 0 }, impound: false, faction: null,
 };
-const launched = Missions.launch(contract, ["s1"]);
+// Mission launch is async (it may claim a shared station haul) — wrap the tail.
+(async () => {
+const launched = await Missions.launch(contract, ["s1"]);
 assert.ok(launched.ok, "launch ok");
 const m = ctx.Game.state.missions[0];
 m.startedAt = Date.now() - m.totalMs - 1;
@@ -78,3 +80,4 @@ assert.ok(!Story.s().ephemeral[id], "ephemeral dropped after file");
 assert.strictEqual(MissionStory.begin(out[0]), null, "no duplicate thread");
 
 console.log("check_mission_story: Dispatch after-action ✔");
+})().catch(e => { console.error(e); process.exit(1); });

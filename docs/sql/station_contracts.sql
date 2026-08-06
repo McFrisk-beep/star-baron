@@ -726,7 +726,8 @@ grant execute on function public.app_station_claim_haul(text) to authenticated;
 grant execute on function public.app_station_settle_haul(text, text) to authenticated;
 grant execute on function public.app_station_expire_hauls(text) to authenticated;
 
--- Extend settle to pay queued haul refunds (offline owner).
+-- Extend settle to pay queued haul refunds (offline owner) and deposit claimed
+-- bay-tax cargo into stations.hold (server hold previously never grew).
 create or replace function public.app_station_settle()
 returns jsonb
 language plpgsql
@@ -738,7 +739,8 @@ declare
   now_ms  bigint := app._now_ms();
   pays    jsonb := '[]'::jsonb;
   items   jsonb;
-  cargo   jsonb;
+  cargo   jsonb := '[]'::jsonb;
+  holds   jsonb := '{}'::jsonb;
   pstate  jsonb;
   credits double precision;
   row     record;
@@ -775,23 +777,97 @@ begin
            'systemId', system_id, 'kind', kind, 'name', name, 'payload', payload)), '[]'::jsonb)
     into items from back;
 
-  with tax as (
-    update public.station_bay_tax
-       set claimed_at = now()
+  for row in
+    select id, system_id, comm_id, qty
+      from public.station_bay_tax
      where owner_id = uid and claimed_at is null
-     returning system_id, comm_id, qty
-  )
-  select coalesce(jsonb_agg(jsonb_build_object(
-           'systemId', system_id, 'commId', comm_id, 'qty', qty)), '[]'::jsonb)
-    into cargo from tax;
+     for update
+  loop
+    update public.stations
+       set hold = public._station_hold_add(hold, row.comm_id, row.qty), updated_at = now()
+     where system_id = row.system_id and owner_id = uid;
+    update public.station_bay_tax set claimed_at = now() where id = row.id;
+    cargo := cargo || jsonb_build_array(jsonb_build_object(
+      'systemId', row.system_id, 'commId', row.comm_id, 'qty', row.qty));
+    holds := holds || jsonb_build_object(
+      row.system_id, (select hold from public.stations where system_id = row.system_id));
+  end loop;
 
   pstate := app._lock_state(now_ms);
   credits := coalesce((pstate->>'credits')::float8, 0);
 
   return jsonb_build_object(
-    'ok', true, 'payouts', pays, 'items', items, 'cargo', cargo, 'credits', credits
+    'ok', true, 'payouts', pays, 'items', items, 'cargo', cargo,
+    'holds', holds, 'credits', credits
   );
 end;
 $$;
 
 grant execute on function public.app_station_settle() to authenticated;
+
+-- Owner top-up / draw from stations.hold. Production hub output and capital
+-- deliveries go through here so the Contract Office escrow has real units to
+-- take — hold_bootstrap is one-shot and cancel/fail refunds only restore what
+-- was already posted.
+create or replace function public.app_station_hold_deposit(p_system text, p_deltas jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  uid    uuid := auth.uid();
+  st     public.stations%rowtype;
+  k      text;
+  v      text;
+  delta  int;
+  have   int;
+  next_h jsonb;
+begin
+  if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
+  if p_system is null or length(p_system) > 40 then
+    return jsonb_build_object('ok', false, 'error', 'No station.');
+  end if;
+  if jsonb_typeof(p_deltas) is distinct from 'object' then
+    return jsonb_build_object('ok', false, 'error', 'Bad hold delta.');
+  end if;
+
+  select * into st from public.stations where system_id = p_system for update;
+  if not found or st.owner_id is distinct from uid then
+    return jsonb_build_object('ok', false, 'error', 'Not your station.');
+  end if;
+
+  next_h := coalesce(st.hold, '{}'::jsonb);
+  for k, v in select key, value from jsonb_each_text(p_deltas)
+  loop
+    if k is null or length(k) > 40 then
+      return jsonb_build_object('ok', false, 'error', 'Unknown commodity.');
+    end if;
+    begin
+      delta := greatest(-500, least(500, coalesce(v::int, 0)));
+    exception when others then
+      return jsonb_build_object('ok', false, 'error', 'Bad hold delta.');
+    end;
+    if delta = 0 then continue; end if;
+    if delta > 0 then
+      next_h := public._station_hold_add(next_h, k, delta);
+    else
+      have := public._station_hold_get(next_h, k);
+      if have < -delta then
+        return jsonb_build_object('ok', false, 'error',
+          format('Only %s in station hold.', have));
+      end if;
+      next_h := public._station_hold_take(next_h, k, -delta);
+    end if;
+  end loop;
+
+  update public.stations set hold = next_h, updated_at = now()
+   where system_id = p_system
+  returning * into st;
+
+  return jsonb_build_object('ok', true, 'hold', st.hold);
+end;
+$$;
+
+revoke execute on function public.app_station_hold_deposit(text, jsonb) from public;
+grant execute on function public.app_station_hold_deposit(text, jsonb) to authenticated;

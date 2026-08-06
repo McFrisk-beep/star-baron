@@ -2847,9 +2847,9 @@ const UI = {
       this.toast(`Withdrew ${Util.credits(r.amount)}.`, "good"); this.flashCredits(); this.renderStations(); this.updateHeader();
     });
     body.querySelectorAll("[data-st-deliver]").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const id = btn.dataset.stDeliver;
-        const r = Stations.deliver(st.systemId, id, st.hold[id] | 0);
+        const r = await Stations.deliver(st.systemId, id, st.hold[id] | 0);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Delivered ${r.qty} for ${Util.credits(r.proceeds)}.`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader(); this.updateExchange();

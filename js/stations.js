@@ -190,7 +190,7 @@ const Stations = {
   holderLabel(st) {
     if (!st) return "NPC-held";
     if (st.remote) return `Held by ${st.ownerDisplay}`;
-    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "Yours" : "Player-held";
+    if (this.ownerHeld(st)) return this._mine(st) ? "Yours" : "Player-held";
     const rem = this.remoteHolder(st.systemId);
     return rem ? `Held by ${rem.display}` : "NPC-held";
   },
@@ -198,7 +198,7 @@ const Stations = {
   holderTag(st) {
     if (!st) return "NPC";
     if (st.remote) return `held by ${st.ownerDisplay}`;
-    if (this.ownerHeld(st)) return st.ownerId === this.playerId() ? "yours" : "player-held";
+    if (this.ownerHeld(st)) return this._mine(st) ? "yours" : "player-held";
     const rem = this.remoteHolder(st.systemId);
     return rem ? `held by ${rem.display}` : "NPC";
   },
@@ -523,24 +523,49 @@ const Stations = {
       items++;
     }
     // Lease tax is commodities into the station hold (§8), not wallet credits.
-    for (const row of Array.isArray(res.cargo) ? res.cargo : []) {
-      const sid = this._txt(row && row.systemId, 40);
-      const commId = this._txt(row && row.commId, 40);
-      const qty = Math.max(0, Math.min(500, Math.floor(+(row && row.qty) || 0)));
-      if (!sid || !commId || !qty) continue;
-      if (!COMMODITIES.some(c => c.id === commId)) continue;
-      const st = this.get(sid);
-      if (st && this.ownerHeld(st) && this._mine(st)) {
-        st.hold[commId] = (st.hold[commId] | 0) + qty;
-        this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
-        cargo += qty;
-      } else {
-        // Lost the station since the tax was queued — residual follows us out.
-        const s = Game.state;
-        const held = s.positions[commId] || 0;
-        s.positions[commId] = held + qty;
-        s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
-        cargo += qty;
+    // D1+ settle deposits into stations.hold server-side and returns `holds`.
+    if (res.holds && typeof res.holds === "object") {
+      for (const [sid, hold] of Object.entries(res.holds)) {
+        const st = this.get(this._txt(sid, 40));
+        if (st && this.ownerHeld(st) && this._mine(st)) this._applyHoldFromServer(st, hold);
+      }
+      for (const row of Array.isArray(res.cargo) ? res.cargo : []) {
+        const sid = this._txt(row && row.systemId, 40);
+        const commId = this._txt(row && row.commId, 40);
+        const qty = Math.max(0, Math.min(500, Math.floor(+(row && row.qty) || 0)));
+        if (!sid || !commId || !qty || !COMMODITIES.some(c => c.id === commId)) continue;
+        const st = this.get(sid);
+        if (st && this.ownerHeld(st) && this._mine(st)) {
+          this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
+          cargo += qty;
+        } else {
+          const s = Game.state;
+          const held = s.positions[commId] || 0;
+          s.positions[commId] = held + qty;
+          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+          cargo += qty;
+        }
+      }
+    } else {
+      for (const row of Array.isArray(res.cargo) ? res.cargo : []) {
+        const sid = this._txt(row && row.systemId, 40);
+        const commId = this._txt(row && row.commId, 40);
+        const qty = Math.max(0, Math.min(500, Math.floor(+(row && row.qty) || 0)));
+        if (!sid || !commId || !qty) continue;
+        if (!COMMODITIES.some(c => c.id === commId)) continue;
+        const st = this.get(sid);
+        if (st && this.ownerHeld(st) && this._mine(st)) {
+          st.hold[commId] = (st.hold[commId] | 0) + qty;
+          this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
+          cargo += qty;
+        } else {
+          // Lost the station since the tax was queued — residual follows us out.
+          const s = Game.state;
+          const held = s.positions[commId] || 0;
+          s.positions[commId] = held + qty;
+          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+          cargo += qty;
+        }
       }
     }
     if (credits || tariffs || items || cargo) {
@@ -1427,14 +1452,28 @@ const Stations = {
     if (res.credits != null) s.credits = +res.credits;
     else s.credits -= paid;
     if (!bought) {
-      if (window.Cloud && Cloud.stationBuyRefund) {
-        try {
-          const ref = await Cloud.stationBuyRefund(listing.id);
-          if (ref && ref.credits != null) s.credits = +ref.credits;
-        } catch (e) { console.warn("[Stations] hall buy refund failed:", e); }
+      let refunded = false;
+      const ref = window.Cloud && Cloud.stationBuyRefund
+        ? await Cloud.stationBuyRefund(listing.id).catch(e => {
+            console.warn("[Stations] hall buy refund failed:", e);
+            return null;
+          })
+        : null;
+      if (ref && ref.ok && ref.credits != null) {
+        s.credits = +ref.credits;
+        refunded = true;
+      } else if (res.credits == null) {
+        // Pre-D0: we debited locally above — undo it.
+        s.credits += paid;
+        refunded = true;
       }
       console.warn("[Stations] unusable payload from hall listing", listing.id);
-      return { ok: false, msg: "That listing was malformed — credits refunded." };
+      return {
+        ok: false,
+        msg: refunded
+          ? "That listing was malformed — credits refunded."
+          : "That listing was malformed — contact support, payment was taken.",
+      };
     }
     if (!this._deliverListable(bought, this.playerId()).ok) this._park(bought);
     if (window.Economy) Economy.refreshNetWorth();
@@ -1837,14 +1876,42 @@ const Stations = {
 
   async settleHaul(contractId, outcome) {
     const found = this.findHaul(contractId);
-    if (!found) return { ok: false, msg: "Haul gone." };
+    // After reload a claimed haul isn't on the open board — still settle by id.
+    if (!found) {
+      if (this._contractsWritable() && /^[0-9a-f-]{36}$/i.test(String(contractId || ""))) {
+        try {
+          const res = await Cloud.stationSettleHaul(contractId, outcome);
+          if (!res || !res.ok) {
+            const err = (res && res.error) || "Settle refused.";
+            return {
+              ok: false, msg: err,
+              terminal: /gone|already settled|not your haul/i.test(err),
+            };
+          }
+          if (res.credits != null) Game.state.credits = +res.credits;
+          if (window.Economy) Economy.refreshNetWorth();
+          if (window.Game) Game.requestSave();
+          return { ok: true, credits: res.credits };
+        } catch (e) {
+          console.warn("[Stations] settle haul failed:", e);
+          return { ok: false, msg: "Couldn't reach the contract board." };
+        }
+      }
+      return { ok: false, msg: "Haul gone.", terminal: true };
+    }
     const { st, contract } = found;
     if (contract.status !== "active" && contract.status !== "open")
-      return { ok: false, msg: "Already settled." };
+      return { ok: false, msg: "Already settled.", terminal: true };
     if (contract.shared && this._contractsWritable()) {
       try {
         const res = await Cloud.stationSettleHaul(contractId, outcome);
-        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Settle refused." };
+        if (!res || !res.ok) {
+          const err = (res && res.error) || "Settle refused.";
+          return {
+            ok: false, msg: err,
+            terminal: /gone|already settled|not your haul/i.test(err),
+          };
+        }
         if (res.credits != null) Game.state.credits = +res.credits;
         if (this._mine(st)) this._applyHoldFromServer(st, res.hold);
         if (res.contract_filled != null || res.contract_expired != null) {
@@ -2506,6 +2573,7 @@ const Stations = {
     const taxBps = Util.clamp(st.leaseTaxBps | 0, 0, 4000);
     let total = 0;
     let ownerStaffed = 0;
+    let holdIn = 0;
     const pid = this.playerId();
     const shared = this.bayShared(st.systemId);
     for (const bay of st.bays) {
@@ -2521,11 +2589,15 @@ const Stations = {
       if (isOwner) {
         ownerStaffed++;
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
+        holdIn += gross;
         continue;
       }
       const taxQty = Math.floor(gross * taxBps / 10000);
       const keep = gross - taxQty;
-      if (taxQty > 0) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
+      if (taxQty > 0) {
+        st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
+        holdIn += taxQty;
+      }
       if (keep <= 0) continue;
       if (bay.npc) continue; // NPC keeps residual off-map
       if (bay.lesseeId === pid && window.Game) {
@@ -2546,11 +2618,20 @@ const Stations = {
     const staffFactor = Math.max(0.35, ownerStaffed / Math.max(1, st.bays.length));
     st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub
       * (1 + this.tierInfo(st.tier).rank * 0.15) * staffFactor);
+    // Shared Contract Office hold is server-authoritative — top it up so posts
+    // aren't stuck on the one-shot publish bootstrap.
+    if (holdIn > 0 && this.contractsShared(st.systemId) && this._contractsWritable()
+        && window.Cloud && Cloud.stationHoldDeposit) {
+      const deltas = { [st.prodComm]: holdIn };
+      void Cloud.stationHoldDeposit(st.systemId, deltas).then(res => {
+        if (res && res.ok) this._applyHoldFromServer(st, res.hold);
+      }).catch(e => console.warn("[Stations] hold deposit failed:", e));
+    }
     return total;
   },
 
   // Haul station hold → sell on the sector capital exchange (owner action).
-  deliverToExchange(systemId, commId, qty) {
+  async deliverToExchange(systemId, commId, qty) {
     const st = this.get(systemId);
     if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     const s = Game.state;
@@ -2562,9 +2643,21 @@ const Stations = {
     }
     qty = Math.min(Math.floor(qty), st.hold[commId] | 0);
     if (qty <= 0) return { ok: false, msg: "Nothing to deliver." };
+    if (this.contractsShared(systemId) && this._contractsWritable()
+        && window.Cloud && Cloud.stationHoldDeposit) {
+      try {
+        const res = await Cloud.stationHoldDeposit(systemId, { [commId]: -qty });
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Hold draw refused." };
+        this._applyHoldFromServer(st, res.hold);
+      } catch (e) {
+        console.warn("[Stations] hold take failed:", e);
+        return { ok: false, msg: "Couldn't reach the station hold." };
+      }
+    } else {
+      st.hold[commId] -= qty;
+    }
     const price = Economy.sellPrice(commId);
     const proceeds = price * qty;
-    st.hold[commId] -= qty;
     s.credits += proceeds;
     Stock.put(st.sectorId, commId, qty);
     st.delivered = (st.delivered | 0) + qty;
@@ -3063,13 +3156,13 @@ const Stations = {
         if (res && res.ok) {
           this._applyTreasurySync(res);
           if (res.credits != null && window.Game) Game.state.credits = +res.credits;
-        }
-        for (const row of upkeepReports) {
-          const st = this.get(row.system_id);
-          if (!st || st.status !== "owned") continue;
-          const sentiment = (window.Stock && Stock.sentiment[st.sectorId]) || STATIONCFG.sentimentStart;
-          this._warnStages(st, sentiment);
-          this._maybeRevolt(st, sentiment, hourIndex);
+          for (const row of upkeepReports) {
+            const st = this.get(row.system_id);
+            if (!st || st.status !== "owned") continue;
+            const sentiment = (window.Stock && Stock.sentiment[st.sectorId]) || STATIONCFG.sentimentStart;
+            this._warnStages(st, sentiment);
+            this._maybeRevolt(st, sentiment, hourIndex);
+          }
         }
       });
     }
@@ -3086,7 +3179,8 @@ const Stations = {
         this.reconcileRemoteLeases();
         return this.produceRemoteLeases(hourIndex);
       })
-      .then(() => this.settleHall());
+      .then(() => this.settleHall())
+      .then(() => this._retryPendingHaulSettles());
   },
 
   _warnStages(st, sentiment) {
@@ -3266,22 +3360,52 @@ const Stations = {
   },
 
   // ---- tick (auctions; stock hour is driven by Stock.tick) ---------------
+  _haulSettleInflight: null, // Set of contractIds currently settling
+  _retryPendingHaulSettles() {
+    const s = window.Game && window.Game.state;
+    if (!s || !this._contractsWritable()) return;
+    const pending = Array.isArray(s.pendingHaulSettles) ? s.pendingHaulSettles : [];
+    if (!pending.length) return;
+    if (!this._haulSettleInflight) this._haulSettleInflight = new Set();
+    const MAX_ATTEMPTS = 8;
+    const next = [];
+    let changed = false;
+    for (const row of pending) {
+      if (!row || typeof row.contractId !== "string") { changed = true; continue; }
+      const outcome = row.outcome === "fail" || row.outcome === "abandon" ? row.outcome : "success";
+      const attempts = Math.max(0, row.attempts | 0);
+      if (attempts >= MAX_ATTEMPTS) { changed = true; continue; }
+      if (this._haulSettleInflight.has(row.contractId)) {
+        next.push({ contractId: row.contractId, outcome, attempts });
+        continue;
+      }
+      this._haulSettleInflight.add(row.contractId);
+      next.push({ contractId: row.contractId, outcome, attempts: attempts + 1 });
+      void this.settleHaul(row.contractId, outcome).then(res => {
+        this._haulSettleInflight.delete(row.contractId);
+        const cur = Array.isArray(window.Game.state.pendingHaulSettles) ? window.Game.state.pendingHaulSettles : [];
+        if (res && res.ok) {
+          window.Game.state.pendingHaulSettles = cur.filter(p => p && p.contractId !== row.contractId);
+          if (window.Game.requestSave) window.Game.requestSave();
+          return;
+        }
+        if (res && res.terminal) {
+          window.Game.state.pendingHaulSettles = cur.filter(p => p && p.contractId !== row.contractId);
+          if (window.Game.requestSave) window.Game.requestSave();
+        }
+      }).catch(() => { this._haulSettleInflight.delete(row.contractId); });
+      changed = true;
+    }
+    if (changed || next.length !== pending.length) {
+      s.pendingHaulSettles = next.slice(0, 20);
+      if (window.Game.requestSave) window.Game.requestSave();
+    }
+  },
+
   tick(now = Date.now()) {
     this.ensure();
     if (!this.auctionsShared()) {
       for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
-    }
-    const s = Game.state;
-    if (s && s.pendingHaulSettles && s.pendingHaulSettles.length && this._contractsWritable()) {
-      const pending = s.pendingHaulSettles.slice();
-      for (const row of pending) {
-        void this.settleHaul(row.contractId, row.outcome).then(res => {
-          if (res && res.ok) {
-            s.pendingHaulSettles = (s.pendingHaulSettles || []).filter(p => p.contractId !== row.contractId);
-            if (window.Game) Game.requestSave();
-          }
-        });
-      }
     }
     for (const st of this.list()) {
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
