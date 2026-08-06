@@ -185,10 +185,10 @@ const Missions = {
       if (m.source !== "station" || !m.contractId || !window.Stations) continue;
       if (!(Stations.contractsShared && Stations.contractsShared(m.stationId))) continue;
       waits.push(Stations.settleHaul(m.contractId, "success").then(res => {
-        m._serverSettle = res || { ok: false };
+        m._serverSettle = res || { ok: false, msg: "Settle refused." };
       }).catch(e => {
         console.warn("[Missions] shared haul settle failed:", m.contractId, e);
-        m._serverSettle = { ok: false };
+        m._serverSettle = { ok: false, msg: "Couldn't reach the contract board." };
       }));
     }
     if (waits.length) await Promise.all(waits);
@@ -209,6 +209,18 @@ const Missions = {
     return out;
   },
 
+  // Shared station hauls: settle before narrative so money and story share one
+  // server roll. Transient RPC failures leave the mission open and queue a retry.
+  _queueHaulSettleRetry(contractId, outcome = "success") {
+    if (!contractId) return;
+    const s = this.s();
+    s.pendingHaulSettles = s.pendingHaulSettles || [];
+    if (!s.pendingHaulSettles.some(p => p.contractId === contractId))
+      s.pendingHaulSettles.push({ contractId, outcome, attempts: 0 });
+    if (s.pendingHaulSettles.length > 20)
+      s.pendingHaulSettles = s.pendingHaulSettles.slice(-20);
+  },
+
   _resolveLocal(now, opts = {}) {
     const s = this.s();
     const out = [];
@@ -223,10 +235,17 @@ const Missions = {
       const pre = sharedHaul ? m._serverSettle : null;
       if (sharedHaul) delete m._serverSettle;
 
-      // Shared haul already settled: don't mark resolved if the flight isn't done yet.
-      if (sharedHaul && pre && !pre.ok && !pre.terminal
-          && /not launched|still in flight/i.test(pre.msg || pre.error || "")) {
-        continue;
+      if (sharedHaul) {
+        const err = (pre && (pre.msg || pre.error)) || "";
+        // Still in flight — try again next tick. ("Not launched" is terminal in
+        // _applySharedSettle; don't list it here or the guard lies.)
+        if (pre && !pre.ok && /still in flight/i.test(err)) continue;
+        // Transient RPC / board error — leave mission open, drain via pendingHaulSettles.
+        if (!pre || (!pre.ok && !pre.terminal)) {
+          console.warn("[Missions] shared haul settle deferred:", m.contractId, pre);
+          this._queueHaulSettleRetry(m.contractId, "success");
+          continue;
+        }
       }
 
       m.resolved = true;
@@ -234,7 +253,8 @@ const Missions = {
       let success = sharedHaul
         ? !!(pre && pre.ok && pre.outcome === "success")
         : Math.random() < m.successChance;
-      if (sharedHaul && pre && pre.ok && pre.credits != null) s.credits = +pre.credits;
+      const sharedPaid = sharedHaul && success;
+      if (sharedPaid && pre.credits != null) s.credits = +pre.credits;
 
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
         sysName: m.sysName || null, danger: m.danger || null, faction: m.faction || null,
@@ -261,7 +281,12 @@ const Missions = {
       }
       const lostIds = new Set(report.lost.map(x => x.uid));
       const survivors = m.shipUids.map(u => Fleet.ship(u)).filter(sh => sh && !lostIds.has(sh.uid));
-      if (!survivors.length && report.lost.length) { success = false; report.success = false; report.wipe = true; } // nobody came home
+      // Wipe: guest/local flips to fail (settle fail below). Shared already settled —
+      // keep the server verdict so the report matches the wallet.
+      if (!survivors.length && report.lost.length) {
+        report.wipe = true;
+        if (!sharedPaid) { success = false; report.success = false; }
+      }
 
       if (success) {
         const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
@@ -307,13 +332,6 @@ const Missions = {
         }
         if (stationHaul && m.contractId && window.Stations && !sharedHaul) {
           Stations.settleHaul(m.contractId, "success");
-        } else if (sharedHaul && pre && !pre.ok) {
-          console.warn("[Missions] shared haul settle failed:", m.contractId, pre);
-          s.pendingHaulSettles = s.pendingHaulSettles || [];
-          if (!s.pendingHaulSettles.some(p => p.contractId === m.contractId))
-            s.pendingHaulSettles.push({ contractId: m.contractId, outcome: "success", attempts: 0 });
-          if (s.pendingHaulSettles.length > 20)
-            s.pendingHaulSettles = s.pendingHaulSettles.slice(-20);
         }
         for (const sh of survivors) sh.status = "idle";
       } else {

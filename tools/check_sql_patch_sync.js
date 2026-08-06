@@ -97,6 +97,8 @@ assert.ok(trustSql.includes("delivered_cycle"),
   "station_economy_trust.sql must track delivered_cycle for standing");
 assert.ok(!/r->>'delivered'/.test(upkeepSql) && !/r->>'expected'/.test(upkeepSql),
   "station_upkeep.sql after_hour must not trust client delivered/expected");
+assert.ok(/standing\s*=\s*stand\b/.test(upkeepSql),
+  "station_upkeep.sql after_hour must not assign standing = standing (ambiguous)");
 assert.ok(trustSql.includes("cooldown") && /status = 'cooldown'/.test(trustSql),
   "station_economy_trust.sql publish must respect revolt cooldown");
 assert.ok(/taken_at < now\(\) - interval '24 hours'/.test(trustSql),

@@ -117,7 +117,7 @@ declare
   st        public.stations%rowtype;
   delivered int;
   expected  int;
-  standing  numeric;
+  stand     numeric;
   upkeep    bigint;
   hub       int;
   staffed   int;
@@ -174,14 +174,14 @@ begin
     if expected < 1 then expected := 40; end if;
     delivered := greatest(0, coalesce(st.delivered_cycle, 0));
 
-    standing := coalesce(st.standing, 60);
-    if delivered >= expected then standing := standing + 4;
-    elsif delivered > 0 then standing := standing + 1;
-    else standing := standing - 5;
+    stand := coalesce(st.standing, 60);
+    if delivered >= expected then stand := stand + 4;
+    elsif delivered > 0 then stand := stand + 1;
+    else stand := stand - 5;
     end if;
 
-    if hub <= 0 or st.prod_comm is null or staffed <= 0 then standing := standing - 3; end if;
-    if coalesce(st.lease_tax_bps, 0) > 2000 then standing := standing - 2; end if;
+    if hub <= 0 or st.prod_comm is null or staffed <= 0 then stand := stand - 3; end if;
+    if coalesce(st.lease_tax_bps, 0) > 2000 then stand := stand - 2; end if;
 
     upkeep := public._station_upkeep_per_cycle(st.tier, st.reactor_level, st.modules);
     paid := false;
@@ -193,17 +193,17 @@ begin
       credits := credits - upkeep;
       paid := true;
     else
-      standing := standing - 6;
+      stand := stand - 6;
     end if;
 
     if coalesce((st.modules->>'customs_house')::int, 0) > 0 then
       update public.stations set treasury = floor(treasury) + 800 where system_id = sid;
-      standing := standing + 1;
+      stand := stand + 1;
     elsif coalesce((st.modules->>'free_port')::int, 0) > 0 then
-      standing := standing - 1;
+      stand := stand - 1;
     end if;
 
-    standing := greatest(0, least(100, standing));
+    stand := greatest(0, least(100, stand));
 
     -- Baseline Production Hub output → hold (jack yield; no client quantity).
     next_h := coalesce(st.hold, '{}'::jsonb);
@@ -222,7 +222,7 @@ begin
     end if;
 
     update public.stations set
-      standing = standing,
+      standing = stand,
       hold = next_h,
       delivered_cycle = 0,
       upkeep_paid_through = tick_at,
