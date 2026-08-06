@@ -210,17 +210,8 @@ const Missions = {
   },
 
   // Shared station hauls: settle before narrative so money and story share one
-  // server roll. Transient RPC failures leave the mission open and queue a retry.
-  _queueHaulSettleRetry(contractId, outcome = "success") {
-    if (!contractId) return;
-    const s = this.s();
-    s.pendingHaulSettles = s.pendingHaulSettles || [];
-    if (!s.pendingHaulSettles.some(p => p.contractId === contractId))
-      s.pendingHaulSettles.push({ contractId, outcome, attempts: 0 });
-    if (s.pendingHaulSettles.length > 20)
-      s.pendingHaulSettles = s.pendingHaulSettles.slice(-20);
-  },
-
+  // server roll. Transient RPC failures leave the mission open — resolveMatured
+  // is the retry (don't also queue pendingHaulSettles; the two drivers race).
   _resolveLocal(now, opts = {}) {
     const s = this.s();
     const out = [];
@@ -240,12 +231,9 @@ const Missions = {
         // Still in flight — try again next tick. ("Not launched" is terminal in
         // _applySharedSettle; don't list it here or the guard lies.)
         if (pre && !pre.ok && /still in flight/i.test(err)) continue;
-        // Transient RPC / board error — leave mission open, drain via pendingHaulSettles.
-        if (!pre || (!pre.ok && !pre.terminal)) {
-          console.warn("[Missions] shared haul settle deferred:", m.contractId, pre);
-          this._queueHaulSettleRetry(m.contractId, "success");
-          continue;
-        }
+        // Transient RPC / board error — leave mission open; next resolveMatured
+        // re-settles. No contractId (corrupt/legacy save) is terminal failure.
+        if (m.contractId && (!pre || (!pre.ok && !pre.terminal))) continue;
       }
 
       m.resolved = true;
