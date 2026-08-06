@@ -480,7 +480,9 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Directory read — include reliability stats.
+-- CREATE OR REPLACE can't change RETURNS TABLE shape (42P13); drop first.
 -- ---------------------------------------------------------------------------
+drop function if exists public.app_station_directory();
 create or replace function public.app_station_directory()
 returns table (
   system_id       text,
@@ -518,6 +520,8 @@ as $$
   order by s.system_id
   limit 500;
 $$;
+
+grant execute on function public.app_station_directory() to anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Publish — preserve server hold + contract stats; one-time hold bootstrap.
