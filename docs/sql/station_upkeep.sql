@@ -6,10 +6,13 @@
 --
 -- Phase D0 made treasury authoritative; standing and upkeep were still client-side.
 -- This paste moves the hourly standing/upkeep cycle server-side for published
--- stations: the owner reports delivered units; the server applies standing
--- deltas, debits treasury or owner credits for upkeep, credits customs
--- subsidies, and deposits baseline Production Hub output into stations.hold.
+-- stations: standing uses server-tracked delivered_cycle (from deliver/haul
+-- settle), not client report fields; upkeep debits treasury/wallet; customs
+-- subsidies credit; baseline Production Hub output deposits into stations.hold.
 -- Revolt rolls stay client-side for now.
+
+alter table public.stations
+  add column if not exists delivered_cycle int not null default 0;
 
 -- ---------------------------------------------------------------------------
 -- Tier / upkeep helpers — mirror js/data.js STATION_TIERS + STATIONCFG.
@@ -93,7 +96,8 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- After stock hour: standing + upkeep for the caller's published stations.
--- p_reports: [{ "system_id": "...", "delivered": 40, "expected": 42 }, ...]
+-- p_reports: [{ "system_id": "..." }, ...] — delivered/expected ignored.
+-- Standing uses stations.delivered_cycle (bumped by deliver/haul success).
 -- Also deposits baseline Production Hub output into stations.hold so the
 -- Contract Office escrow grows without a client-trusted deposit RPC.
 -- ---------------------------------------------------------------------------
@@ -147,9 +151,6 @@ begin
     sid := nullif(trim(coalesce(r->>'system_id', '')), '');
     continue when sid is null or length(sid) > 40;
 
-    delivered := greatest(0, coalesce((r->>'delivered')::int, 0));
-    expected  := greatest(1, coalesce((r->>'expected')::int, 40));
-
     select * into st from public.stations where system_id = sid for update;
     if not found or st.owner_id is distinct from uid or st.status <> 'owned' then
       continue;
@@ -164,16 +165,21 @@ begin
     -- produces in npcProduceHour before afterStockHour updates standing).
     strike := coalesce(st.standing, 60) < 20;
 
+    hub := greatest(0, coalesce((st.modules->>'production_hub')::int, 0));
+    staffed := public._station_owner_staffed(st.bays, uid);
+    bay_n := greatest(1, coalesce(jsonb_array_length(st.bays), 0));
+    staff_fac := greatest(0.35, staffed::numeric / bay_n);
+    -- Mirror STATIONCFG.expectedDeliveryBase × hub × tier × staffFactor.
+    expected := round(40.0 * hub * (1.0 + public._station_tier_rank(st.tier) * 0.15) * staff_fac)::int;
+    if expected < 1 then expected := 40; end if;
+    delivered := greatest(0, coalesce(st.delivered_cycle, 0));
+
     standing := coalesce(st.standing, 60);
     if delivered >= expected then standing := standing + 4;
     elsif delivered > 0 then standing := standing + 1;
     else standing := standing - 5;
     end if;
 
-    hub := greatest(0, coalesce((st.modules->>'production_hub')::int, 0));
-    staffed := public._station_owner_staffed(st.bays, uid);
-    bay_n := greatest(1, coalesce(jsonb_array_length(st.bays), 0));
-    staff_fac := greatest(0.35, staffed::numeric / bay_n);
     if hub <= 0 or st.prod_comm is null or staffed <= 0 then standing := standing - 3; end if;
     if coalesce(st.lease_tax_bps, 0) > 2000 then standing := standing - 2; end if;
 
@@ -218,6 +224,7 @@ begin
     update public.stations set
       standing = standing,
       hold = next_h,
+      delivered_cycle = 0,
       upkeep_paid_through = tick_at,
       updated_at = now()
     where system_id = sid;

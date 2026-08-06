@@ -17,7 +17,8 @@
 
 alter table public.stations
   add column if not exists contract_filled int not null default 0,
-  add column if not exists contract_expired int not null default 0;
+  add column if not exists contract_expired int not null default 0,
+  add column if not exists delivered_cycle int not null default 0;
 
 -- ---------------------------------------------------------------------------
 -- Haul ledger. Goods sit in stations.hold; bounty is spent at post time.
@@ -422,7 +423,9 @@ begin
     end if;
     update public.station_hauls set status = 'filled' where id = h.id;
     update public.stations
-       set contract_filled = contract_filled + 1, updated_at = now()
+       set contract_filled = contract_filled + 1,
+           delivered_cycle = coalesce(delivered_cycle, 0) + h.qty,
+           updated_at = now()
      where system_id = h.system_id;
   else
     if not app._credit_user(h.owner_id, h.escrow, now_ms) then
@@ -749,6 +752,7 @@ declare
   pstate  jsonb;
   credits double precision;
   row     record;
+  taken   bigint;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
 
@@ -761,9 +765,16 @@ begin
     if row.reason in ('sale', 'haul_refund') then
       perform app._credit_user(uid, row.amount, now_ms);
     elsif row.reason = 'refund_owed' then
-      -- Seller shortfall from a hall buy refund — claw what we can; claim anyway
-      -- so a forever-broke wallet doesn't strand the row.
-      perform app._debit_user(uid, row.amount, now_ms);
+      -- Seller shortfall from a hall buy refund — claw what we can; leave the
+      -- residual queued so a broke wallet can't wipe the debt on settle.
+      taken := app._debit_user(uid, row.amount, now_ms);
+      if taken < row.amount then
+        if taken > 0 then
+          update public.station_payouts
+             set amount = row.amount - taken where id = row.id;
+        end if;
+        continue;
+      end if;
     elsif row.reason = 'tariff' then
       update public.stations
          set treasury = treasury + row.amount, updated_at = now()

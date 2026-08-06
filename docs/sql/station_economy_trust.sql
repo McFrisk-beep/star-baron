@@ -6,6 +6,10 @@
 --   2. publish never accepts client treasury/hold (INSERT empty; no bootstrap fields)
 --   3. ownership release clears treasury/hold; relinquish/revolt go through RPC
 --   4. deliverToExchange credits via app_station_deliver (market-priced, no client mint)
+-- Medium follow-ups:
+--   5. standing uses delivered_cycle (deliver/haul), not client after_hour fields
+--   6. publish respects revolt cooldown; expire reclaims never-launched claims
+--   7. release queues haul_refund when _credit_user can't pay escrow back
 --
 -- Requires: station_treasury/contracts/upkeep/modules/auctions + phase2 ship_def
 --           + phase4 market.price_system / scarcity helpers.
@@ -15,7 +19,8 @@
 -- One-shot economy bootstrap flag (stops remint after withdraw/draw-to-empty).
 -- ---------------------------------------------------------------------------
 alter table public.stations
-  add column if not exists economy_bootstrapped boolean not null default false;
+  add column if not exists economy_bootstrapped boolean not null default false,
+  add column if not exists delivered_cycle int not null default 0;
 
 -- Haul flight ledger — set by app_station_launch_haul; required for success settle.
 alter table public.station_hauls
@@ -278,7 +283,15 @@ begin
     if h.owner_id <> uid then
       return jsonb_build_object('ok', false, 'error', 'Not your posting.');
     end if;
-    if h.status <> 'open' or h.expires_at > now() then
+    if h.status = 'open' then
+      if h.expires_at > now() then
+        return jsonb_build_object('ok', false, 'error', 'Not expired.');
+      end if;
+    elsif h.status = 'active' and h.flight_ms is null
+          and h.taken_at is not null
+          and h.taken_at < now() - interval '24 hours' then
+      null; -- claimed but never launched — owner reclaim
+    else
       return jsonb_build_object('ok', false, 'error', 'Not expired.');
     end if;
   elsif outc in ('success', 'fail', 'abandon') then
@@ -316,7 +329,9 @@ begin
       flight_ms = null, flight_seed = null, flight_chance = null, ship_uids = null
      where id = h.id;
     update public.stations
-       set contract_filled = contract_filled + 1, updated_at = now()
+       set contract_filled = contract_filled + 1,
+           delivered_cycle = coalesce(delivered_cycle, 0) + h.qty,
+           updated_at = now()
      where system_id = h.system_id;
     outc := 'success';
   else
@@ -459,7 +474,11 @@ begin
   pstate := jsonb_set(pstate, '{credits}', to_jsonb(credits));
 
   next_h := public._station_hold_take(coalesce(strow.hold, '{}'::jsonb), comm.id, qty);
-  update public.stations set hold = next_h, updated_at = now() where system_id = p_system;
+  update public.stations
+     set hold = next_h,
+         delivered_cycle = coalesce(delivered_cycle, 0) + qty,
+         updated_at = now()
+   where system_id = p_system;
   update public.sector_stock set units = have_u + qty, updated_at = now()
     where sector_id = sec and comm_id = comm.id;
   perform app._write_state(pstate, now_ms);
@@ -520,10 +539,13 @@ begin
   -- Cancel open hauls: refund escrow + restore hold goods before wipe.
   for open_h in
     select * from public.station_hauls
-     where system_id = p_system and status = 'open' and owner_id = uid
+     where system_id = p_system and owner_id = uid and status = 'open'
      for update
   loop
-    perform app._credit_user(uid, open_h.escrow, now_ms);
+    if not app._credit_user(uid, open_h.escrow, now_ms) then
+      insert into public.station_payouts (user_id, system_id, amount, reason, note)
+      values (uid, p_system, open_h.escrow, 'haul_refund', open_h.id::text);
+    end if;
     strow.hold := public._station_hold_add(coalesce(strow.hold, '{}'::jsonb), open_h.comm_id, open_h.qty);
     update public.station_hauls set status = 'cancelled' where id = open_h.id;
   end loop;
@@ -614,6 +636,7 @@ declare
   s_npc     boolean;
   keep_srv  boolean;
   kept      text[] := '{}';
+  blocked   text[] := '{}';
   conflicts text[];
   synced    jsonb;
 begin
@@ -637,6 +660,16 @@ begin
   for r in select * from jsonb_array_elements(v_rows) loop
     sid := nullif(trim(coalesce(r->>'system_id', '')), '');
     continue when sid is null or length(sid) > 40;
+
+    -- Revolt cooldown: auction_open respects it; publish must too.
+    if exists (
+      select 1 from public.stations s
+       where s.system_id = sid and s.status = 'cooldown'
+         and s.cooldown_until is not null and s.cooldown_until > now()
+    ) then
+      blocked := blocked || sid;
+      continue;
+    end if;
     kept := kept || sid;
 
     v_hall := case when jsonb_typeof(r->'hall') = 'array' then r->'hall' else '[]'::jsonb end;
@@ -762,6 +795,7 @@ begin
   select array_agg(system_id) into conflicts
     from public.stations
    where system_id = any(kept) and owner_id is distinct from uid;
+  conflicts := coalesce(conflicts, '{}'::text[]) || blocked;
 
   select coalesce(jsonb_agg(jsonb_build_object(
            'system_id', system_id,
@@ -853,6 +887,7 @@ begin
       treasury = 0,
       hold = '{}'::jsonb,
       economy_bootstrapped = true,
+      cooldown_until = null,
       updated_at = now();
 
     update public.station_auctions set status = 'closed' where system_id = a.system_id;
@@ -865,6 +900,43 @@ end;
 $$;
 
 grant execute on function public.app_station_close_due() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Expire open hauls + reclaim claims that never launched (24h).
+-- ---------------------------------------------------------------------------
+create or replace function public.app_station_expire_hauls(p_system text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  uid uuid := auth.uid();
+  hid uuid;
+  n   int := 0;
+  res jsonb;
+begin
+  if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
+  for hid in
+    select id from public.station_hauls
+     where system_id = p_system and owner_id = uid
+       and (
+         (status = 'open' and expires_at <= now())
+         or (status = 'active' and flight_ms is null
+             and taken_at is not null
+             and taken_at < now() - interval '24 hours')
+       )
+     for update
+  loop
+    res := public.app_station_settle_haul(hid::text, 'expire');
+    if coalesce((res->>'ok')::boolean, false) then n := n + 1; end if;
+  end loop;
+  return jsonb_build_object('ok', true, 'expired', n);
+end;
+$$;
+
+revoke execute on function public.app_station_expire_hauls(text) from public;
+grant execute on function public.app_station_expire_hauls(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Fail loud if app_mission_resolve still pays station hauls (double escrow).

@@ -16,6 +16,7 @@ const patch = fs.readFileSync(path.join(root, "docs/sql/market_commodities_expan
 const phase2Sql = fs.readFileSync(path.join(root, "docs/sql/phase2_missions_bazaar.sql"), "utf8");
 const trustSql = fs.readFileSync(path.join(root, "docs/sql/station_economy_trust.sql"), "utf8");
 const modulesSql = fs.readFileSync(path.join(root, "docs/sql/station_modules.sql"), "utf8");
+const upkeepSql = fs.readFileSync(path.join(root, "docs/sql/station_upkeep.sql"), "utf8");
 
 const FNS = [
   "market.commodity",
@@ -92,6 +93,14 @@ assert.ok(trustSql.includes("economy_bootstrapped = true")
   "station_economy_trust.sql must keep economy_bootstrapped sticky (never reset false)");
 assert.ok(trustSql.includes("Haul not launched") || trustSql.includes("Still in flight"),
   "station_economy_trust.sql settle_haul must require a launched flight");
+assert.ok(trustSql.includes("delivered_cycle"),
+  "station_economy_trust.sql must track delivered_cycle for standing");
+assert.ok(!/r->>'delivered'/.test(upkeepSql) && !/r->>'expected'/.test(upkeepSql),
+  "station_upkeep.sql after_hour must not trust client delivered/expected");
+assert.ok(trustSql.includes("cooldown") && /status = 'cooldown'/.test(trustSql),
+  "station_economy_trust.sql publish must respect revolt cooldown");
+assert.ok(/taken_at < now\(\) - interval '24 hours'/.test(trustSql),
+  "station_economy_trust.sql must reclaim claimed-but-never-launched hauls");
 assert.ok(trustSql.includes("Too many ships"),
   "station_economy_trust.sql must dedupe/cap ship arrays");
 assert.ok(trustSql.includes("double escrow"),
