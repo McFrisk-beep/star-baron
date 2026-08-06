@@ -982,18 +982,15 @@ target.refitUntil = 0;
       }
       if (!h._launched) return { ok: false, error: "Haul not launched." };
       if (!h._flight_ready) return { ok: false, error: "Still in flight." };
-      // Server roll stub: honour success for harness; fail path available.
-      const win = outcome !== "fail";
-      if (win) {
-        ctx.Game.state.credits += h.escrow;
-        h._gone = true;
-        vexRow.contract_filled = 3;
-        return { ok: true, outcome: "success", credits: ctx.Game.state.credits,
-          contract_filled: 3, contract_expired: 1 };
-      }
+      // Server roll stub: ignore client outcome (matches app_station_settle_haul).
+      // Harness always wins after a valid launch so money/story stay aligned.
+      // Simulate _station_restock (SQL already does this server-side).
+      if (typeof Stock !== "undefined") Stock.put(heldSt.sectorId, h.comm_id, h.qty);
+      ctx.Game.state.credits += h.escrow;
       h._gone = true;
-      return { ok: true, outcome: "fail", credits: ctx.Game.state.credits,
-        hold: { ...floor.hold }, contract_filled: 2, contract_expired: 1 };
+      vexRow.contract_filled = 3;
+      return { ok: true, outcome: "success", credits: ctx.Game.state.credits,
+        contract_filled: 3, contract_expired: 1 };
     },
     async stationDeliver(system, comm, qty) {
       qty = Math.min(qty | 0, floor.hold[comm] | 0);

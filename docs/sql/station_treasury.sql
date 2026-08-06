@@ -359,6 +359,7 @@ declare
   pstate  jsonb;
   credits double precision;
   row     record;
+  taken   bigint;
 begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
 
@@ -371,7 +372,15 @@ begin
     if row.reason = 'sale' then
       perform app._credit_user(uid, row.amount, now_ms);
     elsif row.reason = 'refund_owed' then
-      perform app._debit_user(uid, row.amount, now_ms);
+      -- Claw what we can; leave residual queued (don't wipe debt on empty wallet).
+      taken := app._debit_user(uid, row.amount, now_ms);
+      if taken < row.amount then
+        if taken > 0 then
+          update public.station_payouts
+             set amount = row.amount - taken where id = row.id;
+        end if;
+        continue;
+      end if;
     elsif row.reason = 'tariff' then
       update public.stations
          set treasury = treasury + row.amount, updated_at = now()

@@ -512,7 +512,7 @@ Client side, `Stations.bayShared(systemId)` is the seam: a published station's f
 | **D2** | Standing + upkeep hourly cycle | `station_upkeep.sql` |
 | **D3** | Module install/uninstall; publish preserves modules | `station_modules.sql` |
 | **D4** | Cross-player auctions (open, bid, close) | `station_auctions.sql` |
-| **Trust** | Haul flight gate, no client wealth bootstrap, release/deliver RPCs | `station_economy_trust.sql` (paste last; requires phase2 with station-mission skip) |
+| **Trust** | Haul flight gate, no client wealth/standing bootstrap, release/deliver, cooldown-aware publish | `station_economy_trust.sql` (paste last; requires phase2 with station-mission skip) |
 
 **Paste order (stations):** `station_treasury.sql` → `station_contracts.sql` → `station_upkeep.sql` → `station_modules.sql` → `station_auctions.sql` → `station_economy_trust.sql`. Trust raises if `app_mission_resolve` lacks the `source = 'station'` skip — re-paste `phase2_missions_bazaar.sql` first if it errors.
 

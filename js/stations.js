@@ -1642,14 +1642,13 @@ const Stations = {
 
   _applyHoldFromServer(st, hold) {
     if (!st || !hold || typeof hold !== "object") return;
-    if (!st.hold || typeof st.hold !== "object") st.hold = {};
+    const next = {};
     for (const [k, v] of Object.entries(hold)) {
-      if (COMMODITIES.some(c => c.id === k)) {
-        const n = Math.max(0, Math.floor(+v || 0));
-        if (n > 0) st.hold[k] = n;
-        else delete st.hold[k];
-      }
+      if (!COMMODITIES.some(c => c.id === k)) continue;
+      const n = Math.max(0, Math.floor(+v || 0));
+      if (n > 0) next[k] = n;
     }
+    st.hold = next;
   },
 
   findHaul(contractId) {
@@ -1920,9 +1919,7 @@ const Stations = {
     }
     const settledOutcome = res.outcome || outcome;
     if (st && contract && settledOutcome === "success") {
-      // Server restocks sector_stock; local put only when Phase 4 shelf isn't live.
-      if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
-        Stock.put(st.sectorId, contract.commId, contract.qty);
+      // Server already _station_restocks — no local Stock.put (STATIONS.md §14).
       if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
     }
     if (st && contract) {
@@ -2641,8 +2638,7 @@ const Stations = {
         const got = Math.max(0, Math.floor(+res.qty || qty));
         const proceeds = Math.max(0, +res.proceeds || 0);
         const price = +res.price || (got ? proceeds / got : 0);
-        if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
-          Stock.put(st.sectorId, commId, got);
+        // Server restocks sector_stock inside app_station_deliver — no local put.
         st.delivered = (st.delivered | 0) + got;
         this._ledger(st, proceeds, "delivery", `${got}× ${commId}`);
         Bus.emit("trade", { side: "sell", commId, qty: got, price });
@@ -3125,11 +3121,8 @@ const Stations = {
       if (st.status !== "owned") { if (st.status === "refit") st.delivered = 0; continue; }
 
       if (this.upkeepShared(st.systemId) && this._mine(st)) {
-        upkeepReports.push({
-          system_id: st.systemId,
-          delivered: st.delivered | 0,
-          expected: st.expected || STATIONCFG.expectedDeliveryBase,
-        });
+        // Server tracks delivered_cycle from deliver/haul — don't send client counts.
+        upkeepReports.push({ system_id: st.systemId });
         if (st.modules.customs_house | 0) {
           if (window.Rep) {
             Rep.change("free_trade", 0.4);

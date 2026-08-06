@@ -167,13 +167,32 @@ const Missions = {
   // Authoritative path awaits app_mission_resolve (server RNG); guests stay sync.
   // Station hauls are skipped by app_mission_resolve (escrow settle is separate).
   // Auth first so its result_slice can't resurrect a station mission we just cleared.
+  // Shared station hauls settle BEFORE narrative so money and story share one roll.
   resolveMatured(now) {
     if (!this.authoritative()) return this._resolveLocal(now);
     const due = this.s().missions.some(m =>
       !m.resolved && m.source !== "station" && now - m.startedAt >= m.totalMs);
-    if (!due) return Promise.resolve(this._resolveLocal(now, { stationOnly: true }));
-    return this._resolveAuth(now).then(out =>
-      this._resolveLocal(now, { stationOnly: true }).concat(out));
+    if (!due) return this._resolveStationsAuth(now);
+    return this._resolveAuth(now).then(async out =>
+      (await this._resolveStationsAuth(now)).concat(out));
+  },
+
+  async _resolveStationsAuth(now) {
+    const s = this.s();
+    const waits = [];
+    for (const m of s.missions) {
+      if (m.resolved || now - m.startedAt < m.totalMs) continue;
+      if (m.source !== "station" || !m.contractId || !window.Stations) continue;
+      if (!(Stations.contractsShared && Stations.contractsShared(m.stationId))) continue;
+      waits.push(Stations.settleHaul(m.contractId, "success").then(res => {
+        m._serverSettle = res || { ok: false, msg: "Settle refused." };
+      }).catch(e => {
+        console.warn("[Missions] shared haul settle failed:", m.contractId, e);
+        m._serverSettle = { ok: false, msg: "Couldn't reach the contract board." };
+      }));
+    }
+    if (waits.length) await Promise.all(waits);
+    return this._resolveLocal(now, { stationOnly: true });
   },
 
   async _resolveAuth(now) {
@@ -190,6 +209,9 @@ const Missions = {
     return out;
   },
 
+  // Shared station hauls: settle before narrative so money and story share one
+  // server roll. Transient RPC failures leave the mission open — resolveMatured
+  // is the retry (don't also queue pendingHaulSettles; the two drivers race).
   _resolveLocal(now, opts = {}) {
     const s = this.s();
     const out = [];
@@ -197,8 +219,31 @@ const Missions = {
       if (m.resolved || now - m.startedAt < m.totalMs) continue;
       if (opts.stationOnly && m.source !== "station") continue;
       if (opts.skipStation && m.source === "station") continue;
+
+      const stationHaul = m.source === "station";
+      const sharedHaul = stationHaul && m.stationId && window.Stations
+        && Stations.contractsShared && Stations.contractsShared(m.stationId);
+      const pre = sharedHaul ? m._serverSettle : null;
+      if (sharedHaul) delete m._serverSettle;
+
+      if (sharedHaul) {
+        const err = (pre && (pre.msg || pre.error)) || "";
+        // Still in flight — try again next tick. ("Not launched" is terminal in
+        // _applySharedSettle; don't list it here or the guard lies.)
+        if (pre && !pre.ok && /still in flight/i.test(err)) continue;
+        // Transient RPC / board error — leave mission open; next resolveMatured
+        // re-settles. No contractId (corrupt/legacy save) is terminal failure.
+        if (m.contractId && (!pre || (!pre.ok && !pre.terminal))) continue;
+      }
+
       m.resolved = true;
-      let success = Math.random() < m.successChance;
+      // Shared: one server roll. Guest/local: client roll (and local settle below).
+      let success = sharedHaul
+        ? !!(pre && pre.ok && pre.outcome === "success")
+        : Math.random() < m.successChance;
+      const sharedPaid = sharedHaul && success;
+      if (sharedPaid && pre.credits != null) s.credits = +pre.credits;
+
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
         sysName: m.sysName || null, danger: m.danger || null, faction: m.faction || null,
         credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [] };
@@ -224,13 +269,15 @@ const Missions = {
       }
       const lostIds = new Set(report.lost.map(x => x.uid));
       const survivors = m.shipUids.map(u => Fleet.ship(u)).filter(sh => sh && !lostIds.has(sh.uid));
-      if (!survivors.length && report.lost.length) { success = false; report.success = false; report.wipe = true; } // nobody came home
+      // Wipe: guest/local flips to fail (settle fail below). Shared already settled —
+      // keep the server verdict so the report matches the wallet.
+      if (!survivors.length && report.lost.length) {
+        report.wipe = true;
+        if (!sharedPaid) { success = false; report.success = false; }
+      }
 
       if (success) {
         const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
-        const stationHaul = m.source === "station";
-        const sharedHaul = stationHaul && m.stationId && window.Stations
-          && Stations.contractsShared && Stations.contractsShared(m.stationId);
         const gross = stationHaul
           ? Math.round(m.reward.credits || 0)
           : Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
@@ -271,30 +318,8 @@ const Missions = {
             }
           }
         }
-        if (stationHaul && m.contractId && window.Stations) {
-          // Shared path: server rolls success/fail; client outcome is a hint only.
-          const settled = Stations.settleHaul(m.contractId, "success");
-          if (settled && typeof settled.then === "function") {
-            void settled.then(res => {
-              if (res && res.ok) {
-                if (res.credits != null) s.credits = +res.credits;
-                if (res.outcome === "fail") {
-                  report.success = false;
-                  report.credits = 0;
-                }
-              } else {
-                console.warn("[Missions] shared haul settle failed:", m.contractId, res);
-                s.pendingHaulSettles = s.pendingHaulSettles || [];
-                if (!s.pendingHaulSettles.some(p => p.contractId === m.contractId))
-                  s.pendingHaulSettles.push({ contractId: m.contractId, outcome: "success", attempts: 0 });
-                if (s.pendingHaulSettles.length > 20)
-                  s.pendingHaulSettles = s.pendingHaulSettles.slice(-20);
-              }
-              if (window.Economy) Economy.refreshNetWorth();
-            });
-          } else if (sharedHaul && settled && settled.credits != null) {
-            s.credits = +settled.credits;
-          }
+        if (stationHaul && m.contractId && window.Stations && !sharedHaul) {
+          Stations.settleHaul(m.contractId, "success");
         }
         for (const sh of survivors) sh.status = "idle";
       } else {
@@ -307,9 +332,8 @@ const Missions = {
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else sh.status = "idle";
         }
-        if (m.source === "station" && m.contractId && window.Stations) {
-          // Still call settle — server owns the roll for shared hauls.
-          void Stations.settleHaul(m.contractId, "fail");
+        if (stationHaul && m.contractId && window.Stations && !sharedHaul) {
+          Stations.settleHaul(m.contractId, "fail");
         }
       }
       if (report.lost.length) s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));

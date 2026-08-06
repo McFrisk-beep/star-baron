@@ -160,6 +160,7 @@ begin
       treasury = 0,
       hold = '{}'::jsonb,
       economy_bootstrapped = true,
+      cooldown_until = null,
       updated_at = now();
 
     update public.station_auctions set status = 'closed' where system_id = a.system_id;
