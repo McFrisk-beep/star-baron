@@ -2872,15 +2872,15 @@ const UI = {
       };
     });
     body.querySelectorAll("[data-st-install]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.install(st.systemId, btn.dataset.stInstall);
+      btn.onclick = async () => {
+        const r = await Stations.install(st.systemId, btn.dataset.stInstall);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Installed. −${Util.credits(r.cost)}`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader();
       };
     });
     body.querySelectorAll("[data-st-uninstall]").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const id = btn.dataset.stUninstall;
         const def = STATION_MODULES[id];
         const lvl = id === "reactor" ? (st.reactorLevel | 0) : (st.modules[id] | 0);
@@ -2895,7 +2895,7 @@ const UI = {
           + `Refund is ${Util.credits(refund)} — 50% of component cost, and none of the credits.\n`
           + `The station goes offline for ${Util.duration(Stations.uninstallCost())}.`
           + (knockOn.length ? `\nThis also ${knockOn[0]}.` : ""))) return;
-        const r = Stations.uninstall(st.systemId, id);
+        const r = await Stations.uninstall(st.systemId, id);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
         this.flashCredits(); this.renderStations(); this.updateHeader();

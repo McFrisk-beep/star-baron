@@ -633,14 +633,14 @@ const StarMap = {
     if (survey) survey.onclick = () => UI.openSurvey(sys.id);
 
     const stAuction = document.getElementById("sm-st-auction");
-    if (stAuction) stAuction.onclick = () => {
-      const r = Stations.openAuction(sys.id, +stAuction.dataset.min);
+    if (stAuction) stAuction.onclick = async () => {
+      const r = await Stations.openAuction(sys.id, +stAuction.dataset.min);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
     };
     const stBid = document.getElementById("sm-st-bid");
-    if (stBid) stBid.onclick = () => {
-      const r = Stations.bid(sys.id, +stBid.dataset.min);
+    if (stBid) stBid.onclick = async () => {
+      const r = await Stations.bid(sys.id, +stBid.dataset.min);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Bid placed: ${Util.credits(r.auction.highBid)}`, "good");
       UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();

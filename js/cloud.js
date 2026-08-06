@@ -392,6 +392,71 @@ const Cloud = {
     return this._contractsRpc("app_station_expire_hauls", { p_system: system });
   },
 
+  // Standing + upkeep cycle (docs/sql/station_upkeep.sql) — phase D2.
+  async stationAfterHour(reports) {
+    return this._treasuryRpc("app_station_after_hour", { p_reports: reports || [] });
+  },
+
+  // Module install (docs/sql/station_modules.sql) — phase D3.
+  modulesMissing: false,
+  async _modulesRpc(name, args) {
+    if (this.modulesMissing) return { ok: false, error: "Station modules not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.modulesMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_modules.sql");
+        return { ok: false, error: "Station modules not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  modulesReady() { return this.treasuryReady() && !this.modulesMissing; },
+  async stationModuleInstall(system, module) {
+    return this._modulesRpc("app_station_module_install", { p_system: system, p_module: module });
+  },
+  async stationModuleUninstall(system, module) {
+    return this._modulesRpc("app_station_module_uninstall", { p_system: system, p_module: module });
+  },
+
+  // Station auctions (docs/sql/station_auctions.sql) — phase D4.
+  auctionsMissing: false,
+  async _auctionsRpc(name, args) {
+    if (this.auctionsMissing) return { ok: false, error: "Station auctions not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.auctionsMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_auctions.sql");
+        return { ok: false, error: "Station auctions not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  auctionsReady() { return this.enabled && !this.auctionsMissing && this.signedIn(); },
+  async stationAuctions() {
+    if (!this.enabled || !this.client || this.auctionsMissing) return null;
+    const { data, error } = await this.client.rpc("app_station_auctions");
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this.auctionsMissing = true;
+        console.warn("[Cloud] app_station_auctions missing — run docs/sql/station_auctions.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  async stationAuctionOpen(system, amount) {
+    return this._auctionsRpc("app_station_auction_open", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationBid(system, amount) {
+    return this._auctionsRpc("app_station_bid", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationCloseDue() {
+    return this._auctionsRpc("app_station_close_due", {});
+  },
+
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

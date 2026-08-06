@@ -4,14 +4,17 @@
 
 const Stations = {
   byId: {},           // systemId -> station
-  auctions: {},       // systemId -> auction
+  auctions: {},       // systemId -> auction (local / guest)
+  remoteAuctions: {}, // systemId -> auction (server, phase D4)
   access: {},         // systemId -> { playerId -> role }
   ledger: {},         // systemId -> [{at, kind, amount, note}]
   lastWarn: {},       // systemId -> stage string (comms dedupe)
 
   playerId() {
-    if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.user) {
-      return Cloud.user.id || Cloud.user.email || "player";
+    const c = window.Cloud;
+    if (c && c.signedIn && c.signedIn()) {
+      const u = typeof c.user === "function" ? c.user() : c.user;
+      if (u) return u.id || u.email || "player";
     }
     return "player";
   },
@@ -768,6 +771,24 @@ const Stations = {
     if (!st) return { ok: false, msg: "No station." };
     const check = this.canInstall(st, moduleId);
     if (!check.ok) return check;
+    if (this.modulesShared(systemId)) {
+      return Cloud.stationModuleInstall(systemId, moduleId).then(res => {
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Install refused." };
+        if (moduleId === "reactor") st.reactorLevel = res.level | 0;
+        else st.modules[moduleId] = res.level | 0;
+        if (moduleId === "production_hub") this.syncBays(st);
+        if (res.credits != null) Game.state.credits = +res.credits;
+        else Game.state.credits -= check.cost;
+        this._ledger(st, -(res.cost || check.cost), "install",
+          `${STATION_MODULES[moduleId].name} ${"I".repeat(res.level | 0)}`);
+        if (window.Game) Game.requestSave();
+        this._publishSoon();
+        return { ok: true, level: res.level, cost: res.cost || check.cost };
+      }).catch(e => {
+        console.warn("[Stations] module install failed:", e);
+        return { ok: false, msg: "Couldn't reach the station ledger." };
+      });
+    }
     const s = Game.state;
     s.credits -= check.cost;
     if (moduleId === "reactor") st.reactorLevel = check.next;
@@ -808,6 +829,30 @@ const Stations = {
     if (moduleId === "customs_house") {
       st.impoundHold = {};
       st.impoundClaims = [];
+    }
+    if (this.modulesShared(systemId)) {
+      return Cloud.stationModuleUninstall(systemId, moduleId).then(res => {
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Uninstall refused." };
+        if (moduleId === "reactor") st.reactorLevel = 0;
+        else if (moduleId === "production_hub") {
+          delete st.modules.production_hub;
+          delete st.modules.refinery;
+          this.syncBays(st);
+          st.prodComm = null;
+        } else delete st.modules[moduleId];
+        if ((st.modules.production_hub | 0) < 2) delete st.modules.refinery;
+        if (res.credits != null) Game.state.credits = +res.credits;
+        else Game.state.credits += refund;
+        st.status = "refit";
+        st.refitUntil = Date.now() + STATIONCFG.refitMs;
+        this._ledger(st, res.refund || refund, "uninstall", `${def.name} refund`);
+        if (window.Game) Game.requestSave();
+        this._publishSoon();
+        return { ok: true, refund: res.refund || refund };
+      }).catch(e => {
+        console.warn("[Stations] module uninstall failed:", e);
+        return { ok: false, msg: "Couldn't reach the station ledger." };
+      });
     }
     Game.state.credits += refund;
     st.status = "refit";
@@ -1955,6 +2000,87 @@ const Stations = {
           expired: Math.max(0, Math.floor(+row.contract_expired || 0)),
         };
       }
+      if (row.modules && typeof row.modules === "object") {
+        const mods = {};
+        for (const [id, lvl] of Object.entries(row.modules)) {
+          if (!STATION_MODULES[id]) continue;
+          const n = Math.max(0, Math.floor(+lvl || 0));
+          if (n > 0) mods[id] = n;
+        }
+        st.modules = mods;
+        if (mods.production_hub) this.syncBays(st);
+      }
+      if (row.reactor_level != null) st.reactorLevel = Util.clamp(+row.reactor_level | 0, 0, 5);
+    }
+  },
+
+  upkeepShared(systemId) {
+    return this.treasuryShared(systemId);
+  },
+  modulesShared(systemId) {
+    const st = this.get(systemId);
+    if (!st || !this._mine(st)) return false;
+    const c = window.Cloud;
+    return !!(c && c.modulesReady && c.modulesReady());
+  },
+  _modulesWritable() {
+    const c = window.Cloud;
+    return !!(c && c.modulesReady && c.modulesReady());
+  },
+  auctionsShared() {
+    const c = window.Cloud;
+    return !!(c && c.auctionsReady && c.auctionsReady());
+  },
+
+  _ingestAuction(r) {
+    if (!r || !r.system_id) return null;
+    const parseTs = v => (typeof v === "number" ? v : Date.parse(v)) || Date.now();
+    return {
+      systemId: String(r.system_id),
+      status: "open",
+      opensAt: parseTs(r.opens_at),
+      closesAt: parseTs(r.closes_at),
+      highBid: Math.floor(+r.high_bid || 0),
+      highBidder: r.high_bidder ? String(r.high_bidder) : null,
+      bids: [],
+    };
+  },
+
+  async refreshAuctions() {
+    if (!this.auctionsShared()) return this.remoteAuctions;
+    try {
+      const rows = await Cloud.stationAuctions();
+      if (!rows) return this.remoteAuctions;
+      const next = {};
+      for (const r of rows) {
+        const a = this._ingestAuction(r);
+        if (a) next[a.systemId] = a;
+      }
+      this.remoteAuctions = next;
+    } catch (e) {
+      console.warn("[Stations] auction fetch failed:", e);
+    }
+    return this.remoteAuctions;
+  },
+
+  _applyAuctionClose(res) {
+    if (!res || !Array.isArray(res.closed)) return;
+    const me = this.accountId();
+    for (const row of res.closed) {
+      const sid = row && row.system_id ? String(row.system_id) : "";
+      if (!sid) continue;
+      delete this.remoteAuctions[sid];
+      if (row.outcome === "won" && me && row.bidder === me) {
+        const st = this.get(sid);
+        if (st) {
+          st.ownerId = this.playerId();
+          st.status = "owned";
+          st.standing = STATIONCFG.standingStart;
+          st.delivered = 0;
+          this._publishSoon();
+          if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(row.amount)}.`, "ok");
+        }
+      }
     }
   },
 
@@ -2478,7 +2604,11 @@ const Stations = {
     return Math.max(STATIONCFG.minBidIncrement, Math.round(raw / 50000) * 50000);
   },
 
-  getAuction(systemId) { return this.auctions[systemId] || null; },
+  getAuction(systemId) {
+    if (this.auctionsShared() && this.remoteAuctions[systemId])
+      return this.remoteAuctions[systemId];
+    return this.auctions[systemId] || null;
+  },
 
   openAuction(systemId, bid) {
     const st = this.get(systemId);
@@ -2490,6 +2620,8 @@ const Stations = {
       return { ok: false, msg: "Station is cooling down after a revolt." };
     if (this.auctions[systemId] && this.auctions[systemId].status === "open")
       return { ok: false, msg: "Auction already open." };
+    if (this.auctionsShared() && this.remoteAuctions[systemId])
+      return { ok: false, msg: "Auction already open." };
     const pid = this.playerId();
     const tier = window.Economy ? Economy.tier() : 0;
     if (this.ownedCount(pid) >= this.ownerCap(tier))
@@ -2497,6 +2629,25 @@ const Stations = {
     const min = this.openingBid(st);
     bid = Math.floor(+bid || min);
     if (bid < min) return { ok: false, msg: `Opening bid is ${Util.credits(min)}.` };
+    if (this.auctionsShared()) {
+      return Cloud.stationAuctionOpen(systemId, bid).then(res => {
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Couldn't open auction." };
+        const auc = this._ingestAuction({
+          system_id: systemId,
+          opens_at: res.opens_at || Date.now(),
+          closes_at: res.closes_at, high_bid: res.high_bid, high_bidder: this.accountId(),
+        });
+        this.remoteAuctions[systemId] = auc;
+        if (res.credits != null) Game.state.credits = +res.credits;
+        if (window.Economy) Economy.refreshNetWorth();
+        if (window.Game) Game.requestSave();
+        if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "ok");
+        return { ok: true, auction: auc };
+      }).catch(e => {
+        console.warn("[Stations] auction open failed:", e);
+        return { ok: false, msg: "Couldn't reach the auction ledger." };
+      });
+    }
     const s = Game.state;
     const escrowed = this.escrowTotal(pid);
     if (s.credits - escrowed < bid) return { ok: false, msg: "Not enough free credits (escrow counts)." };
@@ -2521,17 +2672,33 @@ const Stations = {
   },
 
   bid(systemId, amount) {
-    const auc = this.auctions[systemId];
+    const auc = this.getAuction(systemId);
     if (!auc || auc.status !== "open") return { ok: false, msg: "No open auction." };
     const st = this.get(systemId);
     const pid = this.playerId();
+    const me = this.accountId();
     const tier = window.Economy ? Economy.tier() : 0;
-    // Cap check (also re-checked at close).
-    if (this.ownedCount(pid) >= this.ownerCap(tier) && auc.highBidder !== pid)
+    if (this.ownedCount(pid) >= this.ownerCap(tier)
+        && auc.highBidder !== pid && auc.highBidder !== me)
       return { ok: false, msg: "Station ownership cap reached for your tier." };
     amount = Math.floor(+amount || 0);
     const min = auc.highBid + STATIONCFG.minBidIncrement;
     if (amount < min) return { ok: false, msg: `Bid at least ${Util.credits(min)}.` };
+    if (this.auctionsShared()) {
+      return Cloud.stationBid(systemId, amount).then(res => {
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Bid refused." };
+        auc.highBid = Math.floor(+res.high_bid || amount);
+        auc.highBidder = me || pid;
+        if (res.closes_at) auc.closesAt = Date.parse(res.closes_at) || auc.closesAt;
+        if (res.credits != null) Game.state.credits = +res.credits;
+        if (window.Economy) Economy.refreshNetWorth();
+        if (window.Game) Game.requestSave();
+        return { ok: true, auction: auc };
+      }).catch(e => {
+        console.warn("[Stations] bid failed:", e);
+        return { ok: false, msg: "Couldn't reach the auction ledger." };
+      });
+    }
     const s = Game.state;
     // If we're already high bidder, only need the delta escrowed.
     let need = amount;
@@ -2570,6 +2737,14 @@ const Stations = {
 
   escrowTotal(pid = this.playerId()) {
     let n = 0;
+    const me = this.accountId();
+    if (this.auctionsShared()) {
+      for (const auc of Object.values(this.remoteAuctions)) {
+        if (auc.status === "open" && (auc.highBidder === pid || (me && auc.highBidder === me)))
+          n += auc.highBid;
+      }
+      return n;
+    }
     for (const auc of Object.values(this.auctions)) {
       if (auc.status === "open" && auc.highBidder === pid) n += auc.highBid;
     }
@@ -2773,9 +2948,11 @@ const Stations = {
   // ---- Standing / revolt (after stock hour) ------------------------------
   afterStockHour(hourIndex) {
     const now = Date.now();
-    // Resolve due auctions first.
-    for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
+    if (!this.auctionsShared()) {
+      for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
+    }
 
+    const upkeepReports = [];
     for (const st of this.list()) {
       // Clear finished refits / cooldowns.
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
@@ -2797,6 +2974,31 @@ const Stations = {
       // Standing decay and upkeep are both suspended during a declared refit
       // (docs open question → yes): the station is offline by the owner's choice.
       if (st.status !== "owned") { if (st.status === "refit") st.delivered = 0; continue; }
+
+      if (this.upkeepShared(st.systemId) && this._mine(st)) {
+        upkeepReports.push({
+          system_id: st.systemId,
+          delivered: st.delivered | 0,
+          expected: st.expected || STATIONCFG.expectedDeliveryBase,
+        });
+        if (st.modules.customs_house | 0) {
+          if (window.Rep) {
+            Rep.change("free_trade", 0.4);
+            Rep.change("mining_combine", 0.2);
+            Rep.change("syndicate", -0.8);
+          }
+        } else if (st.modules.free_port | 0) {
+          if (window.Rep) {
+            Rep.change("syndicate", 0.6);
+            Rep.change("free_trade", -0.4);
+          }
+        }
+        st.delivered = 0;
+        const sentiment = (window.Stock && Stock.sentiment[st.sectorId]) || STATIONCFG.sentimentStart;
+        this._warnStages(st, sentiment);
+        this._maybeRevolt(st, sentiment, hourIndex);
+        continue;
+      }
 
       let standing = st.standing;
       const expected = st.expected || STATIONCFG.expectedDeliveryBase;
@@ -2849,10 +3051,24 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
-    // Hourly: refresh who holds what, re-stamp our own rows so an active owner
-    // never ages out of the directory's 30-day window, then run our remote
-    // leases (keep locally, tax queued for the owner) and claim anything owed.
-    void this.refreshDirectory()
+    // Hourly: server upkeep/auctions, refresh directory, leases, settle.
+    let chain = Promise.resolve();
+    if (upkeepReports.length && window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady()) {
+      chain = chain.then(() => Cloud.stationAfterHour(upkeepReports)).then(res => {
+        if (res && res.ok) {
+          this._applyTreasurySync(res);
+          if (res.credits != null && window.Game) Game.state.credits = +res.credits;
+        }
+      });
+    }
+    if (this.auctionsShared()) {
+      chain = chain.then(() => Cloud.stationCloseDue()).then(res => {
+        if (res && res.ok) this._applyAuctionClose(res);
+      });
+    }
+    void chain
+      .then(() => this.refreshAuctions())
+      .then(() => this.refreshDirectory())
       .then(() => this.publishOwned())
       .then(() => {
         this.reconcileRemoteLeases();
@@ -3040,7 +3256,14 @@ const Stations = {
   // ---- tick (auctions; stock hour is driven by Stock.tick) ---------------
   tick(now = Date.now()) {
     this.ensure();
-    for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
+    if (this.auctionsShared()) {
+      void Cloud.stationCloseDue().then(res => {
+        if (res && res.ok) this._applyAuctionClose(res);
+        return this.refreshAuctions();
+      });
+    } else {
+      for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
+    }
     for (const st of this.list()) {
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";
       if (st.status === "cooldown" && now >= st.cooldownUntil) st.status = "npc";

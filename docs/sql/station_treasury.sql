@@ -482,7 +482,7 @@ begin
 end;
 $$;
 
--- Remaining station stubs — still phase D1+.
+-- Stubs below are replaced by station_modules.sql (D3) and station_auctions.sql (D4).
 create or replace function public.app_station_bid(p_system text, p_amount numeric)
 returns jsonb language sql security definer as $$
   select jsonb_build_object('ok', false, 'error', 'Station auctions not live on server yet.');

@@ -1070,5 +1070,126 @@ target.refitUntil = 0;
   assert.ok(!(await Stations.claimHaulForLaunch(haulId)).ok, "signed out can't claim");
 }
 
+// ---- Phase D2: server standing + upkeep ------------------------------------
+{
+  ctx.Cloud._user = { id: "acct-me" };
+  const commId = pool[0].id;
+  target.modules = { production_hub: 1 };
+  target.hold = { [commId]: 50 };
+  target.delivered = 45;
+  target.expected = 40;
+  target.treasury = 5000;
+  target.standing = 55;
+  Stations.directory[target.systemId] = Stations._ingest({
+    system_id: target.systemId, owner_id: "acct-me", display: "Me", tier: target.tier,
+    status: "owned", modules: { production_hub: 1 }, reactor_level: 0,
+    lease_tax_bps: 1000, sale_tariff_bps: 500, scrutiny: 10, standing: 55,
+  });
+  ctx.Cloud.modulesMissing = false;
+  ctx.Cloud.auctionsMissing = false;
+  ctx.Cloud.treasuryMissing = false;
+  ctx.Cloud.treasuryReady = () => true;
+  ctx.Cloud.modulesReady = () => true;
+  ctx.Cloud.auctionsReady = () => true;
+  ctx.Cloud.stationAfterHour = async reports => {
+    assert.strictEqual(reports.length, 1, "one upkeep report");
+    target.standing = 59;
+    target.treasury = 4200;
+    ctx.Game.state.credits = 9000;
+    return { ok: true, treasuries: [{ system_id: target.systemId, treasury: 4200, standing: 59 }],
+      credits: 9000 };
+  };
+  assert.ok(Stations.upkeepShared(target.systemId), "published owned station shares upkeep");
+  const res = await ctx.Cloud.stationAfterHour([{
+    system_id: target.systemId, delivered: 45, expected: 40,
+  }]);
+  Stations._applyTreasurySync(res);
+  assert.strictEqual(target.standing, 59, "standing syncs from server");
+  assert.strictEqual(target.treasury, 4200, "treasury syncs after upkeep");
+  delete Stations.directory[target.systemId];
+}
+
+// ---- Phase D3: server module install ---------------------------------------
+{
+  target.ownerId = "acct-me";
+  target.status = "owned";
+  target.modules = {};
+  target.reactorLevel = 0;
+  ctx.Cloud._user = { id: "acct-me" };
+  ctx.Cloud.modulesMissing = false;
+  ctx.Cloud.treasuryMissing = false;
+  ctx.Cloud.modulesReady = () => true;
+  Stations.directory[target.systemId] = Stations._ingest({
+    system_id: target.systemId, owner_id: "acct-me", display: "Me", tier: target.tier,
+    status: "owned", modules: {}, reactor_level: 0,
+    lease_tax_bps: 1000, sale_tariff_bps: 500, scrutiny: 10, standing: 60,
+  });
+  ctx.Cloud.stationModuleInstall = async (system, mod) => {
+    if (mod !== "lane_buoy") return { ok: false, error: "nope" };
+    target.modules.lane_buoy = 1;
+    ctx.Game.state.credits -= 35000;
+    return { ok: true, module: mod, level: 1, cost: 35000, credits: ctx.Game.state.credits };
+  };
+  ctx.Cloud.enabled = true;
+  ctx.Cloud.signedIn = () => !!ctx.Cloud._user;
+  assert.ok(typeof ctx.Cloud.modulesReady === "function", "modulesReady patched on Cloud");
+  assert.ok(Stations.modulesShared(target.systemId), "modules shared when SQL live");
+  ctx.Game.state.credits = 5_000_000;
+  const cash = ctx.Game.state.credits;
+  const ins = await Stations.install(target.systemId, "lane_buoy");
+  assert.ok(ins.ok, ins.msg);
+  assert.strictEqual(target.modules.lane_buoy, 1, "module lands locally after RPC");
+  assert.strictEqual(ctx.Game.state.credits, cash - 35000, "install debits wallet via server");
+  delete Stations.directory[target.systemId];
+  delete target.modules.lane_buoy;
+}
+
+// ---- Phase D4: server auctions ---------------------------------------------
+{
+  const aucSys = target.systemId;
+  target.ownerId = null;
+  target.status = "npc";
+  delete Stations.directory[aucSys];
+  ctx.Cloud._user = { id: "acct-me" };
+  ctx.Cloud.auctionsMissing = false;
+  ctx.Cloud.auctionsReady = () => true;
+  ctx.Cloud.stationAuctionOpen = async (system, amount) => {
+    assert.strictEqual(system, aucSys);
+    ctx.Game.state.credits -= amount;
+    const closes = T + 72 * 3600e3;
+    Stations.remoteAuctions[system] = Stations._ingestAuction({
+      system_id: system, opens_at: T,
+      closes_at: closes, high_bid: amount, high_bidder: "acct-me",
+    });
+    return { ok: true, high_bid: amount, closes_at: closes, credits: ctx.Game.state.credits };
+  };
+  ctx.Cloud.stationBid = async (system, amount) => {
+    const a = Stations.remoteAuctions[system];
+    a.highBid = amount;
+    ctx.Game.state.credits -= 50000;
+    return { ok: true, high_bid: amount, closes_at: a.closesAt, credits: ctx.Game.state.credits };
+  };
+  ctx.Cloud.stationAuctions = async () => Object.values(Stations.remoteAuctions).map(a => ({
+    system_id: a.systemId, status: "open",
+    opens_at: a.opensAt, closes_at: a.closesAt,
+    high_bid: a.highBid, high_bidder: "acct-me",
+  }));
+  ctx.Cloud.stationCloseDue = async () => ({ ok: true, closed: [] });
+  assert.ok(Stations.auctionsShared(), "auctions shared when SQL live");
+  ctx.Game.state.credits = 5_000_000;
+  const cashA = ctx.Game.state.credits;
+  const openAmt = Stations.openingBid(target);
+  const opened = await Stations.openAuction(aucSys, openAmt);
+  assert.ok(opened.ok, opened.msg);
+  assert.ok(Stations.getAuction(aucSys), "open auction visible");
+  const bid = await Stations.bid(aucSys, openAmt + STATIONCFG.minBidIncrement);
+  assert.ok(bid.ok, bid.msg);
+  assert.strictEqual(Stations.getAuction(aucSys).highBid, openAmt + STATIONCFG.minBidIncrement, "bid updates cache");
+  assert.ok(ctx.Game.state.credits < cashA, "bids debit credits");
+  delete Stations.remoteAuctions[aucSys];
+  ctx.Cloud.modulesMissing = true;
+  ctx.Cloud.auctionsMissing = true;
+}
+
 console.log("OK check_stations");
 })().catch(e => { console.error(e); process.exit(1); });
