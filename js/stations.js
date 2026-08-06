@@ -314,9 +314,6 @@ const Stations = {
       prod_comm: st.prodComm || "",
       // ms epoch — never `| 0` this, 32-bit truncation mangles it.
       refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
-      // One-time bootstrap when the server treasury is still zero (phase D0).
-      treasury_bootstrap: this.treasuryShared(st.systemId) ? Math.max(0, Math.floor(+st.treasury || 0)) : 0,
-      hold_bootstrap: this.contractsShared(st.systemId) ? (st.hold || {}) : {},
       // Shelf and bay occupancy — what makes a visited station look inhabited.
       // Owner-occupied bays rewrite "player" → account uuid so the shared column
       // names us the same way a remote lease does. Publish merges foreign

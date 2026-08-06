@@ -290,7 +290,7 @@ grant execute on function public.app_station_module_install(text, text) to authe
 grant execute on function public.app_station_module_uninstall(text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Publish — D1 hold bootstrap + contract stats; preserve server modules/reactor.
+-- Publish — D1 contract stats; preserve server modules/reactor/treasury/hold.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_publish(p_stations jsonb)
 returns jsonb
@@ -308,7 +308,6 @@ declare
   disp      text;
   v_hall    jsonb;
   v_bays    jsonb;
-  v_hold    jsonb;
   v_n       int;
   prev_bays jsonb;
   merged    jsonb;
@@ -320,7 +319,6 @@ declare
   c_npc     boolean;
   s_npc     boolean;
   keep_srv  boolean;
-  boot_treas numeric;
   kept      text[] := '{}';
   conflicts text[];
   synced    jsonb;
@@ -398,11 +396,7 @@ begin
     end loop;
     if v_n <= 0 then merged := '[]'::jsonb; end if;
 
-    boot_treas := greatest(0, least(500000000::numeric,
-      floor(coalesce((r->>'treasury_bootstrap')::numeric, 0))));
-
-    v_hold := case when jsonb_typeof(r->'hold_bootstrap') = 'object' then r->'hold_bootstrap' else '{}'::jsonb end;
-
+    -- No client treasury/hold bootstrap — INSERT starts empty; UPDATE keeps server.
     insert into public.stations as s (
       system_id, owner_id, owner_display, tier, status, modules, reactor_level,
       treasury, hold, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
@@ -414,8 +408,8 @@ begin
       case when coalesce(r->>'status', '') in ('owned', 'refit') then r->>'status' else 'owned' end,
       case when jsonb_typeof(r->'modules') = 'object' then r->'modules' else '{}'::jsonb end,
       greatest(0, least(5, coalesce((r->>'reactor_level')::int, 0))),
-      boot_treas,
-      v_hold,
+      0,
+      '{}'::jsonb,
       greatest(0, least(4000, coalesce((r->>'lease_tax_bps')::int, 1000))),
       greatest(0, least(1500, coalesce((r->>'sale_tariff_bps')::int, 500))),
       greatest(0, least(100, coalesce((r->>'scrutiny')::int, 10))),
@@ -437,12 +431,10 @@ begin
       reactor_level   = s.reactor_level,
       treasury        = case
                           when s.owner_id is not null and s.owner_id is distinct from uid then 0
-                          when not s.economy_bootstrapped and boot_treas > 0 then boot_treas
                           else s.treasury
                         end,
       hold            = case
                           when s.owner_id is not null and s.owner_id is distinct from uid then '{}'::jsonb
-                          when not s.economy_bootstrapped and v_hold <> '{}'::jsonb then v_hold
                           else s.hold
                         end,
       economy_bootstrapped = true,
