@@ -281,6 +281,9 @@ const Cloud = {
   async stationBuyItem(system, listingId) {
     return this.rpc("app_station_buy_item", { p_system: system, p_listing_id: listingId });
   },
+  async stationBuyRefund(listingId) {
+    return this._optional("app_station_buy_refund", { p_listing_id: listingId });
+  },
   async stationCancelListing(listingId) {
     return this.rpc("app_station_cancel_listing", { p_listing_id: listingId });
   },

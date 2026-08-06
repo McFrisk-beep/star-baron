@@ -736,7 +736,7 @@ as $$
 declare
   uid     uuid := auth.uid();
   now_ms  bigint := app._now_ms();
-  pays    jsonb;
+  pays    jsonb := '[]'::jsonb;
   items   jsonb;
   cargo   jsonb;
   pstate  jsonb;
@@ -746,7 +746,7 @@ begin
   if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
 
   for row in
-    select id, system_id, amount, reason
+    select id, system_id, amount, reason, note
       from public.station_payouts
      where user_id = uid and claimed_at is null
      for update
@@ -758,17 +758,11 @@ begin
          set treasury = treasury + row.amount, updated_at = now()
        where system_id = row.system_id and owner_id = uid;
     end if;
+    pays := pays || jsonb_build_array(jsonb_build_object(
+      'systemId', row.system_id, 'amount', row.amount, 'reason', row.reason,
+      'note', coalesce(row.note, '')));
     update public.station_payouts set claimed_at = now() where id = row.id;
   end loop;
-
-  with claimed as (
-    select system_id, amount, reason, note
-      from public.station_payouts
-     where user_id = uid and claimed_at > now() - interval '2 seconds'
-  )
-  select coalesce(jsonb_agg(jsonb_build_object(
-           'systemId', system_id, 'amount', amount, 'reason', reason, 'note', note)), '[]'::jsonb)
-    into pays from claimed;
 
   with back as (
     update public.station_listings

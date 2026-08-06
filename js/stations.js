@@ -729,7 +729,7 @@ const Stations = {
     if (!def) return { ok: false, msg: "Unknown module." };
     if (st.status === "refit") return { ok: false, msg: "Station is in refit." };
     if (st.status !== "owned") return { ok: false, msg: "You don't own this station." };
-    if (st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!this._mine(st)) return { ok: false, msg: "Not your station." };
 
     const cur = moduleId === "reactor" ? (st.reactorLevel | 0) : (st.modules[moduleId] | 0);
     if (cur >= def.max) return { ok: false, msg: "Already at max level." };
@@ -802,7 +802,7 @@ const Stations = {
   uninstall(systemId, moduleId) {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
-    if (st.ownerId !== this.playerId() || st.status !== "owned") return { ok: false, msg: "Not your station." };
+    if (!this._mine(st) || st.status !== "owned") return { ok: false, msg: "Not your station." };
     const cur = moduleId === "reactor" ? (st.reactorLevel | 0) : (st.modules[moduleId] | 0);
     if (cur <= 0) return { ok: false, msg: "Not installed." };
     const def = STATION_MODULES[moduleId];
@@ -865,7 +865,7 @@ const Stations = {
   // ---- Production Hub ----------------------------------------------------
   setProduction(systemId, commId) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
+    if (!st || !this._mine(st) || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
     if (!(st.modules.production_hub | 0)) return { ok: false, msg: "Install a Production Hub first." };
     const sys = Galaxy.get(systemId);
@@ -889,7 +889,7 @@ const Stations = {
 
   async setLeaseTax(systemId, bps) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     bps = Util.clamp(Math.round(+bps || 0), 0, 4000);
     if (this.treasuryShared(systemId)) {
       const res = await this._setPolicy(systemId, { lease_tax_bps: bps });
@@ -903,7 +903,7 @@ const Stations = {
 
   async setSaleTariff(systemId, bps) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     bps = Util.clamp(Math.round(+bps || 0), 0, 1500);
     if (this.treasuryShared(systemId)) {
       const res = await this._setPolicy(systemId, { sale_tariff_bps: bps });
@@ -928,7 +928,7 @@ const Stations = {
 
   setRole(systemId, pid, role) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     pid = String(pid || "").trim();
     if (!pid || pid === this.playerId()) return { ok: false, msg: "Invalid player." };
     if (!["allied", "guest", "barred", "partner"].includes(role))
@@ -978,7 +978,7 @@ const Stations = {
     const st = this.view(sysId);
     if (!st) return { ok: false, reason: "No station services here" };
     const owned = this.ownerHeld(st);
-    const mine = owned && st.ownerId === this.playerId();
+    const mine = owned && this._mine(st);
     const mod = id => (st.modules && st.modules[id]) | 0;
 
     // The owner's console stays reachable through a refit — that's where the
@@ -1101,7 +1101,7 @@ const Stations = {
     }
     const s = window.Game && Game.state;
     if (!s || s.travel) return { ok: false, msg: "Can't trade in transit." };
-    if (!st.remote && st.ownerId === this.playerId()) return { ok: true, st };
+    if (!st.remote && this._mine(st)) return { ok: true, st };
     if (s.currentSystem === systemId) return { ok: true, st };
     return { ok: false, msg: "Dock at this station to use the Exchange Hall." };
   },
@@ -1313,7 +1313,7 @@ const Stations = {
     const idx = st.hall.findIndex(l => l.id === listingId);
     if (idx < 0) return { ok: false, msg: "Listing gone." };
     const listing = st.hall[idx];
-    if (listing.sellerId !== this.playerId() && st.ownerId !== this.playerId())
+    if (listing.sellerId !== this.playerId() && !this._mine(st))
       return { ok: false, msg: "Not your listing." };
     st.hall.splice(idx, 1);
     this._restoreListable(listing, listing.sellerId);
@@ -1327,7 +1327,7 @@ const Stations = {
     if (!this._hallWritable()) return { ok: false, msg: "Sign in to manage shared listings." };
     if (!this.listingMine(listing)) {
       const st = this.get(systemId);
-      if (!(st && this.ownerHeld(st) && st.ownerId === this.playerId()))
+      if (!(st && this.ownerHeld(st) && this._mine(st)))
         return { ok: false, msg: "Not your listing." };
     }
     let res;
@@ -1427,9 +1427,14 @@ const Stations = {
     if (res.credits != null) s.credits = +res.credits;
     else s.credits -= paid;
     if (!bought) {
-      if (res.credits == null) s.credits += paid;
+      if (window.Cloud && Cloud.stationBuyRefund) {
+        try {
+          const ref = await Cloud.stationBuyRefund(listing.id);
+          if (ref && ref.credits != null) s.credits = +ref.credits;
+        } catch (e) { console.warn("[Stations] hall buy refund failed:", e); }
+      }
       console.warn("[Stations] unusable payload from hall listing", listing.id);
-      return { ok: false, msg: "That listing was malformed — the hall took payment server-side." };
+      return { ok: false, msg: "That listing was malformed — credits refunded." };
     }
     if (!this._deliverListable(bought, this.playerId()).ok) this._park(bought);
     if (window.Economy) Economy.refreshNetWorth();
@@ -1600,11 +1605,14 @@ const Stations = {
 
   _applyHoldFromServer(st, hold) {
     if (!st || !hold || typeof hold !== "object") return;
-    const next = {};
+    if (!st.hold || typeof st.hold !== "object") st.hold = {};
     for (const [k, v] of Object.entries(hold)) {
-      if (COMMODITIES.some(c => c.id === k)) next[k] = Math.max(0, Math.floor(+v || 0));
+      if (COMMODITIES.some(c => c.id === k)) {
+        const n = Math.max(0, Math.floor(+v || 0));
+        if (n > 0) st.hold[k] = n;
+        else delete st.hold[k];
+      }
     }
-    st.hold = next;
   },
 
   findHaul(contractId) {
@@ -1941,7 +1949,7 @@ const Stations = {
 
   async setScrutiny(systemId, pct) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     if (!(st.modules.customs_house | 0)) return { ok: false, msg: "Needs a Customs House." };
     const capPct = Math.round((CUSTOMS.cap || 0.85) * 100);
     const scrutiny = Util.clamp(Math.round(+pct || 0), 0, capPct);
@@ -2078,7 +2086,7 @@ const Stations = {
           st.standing = STATIONCFG.standingStart;
           st.delivered = 0;
           this._publishSoon();
-          if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(row.amount)}.`, "ok");
+          if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(row.amount)}.`, "good");
         }
       }
     }
@@ -2149,7 +2157,7 @@ const Stations = {
   // Owner parks an extractor in a bay (occupies it; output → station hold).
   occupyBay(systemId, bayIndex, extractorUid) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId() || !this.ownerHeld(st))
+    if (!st || !this._mine(st) || !this.ownerHeld(st))
       return { ok: false, msg: "Not your station." };
     // Staffing during a refit is allowed — output is gated in _playerProduce,
     // so the owner can have the line ready for the moment it comes back up.
@@ -2178,7 +2186,7 @@ const Stations = {
   async leaseBay(systemId, bayIndex, extractorUid) {
     const v = this.view(systemId);
     if (!v || v.status !== "owned") return { ok: false, msg: "Station isn't leasing." };
-    if (this.ownerHeld(this.get(systemId)) && this.get(systemId).ownerId === this.playerId())
+    if (this.ownerHeld(this.get(systemId)) && this._mine(this.get(systemId)))
       return { ok: false, msg: "You own this station — occupy a bay instead." };
     if (v.remote && this.accountId() && v.ownerId === this.accountId())
       return { ok: false, msg: "You own this station — occupy a bay instead." };
@@ -2544,7 +2552,7 @@ const Stations = {
   // Haul station hold → sell on the sector capital exchange (owner action).
   deliverToExchange(systemId, commId, qty) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     const s = Game.state;
     if (s.travel) return { ok: false, msg: "Can't deliver in transit." };
     const sec = Galaxy.sector(st.sectorId);
@@ -2641,7 +2649,7 @@ const Stations = {
         if (res.credits != null) Game.state.credits = +res.credits;
         if (window.Economy) Economy.refreshNetWorth();
         if (window.Game) Game.requestSave();
-        if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "ok");
+        if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "good");
         return { ok: true, auction: auc };
       }).catch(e => {
         console.warn("[Stations] auction open failed:", e);
@@ -2667,7 +2675,7 @@ const Stations = {
     };
     if (st.status === "cooldown") st.status = "npc";
     if (window.Game) Game.requestSave();
-    if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "ok");
+    if (window.UI && UI.toast) UI.toast(`Auction opened on ${st.name} at ${Util.credits(bid)}.`, "good");
     return { ok: true, auction: this.auctions[systemId] };
   },
 
@@ -2772,7 +2780,7 @@ const Stations = {
     if (!this._isAdmin()) return { ok: false, msg: "Admins only." };
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
-    if (st.status === "owned" && st.ownerId === this.playerId())
+    if (st.status === "owned" && this._mine(st))
       return { ok: false, msg: "You already own this station." };
     if (st.status === "owned" && st.ownerId && st.ownerId !== this.playerId())
       return { ok: false, msg: "Already owned — relinquish first." };
@@ -2866,7 +2874,7 @@ const Stations = {
       this._ledger(st, auc.highBid, "auction_win", "paid to controlling faction");
       this._publishSoon();
       auc.status = "closed";
-      if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(auc.highBid)}.`, "ok");
+      if (window.UI && UI.toast) UI.toast(`You won ${st.name} for ${Util.credits(auc.highBid)}.`, "good");
       if (window.Story && Story.inbox) {
         // Soft comms notice without depending on Story internals.
       }
@@ -2994,9 +3002,6 @@ const Stations = {
           }
         }
         st.delivered = 0;
-        const sentiment = (window.Stock && Stock.sentiment[st.sectorId]) || STATIONCFG.sentimentStart;
-        this._warnStages(st, sentiment);
-        this._maybeRevolt(st, sentiment, hourIndex);
         continue;
       }
 
@@ -3018,7 +3023,7 @@ const Stations = {
       if (st.treasury >= upkeep) {
         st.treasury -= upkeep;
         this._ledger(st, -upkeep, "upkeep", "treasury");
-      } else if (st.ownerId === this.playerId() && Game.state.credits >= upkeep) {
+      } else if (this._mine(st) && Game.state.credits >= upkeep) {
         Game.state.credits -= upkeep;
         this._ledger(st, -upkeep, "upkeep", "owner");
       } else {
@@ -3031,14 +3036,14 @@ const Stations = {
         const sub = STATIONCFG.customsSubsidy | 0;
         if (sub > 0) { st.treasury += sub; this._ledger(st, sub, "enforcement", "lawful subsidy"); }
         standing += STATIONCFG.customsStandingTick || 1;
-        if (st.ownerId === this.playerId() && window.Rep) {
+        if (this._mine(st) && window.Rep) {
           Rep.change("free_trade", 0.4);
           Rep.change("mining_combine", 0.2);
           Rep.change("syndicate", -0.8);
         }
       } else if (st.modules.free_port | 0) {
         standing += STATIONCFG.freePortStandingTick || -1;
-        if (st.ownerId === this.playerId() && window.Rep) {
+        if (this._mine(st) && window.Rep) {
           Rep.change("syndicate", 0.6);
           Rep.change("free_trade", -0.4);
         }
@@ -3058,6 +3063,13 @@ const Stations = {
         if (res && res.ok) {
           this._applyTreasurySync(res);
           if (res.credits != null && window.Game) Game.state.credits = +res.credits;
+        }
+        for (const row of upkeepReports) {
+          const st = this.get(row.system_id);
+          if (!st || st.status !== "owned") continue;
+          const sentiment = (window.Stock && Stock.sentiment[st.sectorId]) || STATIONCFG.sentimentStart;
+          this._warnStages(st, sentiment);
+          this._maybeRevolt(st, sentiment, hourIndex);
         }
       });
     }
@@ -3174,7 +3186,7 @@ const Stations = {
 
   sellImpound(systemId, commId, qty) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     const s = Game.state;
     if (s.travel) return { ok: false, msg: "Can't sell in transit." };
     const sec = Galaxy.sector(st.sectorId);
@@ -3192,7 +3204,7 @@ const Stations = {
     Stock.put(st.sectorId, commId, qty);
     this._ledger(st, proceeds, "impound_sale", `${qty}× ${commId}`);
     // Lawful fork: enforcement sales please Free Trade, annoy Syndicate.
-    if (window.Rep && st.ownerId === this.playerId()) {
+    if (window.Rep && this._mine(st)) {
       Rep.change("free_trade", 1);
       Rep.change("syndicate", -2);
     }
@@ -3234,7 +3246,7 @@ const Stations = {
     if (window.Rep) {
       Rep.change("syndicate", 2);
       Rep.change("free_trade", -1);
-      if (st.ownerId === this.playerId()) Rep.change("syndicate", 1);
+      if (this._mine(st)) Rep.change("syndicate", 1);
     }
     if (window.Game) Game.requestSave();
     return { ok: true, qty: c.qty, paid: c.ransom, commId: c.commId };
@@ -3243,7 +3255,7 @@ const Stations = {
   // Owner releases a claim back for free (or burns it).
   dropImpoundClaim(systemId, claimId) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     const idx = (st.impoundClaims || []).findIndex(c => c.id === claimId);
     if (idx < 0) return { ok: false, msg: "Claim gone." };
     const c = st.impoundClaims[idx];
@@ -3256,13 +3268,20 @@ const Stations = {
   // ---- tick (auctions; stock hour is driven by Stock.tick) ---------------
   tick(now = Date.now()) {
     this.ensure();
-    if (this.auctionsShared()) {
-      void Cloud.stationCloseDue().then(res => {
-        if (res && res.ok) this._applyAuctionClose(res);
-        return this.refreshAuctions();
-      });
-    } else {
+    if (!this.auctionsShared()) {
       for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
+    }
+    const s = Game.state;
+    if (s && s.pendingHaulSettles && s.pendingHaulSettles.length && this._contractsWritable()) {
+      const pending = s.pendingHaulSettles.slice();
+      for (const row of pending) {
+        void this.settleHaul(row.contractId, row.outcome).then(res => {
+          if (res && res.ok) {
+            s.pendingHaulSettles = (s.pendingHaulSettles || []).filter(p => p.contractId !== row.contractId);
+            if (window.Game) Game.requestSave();
+          }
+        });
+      }
     }
     for (const st of this.list()) {
       if (st.status === "refit" && now >= st.refitUntil) st.status = st.ownerId ? "owned" : "npc";

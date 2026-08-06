@@ -42,7 +42,7 @@ const Missions = {
     ];
   },
 
-  async _launchLocal(contract, uids) {
+  _launchLocal(contract, uids, opts) {
     const s = this.s();
     uids = uids.filter(u => { const sh = Fleet.ship(u); return sh && sh.status === "idle"; });
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
@@ -51,9 +51,14 @@ const Missions = {
       const info = Senate.shipBanInfo(sh && sh.cls);
       return { ok: false, msg: info ? `${info.cls}-class ships banned due to ${info.title}.` : "That ship class is restricted by a senate edict." };
     }
-    const claim = window.Bazaar ? await Bazaar.claimForLaunch(contract) : { ok: true, contract };
-    if (!claim.ok) return claim;
-    contract = claim.contract;
+    if (!opts || !opts.claimed) {
+      const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
+      if (claim && typeof claim.then === "function") {
+        return { ok: false, msg: "Contract claim still pending — try again." };
+      }
+      if (!claim.ok) return claim;
+      contract = claim.contract;
+    }
     const phases = this.buildPhases(contract, uids);
     const totalMs = phases.reduce((a, p) => a + p.ms, 0);
     const mission = {
@@ -80,12 +85,24 @@ const Missions = {
   },
 
   launch(contract, uids) {
-    if (!this.authoritative()) return this._launchLocal(contract, uids);
+    if (!this.authoritative()) {
+      const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
+      if (claim && typeof claim.then === "function") {
+        return claim.then(c => (c.ok ? this._launchLocal(c.contract, uids, { claimed: true }) : c));
+      }
+      if (!claim.ok) return claim;
+      return this._launchLocal(claim.contract, uids, { claimed: true });
+    }
     const shipUids = (uids || []).slice();
     const contractId = contract && contract.id;
     if (!contractId) return Promise.resolve({ ok: false, msg: "Contract not in hand." });
     return Economy._withRpc(
-      () => this._launchLocal(contract, shipUids),
+      () => {
+        const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
+        if (claim && typeof claim.then === "function") return { ok: false, msg: "Contract claim still pending." };
+        if (!claim.ok) return claim;
+        return this._launchLocal(claim.contract, shipUids, { claimed: true });
+      },
       // phase2c: launch claims the board job. Pre-phase2c SQL only accepts
       // pendingContracts — take once, then retry launch.
       async () => {
@@ -249,8 +266,15 @@ const Missions = {
         if (stationHaul && m.contractId && window.Stations) {
           const settled = Stations.settleHaul(m.contractId, "success");
           if (settled && typeof settled.then === "function") {
-            settled.then(res => {
-              if (res && res.ok && res.credits != null) s.credits = +res.credits;
+            void settled.then(res => {
+              if (res && res.ok) {
+                if (res.credits != null) s.credits = +res.credits;
+              } else {
+                console.warn("[Missions] shared haul settle failed:", m.contractId, res);
+                s.pendingHaulSettles = s.pendingHaulSettles || [];
+                if (!s.pendingHaulSettles.some(p => p.contractId === m.contractId))
+                  s.pendingHaulSettles.push({ contractId: m.contractId, outcome: "success" });
+              }
               if (window.Economy) Economy.refreshNetWorth();
             });
           } else if (sharedHaul && settled && settled.credits != null) {

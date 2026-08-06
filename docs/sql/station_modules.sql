@@ -287,9 +287,7 @@ grant execute on function public.app_station_module_install(text, text) to authe
 grant execute on function public.app_station_module_uninstall(text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Publish — preserve server modules / reactor (like treasury / standing).
--- Re-run the publish body from station_treasury.sql with two extra preserved cols.
--- ponytail: patch only the on-conflict columns; full publish lives in treasury.
+-- Publish — D1 hold bootstrap + contract stats; preserve server modules/reactor.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_publish(p_stations jsonb)
 returns jsonb
@@ -307,6 +305,7 @@ declare
   disp      text;
   v_hall    jsonb;
   v_bays    jsonb;
+  v_hold    jsonb;
   v_n       int;
   prev_bays jsonb;
   merged    jsonb;
@@ -399,9 +398,11 @@ begin
     boot_treas := greatest(0, least(500000000::numeric,
       floor(coalesce((r->>'treasury_bootstrap')::numeric, 0))));
 
+    v_hold := case when jsonb_typeof(r->'hold_bootstrap') = 'object' then r->'hold_bootstrap' else '{}'::jsonb end;
+
     insert into public.stations as s (
       system_id, owner_id, owner_display, tier, status, modules, reactor_level,
-      treasury, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
+      treasury, hold, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
       refit_until, hall, bays, updated_at
     )
     values (
@@ -411,6 +412,7 @@ begin
       case when jsonb_typeof(r->'modules') = 'object' then r->'modules' else '{}'::jsonb end,
       greatest(0, least(5, coalesce((r->>'reactor_level')::int, 0))),
       boot_treas,
+      v_hold,
       greatest(0, least(4000, coalesce((r->>'lease_tax_bps')::int, 1000))),
       greatest(0, least(1500, coalesce((r->>'sale_tariff_bps')::int, 500))),
       greatest(0, least(100, coalesce((r->>'scrutiny')::int, 10))),
@@ -430,10 +432,13 @@ begin
       modules         = s.modules,
       reactor_level   = s.reactor_level,
       treasury        = case when s.treasury = 0 and boot_treas > 0 then boot_treas else s.treasury end,
+      hold            = case when s.hold = '{}'::jsonb and v_hold <> '{}'::jsonb then v_hold else s.hold end,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
       scrutiny        = s.scrutiny,
       standing        = s.standing,
+      contract_filled = s.contract_filled,
+      contract_expired = s.contract_expired,
       prod_comm       = excluded.prod_comm,
       refit_until     = excluded.refit_until,
       hall            = excluded.hall,
@@ -458,8 +463,11 @@ begin
            'system_id', system_id,
            'treasury', floor(treasury),
            'standing', round(standing),
+           'hold', hold,
            'modules', modules,
-           'reactor_level', reactor_level)), '[]'::jsonb)
+           'reactor_level', reactor_level,
+           'contract_filled', contract_filled,
+           'contract_expired', contract_expired)), '[]'::jsonb)
     into synced
     from public.stations
    where owner_id = uid and system_id = any(kept);
@@ -473,3 +481,43 @@ begin
   );
 end;
 $$;
+
+-- Refund buyer when a sold listing payload can't be delivered client-side.
+create or replace function public.app_station_buy_refund(p_listing_id text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  uid      uuid := auth.uid();
+  now_ms   bigint := app._now_ms();
+  l        public.station_listings%rowtype;
+  pstate   jsonb;
+  credits  double precision;
+begin
+  if uid is null then return jsonb_build_object('ok', false, 'error', 'not signed in'); end if;
+  if p_listing_id !~ '^[0-9a-fA-F-]{36}$' then
+    return jsonb_build_object('ok', false, 'error', 'Listing gone.');
+  end if;
+
+  select * into l from public.station_listings
+   where id = p_listing_id::uuid and buyer_id = uid and status = 'sold'
+     and settled_at > now() - interval '5 minutes'
+   for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'Nothing to refund.');
+  end if;
+
+  update public.station_listings set status = 'cancelled' where id = l.id;
+
+  pstate  := app._lock_state(now_ms);
+  credits := coalesce((pstate->>'credits')::float8, 0) + l.price;
+  pstate  := jsonb_set(pstate, '{credits}', to_jsonb(credits));
+  perform app._write_state(pstate, now_ms);
+
+  return jsonb_build_object('ok', true, 'credits', credits, 'refunded', l.price);
+end;
+$$;
+
+grant execute on function public.app_station_buy_refund(text) to authenticated;

@@ -877,7 +877,7 @@ const Bazaar = {
   // ---- contracts ----------------------------------------------------------
   // Claim a job at Launch time only (View Contract does not reserve it).
   // Accepts a board-open job or a legacy pendingContracts entry.
-  async claimForLaunch(contract) {
+  claimForLaunch(contract) {
     const s = this.s();
     const id = contract && contract.id;
     if (!id) return { ok: false, msg: "Invalid contract." };
@@ -886,7 +886,11 @@ const Bazaar = {
     if (held) return { ok: true, contract: held, fromPending: true };
     if ((contract && contract.source === "station") || (id && String(id).startsWith("sc"))) {
       if (!window.Stations) return { ok: false, msg: "Contract no longer available." };
-      const r = await Stations.claimHaulForLaunch(id);
+      if (contract.stationId && Stations.contractsShared(contract.stationId)) {
+        return Stations.claimHaulForLaunch(id);
+      }
+      const r = Stations.claimHaulForLaunch(id);
+      if (r && typeof r.then === "function") return r;
       if (!r.ok) return r;
       const b = this.bz();
       b.contracts = (b.contracts || []).filter(x => x.id !== id);

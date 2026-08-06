@@ -594,6 +594,10 @@ target.refitUntil = 0;
       return { ok: true, id: l.id, kind: l.kind, name: l.name, price: l.price, tariff,
         seller: l.seller, payload: l.payload, credits: ctx.Game.state.credits };
     },
+    async stationBuyRefund(id) {
+      ctx.Game.state.credits += 100;
+      return { ok: true, credits: ctx.Game.state.credits, refunded: 100 };
+    },
     async stationCancelListing(id) {
       const i = srv.listings.findIndex(l => l.id === id);
       if (i < 0) return { ok: false, error: "Listing gone." };
@@ -667,8 +671,8 @@ target.refitUntil = 0;
   const cashBeforeBad = ctx.Game.state.credits;
   const bad = await Stations.buyHallListing(heldSt.systemId, "srv-bad");
   assert.ok(!bad.ok, "a payload that can't be rebuilt is refused locally");
-  assert.strictEqual(ctx.Game.state.credits, cashBeforeBad - 100,
-    "the server debit is authoritative once phase D0 is live");
+  assert.strictEqual(ctx.Game.state.credits, cashBeforeBad,
+    "malformed payload is refunded server-side after the D0 debit");
 
   // Settle: sale proceeds credit the wallet server-side; legacy tariff payouts
   // still land in treasury when claimed.
