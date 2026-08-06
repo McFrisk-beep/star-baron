@@ -5,6 +5,9 @@
 -- Module installs debit players.state credits in-RPC; publish stops overwriting
 -- modules / reactor_level from the client. Uninstall refunds 50%, triggers refit.
 
+alter table public.stations
+  add column if not exists economy_bootstrapped boolean not null default false;
+
 -- ---------------------------------------------------------------------------
 -- Module catalogue — costs mirror js/data.js STATION_MODULES (index = level-1).
 -- ---------------------------------------------------------------------------
@@ -403,7 +406,7 @@ begin
     insert into public.stations as s (
       system_id, owner_id, owner_display, tier, status, modules, reactor_level,
       treasury, hold, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
-      refit_until, hall, bays, updated_at
+      refit_until, hall, bays, economy_bootstrapped, updated_at
     )
     values (
       sid, uid, disp,
@@ -422,6 +425,7 @@ begin
            then to_timestamp((r->>'refit_until')::bigint / 1000.0) end,
       coalesce(v_hall, '[]'::jsonb),
       coalesce(merged, '[]'::jsonb),
+      true,
       now()
     )
     on conflict (system_id) do update set
@@ -431,8 +435,9 @@ begin
       status          = excluded.status,
       modules         = s.modules,
       reactor_level   = s.reactor_level,
-      treasury        = case when s.treasury = 0 and boot_treas > 0 then boot_treas else s.treasury end,
-      hold            = case when s.hold = '{}'::jsonb and v_hold <> '{}'::jsonb then v_hold else s.hold end,
+      treasury        = case when not s.economy_bootstrapped and boot_treas > 0 then boot_treas else s.treasury end,
+      hold            = case when not s.economy_bootstrapped and v_hold <> '{}'::jsonb then v_hold else s.hold end,
+      economy_bootstrapped = true,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
       scrutiny        = s.scrutiny,
@@ -451,6 +456,7 @@ begin
 
   update public.stations
      set owner_id = null, owner_display = null, status = 'npc',
+         treasury = 0, hold = '{}'::jsonb, economy_bootstrapped = false,
          hall = '[]'::jsonb, bays = '[]'::jsonb, updated_at = now()
    where owner_id = uid
      and not (system_id = any(kept));

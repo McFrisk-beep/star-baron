@@ -689,6 +689,7 @@ begin
 
   update public.stations
      set owner_id = null, owner_display = null, status = 'npc',
+         treasury = 0, hold = '{}'::jsonb,
          hall = '[]'::jsonb, bays = '[]'::jsonb, updated_at = now()
    where owner_id = uid
      and not (system_id = any(kept));

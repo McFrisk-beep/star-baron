@@ -349,7 +349,7 @@ freeTarget.modules = { production_hub: 1 };
 freeTarget.reactorLevel = 1;
 freeTarget.treasury = 12_000;
 const creditsBeforeRel = ctx.Game.state.credits;
-const rel = Stations.relinquish(freeTarget.systemId);
+const rel = await Stations.relinquish(freeTarget.systemId);
 assert.ok(rel.ok, rel.msg);
 assert.strictEqual(freeTarget.status, "npc");
 assert.strictEqual(freeTarget.ownerId, null);
@@ -365,7 +365,7 @@ freeTarget.treasury = 0;
 const holdWorth = Stations.holdValue(freeTarget);
 assert.ok(holdWorth > 0, "hold has exchange value");
 const creditsBeforeHold = ctx.Game.state.credits;
-const rel2 = Stations.relinquish(freeTarget.systemId);
+const rel2 = await Stations.relinquish(freeTarget.systemId);
 assert.ok(rel2.ok, rel2.msg);
 assert.strictEqual(rel2.holdCredits, holdWorth);
 assert.strictEqual(ctx.Game.state.credits, creditsBeforeHold + holdWorth, "hold buyback credited");
@@ -964,17 +964,48 @@ target.refitUntil = 0;
         createdAt: Date.parse(h.created_at), expiresAt: Date.parse(h.expires_at),
       }, systemId: h.system_id };
     },
+    async stationLaunchHaul(id) {
+      const h = floor.hauls.find(x => x.id === id);
+      if (!h || h._gone || h.taken_by !== this._user.id)
+        return { ok: false, error: "Haul not claimed by you." };
+      if (h._launched) return { ok: false, error: "Haul already launched." };
+      h._launched = true;
+      h._flight_ready = true; // harness: skip wall-clock wait
+      return { ok: true, mission: { uid: "m1", contractId: id, source: "station", totalMs: 1, startedAt: T } };
+    },
     async stationSettleHaul(id, outcome) {
       const h = floor.hauls.find(x => x.id === id);
       if (!h || h._gone) return { ok: false, error: "Haul gone." };
-      if (outcome === "success") {
+      if (outcome === "abandon") {
+        h._gone = true;
+        return { ok: true, outcome: "abandon", credits: ctx.Game.state.credits };
+      }
+      if (!h._launched) return { ok: false, error: "Haul not launched." };
+      if (!h._flight_ready) return { ok: false, error: "Still in flight." };
+      // Server roll stub: honour success for harness; fail path available.
+      const win = outcome !== "fail";
+      if (win) {
         ctx.Game.state.credits += h.escrow;
         h._gone = true;
         vexRow.contract_filled = 3;
-        return { ok: true, outcome, credits: ctx.Game.state.credits,
+        return { ok: true, outcome: "success", credits: ctx.Game.state.credits,
           contract_filled: 3, contract_expired: 1 };
       }
-      return { ok: false, error: "Not your haul." };
+      h._gone = true;
+      return { ok: true, outcome: "fail", credits: ctx.Game.state.credits,
+        hold: { ...floor.hold }, contract_filled: 2, contract_expired: 1 };
+    },
+    async stationDeliver(system, comm, qty) {
+      qty = Math.min(qty | 0, floor.hold[comm] | 0);
+      if (qty <= 0) return { ok: false, error: "Nothing to deliver." };
+      floor.hold[comm] -= qty;
+      const price = 10;
+      const proceeds = price * qty;
+      ctx.Game.state.credits += proceeds;
+      return { ok: true, qty, proceeds, price, credits: ctx.Game.state.credits, hold: { ...floor.hold } };
+    },
+    async stationRelease(system, mode) {
+      return { ok: true, mode, credits: ctx.Game.state.credits, treasury: 0, holdCredits: 0 };
     },
     async stationPostHaul(system, comm, qty, rate) {
       if (system !== target.systemId) return { ok: false, error: "Not your station." };
@@ -1022,10 +1053,18 @@ target.refitUntil = 0;
   assert.ok(!Stations.boardContracts().some(j => j.id === haulId), "claimed haul leaves the board");
   assert.ok(Stations.findHaul(haulId), "haul index kept until settle");
 
+  // Instant settle without launch must fail (trust gate).
+  const tooSoon = await Stations.settleHaul(haulId, "success");
+  assert.ok(!tooSoon.ok, "settle before launch refused");
+
+  const launched = await ctx.Cloud.stationLaunchHaul(haulId, ["ship1"]);
+  assert.ok(launched.ok, launched.error);
+
   const cashBefore = ctx.Game.state.credits;
   const stockBefore = Stock.available(heldSt.sectorId, commId);
   const settled = await Stations.settleHaul(haulId, "success");
   assert.ok(settled.ok, settled.msg);
+  assert.strictEqual(settled.outcome, "success");
   assert.strictEqual(ctx.Game.state.credits, cashBefore + 1200, "hauler paid from server escrow");
   assert.ok(Stock.available(heldSt.sectorId, commId) >= stockBefore + 30, "success restocks sector");
   assert.strictEqual(Stations.get(heldSt.systemId).contractStats.filled, 3,

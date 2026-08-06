@@ -984,6 +984,12 @@ begin
 
   for m in select value from jsonb_array_elements(missions) loop
     if coalesce((m->>'resolved')::boolean, false) then continue; end if;
+    -- Station Contract Office hauls settle via app_station_settle_haul (escrow
+    -- + sector restock). Leaving them here would mint reward.credits twice.
+    if m->>'source' = 'station' then
+      kept := kept || jsonb_build_array(m);
+      continue;
+    end if;
     if now_ms - coalesce((m->>'startedAt')::bigint, 0) < coalesce((m->>'totalMs')::float8, 0) then
       kept := kept || jsonb_build_array(m);
       continue;

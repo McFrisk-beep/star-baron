@@ -2801,13 +2801,13 @@ const UI = {
       ${this._renderContractOfficePanel(st)}
       ${this._renderCustomsPanel(st, draftScrutiny)}`;
 
-    body.querySelector("#st-relinquish")?.addEventListener("click", () => {
+    body.querySelector("#st-relinquish")?.addEventListener("click", async () => {
       const holdV = Stations.holdValue(st);
       const holdNote = holdV > 0
         ? `\nHold goods cashed out at ~${Util.credits(holdV)}c.`
         : "\nHold is empty.";
       if (!confirm(`Relinquish ${st.name}? Modules stay for the next owner; treasury returns to you.${holdNote}`)) return;
-      const r = Stations.relinquish(st.systemId);
+      const r = await Stations.relinquish(st.systemId);
       if (!r.ok) return this.toast(r.msg, "warn");
       const bits = [];
       if (r.treasury) bits.push(`treasury ${Util.credits(r.treasury)}`);

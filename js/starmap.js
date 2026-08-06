@@ -653,14 +653,14 @@ const StarMap = {
       UI.flashCredits(); UI.updateHeader(); this.renderInfo(sys); this.updateGalaxyNodes();
     };
     const stRelinquish = document.getElementById("sm-st-relinquish");
-    if (stRelinquish) stRelinquish.onclick = () => {
+    if (stRelinquish) stRelinquish.onclick = async () => {
       const st0 = Stations.get(sys.id);
       const holdV = st0 ? Stations.holdValue(st0) : 0;
       const holdNote = holdV > 0
         ? `\nHold goods cashed out at ~${Util.credits(holdV)}c.`
         : "\nHold is empty.";
       if (!confirm(`Relinquish ${st0?.name || "this station"}? Modules stay for the next owner; treasury returns to you.${holdNote}`)) return;
-      const r = Stations.relinquish(sys.id);
+      const r = await Stations.relinquish(sys.id);
       if (!r.ok) return UI.toast(r.msg, "warn");
       const bits = [];
       if (r.treasury) bits.push(`treasury ${Util.credits(r.treasury)}`);
