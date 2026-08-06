@@ -440,7 +440,7 @@ assert.ok(!grab.ok, "refit station is not auctionable");
 // Owner actions that must keep working while offline.
 assert.ok(Stations.setProduction(target.systemId, pool[0].id).ok, "can reassign during refit");
 target.treasury = 5_000;
-assert.ok(Stations.withdraw(target.systemId, 5_000).ok, "can withdraw during refit");
+assert.ok((await Stations.withdraw(target.systemId, 5_000)).ok, "can withdraw during refit");
 
 // Refit ends on tick.
 const savedT = T;
@@ -568,16 +568,17 @@ target.refitUntil = 0;
     payouts: [],
   };
   ctx.Cloud = {
-    enabled: true, hallMissing: false,
+    enabled: true, hallMissing: false, treasuryMissing: false,
     _user: { id: "acct-me" },
     user() { return this._user; },
     signedIn() { return !!this._user; },
     hallReady() { return this.enabled && !this.hallMissing && this.signedIn(); },
+    treasuryReady() { return this.enabled && !this.treasuryMissing && this.signedIn(); },
     async stationDirectory() { return [vexRow]; },
     async stationPublish(rows) { this.published = rows; return { ok: true, held: rows.length, conflicts: [] }; },
     async stationHall(ids) {
       return srv.listings.filter(l => ids.includes(l.system_id))
-        .map(({ payload, ...row }) => row);           // payloads never leave on a read
+        .map(({ payload, ...row }) => row);
     },
     async stationListItem(system, l) {
       const row = { id: "srv-" + (srv.listings.length + 1), system_id: system, seller_id: "acct-me",
@@ -590,9 +591,13 @@ target.refitUntil = 0;
       const i = srv.listings.findIndex(l => l.id === id && l.system_id === system);
       if (i < 0) return { ok: false, error: "Listing gone." };
       const l = srv.listings.splice(i, 1)[0];
-      const tariff = Math.floor(l.price * 800 / 10000);          // Vex's published 8%
+      const tariff = Math.floor(l.price * 800 / 10000);
+      if (ctx.Game.state.credits < l.price) return { ok: false, error: "Not enough credits." };
+      ctx.Game.state.credits -= l.price;
+      srv.ownerTreasury = (srv.ownerTreasury | 0) + tariff;
       srv.payouts.push({ user_id: l.seller_id, amount: l.price - tariff, reason: "sale" });
-      return { ok: true, id: l.id, kind: l.kind, name: l.name, price: l.price, tariff, seller: l.seller, payload: l.payload };
+      return { ok: true, id: l.id, kind: l.kind, name: l.name, price: l.price, tariff,
+        seller: l.seller, payload: l.payload, credits: ctx.Game.state.credits };
     },
     async stationCancelListing(id) {
       const i = srv.listings.findIndex(l => l.id === id);
@@ -601,7 +606,25 @@ target.refitUntil = 0;
       if (l.seller_id !== "acct-me") return { ok: true, cleared: true, name: l.name };
       return { ok: true, kind: l.kind, name: l.name, payload: l.payload };
     },
-    async stationSettle() { const out = srv.mine || { payouts: [], items: [] }; srv.mine = null; return { ok: true, ...out }; },
+    async stationSettle() {
+      const out = srv.mine || { payouts: [], items: [] };
+      for (const p of out.payouts || []) {
+        if (p.reason === "sale") ctx.Game.state.credits += p.amount;
+      }
+      srv.mine = null;
+      return { ok: true, payouts: out.payouts || [], items: out.items || [], cargo: [],
+        credits: ctx.Game.state.credits };
+    },
+    async stationWithdraw(system, amount) {
+      if ((target.treasury | 0) < amount) return { ok: false, error: "Invalid amount." };
+      target.treasury -= amount;
+      ctx.Game.state.credits += amount;
+      return { ok: true, amount, treasury: target.treasury, credits: ctx.Game.state.credits };
+    },
+    async stationSetPolicy(system, policy) {
+      if (policy.lease_tax_bps != null) vexRow.lease_tax_bps = policy.lease_tax_bps;
+      return { ok: true, lease_tax_bps: vexRow.lease_tax_bps };
+    },
   };
 
   await Stations.refreshDirectory();
@@ -619,7 +642,9 @@ target.refitUntil = 0;
   assert.ok(bought.ok, bought.msg);
   assert.strictEqual(ctx.Game.state.credits, cashBefore - 4000, "buyer pays the shelf price");
   assert.strictEqual(bought.tariff, 320, "the owner's 8% tariff is split off at the sale");
+  assert.strictEqual(srv.payouts.length, 1, "only the seller is queued — tariff went to treasury");
   assert.strictEqual(srv.payouts[0].amount, 3680, "the seller is queued their net, not the gross");
+  assert.strictEqual(srv.ownerTreasury, 320, "tariff credits the station treasury server-side");
   const got = Object.values(ctx.Game.state.extractors).find(e => e.name === "Vex Deep Rig");
   assert.ok(got, "the bought extractor lands in our pool");
   assert.notStrictEqual(got.uid, "exVex", "a foreign uid is re-minted so it can't collide with ours");
@@ -646,23 +671,33 @@ target.refitUntil = 0;
   await Stations.refreshHalls([heldSt.systemId]);
   const cashBeforeBad = ctx.Game.state.credits;
   const bad = await Stations.buyHallListing(heldSt.systemId, "srv-bad");
-  assert.ok(!bad.ok, "a payload that can't be rebuilt is refused");
-  assert.strictEqual(ctx.Game.state.credits, cashBeforeBad, "and nothing is charged for it");
+  assert.ok(!bad.ok, "a payload that can't be rebuilt is refused locally");
+  assert.strictEqual(ctx.Game.state.credits, cashBeforeBad - 100,
+    "the server debit is authoritative once phase D0 is live");
 
-  // Settle: sale proceeds are ours, a tariff on our own station is the station's.
+  // Settle: sale proceeds credit the wallet server-side; legacy tariff payouts
+  // still land in treasury when claimed.
   const treasuryBefore = target.treasury | 0;
   const cashBeforeSettle = ctx.Game.state.credits;
   srv.mine = {
     payouts: [
       { systemId: heldSt.systemId, amount: 1200, reason: "sale", note: "Our Spare" },
-      { systemId: target.systemId, amount: 400, reason: "tariff", note: "someone else's stall" },
+      { systemId: target.systemId, amount: 400, reason: "tariff", note: "legacy queued tariff" },
     ],
     items: [],
   };
   const settled = await Stations.settleHall();
   assert.strictEqual(ctx.Game.state.credits, cashBeforeSettle + 1200, "sale proceeds reach the seller");
-  assert.strictEqual(target.treasury, treasuryBefore + 400, "our tariff lands in the station treasury, not our wallet");
+  assert.strictEqual(target.treasury, treasuryBefore + 400, "legacy tariff payouts land in treasury");
   assert.strictEqual(settled.items, 0, "nothing to hand back this time");
+
+  // Treasury withdraw routes through the server when signed in.
+  target.treasury = 5_000;
+  const cashBeforeW = ctx.Game.state.credits;
+  const wd = await Stations.withdraw(target.systemId, 2_000);
+  assert.ok(wd.ok, wd.msg);
+  assert.strictEqual(target.treasury, 3_000, "withdraw debits server treasury");
+  assert.strictEqual(ctx.Game.state.credits, cashBeforeW + 2_000, "withdraw credits the wallet");
 
   // An item we can't fit is already paid for: it waits in the save, survives a
   // reload, and lands the moment there's room. It must never just evaporate.

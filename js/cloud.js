@@ -319,6 +319,31 @@ const Cloud = {
       p_system: system, p_bay: bay | 0, p_gross: gross | 0,
     });
   },
+
+  // Station treasury + authoritative hall credits (docs/sql/station_treasury.sql).
+  // Latches off withdraw the same way bays latch off lease — phase 4 stubs exist
+  // but "the function exists" proves nothing until this paste is applied.
+  treasuryMissing: false,
+  async _treasuryRpc(name, args) {
+    if (this.treasuryMissing) return { ok: false, error: "Station treasury not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.treasuryMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_treasury.sql");
+        return { ok: false, error: "Station treasury not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  treasuryReady() { return this.enabled && !this.treasuryMissing && this.signedIn(); },
+  async stationWithdraw(system, amount) {
+    return this._treasuryRpc("app_station_withdraw", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationSetPolicy(system, policy) {
+    return this._treasuryRpc("app_station_set_policy", { p_system: system, p_policy: policy || {} });
+  },
+
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

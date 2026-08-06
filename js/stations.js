@@ -90,8 +90,16 @@ const Stations = {
   },
   uninstallCost() { return STATIONCFG.refitMs; },
 
-  ownedBy(pid = this.playerId()) { return this.list().filter(st => st.ownerId === pid && this.ownerHeld(st)); },
+  ownedBy(pid = this.playerId()) {
+    return this.list().filter(st => this.ownerHeld(st) && this._mine(st, pid));
+  },
   ownedCount(pid = this.playerId()) { return this.ownedBy(pid).length; },
+
+  // Guest saves key ownership as "player"; signed-in playerId() is the account
+  // uuid. Until server auctions own the claim, treat legacy "player" as ours.
+  _mine(st, pid = this.playerId()) {
+    return !!st && (st.ownerId === pid || (st.ownerId === "player" && pid !== "player"));
+  },
 
   ownerCap(tierIdx) {
     if (Array.isArray(STATIONCFG.ownerCap)) {
@@ -298,6 +306,8 @@ const Stations = {
       prod_comm: st.prodComm || "",
       // ms epoch — never `| 0` this, 32-bit truncation mangles it.
       refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
+      // One-time bootstrap when the server treasury is still zero (phase D0).
+      treasury_bootstrap: this.treasuryShared(st.systemId) ? Math.max(0, Math.floor(+st.treasury || 0)) : 0,
       // Shelf and bay occupancy — what makes a visited station look inhabited.
       // Owner-occupied bays rewrite "player" → account uuid so the shared column
       // names us the same way a remote lease does. Publish merges foreign
@@ -319,7 +329,10 @@ const Stations = {
     }));
     try {
       const res = await Cloud.stationPublish(rows);
-      if (res && res.ok) await this.refreshDirectory();
+      if (res && res.ok) {
+        this._applyTreasurySync(res);
+        await this.refreshDirectory();
+      }
       // A conflict means someone else claimed it first server-side. Local play
       // is unaffected (nothing is server-authoritative yet) — the directory just
       // keeps showing them as the holder.
@@ -478,18 +491,18 @@ const Stations = {
     if (!res || !res.ok) return null;
 
     let credits = 0, tariffs = 0, items = 0, cargo = 0;
+    if (res.credits != null) Game.state.credits = +res.credits;
     for (const p of Array.isArray(res.payouts) ? res.payouts : []) {
       const amt = Math.max(0, Math.round(+(p && p.amount) || 0));
       if (!amt) continue;
       const st = this.get(this._txt(p.systemId, 40));
-      // A tariff is the station's income, not the owner's pocket money (§9) —
-      // unless we've since lost the station, in which case it follows us out.
-      if (p.reason === "tariff" && st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+      // Tariff payouts are legacy (pre-D0); the server credited treasury on
+      // settle. Sale proceeds were credited server-side too — sync credits above.
+      if (p.reason === "tariff" && st && this.ownerHeld(st) && this._mine(st)) {
         st.treasury += amt;
         this._ledger(st, amt, "hall_tariff", this._txt(p.note, 48));
         tariffs += amt;
-      } else {
-        Game.state.credits += amt;
+      } else if (p.reason === "sale") {
         credits += amt;
         if (st) this._ledger(st, amt, "hall_payout", this._txt(p.note, 48));
       }
@@ -508,7 +521,7 @@ const Stations = {
       if (!sid || !commId || !qty) continue;
       if (!COMMODITIES.some(c => c.id === commId)) continue;
       const st = this.get(sid);
-      if (st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+      if (st && this.ownerHeld(st) && this._mine(st)) {
         st.hold[commId] = (st.hold[commId] | 0) + qty;
         this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
         cargo += qty;
@@ -823,18 +836,30 @@ const Stations = {
     return { ok: true, retool, refitUntil: retool ? st.refitUntil : 0 };
   },
 
-  setLeaseTax(systemId, bps) {
+  async setLeaseTax(systemId, bps) {
     const st = this.get(systemId);
     if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
-    st.leaseTaxBps = Util.clamp(Math.round(+bps || 0), 0, 4000);
+    bps = Util.clamp(Math.round(+bps || 0), 0, 4000);
+    if (this.treasuryShared(systemId)) {
+      const res = await this._setPolicy(systemId, { lease_tax_bps: bps });
+      if (!res || !res.ok) return { ok: false, msg: (res && res.msg) || (res && res.error) || "Couldn't set lease tax." };
+      return { ok: true, leaseTaxBps: st.leaseTaxBps };
+    }
+    st.leaseTaxBps = bps;
     if (window.Game) Game.requestSave();
     return { ok: true, leaseTaxBps: st.leaseTaxBps };
   },
 
-  setSaleTariff(systemId, bps) {
+  async setSaleTariff(systemId, bps) {
     const st = this.get(systemId);
     if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
-    st.saleTariffBps = Util.clamp(Math.round(+bps || 0), 0, 1500);
+    bps = Util.clamp(Math.round(+bps || 0), 0, 1500);
+    if (this.treasuryShared(systemId)) {
+      const res = await this._setPolicy(systemId, { sale_tariff_bps: bps });
+      if (!res || !res.ok) return { ok: false, msg: (res && res.msg) || (res && res.error) || "Couldn't set tariff." };
+      return { ok: true, saleTariffBps: st.saleTariffBps };
+    }
+    st.saleTariffBps = bps;
     if (window.Game) Game.requestSave();
     return { ok: true, saleTariffBps: st.saleTariffBps };
   },
@@ -1322,11 +1347,15 @@ const Stations = {
   // half-second between the RPC returning and delivery loses the item (nothing
   // is charged for it). Both go away in phase D, when the debit moves inside
   // the same transaction; an ack RPC before then would buy little.
+  // The shared-shelf buy. The server takes the listing off the shelf, debits
+  // the buyer's wallet, splits the tariff into the station treasury, pays (or
+  // queues) the seller, and hands us the item.
   async _buyShared(systemId, listing) {
     if (!this._hallWritable()) return { ok: false, msg: "Sign in to buy here." };
     if (this.listingMine(listing)) return { ok: false, msg: "That's your listing." };
     const s = Game.state;
-    if (s.credits < listing.price) return { ok: false, msg: "Not enough credits." };
+    if (!this._treasuryWritable() && s.credits < listing.price)
+      return { ok: false, msg: "Not enough credits." };
     const room = this._roomFor(listing.kind);
     if (!room.ok) return room;
 
@@ -1337,22 +1366,19 @@ const Stations = {
       return { ok: false, msg: "The hall is unreachable right now." };
     }
     if (!res || !res.ok) {
-      // Someone got there first, or it expired between render and click.
       this._dropShared(systemId, listing.id);
       void this.refreshHalls([systemId]);
       return { ok: false, msg: (res && res.error) || "Listing gone." };
     }
     const bought = this._ingestBought(res);
     this._dropShared(systemId, listing.id);
-    // Paid at the server's price, not the one our stale row was showing.
     const paid = this._num(res.price, 0, 1e12, listing.price);
-    s.credits -= paid;
+    if (res.credits != null) s.credits = +res.credits;
+    else s.credits -= paid;
     if (!bought) {
-      // The escrowed payload didn't survive re-typing: we own a thing we can't
-      // build. Refund rather than silently charge for nothing.
-      s.credits += paid;
+      if (res.credits == null) s.credits += paid;
       console.warn("[Stations] unusable payload from hall listing", listing.id);
-      return { ok: false, msg: "That listing was malformed — nothing was charged." };
+      return { ok: false, msg: "That listing was malformed — the hall took payment server-side." };
     }
     if (!this._deliverListable(bought, this.playerId()).ok) this._park(bought);
     if (window.Economy) Economy.refreshNetWorth();
@@ -1652,12 +1678,18 @@ const Stations = {
     return filled;
   },
 
-  setScrutiny(systemId, pct) {
+  async setScrutiny(systemId, pct) {
     const st = this.get(systemId);
     if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
     if (!(st.modules.customs_house | 0)) return { ok: false, msg: "Needs a Customs House." };
     const capPct = Math.round((CUSTOMS.cap || 0.85) * 100);
-    st.scrutiny = Util.clamp(Math.round(+pct || 0), 0, capPct);
+    const scrutiny = Util.clamp(Math.round(+pct || 0), 0, capPct);
+    if (this.treasuryShared(systemId)) {
+      const res = await this._setPolicy(systemId, { scrutiny });
+      if (!res || !res.ok) return { ok: false, msg: (res && res.msg) || (res && res.error) || "Couldn't set scrutiny." };
+      return { ok: true, scrutiny: st.scrutiny };
+    }
+    st.scrutiny = scrutiny;
     if (window.Game) Game.requestSave();
     return { ok: true, scrutiny: st.scrutiny };
   },
@@ -1676,6 +1708,46 @@ const Stations = {
     return !!(this.directory[systemId] && window.Cloud && Cloud.enabled && !Cloud.baysMissing);
   },
   _baysWritable() { return !!(window.Cloud && Cloud.baysReady && Cloud.baysReady()); },
+
+  // Phase D0: treasury and hall-buy credits are server-owned once
+  // station_treasury.sql is live. Policy changes route through set_policy too.
+  treasuryShared(systemId) {
+    const st = this.get(systemId);
+    if (!st || !this.ownerHeld(st) || !this._mine(st)) return false;
+    return !!(window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady());
+  },
+  _treasuryWritable() { return !!(window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady()); },
+
+  _applyTreasurySync(res) {
+    if (!res || !Array.isArray(res.treasuries)) return;
+    for (const row of res.treasuries) {
+      const sid = this._txt(row.system_id, 40);
+      const st = sid && this.get(sid);
+      if (!st || !this._mine(st)) continue;
+      if (row.treasury != null) st.treasury = Math.max(0, Math.floor(+row.treasury || 0));
+      if (row.standing != null) st.standing = Util.clamp(+row.standing, 0, 100);
+    }
+  },
+
+  async _setPolicy(systemId, policy) {
+    if (!this.treasuryShared(systemId)) return null;
+    try {
+      const res = await Cloud.stationSetPolicy(systemId, policy);
+      if (!res || !res.ok) return res || { ok: false, msg: "Policy change refused." };
+      const st = this.get(systemId);
+      if (st) {
+        if (res.lease_tax_bps != null) st.leaseTaxBps = res.lease_tax_bps | 0;
+        if (res.sale_tariff_bps != null) st.saleTariffBps = res.sale_tariff_bps | 0;
+        if (res.scrutiny != null) st.scrutiny = res.scrutiny | 0;
+      }
+      if (window.Game) Game.requestSave();
+      this._publishSoon();
+      return { ok: true };
+    } catch (e) {
+      console.warn("[Stations] set policy failed:", e);
+      return { ok: false, msg: "Couldn't reach the station ledger." };
+    }
+  },
 
   // Local leases key by playerId() ("player"); shared ones by account uuid.
   bayMine(bay) {
@@ -1885,7 +1957,7 @@ const Stations = {
     // reappears on the next directory merge.
     if (this.bayShared(systemId)) {
       const st = this.get(systemId);
-      if (st && this.ownerHeld(st) && st.ownerId === this.playerId()) {
+      if (st && this.ownerHeld(st) && this._mine(st)) {
         if (!this._baysWritable())
           return { ok: false, msg: "Sign in to manage shared bays." };
         let res;
@@ -2141,11 +2213,27 @@ const Stations = {
   // Alias used by UI / harness.
   deliver(systemId, commId, qty) { return this.deliverToExchange(systemId, commId, qty); },
 
-  withdraw(systemId, amount) {
+  async withdraw(systemId, amount) {
     const st = this.get(systemId);
-    if (!st || st.ownerId !== this.playerId()) return { ok: false, msg: "Not your station." };
+    if (!st || !this._mine(st)) return { ok: false, msg: "Not your station." };
     amount = Math.floor(+amount || 0);
     if (amount <= 0 || amount > st.treasury) return { ok: false, msg: "Invalid amount." };
+    if (this.treasuryShared(systemId)) {
+      let res;
+      try { res = await Cloud.stationWithdraw(systemId, amount); }
+      catch (e) {
+        console.warn("[Stations] withdraw failed:", e);
+        return { ok: false, msg: "Couldn't reach the station ledger." };
+      }
+      if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Withdraw refused." };
+      st.treasury = Math.max(0, Math.floor(+res.treasury || 0));
+      if (res.credits != null) Game.state.credits = +res.credits;
+      else Game.state.credits += amount;
+      this._ledger(st, -amount, "withdraw", "treasury");
+      if (window.Economy) Economy.refreshNetWorth();
+      if (window.Game) Game.requestSave();
+      return { ok: true, amount };
+    }
     st.treasury -= amount;
     Game.state.credits += amount;
     this._ledger(st, -amount, "withdraw", "treasury");

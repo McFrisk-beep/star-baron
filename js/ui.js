@@ -2835,13 +2835,14 @@ const UI = {
         : "Production line assigned.", "good");
       this.renderStations(); this.updateHeader();
     });
-    body.querySelector("#st-set-lease")?.addEventListener("click", () => {
+    body.querySelector("#st-set-lease")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-lease")?.value || 0;
-      Stations.setLeaseTax(st.systemId, pct * 100);
+      const r = await Stations.setLeaseTax(st.systemId, pct * 100);
+      if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Lease tax set to ${pct}%.`, "good"); this.renderStations();
     });
-    body.querySelector("[data-st-withdraw]")?.addEventListener("click", () => {
-      const r = Stations.withdraw(st.systemId, st.treasury);
+    body.querySelector("[data-st-withdraw]")?.addEventListener("click", async () => {
+      const r = await Stations.withdraw(st.systemId, st.treasury);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Withdrew ${Util.credits(r.amount)}.`, "good"); this.flashCredits(); this.renderStations(); this.updateHeader();
     });
@@ -2957,9 +2958,9 @@ const UI = {
   },
 
   _wireCustomsPanel(body, st) {
-    body.querySelector("#st-set-scrutiny")?.addEventListener("click", () => {
+    body.querySelector("#st-set-scrutiny")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-scrutiny")?.value || 0;
-      const r = Stations.setScrutiny(st.systemId, pct);
+      const r = await Stations.setScrutiny(st.systemId, pct);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Scrutiny set to ${r.scrutiny}%.`, "good"); this.renderStations();
     });
@@ -3108,9 +3109,10 @@ const UI = {
   },
 
   _wireHallPanel(body, st) {
-    body.querySelector("#st-set-tariff")?.addEventListener("click", () => {
+    body.querySelector("#st-set-tariff")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-tariff")?.value || 0;
-      Stations.setSaleTariff(st.systemId, pct * 100);
+      const r = await Stations.setSaleTariff(st.systemId, pct * 100);
+      if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Sale tariff set to ${pct}%.`, "good"); this.renderStations();
     });
     // The hall calls can go to the server now, so every handler awaits.
