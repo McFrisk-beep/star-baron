@@ -1,4 +1,6 @@
 -- Station economy trust hardening (paste AFTER station_auctions.sql).
+-- Requires: station D0–D4 + phase2_missions_bazaar.sql (app_mission_resolve must
+--   skip source='station' — this file raises if that guard is missing).
 -- Closes Phase D critical/high holes:
 --   1. settle_haul no longer trusts client success — requires server launch + roll
 --   2. treasury/hold bootstrap is one-shot (economy_bootstrapped), not "whenever empty"
@@ -50,6 +52,50 @@ begin
 end;
 $$;
 
+-- Dedupe + cap (also defined in phase2; recreate here so trust paste is enough).
+create or replace function app._pick_idle_ships(p_ships jsonb, p_ship_uids jsonb)
+returns jsonb
+language plpgsql
+immutable
+as $$
+declare
+  uid_txt text;
+  sh      jsonb;
+  def     record;
+  uids    jsonb := '[]'::jsonb;
+  power   double precision := 0;
+  cargo   double precision := 0;
+  speed   double precision := 0;
+  n       int := 0;
+begin
+  if jsonb_typeof(coalesce(p_ship_uids, 'null'::jsonb)) <> 'array' then
+    return jsonb_build_object('ok', false, 'error', 'Invalid mission.');
+  end if;
+  if jsonb_array_length(p_ship_uids) > 64 then
+    return jsonb_build_object('ok', false, 'error', 'Too many ships.');
+  end if;
+  for uid_txt in select distinct value from jsonb_array_elements_text(p_ship_uids) t(value) loop
+    exit when n >= 64;
+    select value into sh from jsonb_array_elements(coalesce(p_ships, '[]'::jsonb)) x(value)
+      where x.value->>'uid' = uid_txt limit 1;
+    if sh is null or sh->>'status' is distinct from 'idle' then continue; end if;
+    select * into def from app.ship_def(sh->>'type');
+    if def.id is null then continue; end if;
+    uids := uids || jsonb_build_array(uid_txt);
+    power := power + coalesce(def.firepower, 0);
+    cargo := cargo + coalesce(def.cargo, 0);
+    speed := speed + coalesce(def.speed, 1);
+    n := n + 1;
+  end loop;
+  if n = 0 then
+    return jsonb_build_object('ok', false, 'error', 'Select at least one idle ship.');
+  end if;
+  return jsonb_build_object(
+    'ok', true, 'uids', uids, 'power', power, 'cargo', cargo,
+    'speed', speed / n, 'n', n);
+end;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Launch a claimed station haul: stamp flight timer + RNG on the haul row,
 -- lock ships in players.state. Instant claim→success is impossible without this.
@@ -66,10 +112,8 @@ declare
   h          public.station_hauls%rowtype;
   st         jsonb;
   ships      jsonb;
+  pick       jsonb;
   uids       jsonb := '[]'::jsonb;
-  uid_txt    text;
-  sh         jsonb;
-  def        record;
   power      double precision := 0;
   cargo      double precision := 0;
   speed      double precision := 0;
@@ -101,22 +145,15 @@ begin
 
   st := app._lock_state(now_ms);
   ships := coalesce(st->'ships', '[]'::jsonb);
-  for uid_txt in select jsonb_array_elements_text(p_ship_uids) loop
-    select value into sh from jsonb_array_elements(ships) x(value)
-      where x.value->>'uid' = uid_txt limit 1;
-    if sh is null or sh->>'status' is distinct from 'idle' then continue; end if;
-    select * into def from app.ship_def(sh->>'type');
-    if def.id is null then continue; end if;
-    uids := uids || jsonb_build_array(uid_txt);
-    power := power + coalesce(def.firepower, 0);
-    cargo := cargo + coalesce(def.cargo, 0);
-    speed := speed + coalesce(def.speed, 1);
-    n := n + 1;
-  end loop;
-  if n = 0 then
-    return jsonb_build_object('ok', false, 'error', 'Select at least one idle ship.');
+  pick := app._pick_idle_ships(ships, p_ship_uids);
+  if not coalesce((pick->>'ok')::boolean, false) then
+    return jsonb_build_object('ok', false, 'error', coalesce(pick->>'error', 'Select at least one idle ship.'));
   end if;
-  speed := speed / n;
+  uids := pick->'uids';
+  power := coalesce((pick->>'power')::float8, 0);
+  cargo := coalesce((pick->>'cargo')::float8, 0);
+  speed := coalesce((pick->>'speed')::float8, 1);
+  n := coalesce((pick->>'n')::int, 0);
 
   -- Matches Stations._toBoardJob duration + Missions.buildPhases.
   duration_ms := 25 * 60 * 1000 + h.qty * 8000;
@@ -517,15 +554,17 @@ begin
 
     update public.stations set
       owner_id = null, owner_display = null, status = 'npc',
-      treasury = 0, hold = '{}'::jsonb, economy_bootstrapped = false,
+      treasury = 0, hold = '{}'::jsonb,
+      standing = 60, prod_comm = null,
       hall = '[]'::jsonb, bays = '[]'::jsonb,
       cooldown_until = null, updated_at = now()
     where system_id = p_system;
   else
     -- Revolt: forfeit treasury + hold; modules remain for next owner.
+    -- economy_bootstrapped stays sticky — release already zeroes wealth.
     update public.stations set
       owner_id = null, owner_display = null, status = 'cooldown',
-      treasury = 0, hold = '{}'::jsonb, economy_bootstrapped = false,
+      treasury = 0, hold = '{}'::jsonb,
       hall = '[]'::jsonb, bays = '[]'::jsonb,
       standing = 60, prod_comm = null,
       cooldown_until = now() + interval '24 hours',
@@ -690,11 +729,18 @@ begin
       status          = excluded.status,
       modules         = s.modules,
       reactor_level   = s.reactor_level,
-      -- One-shot only: never remint after withdraw/draw emptied the row.
-      treasury        = case when not s.economy_bootstrapped and boot_treas > 0
-                             then boot_treas else s.treasury end,
-      hold            = case when not s.economy_bootstrapped and v_hold <> '{}'::jsonb
-                             then v_hold else s.hold end,
+      -- Sticky one-shot: never remint after the row has been bootstrapped once.
+      -- New owner taking over (stale claim / was npc) starts at zero wealth.
+      treasury        = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then 0
+                          when not s.economy_bootstrapped and boot_treas > 0 then boot_treas
+                          else s.treasury
+                        end,
+      hold            = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then '{}'::jsonb
+                          when not s.economy_bootstrapped and v_hold <> '{}'::jsonb then v_hold
+                          else s.hold
+                        end,
       economy_bootstrapped = true,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
@@ -713,9 +759,10 @@ begin
   end loop;
 
   -- Dropped stations: clear wealth so the next owner/auction can't inherit it.
+  -- economy_bootstrapped stays sticky across ownership.
   update public.stations
      set owner_id = null, owner_display = null, status = 'npc',
-         treasury = 0, hold = '{}'::jsonb, economy_bootstrapped = false,
+         treasury = 0, hold = '{}'::jsonb,
          hall = '[]'::jsonb, bays = '[]'::jsonb,
          cooldown_until = null, updated_at = now()
    where owner_id = uid
@@ -751,13 +798,97 @@ $$;
 grant execute on function public.app_station_publish(jsonb) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Skip station hauls inside app_mission_resolve (escrow settles separately).
--- Re-declare only if phase2 body is present; otherwise launch still works and
--- client resolveLocal + settleHaul covers guests.
+-- Auction close: winner must not bootstrap-mint; zero leftover wealth.
+-- ---------------------------------------------------------------------------
+create or replace function public.app_station_close_due()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, app
+as $$
+declare
+  a         public.station_auctions%rowtype;
+  st        public.stations%rowtype;
+  tier      int;
+  cap       int;
+  owned     int;
+  closed    jsonb := '[]'::jsonb;
+begin
+  for a in
+    select * from public.station_auctions
+     where status = 'open' and closes_at <= now()
+     for update
+  loop
+    select * into st from public.stations where system_id = a.system_id for update;
+
+    if a.high_bidder is null then
+      update public.station_auctions set status = 'closed' where system_id = a.system_id;
+      continue;
+    end if;
+
+    select coalesce((state->'prestige'->>'tier')::int, 0) into tier
+      from public.players where user_id = a.high_bidder for update;
+
+    if not found then
+      update public.station_auctions set status = 'forfeit' where system_id = a.system_id;
+      closed := closed || jsonb_build_array(jsonb_build_object(
+        'system_id', a.system_id, 'outcome', 'forfeit', 'bidder', a.high_bidder));
+      continue;
+    end if;
+
+    cap := public._station_owner_cap(tier);
+    owned := public._station_owned_count(a.high_bidder);
+
+    if owned >= cap then
+      perform app._credit_user(a.high_bidder, a.high_bid, app._now_ms());
+      update public.station_auctions set status = 'forfeit' where system_id = a.system_id;
+      closed := closed || jsonb_build_array(jsonb_build_object(
+        'system_id', a.system_id, 'outcome', 'forfeit', 'bidder', a.high_bidder));
+      continue;
+    end if;
+
+    -- Winner: credits sunk (no refund). Claim station — no wealth inheritance,
+    -- bootstrap already spent for this row (sticky flag).
+    insert into public.stations (system_id, owner_id, tier, status, standing,
+      modules, reactor_level, treasury, hold, economy_bootstrapped, updated_at)
+    values (a.system_id, a.high_bidder,
+      coalesce(st.tier, 'Berth'), 'owned', 60,
+      coalesce(st.modules, '{}'::jsonb), coalesce(st.reactor_level, 0),
+      0, '{}'::jsonb, true, now())
+    on conflict (system_id) do update set
+      owner_id = excluded.owner_id,
+      status = 'owned',
+      standing = 60,
+      treasury = 0,
+      hold = '{}'::jsonb,
+      economy_bootstrapped = true,
+      updated_at = now();
+
+    update public.station_auctions set status = 'closed' where system_id = a.system_id;
+    closed := closed || jsonb_build_array(jsonb_build_object(
+      'system_id', a.system_id, 'outcome', 'won', 'bidder', a.high_bidder, 'amount', a.high_bid));
+  end loop;
+
+  return jsonb_build_object('ok', true, 'closed', closed);
+end;
+$$;
+
+grant execute on function public.app_station_close_due() to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Fail loud if app_mission_resolve still pays station hauls (double escrow).
+-- Prefer re-pasting phase2_missions_bazaar.sql (has the source=station skip);
+-- this check makes a docs-only paste of trust.sql refuse to leave a mint open.
 -- ---------------------------------------------------------------------------
 do $$
 begin
-  -- Patch note for operators: if you re-paste phase2_missions_bazaar.sql after
-  -- this file, re-paste this file (or keep the source=station continue in phase2).
-  null;
+  if not exists (
+    select 1 from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'app_mission_resolve'
+      and pg_get_functiondef(p.oid) like '%''source'' = ''station''%'
+  ) then
+    raise exception
+      'Re-paste docs/sql/phase2_missions_bazaar.sql first — app_mission_resolve still pays station hauls (double escrow).';
+  end if;
 end $$;

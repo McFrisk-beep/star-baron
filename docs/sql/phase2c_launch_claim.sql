@@ -51,9 +51,7 @@ declare
   st jsonb;
   ships jsonb;
   uids jsonb := '[]'::jsonb;
-  uid text;
-  sh jsonb;
-  def record;
+  pick jsonb;
   power double precision := 0;
   cargo double precision := 0;
   speed double precision := 0;
@@ -106,23 +104,15 @@ begin
   end if;
 
   ships := coalesce(st->'ships', '[]'::jsonb);
-  for uid in select jsonb_array_elements_text(p_ship_uids) loop
-    select value into sh from jsonb_array_elements(ships) x(value)
-      where x.value->>'uid' = uid limit 1;
-    if sh is null or sh->>'status' is distinct from 'idle' then continue; end if;
-    select * into def from app.ship_def(sh->>'type');
-    if def.id is null then continue; end if;
-    uids := uids || jsonb_build_array(uid);
-    power := power + coalesce(def.firepower, 0);
-    cargo := cargo + coalesce(def.cargo, 0);
-    speed := speed + coalesce(def.speed, 1);
-    n := n + 1;
-  end loop;
-
-  if n = 0 then
-    return jsonb_build_object('ok', false, 'error', 'Select at least one idle ship.');
+  pick := app._pick_idle_ships(ships, p_ship_uids);
+  if not coalesce((pick->>'ok')::boolean, false) then
+    return jsonb_build_object('ok', false, 'error', coalesce(pick->>'error', 'Select at least one idle ship.'));
   end if;
-  speed := speed / n;
+  uids := pick->'uids';
+  power := coalesce((pick->>'power')::float8, 0);
+  cargo := coalesce((pick->>'cargo')::float8, 0);
+  speed := coalesce((pick->>'speed')::float8, 1);
+  n := coalesce((pick->>'n')::int, 0);
 
   danger := coalesce(contract->>'danger', 'moderate');
   min_fp := coalesce((contract->>'minFirepower')::float8, 0);

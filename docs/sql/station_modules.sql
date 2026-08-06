@@ -435,8 +435,16 @@ begin
       status          = excluded.status,
       modules         = s.modules,
       reactor_level   = s.reactor_level,
-      treasury        = case when not s.economy_bootstrapped and boot_treas > 0 then boot_treas else s.treasury end,
-      hold            = case when not s.economy_bootstrapped and v_hold <> '{}'::jsonb then v_hold else s.hold end,
+      treasury        = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then 0
+                          when not s.economy_bootstrapped and boot_treas > 0 then boot_treas
+                          else s.treasury
+                        end,
+      hold            = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then '{}'::jsonb
+                          when not s.economy_bootstrapped and v_hold <> '{}'::jsonb then v_hold
+                          else s.hold
+                        end,
       economy_bootstrapped = true,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
@@ -456,7 +464,7 @@ begin
 
   update public.stations
      set owner_id = null, owner_display = null, status = 'npc',
-         treasury = 0, hold = '{}'::jsonb, economy_bootstrapped = false,
+         treasury = 0, hold = '{}'::jsonb,
          hall = '[]'::jsonb, bays = '[]'::jsonb, updated_at = now()
    where owner_id = uid
      and not (system_id = any(kept));

@@ -166,13 +166,14 @@ const Missions = {
   // Resolve finished missions. Returns reports (also pushed to state.reports).
   // Authoritative path awaits app_mission_resolve (server RNG); guests stay sync.
   // Station hauls are skipped by app_mission_resolve (escrow settle is separate).
+  // Auth first so its result_slice can't resurrect a station mission we just cleared.
   resolveMatured(now) {
     if (!this.authoritative()) return this._resolveLocal(now);
-    const stationOut = this._resolveLocal(now, { stationOnly: true });
     const due = this.s().missions.some(m =>
       !m.resolved && m.source !== "station" && now - m.startedAt >= m.totalMs);
-    if (!due) return Promise.resolve(stationOut);
-    return this._resolveAuth(now).then(out => stationOut.concat(out));
+    if (!due) return Promise.resolve(this._resolveLocal(now, { stationOnly: true }));
+    return this._resolveAuth(now).then(out =>
+      this._resolveLocal(now, { stationOnly: true }).concat(out));
   },
 
   async _resolveAuth(now) {

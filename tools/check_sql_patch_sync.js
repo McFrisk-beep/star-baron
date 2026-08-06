@@ -76,7 +76,17 @@ assert.ok(trustSql.includes("app_station_launch_haul")
   && trustSql.includes("app_station_deliver")
   && trustSql.includes("app_station_release"),
   "station_economy_trust.sql missing launch/deliver/release RPCs");
-assert.ok(trustSql.includes("Haul not launched") || trustSql.includes("Still in flight"),
-  "station_economy_trust.sql settle_haul must require a launched flight");
+assert.ok(trustSql.includes("economy_bootstrapped = true")
+  && !/economy_bootstrapped\s*=\s*false/.test(trustSql),
+  "station_economy_trust.sql must keep economy_bootstrapped sticky (never reset false)");
+assert.ok(trustSql.includes("app._pick_idle_ships")
+  && trustSql.includes("Too many ships"),
+  "station_economy_trust.sql must dedupe/cap ship arrays");
+assert.ok(/raise exception[\s\S]*source[''] = ['']station/.test(trustSql)
+  || trustSql.includes("double escrow"),
+  "station_economy_trust.sql must fail if mission_resolve lacks station skip");
+assert.ok(fs.readFileSync(path.join(root, "docs/sql/phase2_missions_bazaar.sql"), "utf8")
+  .includes("m->>'source' = 'station'"),
+  "phase2_missions_bazaar.sql must skip source=station in app_mission_resolve");
 
 console.log(`check_sql_patch_sync: ${FNS.length} market fns + app_station_publish + economy_trust ✔`);

@@ -1882,17 +1882,7 @@ const Stations = {
       if (this._contractsWritable() && /^[0-9a-f-]{36}$/i.test(String(contractId || ""))) {
         try {
           const res = await Cloud.stationSettleHaul(contractId, outcome);
-          if (!res || !res.ok) {
-            const err = (res && res.error) || "Settle refused.";
-            return {
-              ok: false, msg: err,
-              terminal: /gone|already settled|not your haul|not launched/i.test(err),
-            };
-          }
-          if (res.credits != null) Game.state.credits = +res.credits;
-          if (window.Economy) Economy.refreshNetWorth();
-          if (window.Game) Game.requestSave();
-          return { ok: true, credits: res.credits };
+          return this._applySharedSettle(res, null, null, outcome);
         } catch (e) {
           console.warn("[Stations] settle haul failed:", e);
           return { ok: false, msg: "Couldn't reach the contract board." };
@@ -1906,40 +1896,46 @@ const Stations = {
     if (contract.shared && this._contractsWritable()) {
       try {
         const res = await Cloud.stationSettleHaul(contractId, outcome);
-        if (!res || !res.ok) {
-          const err = (res && res.error) || "Settle refused.";
-          return {
-            ok: false, msg: err,
-            terminal: /gone|already settled|not your haul/i.test(err),
-          };
-        }
-        if (res.credits != null) Game.state.credits = +res.credits;
-        if (this._mine(st)) this._applyHoldFromServer(st, res.hold);
-        if (res.contract_filled != null || res.contract_expired != null) {
-          st.contractStats = {
-            filled: Math.max(0, Math.floor(+res.contract_filled || 0)),
-            expired: Math.max(0, Math.floor(+res.contract_expired || 0)),
-          };
-        }
-        const settledOutcome = res.outcome || outcome;
-        if (settledOutcome === "success") {
-          // Server restocks sector_stock; local put only when Phase 4 shelf isn't live.
-          if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
-            Stock.put(st.sectorId, contract.commId, contract.qty);
-          if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
-        }
-        this._dropHaul(contractId, st.systemId);
-        const idx = (st.contracts || []).indexOf(contract);
-        if (idx >= 0) st.contracts.splice(idx, 1);
-        if (window.Economy) Economy.refreshNetWorth();
-        if (window.Game) Game.requestSave();
-        return { ok: true, credits: res.credits, outcome: settledOutcome };
+        return this._applySharedSettle(res, st, contract, outcome);
       } catch (e) {
         console.warn("[Stations] settle haul failed:", e);
         return { ok: false, msg: "Couldn't reach the contract board." };
       }
     }
     return this._settleHaulLocal(found, outcome);
+  },
+
+  _applySharedSettle(res, st, contract, outcome) {
+    if (!res || !res.ok) {
+      const err = (res && res.error) || "Settle refused.";
+      return {
+        ok: false, msg: err,
+        terminal: /gone|already settled|not your haul|not launched/i.test(err),
+      };
+    }
+    if (res.credits != null) Game.state.credits = +res.credits;
+    if (st && this._mine(st)) this._applyHoldFromServer(st, res.hold);
+    if (st && (res.contract_filled != null || res.contract_expired != null)) {
+      st.contractStats = {
+        filled: Math.max(0, Math.floor(+res.contract_filled || 0)),
+        expired: Math.max(0, Math.floor(+res.contract_expired || 0)),
+      };
+    }
+    const settledOutcome = res.outcome || outcome;
+    if (st && contract && settledOutcome === "success") {
+      // Server restocks sector_stock; local put only when Phase 4 shelf isn't live.
+      if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
+        Stock.put(st.sectorId, contract.commId, contract.qty);
+      if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
+    }
+    if (st && contract) {
+      this._dropHaul(contract.id, st.systemId);
+      const idx = (st.contracts || []).indexOf(contract);
+      if (idx >= 0) st.contracts.splice(idx, 1);
+    }
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return { ok: true, credits: res.credits, outcome: settledOutcome };
   },
 
   _settleHaulLocal(found, outcome) {
