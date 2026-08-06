@@ -388,6 +388,11 @@ const Cloud = {
   async stationClaimHaul(haulId) {
     return this._contractsRpc("app_station_claim_haul", { p_haul_id: haulId });
   },
+  async stationLaunchHaul(haulId, shipUids) {
+    return this._contractsRpc("app_station_launch_haul", {
+      p_haul_id: haulId, p_ship_uids: shipUids || [],
+    });
+  },
   async stationSettleHaul(haulId, outcome) {
     return this._contractsRpc("app_station_settle_haul", { p_haul_id: haulId, p_outcome: outcome });
   },
@@ -398,6 +403,16 @@ const Cloud = {
     // Draw-only — production is deposited by app_station_after_hour.
     return this._contractsRpc("app_station_hold_deposit", {
       p_system: system, p_deltas: deltas || {},
+    });
+  },
+  async stationDeliver(system, commId, qty) {
+    return this._contractsRpc("app_station_deliver", {
+      p_system: system, p_comm: commId, p_qty: qty | 0,
+    });
+  },
+  async stationRelease(system, mode) {
+    return this._contractsRpc("app_station_release", {
+      p_system: system, p_mode: mode || "relinquish",
     });
   },
 

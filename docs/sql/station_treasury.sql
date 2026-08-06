@@ -415,7 +415,7 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- Publish — preserve treasury, standing, and policy once the server owns them.
--- One-time treasury bootstrap when the server row is still zero.
+-- No client treasury bootstrap (pre-cloud local treasury is not migrated).
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_publish(p_stations jsonb)
 returns jsonb
@@ -444,7 +444,6 @@ declare
   c_npc     boolean;
   s_npc     boolean;
   keep_srv  boolean;
-  boot_treas numeric;
   kept      text[] := '{}';
   conflicts text[];
   synced    jsonb;
@@ -522,9 +521,7 @@ begin
     end loop;
     if v_n <= 0 then merged := '[]'::jsonb; end if;
 
-    boot_treas := greatest(0, least(500000000::numeric,
-      floor(coalesce((r->>'treasury_bootstrap')::numeric, 0))));
-
+    -- No client treasury bootstrap — INSERT starts at 0; UPDATE keeps server.
     insert into public.stations as s (
       system_id, owner_id, owner_display, tier, status, modules, reactor_level,
       treasury, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
@@ -536,7 +533,7 @@ begin
       case when coalesce(r->>'status', '') in ('owned', 'refit') then r->>'status' else 'owned' end,
       case when jsonb_typeof(r->'modules') = 'object' then r->'modules' else '{}'::jsonb end,
       greatest(0, least(5, coalesce((r->>'reactor_level')::int, 0))),
-      boot_treas,
+      0,
       greatest(0, least(4000, coalesce((r->>'lease_tax_bps')::int, 1000))),
       greatest(0, least(1500, coalesce((r->>'sale_tariff_bps')::int, 500))),
       greatest(0, least(100, coalesce((r->>'scrutiny')::int, 10))),
@@ -555,7 +552,10 @@ begin
       status          = excluded.status,
       modules         = excluded.modules,
       reactor_level   = excluded.reactor_level,
-      treasury        = case when s.treasury = 0 and boot_treas > 0 then boot_treas else s.treasury end,
+      treasury        = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then 0
+                          else s.treasury
+                        end,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
       scrutiny        = s.scrutiny,

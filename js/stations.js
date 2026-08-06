@@ -314,9 +314,6 @@ const Stations = {
       prod_comm: st.prodComm || "",
       // ms epoch — never `| 0` this, 32-bit truncation mangles it.
       refit_until: String(st.status === "refit" ? Math.max(0, Math.round(+st.refitUntil || 0)) : 0),
-      // One-time bootstrap when the server treasury is still zero (phase D0).
-      treasury_bootstrap: this.treasuryShared(st.systemId) ? Math.max(0, Math.floor(+st.treasury || 0)) : 0,
-      hold_bootstrap: this.contractsShared(st.systemId) ? (st.hold || {}) : {},
       // Shelf and bay occupancy — what makes a visited station look inhabited.
       // Owner-occupied bays rewrite "player" → account uuid so the shared column
       // names us the same way a remote lease does. Publish merges foreign
@@ -1882,17 +1879,7 @@ const Stations = {
       if (this._contractsWritable() && /^[0-9a-f-]{36}$/i.test(String(contractId || ""))) {
         try {
           const res = await Cloud.stationSettleHaul(contractId, outcome);
-          if (!res || !res.ok) {
-            const err = (res && res.error) || "Settle refused.";
-            return {
-              ok: false, msg: err,
-              terminal: /gone|already settled|not your haul/i.test(err),
-            };
-          }
-          if (res.credits != null) Game.state.credits = +res.credits;
-          if (window.Economy) Economy.refreshNetWorth();
-          if (window.Game) Game.requestSave();
-          return { ok: true, credits: res.credits };
+          return this._applySharedSettle(res, null, null, outcome);
         } catch (e) {
           console.warn("[Stations] settle haul failed:", e);
           return { ok: false, msg: "Couldn't reach the contract board." };
@@ -1906,37 +1893,46 @@ const Stations = {
     if (contract.shared && this._contractsWritable()) {
       try {
         const res = await Cloud.stationSettleHaul(contractId, outcome);
-        if (!res || !res.ok) {
-          const err = (res && res.error) || "Settle refused.";
-          return {
-            ok: false, msg: err,
-            terminal: /gone|already settled|not your haul/i.test(err),
-          };
-        }
-        if (res.credits != null) Game.state.credits = +res.credits;
-        if (this._mine(st)) this._applyHoldFromServer(st, res.hold);
-        if (res.contract_filled != null || res.contract_expired != null) {
-          st.contractStats = {
-            filled: Math.max(0, Math.floor(+res.contract_filled || 0)),
-            expired: Math.max(0, Math.floor(+res.contract_expired || 0)),
-          };
-        }
-        if (outcome === "success") {
-          Stock.put(st.sectorId, contract.commId, contract.qty);
-          if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
-        }
-        this._dropHaul(contractId, st.systemId);
-        const idx = (st.contracts || []).indexOf(contract);
-        if (idx >= 0) st.contracts.splice(idx, 1);
-        if (window.Economy) Economy.refreshNetWorth();
-        if (window.Game) Game.requestSave();
-        return { ok: true, credits: res.credits };
+        return this._applySharedSettle(res, st, contract, outcome);
       } catch (e) {
         console.warn("[Stations] settle haul failed:", e);
         return { ok: false, msg: "Couldn't reach the contract board." };
       }
     }
     return this._settleHaulLocal(found, outcome);
+  },
+
+  _applySharedSettle(res, st, contract, outcome) {
+    if (!res || !res.ok) {
+      const err = (res && res.error) || "Settle refused.";
+      return {
+        ok: false, msg: err,
+        terminal: /gone|already settled|not your haul|not launched/i.test(err),
+      };
+    }
+    if (res.credits != null) Game.state.credits = +res.credits;
+    if (st && this._mine(st)) this._applyHoldFromServer(st, res.hold);
+    if (st && (res.contract_filled != null || res.contract_expired != null)) {
+      st.contractStats = {
+        filled: Math.max(0, Math.floor(+res.contract_filled || 0)),
+        expired: Math.max(0, Math.floor(+res.contract_expired || 0)),
+      };
+    }
+    const settledOutcome = res.outcome || outcome;
+    if (st && contract && settledOutcome === "success") {
+      // Server restocks sector_stock; local put only when Phase 4 shelf isn't live.
+      if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
+        Stock.put(st.sectorId, contract.commId, contract.qty);
+      if (this._mine(st)) st.delivered = (st.delivered | 0) + (contract.qty | 0);
+    }
+    if (st && contract) {
+      this._dropHaul(contract.id, st.systemId);
+      const idx = (st.contracts || []).indexOf(contract);
+      if (idx >= 0) st.contracts.splice(idx, 1);
+    }
+    if (window.Economy) Economy.refreshNetWorth();
+    if (window.Game) Game.requestSave();
+    return { ok: true, credits: res.credits, outcome: settledOutcome };
   },
 
   _settleHaulLocal(found, outcome) {
@@ -2636,6 +2632,28 @@ const Stations = {
     qty = Math.min(Math.floor(qty), st.hold[commId] | 0);
     if (qty <= 0) return { ok: false, msg: "Nothing to deliver." };
     if (this.contractsShared(systemId) && this._contractsWritable()
+        && window.Cloud && Cloud.stationDeliver) {
+      try {
+        const res = await Cloud.stationDeliver(systemId, commId, qty);
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Delivery refused." };
+        this._applyHoldFromServer(st, res.hold);
+        if (res.credits != null) s.credits = +res.credits;
+        const got = Math.max(0, Math.floor(+res.qty || qty));
+        const proceeds = Math.max(0, +res.proceeds || 0);
+        const price = +res.price || (got ? proceeds / got : 0);
+        if (!(window.Stock && Stock.authoritative && Stock.authoritative()))
+          Stock.put(st.sectorId, commId, got);
+        st.delivered = (st.delivered | 0) + got;
+        this._ledger(st, proceeds, "delivery", `${got}× ${commId}`);
+        Bus.emit("trade", { side: "sell", commId, qty: got, price });
+        if (window.Game) Game.requestSave();
+        return { ok: true, qty: got, proceeds, price };
+      } catch (e) {
+        console.warn("[Stations] deliver failed:", e);
+        return { ok: false, msg: "Couldn't reach the station hold." };
+      }
+    }
+    if (this.contractsShared(systemId) && this._contractsWritable()
         && window.Cloud && Cloud.stationHoldDeposit) {
       try {
         const res = await Cloud.stationHoldDeposit(systemId, { [commId]: -qty });
@@ -2896,13 +2914,51 @@ const Stations = {
   },
 
   // Owner walks away. Modules persist; no cooldown. Treasury + hold buyback return.
-  // ponytail: local until app_station_relinquish lands with the station RPC set.
-  relinquish(systemId) {
+  // Shared path: app_station_release credits buyback server-side and zeroes wealth.
+  async relinquish(systemId) {
     const st = this.get(systemId);
     if (!st) return { ok: false, msg: "No station." };
     const pid = this.playerId();
     const mine = st.ownerId === pid && this.ownerHeld(st);
     if (!mine) return { ok: false, msg: "Not your station." };
+
+    if (this.treasuryShared(systemId) && this._treasuryWritable()
+        && window.Cloud && Cloud.stationRelease) {
+      try {
+        const res = await Cloud.stationRelease(systemId, "relinquish");
+        if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Release refused." };
+        if (res.credits != null) Game.state.credits = +res.credits;
+        const treasury = Math.max(0, Math.floor(+res.treasury || 0));
+        const holdCredits = Math.max(0, Math.floor(+res.holdCredits || 0));
+        if (treasury > 0) this._ledger(st, -treasury, "relinquish", "treasury returned");
+        if (holdCredits > 0) this._ledger(st, holdCredits, "relinquish_hold", "hold buyback");
+        for (const c of (st.contracts || []).filter(x => x.status === "open")) this._refundHaul(st, c);
+        st.contracts = (st.contracts || []).filter(x => x.status === "active");
+        for (const l of st.hall || []) this._restoreListable(l, l.sellerId);
+        st.hall = [];
+        this.syncBays(st);
+        for (const bay of st.bays || []) this._clearBay(st, bay);
+        st.ownerId = null;
+        st.status = "npc";
+        st.cooldownUntil = 0;
+        st.treasury = 0;
+        st.hold = {};
+        st.standing = STATIONCFG.standingStart;
+        st.prodComm = null;
+        st.impoundHold = {};
+        st.impoundClaims = [];
+        st.delivered = 0;
+        delete this.access[st.systemId];
+        this._cancelAuction(systemId);
+        if (window.Game) Game.requestSave();
+        this._publishSoon();
+        return { ok: true, st, treasury, holdCredits };
+      } catch (e) {
+        console.warn("[Stations] release failed:", e);
+        return { ok: false, msg: "Couldn't reach the station ledger." };
+      }
+    }
+
     const treasury = st.treasury | 0;
     const holdCredits = this.holdValue(st);
     if (treasury > 0) {
@@ -3221,7 +3277,14 @@ const Stations = {
     // Modules persist — including reactor.
     delete this.auctions[st.systemId];
     this.lastWarn[st.systemId] = "revolt";
-    this._publishSoon();
+    // Shared: forfeit treasury/hold + cooldown on the server (don't leave wealth for the next owner).
+    if (this.treasuryShared(st.systemId) && this._treasuryWritable()
+        && window.Cloud && Cloud.stationRelease) {
+      void Cloud.stationRelease(st.systemId, "revolt").catch(e =>
+        console.warn("[Stations] revolt release failed:", e));
+    } else {
+      this._publishSoon();
+    }
     if (window.UI && UI.toast) UI.toast(`Revolt! You lost ${st.name}. Modules remain for the next owner.`, "bad", 10000);
   },
 

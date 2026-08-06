@@ -87,6 +87,21 @@ const Missions = {
     const shipUids = (uids || []).slice();
     const contractId = contract && contract.id;
     if (!contractId) return Promise.resolve({ ok: false, msg: "Contract not in hand." });
+
+    // Shared station hauls: escrow lives in station_hauls. Launch stamps the
+    // server flight timer; bazaar app_mission_launch can't see those ids.
+    const sharedStation = contract.source === "station" && contract.stationId
+      && window.Stations && Stations.contractsShared
+      && Stations.contractsShared(contract.stationId)
+      && Stations._contractsWritable && Stations._contractsWritable();
+    if (sharedStation) {
+      return Economy._withRpc(
+        () => this._launchLocal(contract, shipUids),
+        () => Cloud.stationLaunchHaul(contractId, shipUids),
+        "Couldn't launch station haul — try again."
+      );
+    }
+
     return Economy._withRpc(
       () => this._launchLocal(contract, shipUids),
 
@@ -150,16 +165,20 @@ const Missions = {
 
   // Resolve finished missions. Returns reports (also pushed to state.reports).
   // Authoritative path awaits app_mission_resolve (server RNG); guests stay sync.
+  // Station hauls are skipped by app_mission_resolve (escrow settle is separate).
+  // Auth first so its result_slice can't resurrect a station mission we just cleared.
   resolveMatured(now) {
     if (!this.authoritative()) return this._resolveLocal(now);
-    const due = this.s().missions.some(m => !m.resolved && now - m.startedAt >= m.totalMs);
-    if (!due) return Promise.resolve([]);
-    return this._resolveAuth(now);
+    const due = this.s().missions.some(m =>
+      !m.resolved && m.source !== "station" && now - m.startedAt >= m.totalMs);
+    if (!due) return Promise.resolve(this._resolveLocal(now, { stationOnly: true }));
+    return this._resolveAuth(now).then(out =>
+      this._resolveLocal(now, { stationOnly: true }).concat(out));
   },
 
   async _resolveAuth(now) {
     const r = await Economy._rpcOnly(() => Cloud.missionResolve(), "Couldn't resolve missions — try again.");
-    if (r && r.missing) return this._resolveLocal(now);
+    if (r && r.missing) return this._resolveLocal(now, { skipStation: true });
     if (!r || !r.ok) return [];
     const out = Array.isArray(r.resolved) ? r.resolved : [];
     Economy.refreshNetWorth();
@@ -171,11 +190,13 @@ const Missions = {
     return out;
   },
 
-  _resolveLocal(now) {
+  _resolveLocal(now, opts = {}) {
     const s = this.s();
     const out = [];
     for (const m of s.missions) {
       if (m.resolved || now - m.startedAt < m.totalMs) continue;
+      if (opts.stationOnly && m.source !== "station") continue;
+      if (opts.skipStation && m.source === "station") continue;
       m.resolved = true;
       let success = Math.random() < m.successChance;
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
@@ -251,11 +272,16 @@ const Missions = {
           }
         }
         if (stationHaul && m.contractId && window.Stations) {
+          // Shared path: server rolls success/fail; client outcome is a hint only.
           const settled = Stations.settleHaul(m.contractId, "success");
           if (settled && typeof settled.then === "function") {
             void settled.then(res => {
               if (res && res.ok) {
                 if (res.credits != null) s.credits = +res.credits;
+                if (res.outcome === "fail") {
+                  report.success = false;
+                  report.credits = 0;
+                }
               } else {
                 console.warn("[Missions] shared haul settle failed:", m.contractId, res);
                 s.pendingHaulSettles = s.pendingHaulSettles || [];
@@ -281,8 +307,10 @@ const Missions = {
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else sh.status = "idle";
         }
-        if (m.source === "station" && m.contractId && window.Stations)
+        if (m.source === "station" && m.contractId && window.Stations) {
+          // Still call settle — server owns the roll for shared hauls.
           void Stations.settleHaul(m.contractId, "fail");
+        }
       }
       if (report.lost.length) s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));
       s.reports.unshift(report);

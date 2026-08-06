@@ -86,6 +86,51 @@ language sql immutable as $$
     when 'high' then 0.4 when 'extreme' then 0.25 else 0.6 end;
 $$;
 
+-- Dedupe + cap client ship arrays before they feed firepower/cargo formulas.
+-- Returns {ok, uids, power, cargo, speed, n} or {ok:false, error}.
+create or replace function app._pick_idle_ships(p_ships jsonb, p_ship_uids jsonb)
+returns jsonb
+language plpgsql
+immutable
+as $$
+declare
+  uid_txt text;
+  sh      jsonb;
+  def     record;
+  uids    jsonb := '[]'::jsonb;
+  power   double precision := 0;
+  cargo   double precision := 0;
+  speed   double precision := 0;
+  n       int := 0;
+begin
+  if jsonb_typeof(coalesce(p_ship_uids, 'null'::jsonb)) <> 'array' then
+    return jsonb_build_object('ok', false, 'error', 'Invalid mission.');
+  end if;
+  if jsonb_array_length(p_ship_uids) > 64 then
+    return jsonb_build_object('ok', false, 'error', 'Too many ships.');
+  end if;
+  for uid_txt in select distinct value from jsonb_array_elements_text(p_ship_uids) t(value) loop
+    exit when n >= 64;
+    select value into sh from jsonb_array_elements(coalesce(p_ships, '[]'::jsonb)) x(value)
+      where x.value->>'uid' = uid_txt limit 1;
+    if sh is null or sh->>'status' is distinct from 'idle' then continue; end if;
+    select * into def from app.ship_def(sh->>'type');
+    if def.id is null then continue; end if;
+    uids := uids || jsonb_build_array(uid_txt);
+    power := power + coalesce(def.firepower, 0);
+    cargo := cargo + coalesce(def.cargo, 0);
+    speed := speed + coalesce(def.speed, 1);
+    n := n + 1;
+  end loop;
+  if n = 0 then
+    return jsonb_build_object('ok', false, 'error', 'Select at least one idle ship.');
+  end if;
+  return jsonb_build_object(
+    'ok', true, 'uids', uids, 'power', power, 'cargo', cargo,
+    'speed', speed / n, 'n', n);
+end;
+$$;
+
 create or replace function app.fleet_cap(p_tier int)
 returns int
 language sql immutable as $$
@@ -808,9 +853,7 @@ declare
   st jsonb;
   ships jsonb;
   uids jsonb := '[]'::jsonb;
-  uid text;
-  sh jsonb;
-  def record;
+  pick jsonb;
   power double precision := 0;
   cargo double precision := 0;
   speed double precision := 0;
@@ -846,23 +889,15 @@ begin
   end if;
 
   ships := coalesce(st->'ships', '[]'::jsonb);
-  for uid in select jsonb_array_elements_text(p_ship_uids) loop
-    select value into sh from jsonb_array_elements(ships) x(value)
-      where x.value->>'uid' = uid limit 1;
-    if sh is null or sh->>'status' is distinct from 'idle' then continue; end if;
-    select * into def from app.ship_def(sh->>'type');
-    if def.id is null then continue; end if;
-    uids := uids || jsonb_build_array(uid);
-    power := power + coalesce(def.firepower, 0);
-    cargo := cargo + coalesce(def.cargo, 0);
-    speed := speed + coalesce(def.speed, 1);
-    n := n + 1;
-  end loop;
-
-  if n = 0 then
-    return jsonb_build_object('ok', false, 'error', 'Select at least one idle ship.');
+  pick := app._pick_idle_ships(ships, p_ship_uids);
+  if not coalesce((pick->>'ok')::boolean, false) then
+    return jsonb_build_object('ok', false, 'error', coalesce(pick->>'error', 'Select at least one idle ship.'));
   end if;
-  speed := speed / n;
+  uids := pick->'uids';
+  power := coalesce((pick->>'power')::float8, 0);
+  cargo := coalesce((pick->>'cargo')::float8, 0);
+  speed := coalesce((pick->>'speed')::float8, 1);
+  n := coalesce((pick->>'n')::int, 0);
 
   danger := coalesce(contract->>'danger', 'moderate');
   min_fp := coalesce((contract->>'minFirepower')::float8, 0);
@@ -984,6 +1019,12 @@ begin
 
   for m in select value from jsonb_array_elements(missions) loop
     if coalesce((m->>'resolved')::boolean, false) then continue; end if;
+    -- Station Contract Office hauls settle via app_station_settle_haul (escrow
+    -- + sector restock). Leaving them here would mint reward.credits twice.
+    if m->>'source' = 'station' then
+      kept := kept || jsonb_build_array(m);
+      continue;
+    end if;
     if now_ms - coalesce((m->>'startedAt')::bigint, 0) < coalesce((m->>'totalMs')::float8, 0) then
       kept := kept || jsonb_build_array(m);
       continue;

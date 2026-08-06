@@ -146,16 +146,20 @@ begin
       continue;
     end if;
 
-    -- Winner: credits sunk (no refund). Claim station.
+    -- Winner: credits sunk (no refund). Claim station — no wealth inheritance.
     insert into public.stations (system_id, owner_id, tier, status, standing,
-      modules, reactor_level, updated_at)
+      modules, reactor_level, treasury, hold, economy_bootstrapped, updated_at)
     values (a.system_id, a.high_bidder,
       coalesce(st.tier, 'Berth'), 'owned', 60,
-      coalesce(st.modules, '{}'::jsonb), coalesce(st.reactor_level, 0), now())
+      coalesce(st.modules, '{}'::jsonb), coalesce(st.reactor_level, 0),
+      0, '{}'::jsonb, true, now())
     on conflict (system_id) do update set
       owner_id = excluded.owner_id,
       status = 'owned',
       standing = 60,
+      treasury = 0,
+      hold = '{}'::jsonb,
+      economy_bootstrapped = true,
       updated_at = now();
 
     update public.station_auctions set status = 'closed' where system_id = a.system_id;

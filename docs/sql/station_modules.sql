@@ -5,6 +5,9 @@
 -- Module installs debit players.state credits in-RPC; publish stops overwriting
 -- modules / reactor_level from the client. Uninstall refunds 50%, triggers refit.
 
+alter table public.stations
+  add column if not exists economy_bootstrapped boolean not null default false;
+
 -- ---------------------------------------------------------------------------
 -- Module catalogue — costs mirror js/data.js STATION_MODULES (index = level-1).
 -- ---------------------------------------------------------------------------
@@ -287,7 +290,7 @@ grant execute on function public.app_station_module_install(text, text) to authe
 grant execute on function public.app_station_module_uninstall(text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Publish — D1 hold bootstrap + contract stats; preserve server modules/reactor.
+-- Publish — D1 contract stats; preserve server modules/reactor/treasury/hold.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_publish(p_stations jsonb)
 returns jsonb
@@ -305,7 +308,6 @@ declare
   disp      text;
   v_hall    jsonb;
   v_bays    jsonb;
-  v_hold    jsonb;
   v_n       int;
   prev_bays jsonb;
   merged    jsonb;
@@ -317,7 +319,6 @@ declare
   c_npc     boolean;
   s_npc     boolean;
   keep_srv  boolean;
-  boot_treas numeric;
   kept      text[] := '{}';
   conflicts text[];
   synced    jsonb;
@@ -395,15 +396,11 @@ begin
     end loop;
     if v_n <= 0 then merged := '[]'::jsonb; end if;
 
-    boot_treas := greatest(0, least(500000000::numeric,
-      floor(coalesce((r->>'treasury_bootstrap')::numeric, 0))));
-
-    v_hold := case when jsonb_typeof(r->'hold_bootstrap') = 'object' then r->'hold_bootstrap' else '{}'::jsonb end;
-
+    -- No client treasury/hold bootstrap — INSERT starts empty; UPDATE keeps server.
     insert into public.stations as s (
       system_id, owner_id, owner_display, tier, status, modules, reactor_level,
       treasury, hold, lease_tax_bps, sale_tariff_bps, scrutiny, standing, prod_comm,
-      refit_until, hall, bays, updated_at
+      refit_until, hall, bays, economy_bootstrapped, updated_at
     )
     values (
       sid, uid, disp,
@@ -411,8 +408,8 @@ begin
       case when coalesce(r->>'status', '') in ('owned', 'refit') then r->>'status' else 'owned' end,
       case when jsonb_typeof(r->'modules') = 'object' then r->'modules' else '{}'::jsonb end,
       greatest(0, least(5, coalesce((r->>'reactor_level')::int, 0))),
-      boot_treas,
-      v_hold,
+      0,
+      '{}'::jsonb,
       greatest(0, least(4000, coalesce((r->>'lease_tax_bps')::int, 1000))),
       greatest(0, least(1500, coalesce((r->>'sale_tariff_bps')::int, 500))),
       greatest(0, least(100, coalesce((r->>'scrutiny')::int, 10))),
@@ -422,6 +419,7 @@ begin
            then to_timestamp((r->>'refit_until')::bigint / 1000.0) end,
       coalesce(v_hall, '[]'::jsonb),
       coalesce(merged, '[]'::jsonb),
+      true,
       now()
     )
     on conflict (system_id) do update set
@@ -431,8 +429,15 @@ begin
       status          = excluded.status,
       modules         = s.modules,
       reactor_level   = s.reactor_level,
-      treasury        = case when s.treasury = 0 and boot_treas > 0 then boot_treas else s.treasury end,
-      hold            = case when s.hold = '{}'::jsonb and v_hold <> '{}'::jsonb then v_hold else s.hold end,
+      treasury        = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then 0
+                          else s.treasury
+                        end,
+      hold            = case
+                          when s.owner_id is not null and s.owner_id is distinct from uid then '{}'::jsonb
+                          else s.hold
+                        end,
+      economy_bootstrapped = true,
       lease_tax_bps   = s.lease_tax_bps,
       sale_tariff_bps = s.sale_tariff_bps,
       scrutiny        = s.scrutiny,
@@ -451,6 +456,7 @@ begin
 
   update public.stations
      set owner_id = null, owner_display = null, status = 'npc',
+         treasury = 0, hold = '{}'::jsonb,
          hall = '[]'::jsonb, bays = '[]'::jsonb, updated_at = now()
    where owner_id = uid
      and not (system_id = any(kept));

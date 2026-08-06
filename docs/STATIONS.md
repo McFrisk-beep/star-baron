@@ -512,10 +512,13 @@ Client side, `Stations.bayShared(systemId)` is the seam: a published station's f
 | **D2** | Standing + upkeep hourly cycle | `station_upkeep.sql` |
 | **D3** | Module install/uninstall; publish preserves modules | `station_modules.sql` |
 | **D4** | Cross-player auctions (open, bid, close) | `station_auctions.sql` |
+| **Trust** | Haul flight gate, no client wealth bootstrap, release/deliver RPCs | `station_economy_trust.sql` (paste last; requires phase2 with station-mission skip) |
+
+**Paste order (stations):** `station_treasury.sql` → `station_contracts.sql` → `station_upkeep.sql` → `station_modules.sql` → `station_auctions.sql` → `station_economy_trust.sql`. Trust raises if `app_mission_resolve` lacks the `source = 'station'` skip — re-paste `phase2_missions_bazaar.sql` first if it errors.
 
 Remaining client-side until later: revolt rolls, sentiment, bay produce keep.
 
-**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`, `app_station_directory` + `app_station_publish` (LIVE), `app_station_hall` + `app_station_list_item` + `app_station_buy_item` + `app_station_cancel_listing` + `app_station_settle` (LIVE), `app_station_lease_bay` + `app_station_vacate_bay` + `app_station_bay_produce` (LIVE), `app_station_withdraw` + `app_station_set_policy` + `app_station_after_hour` (D0–D2), `app_station_module_install` + `app_station_module_uninstall` (D3), `app_station_auction_open` + `app_station_bid` + `app_station_auctions` + `app_station_close_due` (D4).
+**RPCs:** `app_trade` (stock+scarcity LIVE), `app_sector_stock`, `app_stock_tick`, `app_station_directory` + `app_station_publish` (LIVE), `app_station_hall` + `app_station_list_item` + `app_station_buy_item` + `app_station_cancel_listing` + `app_station_settle` (LIVE), `app_station_lease_bay` + `app_station_vacate_bay` + `app_station_bay_produce` (LIVE), `app_station_withdraw` + `app_station_set_policy` + `app_station_after_hour` (D0–D2), `app_station_module_install` + `app_station_module_uninstall` (D3), `app_station_auction_open` + `app_station_bid` + `app_station_auctions` + `app_station_close_due` (D4), `app_station_launch_haul` + `app_station_deliver` + `app_station_release` (trust hardening).
 
 **Cron (hourly):** `app_stock_tick` for consumption + NPC elastic backstop (optional). Full sentiment/revolt/auction close still client-side until station RPCs land.
 
