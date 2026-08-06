@@ -281,6 +281,9 @@ const Cloud = {
   async stationBuyItem(system, listingId) {
     return this.rpc("app_station_buy_item", { p_system: system, p_listing_id: listingId });
   },
+  async stationBuyRefund(listingId) {
+    return this._optional("app_station_buy_refund", { p_listing_id: listingId });
+  },
   async stationCancelListing(listingId) {
     return this.rpc("app_station_cancel_listing", { p_listing_id: listingId });
   },
@@ -319,6 +322,150 @@ const Cloud = {
       p_system: system, p_bay: bay | 0, p_gross: gross | 0,
     });
   },
+
+  // Station treasury + authoritative hall credits (docs/sql/station_treasury.sql).
+  // Latches off withdraw the same way bays latch off lease — phase 4 stubs exist
+  // but "the function exists" proves nothing until this paste is applied.
+  treasuryMissing: false,
+  async _treasuryRpc(name, args) {
+    if (this.treasuryMissing) return { ok: false, error: "Station treasury not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.treasuryMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_treasury.sql");
+        return { ok: false, error: "Station treasury not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  treasuryReady() { return this.enabled && !this.treasuryMissing && this.signedIn(); },
+  async stationWithdraw(system, amount) {
+    return this._treasuryRpc("app_station_withdraw", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationSetPolicy(system, policy) {
+    return this._treasuryRpc("app_station_set_policy", { p_system: system, p_policy: policy || {} });
+  },
+
+  // Cross-player Contract Office (docs/sql/station_contracts.sql).
+  contractsMissing: false,
+  async _contractsRpc(name, args) {
+    if (this.contractsMissing) return { ok: false, error: "Station contracts not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.contractsMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_contracts.sql");
+        return { ok: false, error: "Station contracts not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  contractsReady() { return this.enabled && !this.contractsMissing && this.signedIn(); },
+  async stationHauls(systems) {
+    if (!this.enabled || !this.client || this.contractsMissing) return null;
+    const list = (systems || []).filter(Boolean).slice(0, 20);
+    if (!list.length) return [];
+    const { data, error } = await this.client.rpc("app_station_hauls", { p_systems: list });
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this.contractsMissing = true;
+        console.warn("[Cloud] app_station_hauls missing — run docs/sql/station_contracts.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  async stationPostHaul(system, commId, qty, rate) {
+    return this._contractsRpc("app_station_post_haul", {
+      p_system: system, p_comm_id: commId, p_qty: qty | 0, p_rate: rate | 0,
+    });
+  },
+  async stationCancelHaul(haulId) {
+    return this._contractsRpc("app_station_cancel_haul", { p_haul_id: haulId });
+  },
+  async stationClaimHaul(haulId) {
+    return this._contractsRpc("app_station_claim_haul", { p_haul_id: haulId });
+  },
+  async stationSettleHaul(haulId, outcome) {
+    return this._contractsRpc("app_station_settle_haul", { p_haul_id: haulId, p_outcome: outcome });
+  },
+  async stationExpireHauls(system) {
+    return this._contractsRpc("app_station_expire_hauls", { p_system: system });
+  },
+  async stationHoldDeposit(system, deltas) {
+    // Draw-only — production is deposited by app_station_after_hour.
+    return this._contractsRpc("app_station_hold_deposit", {
+      p_system: system, p_deltas: deltas || {},
+    });
+  },
+
+  // Standing + upkeep cycle (docs/sql/station_upkeep.sql) — phase D2.
+  async stationAfterHour(reports) {
+    return this._treasuryRpc("app_station_after_hour", { p_reports: reports || [] });
+  },
+
+  // Module install (docs/sql/station_modules.sql) — phase D3.
+  modulesMissing: false,
+  async _modulesRpc(name, args) {
+    if (this.modulesMissing) return { ok: false, error: "Station modules not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.modulesMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_modules.sql");
+        return { ok: false, error: "Station modules not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  modulesReady() { return this.treasuryReady() && !this.modulesMissing; },
+  async stationModuleInstall(system, module) {
+    return this._modulesRpc("app_station_module_install", { p_system: system, p_module: module });
+  },
+  async stationModuleUninstall(system, module) {
+    return this._modulesRpc("app_station_module_uninstall", { p_system: system, p_module: module });
+  },
+
+  // Station auctions (docs/sql/station_auctions.sql) — phase D4.
+  auctionsMissing: false,
+  async _auctionsRpc(name, args) {
+    if (this.auctionsMissing) return { ok: false, error: "Station auctions not live on server yet." };
+    try { return await this.rpc(name, args || {}); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.auctionsMissing = true;
+        console.warn("[Cloud] " + name + " missing — run docs/sql/station_auctions.sql");
+        return { ok: false, error: "Station auctions not live on server yet." };
+      }
+      throw e;
+    }
+  },
+  auctionsReady() { return this.enabled && !this.auctionsMissing && this.signedIn(); },
+  async stationAuctions() {
+    if (!this.enabled || !this.client || this.auctionsMissing) return null;
+    const { data, error } = await this.client.rpc("app_station_auctions");
+    if (error) {
+      if (this._isMissingRpc(error)) {
+        this.auctionsMissing = true;
+        console.warn("[Cloud] app_station_auctions missing — run docs/sql/station_auctions.sql");
+        return null;
+      }
+      throw error;
+    }
+    return data || [];
+  },
+  async stationAuctionOpen(system, amount) {
+    return this._auctionsRpc("app_station_auction_open", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationBid(system, amount) {
+    return this._auctionsRpc("app_station_bid", { p_system: system, p_amount: amount | 0 });
+  },
+  async stationCloseDue() {
+    return this._auctionsRpc("app_station_close_due", {});
+  },
+
   async dock(system) {
     return this.rpc("app_dock", { p_system: system });
   },

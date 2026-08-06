@@ -2835,20 +2835,21 @@ const UI = {
         : "Production line assigned.", "good");
       this.renderStations(); this.updateHeader();
     });
-    body.querySelector("#st-set-lease")?.addEventListener("click", () => {
+    body.querySelector("#st-set-lease")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-lease")?.value || 0;
-      Stations.setLeaseTax(st.systemId, pct * 100);
+      const r = await Stations.setLeaseTax(st.systemId, pct * 100);
+      if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Lease tax set to ${pct}%.`, "good"); this.renderStations();
     });
-    body.querySelector("[data-st-withdraw]")?.addEventListener("click", () => {
-      const r = Stations.withdraw(st.systemId, st.treasury);
+    body.querySelector("[data-st-withdraw]")?.addEventListener("click", async () => {
+      const r = await Stations.withdraw(st.systemId, st.treasury);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Withdrew ${Util.credits(r.amount)}.`, "good"); this.flashCredits(); this.renderStations(); this.updateHeader();
     });
     body.querySelectorAll("[data-st-deliver]").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const id = btn.dataset.stDeliver;
-        const r = Stations.deliver(st.systemId, id, st.hold[id] | 0);
+        const r = await Stations.deliver(st.systemId, id, st.hold[id] | 0);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Delivered ${r.qty} for ${Util.credits(r.proceeds)}.`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader(); this.updateExchange();
@@ -2871,15 +2872,15 @@ const UI = {
       };
     });
     body.querySelectorAll("[data-st-install]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.install(st.systemId, btn.dataset.stInstall);
+      btn.onclick = async () => {
+        const r = await Stations.install(st.systemId, btn.dataset.stInstall);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Installed. −${Util.credits(r.cost)}`, "good");
         this.flashCredits(); this.renderStations(); this.updateHeader();
       };
     });
     body.querySelectorAll("[data-st-uninstall]").forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
         const id = btn.dataset.stUninstall;
         const def = STATION_MODULES[id];
         const lvl = id === "reactor" ? (st.reactorLevel | 0) : (st.modules[id] | 0);
@@ -2894,7 +2895,7 @@ const UI = {
           + `Refund is ${Util.credits(refund)} — 50% of component cost, and none of the credits.\n`
           + `The station goes offline for ${Util.duration(Stations.uninstallCost())}.`
           + (knockOn.length ? `\nThis also ${knockOn[0]}.` : ""))) return;
-        const r = Stations.uninstall(st.systemId, id);
+        const r = await Stations.uninstall(st.systemId, id);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(`Uninstalled. Refit underway. +${Util.credits(r.refund)}`, "warn");
         this.flashCredits(); this.renderStations(); this.updateHeader();
@@ -2957,9 +2958,9 @@ const UI = {
   },
 
   _wireCustomsPanel(body, st) {
-    body.querySelector("#st-set-scrutiny")?.addEventListener("click", () => {
+    body.querySelector("#st-set-scrutiny")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-scrutiny")?.value || 0;
-      const r = Stations.setScrutiny(st.systemId, pct);
+      const r = await Stations.setScrutiny(st.systemId, pct);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Scrutiny set to ${r.scrutiny}%.`, "good"); this.renderStations();
     });
@@ -3034,19 +3035,19 @@ const UI = {
   },
 
   _wireContractOfficePanel(body, st) {
-    body.querySelector("#st-haul-post")?.addEventListener("click", () => {
+    body.querySelector("#st-haul-post")?.addEventListener("click", async () => {
       const commId = body.querySelector("#st-haul-comm")?.value;
       const qty = +body.querySelector("#st-haul-qty")?.value || 0;
       const rate = +body.querySelector("#st-haul-rate")?.value || 0;
-      const r = Stations.postHaul(st.systemId, commId, qty, rate);
+      const r = await Stations.postHaul(st.systemId, commId, qty, rate);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Haul posted — escrowed ${Util.credits(r.contract.escrow)} (+${Util.credits(r.fee)} fee).`, "good");
       this.flashCredits(); this.renderStations(); this.updateHeader();
       if (this.page === "bazaar") this.renderBazaar();
     });
     body.querySelectorAll("[data-st-haul-cancel]").forEach(btn => {
-      btn.onclick = () => {
-        const r = Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
+      btn.onclick = async () => {
+        const r = await Stations.cancelHaul(st.systemId, btn.dataset.stHaulCancel);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast("Haul cancelled — goods and bounty returned.", "info");
         this.flashCredits(); this.renderStations(); this.updateHeader();
@@ -3108,9 +3109,10 @@ const UI = {
   },
 
   _wireHallPanel(body, st) {
-    body.querySelector("#st-set-tariff")?.addEventListener("click", () => {
+    body.querySelector("#st-set-tariff")?.addEventListener("click", async () => {
       const pct = +body.querySelector("#st-tariff")?.value || 0;
-      Stations.setSaleTariff(st.systemId, pct * 100);
+      const r = await Stations.setSaleTariff(st.systemId, pct * 100);
+      if (!r.ok) return this.toast(r.msg, "warn");
       this.toast(`Sale tariff set to ${pct}%.`, "good"); this.renderStations();
     });
     // The hall calls can go to the server now, so every handler awaits.

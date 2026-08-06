@@ -42,7 +42,7 @@ const Missions = {
     ];
   },
 
-  _launchLocal(contract, uids) {
+  async _launchLocal(contract, uids) {
     const s = this.s();
     uids = uids.filter(u => { const sh = Fleet.ship(u); return sh && sh.status === "idle"; });
     if (!uids.length) return { ok: false, msg: "Select at least one idle ship." };
@@ -51,8 +51,10 @@ const Missions = {
       const info = Senate.shipBanInfo(sh && sh.cls);
       return { ok: false, msg: info ? `${info.cls}-class ships banned due to ${info.title}.` : "That ship class is restricted by a senate edict." };
     }
-    // Claim at launch (board job or legacy pending) — View Contract does not reserve.
-    const claim = window.Bazaar ? Bazaar.claimForLaunch(contract) : { ok: true, contract };
+    // Claim at launch (board job or legacy pending) — View Contract does not
+    // reserve. Stays below the guards above so a rejected launch never consumes
+    // the contract.
+    const claim = window.Bazaar ? await Bazaar.claimForLaunch(contract) : { ok: true, contract };
     if (!claim.ok) return claim;
     contract = claim.contract;
     const phases = this.buildPhases(contract, uids);
@@ -87,6 +89,7 @@ const Missions = {
     if (!contractId) return Promise.resolve({ ok: false, msg: "Contract not in hand." });
     return Economy._withRpc(
       () => this._launchLocal(contract, shipUids),
+
       // phase2c: launch claims the board job. Pre-phase2c SQL only accepts
       // pendingContracts — take once, then retry launch.
       async () => {
@@ -115,7 +118,7 @@ const Missions = {
     const repHit = m.faction ? Rep.onContractCancel(m.faction, m.danger) : 0;
     s.missions = s.missions.filter(x => x.uid !== uid);
     if (m.source === "station" && m.contractId && window.Stations)
-      Stations.settleHaul(m.contractId, "abandon");
+      void Stations.settleHaul(m.contractId, "abandon");
     Economy.refreshNetWorth();
     Bus.emit("missionAbandoned", m);
     return { ok: true, mission: m, repHit: repHit || 0 };
@@ -204,14 +207,15 @@ const Missions = {
 
       if (success) {
         const rewardMult = window.Boosts ? (1 + Boosts.mag("contractReward")) : 1;
-        // Station hauls pay the escrowed bounty as-is (no faction stake mult / loot).
         const stationHaul = m.source === "station";
+        const sharedHaul = stationHaul && m.stationId && window.Stations
+          && Stations.contractsShared && Stations.contractsShared(m.stationId);
         const gross = stationHaul
           ? Math.round(m.reward.credits || 0)
           : Math.round(m.reward.credits * (m.faction ? Rep.rewardMult(m.faction) : 1) * rewardMult);
-        report.credits = Economy.afterTax(gross);                 // Baron Tier earnings tax
+        report.credits = Economy.afterTax(gross);
         report.taxed = gross - report.credits;
-        s.credits += report.credits;
+        if (!sharedHaul) s.credits += report.credits;
         s.stats.contractsDone = (s.stats.contractsDone || 0) + 1;
         if (m.faction && !stationHaul) Rep.onContract(m.faction, m.type, m.danger);
         if (!stationHaul) {
@@ -246,8 +250,26 @@ const Missions = {
             }
           }
         }
-        if (stationHaul && m.contractId && window.Stations)
-          Stations.settleHaul(m.contractId, "success");
+        if (stationHaul && m.contractId && window.Stations) {
+          const settled = Stations.settleHaul(m.contractId, "success");
+          if (settled && typeof settled.then === "function") {
+            void settled.then(res => {
+              if (res && res.ok) {
+                if (res.credits != null) s.credits = +res.credits;
+              } else {
+                console.warn("[Missions] shared haul settle failed:", m.contractId, res);
+                s.pendingHaulSettles = s.pendingHaulSettles || [];
+                if (!s.pendingHaulSettles.some(p => p.contractId === m.contractId))
+                  s.pendingHaulSettles.push({ contractId: m.contractId, outcome: "success", attempts: 0 });
+                if (s.pendingHaulSettles.length > 20)
+                  s.pendingHaulSettles = s.pendingHaulSettles.slice(-20);
+              }
+              if (window.Economy) Economy.refreshNetWorth();
+            });
+          } else if (sharedHaul && settled && settled.credits != null) {
+            s.credits = +settled.credits;
+          }
+        }
         for (const sh of survivors) sh.status = "idle";
       } else {
         // failure: survivors are seized (smuggle jobs) or limp home damaged.
@@ -260,7 +282,7 @@ const Missions = {
           } else sh.status = "idle";
         }
         if (m.source === "station" && m.contractId && window.Stations)
-          Stations.settleHaul(m.contractId, "fail");
+          void Stations.settleHaul(m.contractId, "fail");
       }
       if (report.lost.length) s.ships = s.ships.filter(sh => !lostIds.has(sh.uid));
       s.reports.unshift(report);

@@ -182,7 +182,9 @@ ctx.Game.state.credits = 50_000;
 const sh6 = mule(); ctx.Game.state.ships.push(sh6, mule());
 const d6 = Charters.dispatch(sh6.uid, "safe", 60, T);
 assert(d6.ok);
-const launch = Missions._launchLocal({
+// Mission launch is async (it may claim a shared station haul) — wrap the tail.
+(async () => {
+const launch = await Missions._launchLocal({
   id: "c1", type: "transport", title: "t", sysName: "X", danger: "safe",
   minFirepower: 0, cargoRequired: 0, durationMs: 60000,
   reward: { credits: 100, itemChance: 0, stockChance: 0 },
@@ -326,3 +328,4 @@ assert.strictEqual(ctx.Game.state.credits, beforePr + expected);
 assert.ok(/Payout cut/i.test(rPr[0].summary || ""), "report notes cargo cut");
 
 console.log("check_charters: ok");
+})().catch(e => { console.error(e); process.exit(1); });

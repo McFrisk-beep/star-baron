@@ -67,7 +67,7 @@ ctx.COMPONENTCFG = ctx.COMPONENTCFG || { bazaarSlots: 0 };
   };
   ctx.Game.state.bazaar.contracts = [contract];
   const uid = ctx.Game.state.ships[0].uid;
-  assert(Missions.launch(contract, [uid]).ok);
+  assert((await Missions.launch(contract, [uid])).ok);
   assert.strictEqual(ctx.Game.state.bazaar.contracts.length, 0, "launch claims off the board");
   assert(ctx.Game.state.bazaarBought.includes("ct-local"));
   T += 5000;

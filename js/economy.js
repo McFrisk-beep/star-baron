@@ -420,7 +420,10 @@ const Economy = {
     // interleave snapshot → commit → trade.
     const run = async () => {
       const snap = this._snapEconomy();
-      const local = optimisticFn();
+      // Await — an async optimistic path (mission launch claims a shared haul)
+      // would otherwise hand back a Promise, read `.ok` as undefined, and skip
+      // the RPC entirely.
+      const local = await optimisticFn();
       if (!local || !local.ok) return local;
       this._pending++;
       try {
