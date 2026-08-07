@@ -112,13 +112,13 @@ const Store = {
   // Coalesce frequent autosaves into one cloud write every _cloudMs.
   _queueCloud(state) {
     if (!this._cloudReady) return;
-    // Don't push optimistic mid-RPC state — app_commit accepts lower credits but
-    // forces server positions, which is how Buy Max could debit without stock.
-    if (window.Economy && Economy.busy()) return;
     clearTimeout(this._cloudTimer);
     this._cloudTimer = setTimeout(() => {
       if (!this._cloudReady || !this.signedIn()) return;
-      if (window.Economy && Economy.busy()) return;
+      // Don't push optimistic mid-RPC state — app_commit accepts lower credits
+      // but forces server positions, which is how Buy Max could debit without
+      // stock. Re-arm rather than drop, so the row still catches up afterwards.
+      if (window.Economy && Economy.busy()) return this._queueCloud(state);
       Cloud.saveRemote(state).then(() => console.log("[Store] cloud save synced")).catch(e => this._cloudFail("save", e));
     }, this._cloudMs);
   },
@@ -127,6 +127,12 @@ const Store = {
   async flush(state) {
     clearTimeout(this._cloudTimer);
     if (!this.signedIn() || !this._cloudReady) return;
+    // Same guard as _queueCloud, and this is the one that actually bit: tab hide
+    // (Game.suspend) and sign-out flush immediately, so backgrounding the game
+    // mid-buy committed the optimistic credits while app_commit forced the
+    // pre-trade positions — paid, no stock. The trade RPC owns the row anyway;
+    // hand the push back to the debounce so it still lands once the trade ends.
+    if (window.Economy && Economy.busy()) { if (state) { this._stampOwner(state); this._queueCloud(state); } return; }
     try { if (state) { this._stampOwner(state); await Cloud.saveRemote(state); } }
     catch (e) { this._cloudFail("flush", e); }
   },

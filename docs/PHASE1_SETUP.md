@@ -39,14 +39,25 @@ Ship the build that routes signed-in trades through `Cloud.rpc('app_*')`
 2. Buy 1 Iron Ore on the Exchange → credits drop; refresh → balance sticks.
 3. As a **guest**, trading still works offline with no RPCs.
 
-### Optional — Settings → Reset Save (signed-in)
+### Required for the two wipes — Reset Save + Global Reset
 
 New query → paste [`docs/sql/reset_save.sql`](sql/reset_save.sql) → **Run**.
+It creates `app_reset_save()` (Settings → Reset Save) and
+`app_world_reset_apply()` (Admin → Issue Global Reset).
 
-Without this RPC, Reset Save still clears localStorage (and no longer
-re-saves on reload), but a signed-in bootstrap will restore the cloud
-`players` row. With it, Reset Save wipes that row to `app._default_state()`
-(keeps cosmetic settings).
+`app_commit` deliberately protects credits / positions / ships / items /
+prestige, so **no client-side wipe can reach `players.state`** — both resets
+have to be RPCs. Without this file:
+
+- **Reset Save** refuses and says so, leaving your progress intact (it used to
+  clear localStorage and bounce straight back off the cloud row on reload).
+- **Global Reset** leaves signed-in players untouched and re-tries on each load
+  (it used to stamp `appliedResetEpoch` through `app_commit`, which took the
+  5,000c credit *decrease* and echoed every other protected slice back — the
+  player was marked reset, kept everything, and could never be reset again).
+
+Guests and pre-Phase-1 `saves` players own their save, so both wipes work
+locally for them with or without this file.
 
 If the Phase 1 SQL isn’t applied yet, the client falls back to the legacy
 `saves` upsert and toasts a pointer at this doc — logged-in play keeps

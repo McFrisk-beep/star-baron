@@ -425,13 +425,17 @@ const Economy = {
     // interleave snapshot → commit → trade.
     const run = async () => {
       const snap = this._snapEconomy();
-      // Await — an async optimistic path (mission launch claims a shared haul)
-      // would otherwise hand back a Promise, read `.ok` as undefined, and skip
-      // the RPC entirely.
-      const local = await optimisticFn();
-      if (!local || !local.ok) return local;
+      // Mark busy BEFORE the optimistic mutation, not after: an async optimistic
+      // path (mission launch claims a shared haul) yields to the event loop with
+      // credits already deducted, and an autosave/flush/pull landing in that gap
+      // commits the optimistic balance against pre-action server positions.
       this._pending++;
+      let local = null;   // hoisted: the missing-RPC catch below returns it
       try {
+        // Await — an async optimistic path would otherwise hand back a Promise,
+        // read `.ok` as undefined, and skip the RPC entirely.
+        local = await optimisticFn();
+        if (!local || !local.ok) return local;
         if (!(await this._syncSoftEconomy(snap))) {
           this._restoreEconomy(snap);
           return { ok: false, msg: failMsg };
@@ -464,7 +468,7 @@ const Economy = {
         if (r.resolved != null) local.resolved = r.resolved;
         return local;
       } catch (e) {
-        if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+        if (local && typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
           // Phase 2 SQL not pasted yet — keep optimistic local mutation.
           console.warn("[Economy] RPC missing — local fallback:", e);
           return local;

@@ -117,6 +117,7 @@ const iron = "iron_ore";
   ctx.Cloud = {
     playersReady: true,
     signedIn: () => true,
+    user: () => ({ id: "u1" }),
     authoritative() { return true; },
     async commit(state) {
       commits.push({ credits: state.credits, pos: state.positions[iron] || 0, bay: (state.stationInv.navos && state.stationInv.navos.blocks[iron]) || 0 });
@@ -155,16 +156,56 @@ const iron = "iron_ore";
   assert.ok(commits[0].pos === 0, "soft-sync sent pre-buy positions");
   assert.ok(commits[0].bay === 0, "soft-sync sent pre-buy bay (not optimistic goods)");
 
-  // ---- 4) Store._queueCloud refuses while busy ----
-  Economy._pending = 1;
-  let cloudQueued = false;
-  ctx.Cloud.saveRemote = async () => { cloudQueued = true; };
+  ctx.Cloud.commit = origCommit;
+
+  // ---- 4) Store._queueCloud holds the push while busy, then catches up ----
+  const tick = () => new Promise(r => setTimeout(r, 1));
+  let cloudPushes = 0;
+  ctx.Cloud.saveRemote = async () => { cloudPushes++; };
   Store._cloudReady = true;
-  Store._cloudTimer = null;
+  Store._cloudMs = 0;
+  Economy._pending = 1;
   Store._queueCloud(ctx.Game.state);
-  assert.strictEqual(Store._cloudTimer, null, "no cloud debounce while busy");
-  assert.ok(!cloudQueued, "cloud push skipped while busy");
+  await tick(); await tick();
+  assert.strictEqual(cloudPushes, 0, "cloud push withheld while busy");
+  assert.ok(Store._cloudTimer, "debounce re-armed rather than dropped");
   Economy._pending = 0;
+  await tick(); await tick();
+  assert.strictEqual(cloudPushes, 1, "withheld push lands once the trade finishes");
+  clearTimeout(Store._cloudTimer);
+
+  // ---- 5) Store.flush refuses while busy (tab hide / sign-out mid-trade) ----
+  // Game.suspend() flushes immediately on visibilitychange — backgrounding the
+  // game mid-buy used to commit optimistic credits against pre-trade positions.
+  cloudPushes = 0;
+  Economy._pending = 1;
+  await Store.flush(ctx.Game.state);
+  assert.strictEqual(cloudPushes, 0, "flush skipped while busy");
+  assert.ok(Store._cloudTimer, "flush hands the push back to the debounce");
+  clearTimeout(Store._cloudTimer);          // deterministic: don't let it race step 6
+  Store._cloudTimer = null;
+  Economy._pending = 0;
+  await Store.flush(ctx.Game.state);
+  assert.strictEqual(cloudPushes, 1, "flush works when idle");
+
+  // ---- 6) busy() covers the optimistic mutation, not just the RPC ----
+  // An async optimistic path yields to the event loop with credits already
+  // deducted; an autosave landing in that gap is the same race.
+  let releaseOptimistic;
+  const optimisticGate = new Promise(r => { releaseOptimistic = r; });
+  const gatedP = Economy._withRpc(
+    async () => { await optimisticGate; return { ok: true }; },
+    async () => ({ ok: true }),
+    "nope"
+  );
+  await tick();
+  assert.ok(Economy.busy(), "busy() during an async optimistic mutation");
+  cloudPushes = 0;
+  await Store.flush(ctx.Game.state);
+  assert.strictEqual(cloudPushes, 0, "no flush during the optimistic window");
+  releaseOptimistic();
+  assert.ok((await gatedP).ok, "gated rpc completes");
+  assert.ok(!Economy.busy(), "busy() clears after the rpc");
 
   console.log("check_reset_buy_race: reset _noSave + buy race / maxBuy bay clamp ✔");
 })().catch(e => { console.error(e); process.exit(1); });
