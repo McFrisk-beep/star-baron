@@ -185,15 +185,38 @@ function plantBackup(extra = {}) {
   assert(restoredRpc[0].credits === 9000, "restore RPC gets the migrated backup credits");
   assert(cloudSaved.length === 0, "restore does not fall back to app_commit flush when RPC is live");
 
+  // Missing RPC must not silently reload into a half-restored cloud row.
+  restoredRpc.length = 0;
+  reloads = 0;
+  Game._corruptSaveReset = true;
+  Store._cloudReady = false;
+  sandbox.Cloud.restoreBackup = async () => ({ ok: false, missing: true, error: "Restore backup RPC not live." });
+  plantBackup();
+  const missing = await Game.restoreCorruptBackup();
+  assert(!missing.ok && /restore_backup\.sql/i.test(missing.msg || ""), "missing RPC refuses restore");
+  assert(reloads === 0, "missing RPC does not reload");
+
+  // Null / failed RPC likewise refuses instead of reloading.
+  reloads = 0;
+  sandbox.Cloud.restoreBackup = async () => null;
+  const nulled = await Game.restoreCorruptBackup();
+  assert(!nulled.ok, "null RPC refuses restore");
+  assert(reloads === 0, "null RPC does not reload");
+
   // Full restore must NOT lift a failed-cloud-load gate.
   cloudSaved.length = 0;
   reloads = 0;
   Game._corruptSaveReset = false;
   Store._cloudReady = false;
+  sandbox.Cloud.restoreBackup = async (st) => {
+    restoredRpc.push(JSON.parse(JSON.stringify(st)));
+    return { ok: true, state: st };
+  };
   plantBackup();
   await Game.restoreCorruptBackup();
   assert(Store._cloudReady === false, "full restore leaves failed-load gate closed");
   assert(cloudSaved.length === 0, "full restore does not flush when not a corrupt-save reset");
+  assert(restoredRpc.length === 0, "non-corrupt-reset path does not call restore RPC");
 
   // Migrate-fail message points at the fix, not "too damaged".
   Game.migrate = () => { throw new Error("still broken"); };

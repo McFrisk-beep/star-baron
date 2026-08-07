@@ -343,7 +343,7 @@ assert.strictEqual(rLock.length, 1, "matured charter still resolves under Phase 
 assert.strictEqual(shLock.status, "idle", "hull freed even when payout is server-owned");
 assert.strictEqual(ctx.Game.state.credits, beforeLock, "no credit mint under Phase 3");
 assert.strictEqual(rLock[0].credits, 0);
-assert.ok(/server ledger/i.test(rLock[0].summary || ""), "report notes deferred payout");
+assert.ok(/forfeit/i.test(rLock[0].summary || ""), "report notes forfeited payout (not deferred)");
 assert.strictEqual(ctx.Game.state.charters.length, 0, "charter cleared so reconcile can't re-lock");
 delete ctx.Cloud;
 

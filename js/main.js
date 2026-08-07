@@ -1174,12 +1174,13 @@ const Game = {
       if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady && Cloud.restoreBackup) {
         try {
           const r = await Cloud.restoreBackup(next);
-          if (r && r.ok && r.state && window.Economy && Economy.applyCommitState) {
-            // Keep local next for reload; server row now matches the backup.
+          if (r && r.ok) {
+            // Server row replaced; local next already saved for reload.
           } else if (r && r.missing) {
-            console.warn("[Game] app_restore_backup missing — credits/ships/cargo stay on the cloud row until docs/sql/restore_backup.sql is applied.");
-          } else if (r && r.ok === false) {
-            console.warn("[Game] app_restore_backup:", r.error || r);
+            console.warn("[Game] app_restore_backup missing — apply docs/sql/restore_backup.sql.");
+            return { ok: false, msg: "Cloud restore isn't live yet — apply docs/sql/restore_backup.sql, then try again. Your backup is still in this browser." };
+          } else {
+            console.warn("[Game] app_restore_backup:", (r && r.error) || r);
             return { ok: false, msg: (r && r.error) || "Couldn't restore the cloud save." };
           }
         } catch (e) {

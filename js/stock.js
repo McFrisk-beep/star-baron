@@ -153,7 +153,8 @@ const Stock = {
   // One hourly cycle. Returns a tiny summary for the sim harness.
   // When the shelf is server-owned, skip local consume/produce/trickle/sentiment
   // mutations — but still run Stations.afterStockHour (and owned-hub produce).
-  tickHour(hourIndex) {
+  // opts.stationRemote === false: local station hour only (no RPC chain).
+  tickHour(hourIndex, opts) {
     const summary = { consumed: 0, produced: 0, shortfall: 0 };
     const shelfLocal = !this.authoritative();
     const ids = this.sectorIds();
@@ -233,7 +234,13 @@ const Stock = {
       }
     }
 
-    if (window.Stations && Stations.afterStockHour) Stations.afterStockHour(hourIndex);
+    // opts.stationRemote: false skips the RPC chain (upkeep/settle/produce) so a
+    // multi-hour catch-up doesn't thundering-herd the server — only the final
+    // hour of a burst should pass true (default).
+    if (window.Stations && Stations.afterStockHour) {
+      const remote = !(opts && opts.stationRemote === false);
+      Stations.afterStockHour(hourIndex, { remote });
+    }
     return summary;
   },
 
@@ -259,20 +266,25 @@ const Stock = {
   // Advance any due hourly ticks (live loop + offline catch-up).
   // Signed-in Phase 4: server cron owns the *shelf*, but Stations.afterStockHour
   // (hall expire, upkeep RPC, remote leases, settle) still rides this watermark.
+  // Multi-hour catch-up runs local station logic every hour, but only the final
+  // hour fires the remote RPC chain (avoids a ~48× boot thundering herd).
   tick(now = Date.now()) {
     if (!this.lastTickAt) this.lastTickAt = now;
     const ms = STOCKCFG.tickMs || 3600000;
     let n = 0;
     // Cap catch-up so a 7-day offline doesn't spin 168 ticks synchronously forever.
     const maxHours = 48;
+    const hours = [];
     while (now - this.lastTickAt >= ms && n < maxHours) {
       this.lastTickAt += ms;
-      const hourIndex = Math.floor(this.lastTickAt / ms);
-      this.tickHour(hourIndex);
+      hours.push(Math.floor(this.lastTickAt / ms));
       n++;
     }
     // If we hit the cap, jump the watermark forward (skip middle hours).
     if (now - this.lastTickAt >= ms) this.lastTickAt = now - (now % ms);
+    for (let i = 0; i < hours.length; i++) {
+      this.tickHour(hours[i], { stationRemote: i === hours.length - 1 });
+    }
     return n;
   },
 

@@ -558,9 +558,8 @@ const Stations = {
         if (st && this.ownerHeld(st) && this._mine(st)) {
           this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
           cargo += qty;
-        } else {
-          // Lost the station — residual should already be in res.positions when
-          // the settle paste credits orphan tax server-side; never soft-mint.
+        } else if (res.positions || row.toPositions) {
+          // Orphan tax credited into positions by the soft-income settle paste.
           cargo += qty;
         }
       }
@@ -578,14 +577,18 @@ const Stations = {
           cargo += qty;
         } else if (this._mintPositions(commId, qty)) {
           // Pre-D1 settle: tax follows us out as cargo (guest / pullMissing).
+          if (window.Assets) Assets.reconcileFromPositions(Game.state.currentSystem);
           cargo += qty;
         }
       }
     }
-    // Authoritative cargo into the wallet ledger (orphan tax / bay keep).
+    // Authoritative cargo into the wallet ledger (orphan tax). Must file the
+    // delta into the hauling bay — a bare positions write is wiped by the next
+    // Assets.reconcile() on buy/sell/transfer (HAULING.md §4).
     if (res.positions && typeof res.positions === "object" && window.Game) {
       Game.state.positions = res.positions;
       if (res.avgCost && typeof res.avgCost === "object") Game.state.avgCost = res.avgCost;
+      if (window.Assets) Assets.reconcileFromPositions(Game.state.currentSystem);
     }
     if (credits || tariffs || items || cargo || res.positions) {
       if (window.Economy) Economy.refreshNetWorth();
@@ -3124,7 +3127,10 @@ const Stations = {
   },
 
   // ---- Standing / revolt (after stock hour) ------------------------------
-  afterStockHour(hourIndex) {
+  // opts.remote === false: local standing/hall/haul only — skip the RPC chain
+  // (used during multi-hour Stock catch-up so only the final hour hits the server).
+  afterStockHour(hourIndex, opts) {
+    const remote = !(opts && opts.remote === false);
     const now = Date.now();
     if (!this.auctionsShared()) {
       for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
@@ -3223,6 +3229,7 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
+    if (!remote) return;
     // Hourly: server upkeep/auctions, refresh directory, leases, settle.
     let chain = Promise.resolve();
     if (upkeepReports.length && window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady()) {

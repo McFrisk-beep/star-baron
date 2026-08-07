@@ -38,9 +38,10 @@ ctx.Game = {
   requestSave() {},
 };
 ctx.Bus = { emit() {}, on() {} };
-ctx.Assets = { parkBlocks() {} };
+ctx.Assets = { parkBlocks() {}, reconcileFromPositions() {} };
 ctx.Rep = { change() {}, edgeForCategory: () => 0 };
 
+(async () => {
 // --- claimHallPayouts must not consume under Phase 3 ---
 const st = Stations.list()[0];
 assert.ok(st, "has a station");
@@ -82,8 +83,13 @@ assert.ok(!st.pendingCargo.player);
 
 // --- Phase 4 shelf authoritative: station hour still fires ---
 let afterCalls = 0;
+let remoteCalls = 0;
 const realAfter = Stations.afterStockHour.bind(Stations);
-Stations.afterStockHour = (h) => { afterCalls++; realAfter(h); };
+Stations.afterStockHour = (h, opts) => {
+  afterCalls++;
+  if (!(opts && opts.remote === false)) remoteCalls++;
+  realAfter(h, opts);
+};
 Stock.markServerShelf(true);
 ctx.Cloud.authoritative = () => true;
 assert.ok(Stock.authoritative(), "shelf latched");
@@ -91,12 +97,63 @@ const unitsBefore = JSON.stringify(Stock.units);
 T += STOCKCFG.tickMs;
 Stock.tick(T);
 assert.strictEqual(afterCalls, 1, "afterStockHour runs when shelf is authoritative");
+assert.strictEqual(remoteCalls, 1, "single-hour tick fires the remote chain");
 assert.strictEqual(JSON.stringify(Stock.units), unitsBefore, "authoritative shelf units unchanged by local tick");
+
+// Multi-hour catch-up: local hour every step, remote chain only on the last
+afterCalls = 0;
+remoteCalls = 0;
+T += STOCKCFG.tickMs * 5;
+Stock.tick(T);
+assert.strictEqual(afterCalls, 5, "local station hour runs for each catch-up hour");
+assert.strictEqual(remoteCalls, 1, "remote RPC chain coalesced to the final hour");
 
 // Boot predicate smoke: Stock.advance still no-ops shelf mutations when authoritative
 afterCalls = 0;
+remoteCalls = 0;
 T += STOCKCFG.tickMs;
 Stock.advance(STOCKCFG.tickMs, T);
 assert.strictEqual(afterCalls, 1, "advance → tickHour → afterStockHour under authoritative shelf");
+assert.strictEqual(remoteCalls, 1);
+
+// --- settleHall files orphan positions into the hauling ledger ---
+ctx.Game.state.positions = {};
+ctx.Game.state.stationInv = {};
+ctx.Game.state.currentSystem = "navos";
+ctx.Assets = {
+  hold: () => ({ blocks: {}, gear: [] }),
+  bay: (sys) => {
+    const s = ctx.Game.state;
+    s.stationInv = s.stationInv || {};
+    return s.stationInv[sys] || (s.stationInv[sys] = { blocks: {}, gear: [] });
+  },
+  bagValue: () => 0,
+  ledgerQty: () => 0,
+  reconcileFromPositions(sys) {
+    // Mirror the real invariant: park server totals into the bay ledger.
+    const s = ctx.Game.state;
+    s.stationInv = s.stationInv || {};
+    const bay = s.stationInv[sys] || (s.stationInv[sys] = { blocks: {}, gear: [] });
+    for (const [id, q] of Object.entries(s.positions || {})) {
+      bay.blocks[id] = Math.max(0, Math.floor(+q || 0));
+    }
+  },
+};
+Economy.refreshNetWorth = () => {};
+Stations._hallWritable = () => true;
+ctx.Cloud.signedIn = () => true;
+ctx.Cloud.hallReady = () => true;
+ctx.Cloud.stationSettle = async () => ({
+  ok: true, credits: 5000, payouts: [], items: [], cargo: [],
+  holds: {},
+  positions: { iron_ore: 120 },
+  avgCost: { iron_ore: 0 },
+});
+const settled = await Stations.settleHall();
+assert.ok(settled && settled.ok);
+assert.strictEqual(ctx.Game.state.positions.iron_ore, 120);
+assert.strictEqual(ctx.Game.state.stationInv.navos.blocks.iron_ore, 120,
+  "orphan tax filed into bay — next reconcile must not wipe it");
 
 console.log("check_soft_income_gates: ok");
+})().catch(e => { console.error(e); process.exit(1); });

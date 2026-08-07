@@ -260,8 +260,10 @@ const Charters = {
         report.success = false;
         report.summary = "Charter closed — hulls already gone.";
       } else if (!mint) {
+        // No app_charter_* yet: freeing the hull is the fix; the reward is
+        // forfeited (not deferred) — there's no row left for a later RPC to pay.
         for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
-        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout waits on the server ledger.`;
+        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout forfeited until the charter ledger is live.`;
       } else {
         // Each hull rolls the convoy chance — escorts lower that shared rate.
         const survivors = [];
