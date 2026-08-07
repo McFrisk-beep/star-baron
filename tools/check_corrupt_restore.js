@@ -160,12 +160,19 @@ function plantBackup(extra = {}) {
   assert(Game.state.workshop.queue.every(j => j.id !== "ckZero"), "readyAt < startedAt jobs dropped");
   assert(Store._cloudReady === false, "sanitize-path merge still leaves cloud gated");
 
-  // --- full restore: market/galaxy from backup, not live session ---
+  // --- full restore: market/galaxy from backup; economy via app_restore_backup ---
   cloudSaved.length = 0;
   reloads = 0;
+  const restoredRpc = [];
   Game.state = Game.defaultState();
   Game._corruptSaveReset = true;
   Store._cloudReady = false;
+  sandbox.Cloud.playersReady = true;
+  sandbox.Cloud.restoreMissing = false;
+  sandbox.Cloud.restoreBackup = async (st) => {
+    restoredRpc.push(JSON.parse(JSON.stringify(st)));
+    return { ok: true, state: st };
+  };
   plantBackup();
   const rr = await Game.restoreCorruptBackup();
   assert(rr.ok, "full restore ok");
@@ -174,8 +181,9 @@ function plantBackup(extra = {}) {
   assert(saved.market && saved.market.fromBackup === true, "full restore keeps backup market");
   assert(saved.galaxy && saved.galaxy.news && saved.galaxy.news[0] === "from-backup", "full restore keeps backup galaxy");
   assert(!(saved.market && saved.market.wipedSession), "full restore did not snapshot live Market");
-  assert(cloudSaved.length === 1, "corrupt-save reset may flush migrated backup once");
-  assert(cloudSaved[0].credits === 9000, "flushed backup is the migrated save, not 1500c default");
+  assert(restoredRpc.length === 1, "corrupt-save reset calls app_restore_backup");
+  assert(restoredRpc[0].credits === 9000, "restore RPC gets the migrated backup credits");
+  assert(cloudSaved.length === 0, "restore does not fall back to app_commit flush when RPC is live");
 
   // Full restore must NOT lift a failed-cloud-load gate.
   cloudSaved.length = 0;

@@ -151,30 +151,37 @@ const Stock = {
   },
 
   // One hourly cycle. Returns a tiny summary for the sim harness.
+  // When the shelf is server-owned, skip local consume/produce/trickle/sentiment
+  // mutations — but still run Stations.afterStockHour (and owned-hub produce).
   tickHour(hourIndex) {
     const summary = { consumed: 0, produced: 0, shortfall: 0 };
+    const shelfLocal = !this.authoritative();
     const ids = this.sectorIds();
     const tradeable = this.tradeable();
 
-    // 1) Consumption
-    for (const sid of ids) {
-      if (!this.shortfall[sid]) this.shortfall[sid] = {};
-      for (const c of tradeable) {
-        const want = Math.floor(this.demand(sid, c.id, hourIndex));
-        const have = this.available(sid, c.id);
-        const took = Math.min(have, want);
-        if (took) this.take(sid, c.id, took);
-        // Only whole unmet units count — fractional demand is noise, not famine.
-        this.shortfall[sid][c.id] = Math.max(0, want - took);
-        summary.consumed += took;
-        summary.shortfall += this.shortfall[sid][c.id];
+    if (shelfLocal) {
+      // 1) Consumption
+      for (const sid of ids) {
+        if (!this.shortfall[sid]) this.shortfall[sid] = {};
+        for (const c of tradeable) {
+          const want = Math.floor(this.demand(sid, c.id, hourIndex));
+          const have = this.available(sid, c.id);
+          const took = Math.min(have, want);
+          if (took) this.take(sid, c.id, took);
+          // Only whole unmet units count — fractional demand is noise, not famine.
+          this.shortfall[sid][c.id] = Math.max(0, want - took);
+          summary.consumed += took;
+          summary.shortfall += this.shortfall[sid][c.id];
+        }
       }
     }
 
-    // 2) NPC station production → sector stock (Stations drives baskets)
+    // 2) NPC station production → sector stock (Stations drives baskets).
+    // Authoritative shelf: npcProduceHour still runs owned-hub / lease logic
+    // but must not Stock.put (see Stations.npcProduceHour).
     if (window.Stations && Stations.npcProduceHour) {
       summary.produced += Stations.npcProduceHour(hourIndex);
-    } else {
+    } else if (shelfLocal) {
       // Fallback when Stations isn't loaded (harness): one virtual producer per sector.
       for (const sid of ids) {
         for (const c of tradeable) {
@@ -187,41 +194,43 @@ const Stock = {
       }
     }
 
-    // 3) Inter-sector trickle into empty/critical bins from surplus sectors
-    for (const sid of ids) {
-      for (const c of tradeable) {
-        if (this.ratio(sid, c.id) >= 0.15) continue;
-        for (const src of ids) {
-          if (src === sid) continue;
-          const have = this.available(src, c.id);
-          const base = this.baseline(src, c.id);
-          if (have <= base * 1.05) continue; // only skim surplus
-          const gift = Math.max(1, Math.floor((have - base) * STOCKCFG.trickleFrac));
-          const took = this.take(src, c.id, gift);
-          if (took) this.put(sid, c.id, took);
+    if (shelfLocal) {
+      // 3) Inter-sector trickle into empty/critical bins from surplus sectors
+      for (const sid of ids) {
+        for (const c of tradeable) {
+          if (this.ratio(sid, c.id) >= 0.15) continue;
+          for (const src of ids) {
+            if (src === sid) continue;
+            const have = this.available(src, c.id);
+            const base = this.baseline(src, c.id);
+            if (have <= base * 1.05) continue; // only skim surplus
+            const gift = Math.max(1, Math.floor((have - base) * STOCKCFG.trickleFrac));
+            const took = this.take(src, c.id, gift);
+            if (took) this.put(sid, c.id, took);
+          }
         }
       }
-    }
 
-    // 4) Sector sentiment (docs/STATIONS.md §6.1)
-    for (const sid of ids) {
-      let sent = this.sentiment[sid];
-      if (sent == null) sent = STATIONCFG.sentimentStart;
-      for (const c of tradeable) {
-        const sf = (this.shortfall[sid] && this.shortfall[sid][c.id]) || 0;
-        const r = this.ratio(sid, c.id);
-        if (sf > 0) sent -= 3.0;
-        else if (r < 0.10) sent -= 1.5;
-        else if (r < 0.25) sent -= 0.5;
-        else if (r >= 0.60) sent += 0.75;
+      // 4) Sector sentiment (docs/STATIONS.md §6.1)
+      for (const sid of ids) {
+        let sent = this.sentiment[sid];
+        if (sent == null) sent = STATIONCFG.sentimentStart;
+        for (const c of tradeable) {
+          const sf = (this.shortfall[sid] && this.shortfall[sid][c.id]) || 0;
+          const r = this.ratio(sid, c.id);
+          if (sf > 0) sent -= 3.0;
+          else if (r < 0.10) sent -= 1.5;
+          else if (r < 0.25) sent -= 0.5;
+          else if (r >= 0.60) sent += 0.75;
+        }
+        // Sentiment deltas above fire per commodity — scale down so ~40 goods don't
+        // pin the meter every hour. Ponytail: one global dampener; revisit if the
+        // commodity count shrinks to a curated "staples" basket.
+        const n = tradeable.length || 1;
+        const rawDelta = sent - (this.sentiment[sid] ?? STATIONCFG.sentimentStart);
+        const damped = (this.sentiment[sid] ?? STATIONCFG.sentimentStart) + rawDelta / n;
+        this.sentiment[sid] = Util.clamp(damped, 0, 100);
       }
-      // Sentiment deltas above fire per commodity — scale down so ~40 goods don't
-      // pin the meter every hour. Ponytail: one global dampener; revisit if the
-      // commodity count shrinks to a curated "staples" basket.
-      const n = tradeable.length || 1;
-      const rawDelta = sent - (this.sentiment[sid] ?? STATIONCFG.sentimentStart);
-      const damped = (this.sentiment[sid] ?? STATIONCFG.sentimentStart) + rawDelta / n;
-      this.sentiment[sid] = Util.clamp(damped, 0, 100);
     }
 
     if (window.Stations && Stations.afterStockHour) Stations.afterStockHour(hourIndex);
@@ -248,9 +257,9 @@ const Stock = {
   },
 
   // Advance any due hourly ticks (live loop + offline catch-up).
-  // Signed-in Phase 4: server cron / app_stock_tick owns the shelf — skip local.
+  // Signed-in Phase 4: server cron owns the *shelf*, but Stations.afterStockHour
+  // (hall expire, upkeep RPC, remote leases, settle) still rides this watermark.
   tick(now = Date.now()) {
-    if (this.authoritative()) return 0;
     if (!this.lastTickAt) this.lastTickAt = now;
     const ms = STOCKCFG.tickMs || 3600000;
     let n = 0;

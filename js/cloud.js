@@ -618,6 +618,21 @@ const Cloud = {
   async resetSave() {
     return this.rpc("app_reset_save");
   },
+  // Settings → Restore backup: replace protected economy slices from a migrated
+  // wiped-save backup (docs/sql/restore_backup.sql). app_commit can't do this.
+  restoreMissing: false,
+  async restoreBackup(state) {
+    if (this.restoreMissing) return { ok: false, missing: true, error: "Restore backup RPC not live." };
+    try { return await this.rpc("app_restore_backup", { p_state: state }); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.restoreMissing = true;
+        console.warn("[Cloud] app_restore_backup missing — run docs/sql/restore_backup.sql");
+        return { ok: false, missing: true, error: "Restore backup RPC not live." };
+      }
+      throw e;
+    }
+  },
   // Admin → Issue Global Reset: consume the shared world_reset epoch server-side
   // (docs/sql/reset_save.sql). The epoch is read from the table by the RPC, never
   // sent from here. Returns { ok, applied, epoch, state }.

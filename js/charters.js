@@ -236,9 +236,10 @@ const Charters = {
 
   // Resolve matured charters. Returns reports (also pushed to state.reports).
   resolve(now = Date.now()) {
-    // Phase 3 live: server ledger owns soft income — don't mint (or free the
-    // hull) until app_charter_* exists. Guests / pullMissing fall through.
-    if (window.Economy && !Economy.softIncomeLocal()) return [];
+    // Phase 3 live: app_commit owns ships/credits and app_charter_* isn't
+    // pasted yet — still free hulls on the timer so dispatch isn't a soft-lock.
+    // Skip credit mint, attrition, and damage (they'd bounce on the next commit).
+    const mint = !(window.Economy && !Economy.softIncomeLocal());
     const s = this.s();
     const out = [];
     for (const c of this.list()) {
@@ -258,6 +259,9 @@ const Charters = {
       if (!ships.length) {
         report.success = false;
         report.summary = "Charter closed — hulls already gone.";
+      } else if (!mint) {
+        for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
+        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout waits on the server ledger.`;
       } else {
         // Each hull rolls the convoy chance — escorts lower that shared rate.
         const survivors = [];
@@ -319,7 +323,7 @@ const Charters = {
     if (out.length) {
       s.charters = this.list().filter(c => !c.resolved);
       Economy.refreshNetWorth();
-      Economy.checkAchievements();
+      if (mint) Economy.checkAchievements();
     }
     return out;
   },

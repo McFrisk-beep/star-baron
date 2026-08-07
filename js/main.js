@@ -393,8 +393,10 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    // Phase 4: signed-in shelf is server-owned — skip local Stock.advance.
-    if (window.Stock && !(window.Economy && Economy.authoritative())) Stock.advance(elapsed, now);
+    // Phase 4: skip local shelf catch-up only once app_sector_stock has latched
+    // (Stock.authoritative). Economy.authoritative alone is Phase 1 — signed-in
+    // without the Phase 4 paste still needs the local hour tick.
+    if (window.Stock && !Stock.authoritative()) Stock.advance(elapsed, now);
     if (window.Stations) Stations.tick(now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
@@ -1165,11 +1167,28 @@ const Game = {
     Store.localSave(Store._stampOwner(next));
     // Only re-open cloud writes when WE gated them for a corrupt-save reset.
     // Never clear a failed-cloud-load gate (unknown remote must stay protected).
-    // Flush the migrated backup (not defaultState) so client-owned slices sync;
-    // app_commit still rejects credit increases.
+    // app_commit rejects credit/ship/cargo increases — use app_restore_backup
+    // so the wiped economy actually lands on the server row.
     if (this._corruptSaveReset) {
       Store._cloudReady = true;
-      try { await Store.flush(next); } catch (e) { /* best-effort */ }
+      if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady && Cloud.restoreBackup) {
+        try {
+          const r = await Cloud.restoreBackup(next);
+          if (r && r.ok && r.state && window.Economy && Economy.applyCommitState) {
+            // Keep local next for reload; server row now matches the backup.
+          } else if (r && r.missing) {
+            console.warn("[Game] app_restore_backup missing — credits/ships/cargo stay on the cloud row until docs/sql/restore_backup.sql is applied.");
+          } else if (r && r.ok === false) {
+            console.warn("[Game] app_restore_backup:", r.error || r);
+            return { ok: false, msg: (r && r.error) || "Couldn't restore the cloud save." };
+          }
+        } catch (e) {
+          console.warn("[Game] restore backup RPC failed:", e);
+          return { ok: false, msg: "Couldn't reach the cloud save to restore credits and ships." };
+        }
+      } else {
+        try { await Store.flush(next); } catch (e) { /* best-effort guest / legacy */ }
+      }
     }
     location.reload();
     return { ok: true };

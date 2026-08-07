@@ -327,5 +327,25 @@ assert.strictEqual(rPr[0].credits, expected, "payout pro-rated to surviving carg
 assert.strictEqual(ctx.Game.state.credits, beforePr + expected);
 assert.ok(/Payout cut/i.test(rPr[0].summary || ""), "report notes cargo cut");
 
+// 14) Phase 3 softIncomeLocal=false: free hulls, do not mint credits
+ctx.Game.state = fresh();
+ctx.Game.state.credits = 50_000;
+const shLock = mule(); ctx.Game.state.ships.push(shLock);
+const dLock = Charters.dispatch(shLock.uid, "safe", 60, T);
+assert(dLock.ok, dLock.msg);
+assert.strictEqual(shLock.status, "charter");
+const beforeLock = ctx.Game.state.credits;
+ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
+assert.strictEqual(Economy.softIncomeLocal(), false, "phase 3 live → no local soft income");
+T += 3600000;
+const rLock = Charters.resolve(T);
+assert.strictEqual(rLock.length, 1, "matured charter still resolves under Phase 3");
+assert.strictEqual(shLock.status, "idle", "hull freed even when payout is server-owned");
+assert.strictEqual(ctx.Game.state.credits, beforeLock, "no credit mint under Phase 3");
+assert.strictEqual(rLock[0].credits, 0);
+assert.ok(/server ledger/i.test(rLock[0].summary || ""), "report notes deferred payout");
+assert.strictEqual(ctx.Game.state.charters.length, 0, "charter cleared so reconcile can't re-lock");
+delete ctx.Cloud;
+
 console.log("check_charters: ok");
 })().catch(e => { console.error(e); process.exit(1); });

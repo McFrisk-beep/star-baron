@@ -110,4 +110,18 @@ assert.ok(trustSql.includes("double escrow"),
 assert.ok(phase2Sql.includes("m->>'source' = 'station'"),
   "phase2_missions_bazaar.sql must skip source=station in app_mission_resolve");
 
-console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust ✔`);
+const softSql = fs.readFileSync(path.join(root, "docs/sql/station_soft_income.sql"), "utf8");
+assert.ok(softSql.includes("app._credit_positions"),
+  "station_soft_income.sql must credit positions for bay keep / orphan tax");
+assert.ok(softSql.includes("app._extractor_yield_mult"),
+  "station_soft_income.sql after_hour must apply extractor quality");
+assert.ok(softSql.includes("toPositions") || softSql.includes("_credit_positions"),
+  "station_soft_income.sql settle must handle orphan bay tax");
+assert.ok(pubT.includes("extractorid"),
+  "station_economy_trust.sql publish must carry owner extractorId for after_hour");
+
+const restoreSql = fs.readFileSync(path.join(root, "docs/sql/restore_backup.sql"), "utf8");
+assert.ok(restoreSql.includes("app_restore_backup"),
+  "restore_backup.sql must define app_restore_backup");
+
+console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust + soft_income ✔`);

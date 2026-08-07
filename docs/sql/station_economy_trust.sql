@@ -707,18 +707,26 @@ begin
       if keep_srv then
         merged := merged || jsonb_build_array(jsonb_build_object(
           'lesseeId', s_lid, 'npc', false,
-          'taxed_at', s_el->'taxed_at'));
+          'taxed_at', s_el->'taxed_at',
+          'extractorId', coalesce(s_el->>'extractorId', '')));
       elsif c_lid <> '' and not c_npc and c_lid <> 'npc' then
+        -- Owner-staffed bays may carry extractorId (after_hour yield quality).
+        -- Remote lessees: occupancy only — their extractor stays in their save.
         if s_lid = c_lid and s_el ? 'taxed_at' and s_el->>'taxed_at' is not null then
           merged := merged || jsonb_build_array(jsonb_build_object(
-            'lesseeId', c_lid, 'npc', false, 'taxed_at', s_el->'taxed_at'));
+            'lesseeId', c_lid, 'npc', false, 'taxed_at', s_el->'taxed_at',
+            'extractorId', case when c_lid = uid::text
+              then left(coalesce(nullif(c_el->>'extractorId', ''), s_el->>'extractorId'), 40)
+              else '' end));
         else
           merged := merged || jsonb_build_array(jsonb_build_object(
-            'lesseeId', c_lid, 'npc', false));
+            'lesseeId', c_lid, 'npc', false,
+            'extractorId', case when c_lid = uid::text
+              then left(coalesce(c_el->>'extractorId', ''), 40) else '' end));
         end if;
       else
         merged := merged || jsonb_build_array(jsonb_build_object(
-          'lesseeId', '', 'npc', false));
+          'lesseeId', '', 'npc', false, 'extractorId', ''));
       end if;
     end loop;
     if v_n <= 0 then merged := '[]'::jsonb; end if;
