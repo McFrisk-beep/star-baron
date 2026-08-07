@@ -208,9 +208,11 @@ All saves go through **`Store`** (`store.js`). Nothing else touches storage.
 - The whole `Game.state` blob is what's saved/synced — so any new feature's data
   is covered automatically *as long as it lives in `state`* and is defaulted in
   `defaultState`/`migrate`.
-- **`Game._noSave` guard:** during logout/login we set `Game._noSave = true` so
+- **`Game._noSave` guard:** during logout/login/**Reset Save** we set `Game._noSave = true` so
   `beforeunload`/autosave can't re-persist stale state right before a reload.
-  (This fixed logout-not-resetting — don't remove it.)
+  (This fixed logout-not-resetting and Reset Save bouncing back — don't remove it.)
+  Signed-in Reset Save also needs `docs/sql/reset_save.sql` (`app_reset_save`) so the
+  `players` row wipes; otherwise bootstrap restores the cloud copy.
 
 ---
 

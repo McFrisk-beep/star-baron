@@ -88,6 +88,8 @@ const UI = {
       boostBar: $("boost-bar"), boostEmpty: $("boost-empty"),
       hubDock: $("hub-dock"), hubDockBody: $("hub-dock-body"),
       hubCouriers: $("hub-couriers"), hubCouriersBody: $("hub-couriers-body"),
+      hubTransit: $("hub-transit"), hubTransitBody: $("hub-transit-body"),
+      hubSurveys: $("hub-surveys"), hubSurveysBody: $("hub-surveys-body"),
       workshopSlots: $("workshop-slots"), workshopQueue: $("workshop-queue"),
       workshopRecipes: $("workshop-recipes"), workshopUpgrade: $("workshop-upgrade"),
       workshopTabs: $("workshop-tabs"),
@@ -141,7 +143,7 @@ const UI = {
     else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this._renderHubCouriers(); }
+    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
@@ -171,6 +173,8 @@ const UI = {
   renderHubDock() {
     const panel = this.refs.hubDock, body = this.refs.hubDockBody;
     if (!panel || !body || !window.Stations || !window.Galaxy) {
+      this.renderHubTransit();
+      this.renderHubSurveys();
       this._renderHubCouriers();
       return;
     }
@@ -180,6 +184,8 @@ const UI = {
     const st = s.travel ? null : Stations.view(s.currentSystem);
     if (!st) {
       panel.classList.add("hidden");
+      this.renderHubTransit();
+      this.renderHubSurveys();
       this._renderHubCouriers();
       return;
     }
@@ -199,7 +205,42 @@ const UI = {
       <div class="system-services">${svcs.map(r =>
         `<span class="svc-chip ${r.ok ? "on" : "off"}" title="${r.ok ? "Available" : (r.reason || "Unavailable")}">${r.label}</span>`
       ).join("")}</div>`;
+    this.renderHubTransit();
+    this.renderHubSurveys();
     this._renderHubCouriers();
+  },
+
+  // Flagship travel — shown on Hub while Economy.inTransit().
+  renderHubTransit() {
+    const panel = this.refs.hubTransit, body = this.refs.hubTransitBody;
+    if (!panel || !body) return;
+    const t = this.s().travel;
+    if (!t) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
+    panel.classList.remove("hidden");
+    const leftMs = Math.max(0, t.departedAt + t.etaMs - Date.now());
+    const pct = (Economy.travelProgress() * 100).toFixed(1);
+    body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · ${Util.duration(leftMs)} remaining</div>
+      <div class="bar hub-transit-bar"><span style="width:${pct}%"></span></div>`;
+  },
+
+  // Active survey expeditions — charting runs still out.
+  renderHubSurveys() {
+    const panel = this.refs.hubSurveys, body = this.refs.hubSurveysBody;
+    if (!panel || !body) return;
+    const exps = (window.Expeditions ? Expeditions.list() : []).filter(e => e && !e.resolved);
+    if (!exps.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
+    panel.classList.remove("hidden");
+    const now = Date.now();
+    body.innerHTML = exps.map(e => {
+      const sh = window.Fleet ? Fleet.ship(e.shipUid) : null;
+      const ship = sh ? sh.name : "Survey ship";
+      if (e.debrief) {
+        return `<div class="haul-ship-line"><b>${this.sysName(e.sysId)}</b> · ${ship} · debrief waiting in Dispatches</div>`;
+      }
+      const leftMs = Math.max(0, e.startedAt + e.etaMs - now);
+      const tag = leftMs > 0 ? Util.duration(leftMs) : "returning…";
+      return `<div class="haul-ship-line">${ship} → <b>${this.sysName(e.sysId)}</b> · ${tag}${e.far ? " · far" : ""}</div>`;
+    }).join("");
   },
 
   // In-flight courier lines on Hub — shown even while traveling (dock panel hides).
@@ -2349,8 +2390,7 @@ const UI = {
         if (Economy.busy()) return;
         const r = await Economy.dockAt(d.dataset.dock);
         if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
-        const warp = window.Senate ? Senate.travelEdictNote(r.etaMs) : "";
-        this.toast(`Departing for ${this.sysName(d.dataset.dock)} — ETA ${Util.duration(r.etaMs)}${warp}`, "good");
+        // Launch toast + hub transit status come from Bus.on("travelStart").
         window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
       }
     };
@@ -3901,7 +3941,7 @@ const UI = {
     r.svStart.onclick = () => {
       const res = Expeditions.start(this._surveySys, this.selectedSurveyShip());
       if (!res.ok) return this.toast(res.msg, "warn");
-      this.toast("Survey dispatched ▸", "good");
+      // Toast + hub status come from Bus.on("surveyStart").
       r.survey.classList.add("hidden");
       window.Game.requestSave(); this.renderFleet();
       if (window.StarMap) { StarMap.refreshInfo(); StarMap.updateGalaxyNodes(); }
@@ -4006,7 +4046,11 @@ const UI = {
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => {
-      if (!d.arrived) return;
+      if (window.Game._booting) return;
+      this.updateHeader(); this.updateExchange(); this.renderSystems(); this.updateDockGates();
+      this.renderHubTransit(); this.renderHubSurveys();
+      if (this.page === "hub") this.renderHubDock();
+      if (!d || !d.arrived) return;
       let msg = `Docked at ${this.sysName(d.sysId)}.`;
       if (d.leaseClaim) {
         const n = Object.values(d.leaseClaim).reduce((a, q) => a + (q | 0), 0);
@@ -4018,8 +4062,27 @@ const UI = {
         const access = Stations.hubAccess(this.page, d.sysId);
         if (!access.ok) this.showPage("hub");
       }
-      this.updateExchange(); this.updateHeader(); this.renderSystems(); this.updateDockGates();
       if (window.StarMap && StarMap.open) StarMap.refreshInfo();
+    });
+    Bus.on("travelStart", e => {
+      if (window.Game._booting) return;
+      const name = this.sysName(e.to);
+      const warp = window.Senate ? Senate.travelEdictNote(e.etaMs) : "";
+      this.toast(`Launched toward ${name} — ETA ${Util.duration(e.etaMs)}${warp}`, "good");
+      this.renderHubTransit();
+      this.updateHeader(); this.updateExchange(); this.updateDockGates();
+      if (this.page === "hub") this.renderHubDock();
+      if (this.page === "systems") this.renderSystems();
+      if (window.StarMap) StarMap.updateGalaxyNodes();
+    });
+    Bus.on("surveyStart", exp => {
+      if (window.Game._booting) return;
+      const name = this.sysName(exp.sysId);
+      const sh = window.Fleet ? Fleet.ship(exp.shipUid) : null;
+      const ship = sh ? sh.name : "Survey ship";
+      this.toast(`Survey launched — ${ship} → ${name} · ETA ${Util.duration(exp.etaMs)}`, "good");
+      this.renderHubSurveys();
+      if (this.page === "fleet") this.renderFleet();
     });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
@@ -4076,7 +4139,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this._renderHubCouriers(); }
+    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
     if (this.page === "assets" && window.Shipments && Shipments.active().length) this.renderAssets();
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.

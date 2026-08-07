@@ -397,6 +397,11 @@ const Economy = {
           biggestTrade: snap.stats.biggestTrade,
           contractsDone: snap.stats.contractsDone,
         }),
+        // Hauling ledger must match the pre-action positions we just forced —
+        // spreading live state would commit bay goods the server positions deny.
+        hold: snap.hold,
+        stationInv: snap.stationInv,
+        shipments: snap.shipments,
       });
       const r = await Cloud.commit(payload);
       if (r && r.ok === false) return false;
@@ -542,7 +547,7 @@ const Economy = {
     return Math.floor(this.depth() / px);
   },
 
-  // effective ceilings the UI clamps to: cap + afford/holdings + sector stock
+  // effective ceilings the UI clamps to: cap + afford/holdings + sector stock + bay room
   maxBuy(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
     if (window.Senate && Senate.isBanned(commId, cat)) return 0;
@@ -552,7 +557,23 @@ const Economy = {
     if (px <= 0 || s.credits <= 0) return 0;
     const byMoney = Math.floor(Math.min(s.credits, this.depth()) / px);
     const byStock = this.stockHere(commId);
-    return Math.max(0, Math.min(byMoney, byStock));
+    let n = Math.max(0, Math.min(byMoney, byStock));
+    // Bay capacity: Buy Max used to ignore this, so the click failed after the
+    // player thought they could afford the fill — or, worse, raced a pull that
+    // locked in optimistic credits. Clamp to what actually fits.
+    if (n > 0 && window.Assets) {
+      const bay = Assets.bay(s.currentSystem), cap = Assets.bayCapacity(s.currentSystem);
+      if (!Assets.canFit(bay, "block", commId, n, cap)) {
+        let lo = 0, hi = n;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (Assets.canFit(bay, "block", commId, mid, cap)) lo = mid;
+          else hi = mid - 1;
+        }
+        n = lo;
+      }
+    }
+    return n;
   },
   maxSell(commId) {
     const c = COMMODITIES.find(x => x.id === commId);
@@ -671,9 +692,15 @@ const Economy = {
 
   buy(commId, qty) {
     if (!this.authoritative()) return this._buyLocal(commId, qty);
+    // Local fill may clamp qty (stock / depth); send THAT amount, not the ask.
+    let filled = Math.floor(qty);
     return this._withRpc(
-      () => this._buyLocal(commId, qty),
-      () => Cloud.trade("buy", commId, Math.floor(qty)),
+      () => {
+        const r = this._buyLocal(commId, qty);
+        if (r && r.ok) filled = r.qty;
+        return r;
+      },
+      () => Cloud.trade("buy", commId, filled),
       "Couldn't reach the exchange — try again."
     );
   },

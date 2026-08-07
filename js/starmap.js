@@ -618,8 +618,7 @@ const StarMap = {
       if (!r || !r.ok) return UI.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
       UI.updateExchange(); UI.updateHeader(); UI.renderSystems();
       window.Game.requestSave(); this.renderInfo(sys); this.updateGalaxyNodes();
-      const warp = window.Senate ? Senate.travelEdictNote(r.etaMs) : "";
-      UI.toast(`Departing for ${sys.name} — ETA ${Util.duration(r.etaMs)}${warp}`, "good");
+      // Launch toast + hub transit status come from Bus.on("travelStart").
     };
     const unlock = document.getElementById("sm-unlock");
     if (unlock) unlock.onclick = async () => {

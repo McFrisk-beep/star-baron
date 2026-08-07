@@ -538,7 +538,12 @@ const Game = {
       // a ghost-minting local fallback after a transient pull failure.
       const retryPull = !Cloud.pullReady && !Cloud.pullMissing
         && (now - (this._lastPullTry || 0) > 15000);
-      if (!Cloud.pullMissing && !this._pullInflight && (this._softIncomeDue(now) || retryPull)) {
+      // Skip while a trade/dock RPC is in flight — committing optimistic credits
+      // via app_pull's soft-sync can lower the server balance without applying
+      // positions (app_commit forces server positions), which is the
+      // "Buy Max took my money, no stock" report.
+      if (!Cloud.pullMissing && !this._pullInflight && !Economy.busy()
+          && (this._softIncomeDue(now) || retryPull)) {
         this._pullInflight = true;
         this._lastPullTry = now;
         void this.pullCatchUp().then(async away => {
@@ -727,6 +732,9 @@ const Game = {
     // corrupt-save / failed-load boot can't push defaultState (1,500c) before
     // the player ever reaches Settings → Restore backup.
     if (!Store._cloudReady) return null;
+    // Don't soft-commit mid-trade: optimistic credits are lower than positions
+    // the server still has, and app_commit would lock that gap in.
+    if (Economy.busy()) return null;
     try {
       // Soft-sync setup (new industries/expeditions) before pull so the
       // server sees them; credits only decrease (spends), never mint via commit.
@@ -863,11 +871,30 @@ const Game = {
   save() { if (this._noSave) return; Store.save(this.snapshot()); },
 
   async reset() {
+    // Same guard as AuthUI.doSignOut: beforeunload → save() would re-write the
+    // just-cleared localStorage (and a pending cloud debounce could resurrect it).
+    this._noSave = true;
+    if (this.stopSchedulers) this.stopSchedulers();
+    clearTimeout(Store._cloudTimer);
+    Store._cloudReady = false;
+
+    // Signed-in: wipe the authoritative players row. Legacy saves delete is a
+    // no-op under security_hardening (no client DELETE policy).
+    if (window.Cloud && Cloud.signedIn && Cloud.signedIn()
+        && Cloud.playersReady && typeof Cloud.resetSave === "function") {
+      try {
+        const r = await Cloud.resetSave();
+        if (r && r.ok === false) console.warn("[Game] app_reset_save:", r.error || r);
+      } catch (e) {
+        console.warn("[Game] cloud reset failed (is docs/sql/reset_save.sql applied?):", e);
+      }
+    }
+
     await Store.clear();
     // Clear in-memory logs too (the reload re-initializes, this is belt-and-braces).
     if (this.state) this.state.newswire = [];
-    Galaxy.localLog = {};
-    Market.effects = []; Market.localEffects = [];
+    if (window.Galaxy) Galaxy.localLog = {};
+    if (window.Market) { Market.effects = []; Market.localEffects = []; }
     if (window.Stock) { Stock.units = {}; Stock.sentiment = {}; }
     if (window.Stations) { Stations.byId = {}; Stations.auctions = {}; }
     location.reload();

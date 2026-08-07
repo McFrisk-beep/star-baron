@@ -1203,6 +1203,7 @@ body.reduced .floatnav-indicator { transition: none; }
 .haul-dock-note { margin: 12px 4px; }
 .haul-shipments { margin-top: 10px; font-size: 12px; }
 .haul-ship-line { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); margin-top: 3px; }
+.hub-transit-bar { margin-top: 6px; max-width: 280px; }
 .assets-list { list-style: none; padding: 0; margin: 8px 0 0; }
 .assets-row { border-bottom: 1px solid var(--line); }
 .assets-row-btn { display: grid; grid-template-columns: 1.4fr .7fr .7fr .7fr auto; gap: 8px; width: 100%; text-align: left; background: transparent; border: 0; color: var(--ink); padding: 10px 4px; cursor: pointer; font: inherit; align-items: center; }
