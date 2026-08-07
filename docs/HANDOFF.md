@@ -212,7 +212,20 @@ All saves go through **`Store`** (`store.js`). Nothing else touches storage.
   `beforeunload`/autosave can't re-persist stale state right before a reload.
   (This fixed logout-not-resetting and Reset Save bouncing back — don't remove it.)
   Signed-in Reset Save also needs `docs/sql/reset_save.sql` (`app_reset_save`) so the
-  `players` row wipes; otherwise bootstrap restores the cloud copy.
+  `players` row wipes; otherwise bootstrap restores the cloud copy — so the client
+  now *refuses* the reset instead of wiping local and bouncing back.
+- **Wipes must be server-side.** `app_commit` protects credits/positions/ships/
+  items/prestige, so a client-built fresh state can never wipe `players.state`.
+  Settings → Reset Save uses `app_reset_save()`; the admin global reset uses
+  `app_world_reset_apply()` (same file), which reads the epoch from
+  `public.world_reset` itself rather than trusting the client. When either RPC is
+  missing the save is left **completely** untouched — never half-applied, and
+  `appliedResetEpoch` is not stamped, so the reset retries on the next load.
+- **Mid-trade cloud writes are blocked.** `Economy.busy()` is true from the
+  optimistic mutation until the RPC settles, and `Store._queueCloud` /
+  `Store.flush` (tab hide, sign-out) both refuse to run during it. `app_commit`
+  accepts a *lower* credits value but forces server positions, so a commit landing
+  mid-buy debited the player and rolled the goods back — "paid, no stock".
 
 ---
 

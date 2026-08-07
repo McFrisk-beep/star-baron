@@ -180,7 +180,7 @@ const AdminUI = {
   // dev: bump the shared reset epoch — every player (guests included) wipes once on next load
   async issueGlobalReset() {
     if (!(window.Cloud && Cloud.isAdmin() && Cloud.client)) { if (window.UI) UI.toast("Cloud + admin required.", "warn"); return; }
-    if (!confirm("Issue a GLOBAL reset to EVERY player (guests included)?\n\nOn their next load, everyone's credits become 5,000 and all owned assets (stocks, ships, industries, accessories) are wiped. The senate is kept. This cannot be undone.")) return;
+    if (!confirm("Issue a GLOBAL reset to EVERY player (guests included)?\n\nOn their next load, everyone's credits become 5,000 and all owned assets (stocks, ships, industries, accessories) are wiped. The senate is kept. This cannot be undone.\n\nSigned-in players need docs/sql/reset_save.sql applied (app_world_reset_apply) — without it their authoritative save is left untouched and the reset re-tries on every load.")) return;
     const status = this.r.devResetStatus;
     if (status) status.textContent = "Issuing…";
     try {

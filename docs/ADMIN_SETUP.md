@@ -131,6 +131,13 @@ create policy "admin writes world_reset" on public.world_reset
   with check ((select role from public.profiles where user_id = auth.uid()) = 'admin');
 ```
 
+Signed-in players also need [`docs/sql/reset_save.sql`](sql/reset_save.sql)
+applied — the wipe runs server-side through `app_world_reset_apply()`, because
+`app_commit` protects credits/positions/ships/items/prestige and would echo a
+client-built fresh state straight back. Without it their authoritative save is
+left untouched and the reset re-tries on every load (console warns why); guests
+still reset normally.
+
 > Then **Admin → Dev → Issue Global Reset**. Each player resets on their *next*
 > load (it fires once per bump, never loops). To undo a mistaken reset there's no
 > clean rollback — players who've already loaded have applied it — so it's behind

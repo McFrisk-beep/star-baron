@@ -265,6 +265,37 @@ const Game = {
     fresh.appliedResetEpoch = epoch;
     return fresh;
   },
+  // Consume an admin-issued global reset. Returns the fresh state, or null when
+  // the wipe could NOT be made authoritative — the save is then left completely
+  // untouched and the reset retries on the next load.
+  //
+  // Signed-in Phase 1 players have to wipe SERVER-side: app_commit protects
+  // credits/positions/ships/items/prestige, so pushing applyAdminReset() through
+  // saveRemote only stamped appliedResetEpoch and echoed every protected slice
+  // back. The player was marked reset, kept everything but their credits (5,000
+  // is a decrease, which app_commit does accept), and could never be reset by
+  // that epoch again. That's the "global reset didn't affect them" report.
+  async applyGlobalReset(loaded, epoch) {
+    // Guests and legacy `saves` players own their save — the local wipe IS the wipe.
+    if (!(window.Cloud && Cloud.authoritative && Cloud.authoritative())) {
+      return this.applyAdminReset(loaded, epoch);
+    }
+    let r = null;
+    try {
+      if (typeof Cloud.worldResetApply === "function") r = await Cloud.worldResetApply();
+    } catch (e) {
+      console.warn("[Game] app_world_reset_apply failed:", e);
+      return null;
+    }
+    // Missing RPC / server declined: do NOT half-apply the reset client-side.
+    if (!r || r.ok === false || !r.applied || !r.state) {
+      console.warn("[Game] global reset skipped — apply docs/sql/reset_save.sql (app_world_reset_apply)");
+      return null;
+    }
+    // The server already wiped and stamped the epoch; adopt its row verbatim.
+    try { return this.migrate(r.state); }
+    catch (e) { console.warn("[Game] reset state migrate failed:", e); return null; }
+  },
   // one-time "An admin reset has been issued" popup → OK reloads into the fresh game
   showAdminReset() {
     const modal = document.getElementById("reset-modal"), ok = document.getElementById("reset-ok");
@@ -282,11 +313,19 @@ const Game = {
     // load the save and the admin-issued global-reset epoch together (both work
     // for guests via the anon key; the epoch is a no-op until the table exists).
     const [loaded, sharedReset] = await Promise.all([Store.load(), this.fetchResetEpoch()]);
-    if (loaded && sharedReset != null && sharedReset > (loaded.appliedResetEpoch || 0)) {
-      this.state = this.applyAdminReset(loaded, sharedReset);   // credits→5000, owned assets wiped, senate kept
+    const resetDue = !!(loaded && sharedReset != null && sharedReset > (loaded.appliedResetEpoch || 0));
+    // null = the wipe couldn't be made authoritative; fall through untouched and
+    // retry next load rather than stamping the epoch over a save we didn't reset.
+    const resetState = resetDue ? await this.applyGlobalReset(loaded, sharedReset) : null;
+    if (resetState) {
+      this.state = resetState;                                  // credits→5000, owned assets wiped, senate kept
       this._adminReset = true;
       Store.localSave(this.state);
-      if (window.Cloud && Cloud.signedIn()) { try { await Cloud.saveRemote(this.state); } catch (e) { console.warn("[reset] cloud persist failed:", e); } }
+      // Authoritative players were already wiped inside applyGlobalReset; this is
+      // the legacy `saves` push (and it must not run through app_commit).
+      if (window.Cloud && Cloud.signedIn() && !Cloud.authoritative()) {
+        try { await Cloud.saveRemote(this.state); } catch (e) { console.warn("[reset] cloud persist failed:", e); }
+      }
       console.log("[Game] admin global reset applied (epoch " + sharedReset + ")");
     } else {
       // migrate() validates the loaded shape, but a save corrupted in a way it
@@ -310,7 +349,19 @@ const Game = {
         // load does; a reload after a real fix still finds the good remote save.
         Store._cloudReady = false;
       }
-      if (sharedReset != null) this.state.appliedResetEpoch = Math.max(this.state.appliedResetEpoch || 0, sharedReset);  // new/up-to-date players adopt the current epoch (no reset)
+      // New/up-to-date players adopt the current epoch (no reset). A reset that
+      // was DUE but couldn't be applied must NOT be stamped — that swallows it
+      // permanently. Leave the old epoch so the next load tries again.
+      if (sharedReset != null && !resetDue) this.state.appliedResetEpoch = Math.max(this.state.appliedResetEpoch || 0, sharedReset);
+    }
+    // Authoritative boot: positions come from the server row, but the location
+    // ledger (hold / bays / shipments) is client-owned and can trail it by one
+    // commit. A reload inside that window showed goods as "Held" with an empty
+    // bay — and the sell path then cleared them as ghosts. Push the delta into a
+    // bay so bought stock can never quietly disappear.
+    if (window.Assets && window.Economy && Economy.authoritative()) {
+      try { Assets.reconcileFromPositions(this.state.currentSystem); }
+      catch (e) { console.warn("[Game] ledger reconcile failed:", e); }
     }
     this.timeScale = 1;
     // resume the galaxy-wide senate before catch-up so it doesn't generate stray local bills
@@ -871,22 +922,40 @@ const Game = {
   save() { if (this._noSave) return; Store.save(this.snapshot()); },
 
   async reset() {
+    // Signed-in: the authoritative players row has to go FIRST, and it has to
+    // work. Legacy `saves` delete is a no-op under security_hardening (no client
+    // DELETE policy), so without app_reset_save a local wipe is pure theatre —
+    // bootstrap restores the cloud row on the reload and the player sees
+    // "Reset Save did nothing". Bail out with a message instead of wiping the
+    // one copy we CAN delete and pretending.
     // Same guard as AuthUI.doSignOut: beforeunload → save() would re-write the
     // just-cleared localStorage (and a pending cloud debounce could resurrect it).
+    // Set BEFORE the cloud wipe so an autosave can't land on top of it either.
     this._noSave = true;
     if (this.stopSchedulers) this.stopSchedulers();
     clearTimeout(Store._cloudTimer);
     Store._cloudReady = false;
 
-    // Signed-in: wipe the authoritative players row. Legacy saves delete is a
-    // no-op under security_hardening (no client DELETE policy).
-    if (window.Cloud && Cloud.signedIn && Cloud.signedIn()
-        && Cloud.playersReady && typeof Cloud.resetSave === "function") {
+    if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady) {
+      let ok = false;
       try {
-        const r = await Cloud.resetSave();
-        if (r && r.ok === false) console.warn("[Game] app_reset_save:", r.error || r);
+        const r = typeof Cloud.resetSave === "function" ? await Cloud.resetSave() : null;
+        ok = !!(r && r.ok !== false);
+        if (!ok) console.warn("[Game] app_reset_save:", (r && (r.error || r)) || "no result");
       } catch (e) {
         console.warn("[Game] cloud reset failed (is docs/sql/reset_save.sql applied?):", e);
+      }
+      // The authoritative row survived, so a local wipe would be pure theatre —
+      // bootstrap restores it on the reload and the player sees "Reset Save did
+      // nothing". Put the game back the way it was and say so instead.
+      if (!ok) {
+        this._noSave = false;
+        Store._cloudReady = true;
+        if (this.startSchedulers) this.startSchedulers();
+        if (window.UI && UI.toast) {
+          UI.toast("Reset Save couldn't reach your cloud save, so nothing was wiped — your progress is intact. (Admin: apply docs/sql/reset_save.sql.)", "warn", 10000);
+        }
+        return false;
       }
     }
 
