@@ -561,6 +561,9 @@ const Stations = {
         } else if (res.positions || row.toPositions) {
           // Orphan tax credited into positions by the soft-income settle paste.
           cargo += qty;
+        } else if (this._mintPositions(commId, qty)) {
+          // D1 holds response without soft-income positions — guest / pullMissing.
+          cargo += qty;
         }
       }
     } else {
@@ -2503,21 +2506,26 @@ const Stations = {
         const commId = COMMODITIES.some(c => c.id === res.commId) ? res.commId : v.prodComm;
         // Prefer server-credited positions (bay_produce paste). Soft-mint only
         // when the ledger allows it — never mint then lose it on app_commit.
+        let landed = false;
         if (res.positions && typeof res.positions === "object" && window.Game) {
           Game.state.positions = res.positions;
           if (res.avgCost && typeof res.avgCost === "object") Game.state.avgCost = res.avgCost;
           if (keep > 0 && window.Assets) Assets.parkBlocks(sid, commId, keep);
           total += keep;
+          landed = true;
         } else if (keep > 0 && this._mintPositions(commId, keep)) {
           if (window.Assets) Assets.parkBlocks(sid, commId, keep);
           total += keep;
+          landed = true;
         }
-        // Drop any pre-directory / catch-up phantom bag for this floor — keep
-        // was credited above (or intentionally skipped); claiming later would double.
-        const local = this.get(sid);
-        if (local && local.pendingCargo) {
-          delete local.pendingCargo[this.playerId()];
-          if (this.accountId()) delete local.pendingCargo[this.accountId()];
+        // Only clear the bag when keep actually landed — a Phase 3 floor without
+        // the soft-income paste must not erase the only record of owed cargo.
+        if (landed) {
+          const local = this.get(sid);
+          if (local && local.pendingCargo) {
+            delete local.pendingCargo[this.playerId()];
+            if (this.accountId()) delete local.pendingCargo[this.accountId()];
+          }
         }
       }
       if (!Object.keys(slots).length) delete this.remoteLeases[sid];
@@ -2570,7 +2578,8 @@ const Stations = {
     if (window.Extractors && !Extractors.canProduce(ex, st.prodComm) && !bay.npc) return 0;
     const yMult = window.Extractors ? Extractors.yieldMult(ex) : 1;
     const bon = window.Extractors ? Extractors.bonuses(ex) : { rate: 1 };
-    let gross = Math.round(perBay * yMult * bon.rate);
+    // floor — matches docs/sql/station_soft_income.sql after_hour bay_out.
+    let gross = Math.floor(perBay * yMult * bon.rate);
     if ((st.standing | 0) < 20) gross = Math.floor(gross / 2); // general strike
     return Math.max(0, gross);
   },
@@ -2598,6 +2607,9 @@ const Stations = {
     let ownerStaffed = 0;
     const pid = this.playerId();
     const shared = this.bayShared(st.systemId);
+    // Phase D after_hour owns hold — local increments would double-count
+    // (and a multi-hour catch-up multiplies against one server hour).
+    const serverHold = this.upkeepShared(st.systemId);
     for (const bay of st.bays) {
       if (!bay.lesseeId) continue;
       // Shared floor: foreign lessees report their own cycle + tax RPC.
@@ -2610,12 +2622,12 @@ const Stations = {
         && st.ownerId === pid;
       if (isOwner) {
         ownerStaffed++;
-        st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
+        if (!serverHold) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
         continue;
       }
       const taxQty = Math.floor(gross * taxBps / 10000);
       const keep = gross - taxQty;
-      if (taxQty > 0) {
+      if (taxQty > 0 && !serverHold) {
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
       }
       if (keep <= 0) continue;
@@ -2644,9 +2656,8 @@ const Stations = {
     const staffFactor = Math.max(0.35, ownerStaffed / Math.max(1, st.bays.length));
     st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub
       * (1 + this.tierInfo(st.tier).rank * 0.15) * staffFactor);
-    // Shared hold grows in app_station_after_hour (server-derived baseline).
-    // Local hold still updates above for the Stations tab; after_hour sync
-    // replaces it. No client deposit — that was a mint vector.
+    // Shared hold grows in app_station_after_hour; local hold updates above
+    // only when that RPC isn't live. No client deposit — that was a mint vector.
     return total;
   },
 

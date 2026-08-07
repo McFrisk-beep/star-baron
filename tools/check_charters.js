@@ -343,8 +343,13 @@ assert.strictEqual(rLock.length, 1, "matured charter still resolves under Phase 
 assert.strictEqual(shLock.status, "idle", "hull freed even when payout is server-owned");
 assert.strictEqual(ctx.Game.state.credits, beforeLock, "no credit mint under Phase 3");
 assert.strictEqual(rLock[0].credits, 0);
-assert.ok(/forfeit/i.test(rLock[0].summary || ""), "report notes forfeited payout (not deferred)");
-assert.strictEqual(ctx.Game.state.charters.length, 0, "charter cleared so reconcile can't re-lock");
+assert.strictEqual(rLock[0].success, false, "zero-credit Phase 3 return is not a win");
+assert.ok(/defer/i.test(rLock[0].summary || ""), "report notes deferred payout");
+assert.strictEqual(ctx.Game.state.charters.length, 1, "row kept for later app_charter_*");
+assert.ok(ctx.Game.state.charters[0].deferred, "flagged deferred, not resolved");
+assert.strictEqual(Charters.active().length, 0, "deferred does not count as active");
+Charters.reconcileShips();
+assert.strictEqual(shLock.status, "idle", "reconcile must not re-lock a deferred charter");
 delete ctx.Cloud;
 
 console.log("check_charters: ok");

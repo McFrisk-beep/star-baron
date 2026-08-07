@@ -2,11 +2,13 @@
 --
 -- app_commit deliberately protects credits / positions / ships / items, so a
 -- Store.flush of a richer wiped-save backup is theatre: the cloud row wins on
--- reload. This RPC replaces those protected slices from a migrated backup.
+-- reload. This RPC replaces those protected slices from a migrated backup —
+-- but ONLY when the server row is already at/near defaults (Reset Save /
+-- wiped ledger). A healthy row keeps its economy; only client-owned workshop
+-- slices are refreshed (same surface app_commit already accepts).
 --
--- Trust model: the caller already owns the players row. This is a recovery
--- tool for the corrupt-save / wipe path — same surface as app_reset_save, but
--- writing the backup instead of defaults. Caps reject absurd forged blobs.
+-- Trust model: never an arbitrary credit setter. Forged wealth cannot land on
+-- a populated ledger. Caps still reject absurd blobs on the wipe path.
 --
 -- Prereq: docs/sql/phase1_players.sql (app._lock_state / app._write_state /
 --         app._now_ms / app._default_state). Safe to re-run.
@@ -23,6 +25,7 @@ declare
   st jsonb;
   src jsonb := coalesce(p_state, '{}'::jsonb);
   credits double precision;
+  cur_credits double precision;
   ships jsonb;
   positions jsonb;
   avg_cost jsonb;
@@ -31,7 +34,9 @@ declare
   extractors jsonb;
   components jsonb;
   main_ship jsonb;
-  n int;
+  cur_ships int;
+  pos_sum double precision;
+  wiped boolean;
 begin
   if uid is null then
     raise exception 'not authenticated';
@@ -42,7 +47,40 @@ begin
 
   st := app._lock_state(now_ms);
 
-  -- Credits: finite, non-negative, hard cap against forged infinity.
+  -- Detect a wiped / default ledger. app_reset_save writes exactly this shape
+  -- (1500c, starter mule, empty cargo). Corrupt-migrate recovery gates cloud
+  -- writes, so a healthy row is NOT wiped — that path only refreshes workshop.
+  cur_credits := coalesce((st->>'credits')::float8, 0);
+  if cur_credits <> cur_credits or cur_credits < 0 then cur_credits := 0; end if;
+  cur_ships := case
+    when jsonb_typeof(st->'ships') = 'array' then jsonb_array_length(st->'ships')
+    else 0
+  end;
+  select coalesce(sum(greatest(0, (value::text)::float8)), 0) into pos_sum
+    from jsonb_each(case when jsonb_typeof(st->'positions') = 'object'
+                         then st->'positions' else '{}'::jsonb end)
+   where jsonb_typeof(value) = 'number'
+     and (value::text)::float8 = (value::text)::float8;
+  wiped := (cur_credits <= 1500 and cur_ships <= 1 and coalesce(pos_sum, 0) <= 0);
+
+  if not wiped then
+    -- Healthy ledger: economy stays. Only client-owned slices that a wipe
+    -- could have clobbered via a gated session — workshop / recipes.
+    if jsonb_typeof(src->'workshop') = 'object' then
+      st := jsonb_set(st, '{workshop}', src->'workshop');
+    end if;
+    if jsonb_typeof(src->'knownRecipes') = 'array' then
+      st := jsonb_set(st, '{knownRecipes}', src->'knownRecipes');
+    end if;
+    if jsonb_typeof(src->'craftedOnce') = 'array' then
+      st := jsonb_set(st, '{craftedOnce}', src->'craftedOnce');
+    end if;
+    st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
+    perform app._write_state(st, now_ms);
+    return jsonb_build_object('ok', true, 'state', st, 'economy', 'kept');
+  end if;
+
+  -- Wiped row: full economy replace from backup (capped against forged infinity).
   credits := coalesce((src->>'credits')::float8, 0);
   if credits <> credits or credits < 0 then credits := 0; end if;
   credits := least(credits, 1e15);
@@ -128,7 +166,7 @@ begin
   st := jsonb_set(st, '{lastSeenAt}', to_jsonb(now_ms));
   perform app._write_state(st, now_ms);
 
-  return jsonb_build_object('ok', true, 'state', st);
+  return jsonb_build_object('ok', true, 'state', st, 'economy', 'restored');
 end;
 $$;
 

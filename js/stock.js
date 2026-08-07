@@ -268,23 +268,27 @@ const Stock = {
   // (hall expire, upkeep RPC, remote leases, settle) still rides this watermark.
   // Multi-hour catch-up runs local station logic every hour, but only the final
   // hour fires the remote RPC chain (avoids a ~48× boot thundering herd).
+  // Watermark advances per successful hour so a throw mid-catch-up retries the rest.
   tick(now = Date.now()) {
     if (!this.lastTickAt) this.lastTickAt = now;
     const ms = STOCKCFG.tickMs || 3600000;
     let n = 0;
     // Cap catch-up so a 7-day offline doesn't spin 168 ticks synchronously forever.
     const maxHours = 48;
+    let cursor = this.lastTickAt;
     const hours = [];
-    while (now - this.lastTickAt >= ms && n < maxHours) {
-      this.lastTickAt += ms;
-      hours.push(Math.floor(this.lastTickAt / ms));
+    while (now - cursor >= ms && n < maxHours) {
+      cursor += ms;
+      hours.push(Math.floor(cursor / ms));
       n++;
     }
-    // If we hit the cap, jump the watermark forward (skip middle hours).
-    if (now - this.lastTickAt >= ms) this.lastTickAt = now - (now % ms);
+    let jumpTo = null;
+    if (now - cursor >= ms) jumpTo = now - (now % ms);
     for (let i = 0; i < hours.length; i++) {
       this.tickHour(hours[i], { stationRemote: i === hours.length - 1 });
+      this.lastTickAt += ms;
     }
+    if (jumpTo != null) this.lastTickAt = jumpTo;
     return n;
   },
 

@@ -123,5 +123,7 @@ assert.ok(pubT.includes("extractorid"),
 const restoreSql = fs.readFileSync(path.join(root, "docs/sql/restore_backup.sql"), "utf8");
 assert.ok(restoreSql.includes("app_restore_backup"),
   "restore_backup.sql must define app_restore_backup");
+assert.ok(/wiped\s*:=/.test(restoreSql) || /economy',\s*'kept'/.test(restoreSql),
+  "restore_backup.sql must refuse economy replace on a healthy ledger");
 
 console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust + soft_income ✔`);

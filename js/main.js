@@ -393,10 +393,10 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    // Phase 4: skip local shelf catch-up only once app_sector_stock has latched
-    // (Stock.authoritative). Economy.authoritative alone is Phase 1 — signed-in
-    // without the Phase 4 paste still needs the local hour tick.
-    if (window.Stock && !Stock.authoritative()) Stock.advance(elapsed, now);
+    // Stock.tick skips shelf mutations when authoritative but still runs the
+    // station hour (afterStockHour / owned-hub produce). Always advance here
+    // under _booting so offline strike/revolt toasts don't fire as live chatter.
+    if (window.Stock) Stock.advance(elapsed, now);
     if (window.Stations) Stations.tick(now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
