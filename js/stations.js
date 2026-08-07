@@ -2512,6 +2512,13 @@ const Stations = {
           if (window.Assets) Assets.parkBlocks(sid, commId, keep);
           total += keep;
         }
+        // Drop any pre-directory / catch-up phantom bag for this floor — keep
+        // was credited above (or intentionally skipped); claiming later would double.
+        const local = this.get(sid);
+        if (local && local.pendingCargo) {
+          delete local.pendingCargo[this.playerId()];
+          if (this.accountId()) delete local.pendingCargo[this.accountId()];
+        }
       }
       if (!Object.keys(slots).length) delete this.remoteLeases[sid];
     }
@@ -2613,17 +2620,21 @@ const Stations = {
       }
       if (keep <= 0) continue;
       if (bay.npc) continue; // NPC keeps residual off-map
-      if (bay.lesseeId === pid && window.Game) {
-        // Soft-mint keep, or park it if Phase 3 would erase a positions write.
-        if (this._mintPositions(st.prodComm, keep)) {
+      if (bay.lesseeId === pid || (this.accountId() && bay.lesseeId === this.accountId())) {
+        // Soft-mint keep when the ledger allows it.
+        if (window.Game && this._mintPositions(st.prodComm, keep)) {
           if (window.Assets) Assets.parkBlocks(st.systemId, st.prodComm, keep);
-        } else {
+        } else if (!shared && !(this.remoteLeases && this.remoteLeases[st.systemId])) {
+          // Guest-local only. Shared / remoteLeases floors credit keep via
+          // produceRemoteLeases — parking here duplicates that payout, and a
+          // multi-hour catch-up multiplies the phantom bag before the RPC runs.
           if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
           const bag = st.pendingCargo[pid] || (st.pendingCargo[pid] = {});
           bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;
         }
-      } else {
-        // Remote / third-party lessee (guest-local) — park keep until they claim.
+      } else if (!shared) {
+        // Guest-local third-party lessee — park keep until they claim.
+        // Shared floors: the lessee mints themselves; don't accrue a ghost bag.
         if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
         const bag = st.pendingCargo[bay.lesseeId] || (st.pendingCargo[bay.lesseeId] = {});
         bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;

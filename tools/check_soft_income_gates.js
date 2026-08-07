@@ -18,7 +18,8 @@ ctx.localStorage = {
 ctx.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
 
 for (const f of ["store.js", "data.js", "flavor.js", "cloud-config.js", "cloud.js",
-  "market.js", "galaxy.js", "stock.js", "fleet.js", "economy.js", "stations.js"]) {
+  "market.js", "galaxy.js", "items.js", "fleet.js", "economy.js", "extractors.js",
+  "stock.js", "stations.js"]) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
 }
 
@@ -80,6 +81,48 @@ const cargo2 = Stations.claimPendingCargo(st.systemId);
 assert.strictEqual(cargo2.claimed.iron_ore, 40);
 assert.strictEqual(ctx.Game.state.positions.iron_ore, 40);
 assert.ok(!st.pendingCargo.player);
+
+// --- Shared floor + Phase 3: _playerProduce must not phantom-park keep ---
+// (produceRemoteLeases owns the payout; catch-up would multiply the bag).
+ctx.Cloud.authoritative = () => true;
+ctx.Cloud.pullReady = true;
+ctx.Cloud.enabled = true;
+ctx.Cloud.baysMissing = false;
+const pool = ctx.COMMODITIES.filter(c => !c.craftOnly);
+const hub = Stations.list()[1] || st;
+hub.ownerId = "alice";
+hub.status = "owned";
+hub.modules = { production_hub: 1 };
+hub.prodComm = pool[0].id;
+hub.leaseTaxBps = 1000;
+hub.hold = {};
+hub.pendingCargo = {};
+hub.standing = 60;
+Stations.syncBays(hub);
+const exUid = "exPhantom";
+ctx.Game.state.extractors = ctx.Game.state.extractors || {};
+ctx.Game.state.extractors[exUid] = { uid: exUid, type: "jack", scope: "all", name: "Jack", components: [] };
+hub.bays[0] = { lesseeId: Stations.playerId(), extractorId: exUid, npc: false };
+Stations.directory[hub.systemId] = {
+  systemId: hub.systemId, ownerId: "alice", status: "owned",
+  modules: hub.modules, prodComm: hub.prodComm, bays: hub.bays.slice(),
+};
+Stations.remoteLeases[hub.systemId] = { 0: exUid };
+assert.ok(Stations.bayShared(hub.systemId), "shared floor for phantom test");
+ctx.Game.state.positions = {};
+Stations._playerProduce(hub, 1);
+Stations._playerProduce(hub, 2);
+Stations._playerProduce(hub, 3);
+assert.ok(!hub.pendingCargo[Stations.playerId()],
+  "shared + Phase 3 must not accrue pendingCargo (produceRemoteLeases owns keep)");
+// Guest-local (not shared): still parks when soft-mint is blocked.
+delete Stations.directory[hub.systemId];
+delete Stations.remoteLeases[hub.systemId];
+assert.ok(!Stations.bayShared(hub.systemId), "not shared");
+hub.pendingCargo = {};
+Stations._playerProduce(hub, 4);
+assert.ok((hub.pendingCargo[Stations.playerId()] || {})[hub.prodComm] > 0,
+  "guest-local still parks keep when Phase 3 blocks mint");
 
 // --- Phase 4 shelf authoritative: station hour still fires ---
 let afterCalls = 0;
