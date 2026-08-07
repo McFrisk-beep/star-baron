@@ -173,6 +173,7 @@ ctx.Assets = {
   },
   bagValue: () => 0,
   ledgerQty: () => 0,
+  parkBlocks() {},
   reconcileFromPositions(sys) {
     // Mirror the real invariant: park server totals into the bay ledger.
     const s = ctx.Game.state;
