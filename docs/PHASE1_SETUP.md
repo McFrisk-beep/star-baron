@@ -39,9 +39,18 @@ Ship the build that routes signed-in trades through `Cloud.rpc('app_*')`
 2. Buy 1 Iron Ore on the Exchange → credits drop; refresh → balance sticks.
 3. As a **guest**, trading still works offline with no RPCs.
 
-If the SQL isn’t applied yet, the client falls back to the legacy `saves`
-upsert and toasts a pointer at this doc — logged-in play keeps working, just
-not authoritative.
+### Optional — Settings → Reset Save (signed-in)
+
+New query → paste [`docs/sql/reset_save.sql`](sql/reset_save.sql) → **Run**.
+
+Without this RPC, Reset Save still clears localStorage (and no longer
+re-saves on reload), but a signed-in bootstrap will restore the cloud
+`players` row. With it, Reset Save wipes that row to `app._default_state()`
+(keeps cosmetic settings).
+
+If the Phase 1 SQL isn’t applied yet, the client falls back to the legacy
+`saves` upsert and toasts a pointer at this doc — logged-in play keeps
+working, just not authoritative.
 
 ---
 

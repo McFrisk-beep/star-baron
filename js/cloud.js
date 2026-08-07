@@ -613,6 +613,11 @@ const Cloud = {
       p_tier: tier == null ? null : tier,
     });
   },
+  // Settings → Reset Save: wipe the caller's players.state to defaults
+  // (docs/sql/reset_save.sql). Keeps cosmetic settings only.
+  async resetSave() {
+    return this.rpc("app_reset_save");
+  },
   async routeStart(comm, from, to, shipUids) {
     return this.rpc("app_route_start", { p_comm: comm, p_from: from, p_to: to, p_ship_uids: shipUids });
   },
