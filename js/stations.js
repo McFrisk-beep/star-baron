@@ -2609,6 +2609,9 @@ const Stations = {
     const shared = this.bayShared(st.systemId);
     // Phase D after_hour owns hold — local increments would double-count
     // (and a multi-hour catch-up multiplies against one server hour).
+    // ponytail: Stock.tick coalesces remote after_hour to the final catch-up
+    // hour, so a 48h offline gap yields ~1 server hour of hub output, not 48.
+    // Exact multi-hour server catch-up belongs in after_hour / a pull RPC.
     const serverHold = this.upkeepShared(st.systemId);
     for (const bay of st.bays) {
       if (!bay.lesseeId) continue;

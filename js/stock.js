@@ -268,6 +268,9 @@ const Stock = {
   // (hall expire, upkeep RPC, remote leases, settle) still rides this watermark.
   // Multi-hour catch-up runs local station logic every hour, but only the final
   // hour fires the remote RPC chain (avoids a ~48× boot thundering herd).
+  // ponytail: with serverHold suppressing local hold, that coalesce under-counts
+  // hub output (1 server hour per offline gap). Prefer that to double-count;
+  // exact N-hour after_hour catch-up is the upgrade path.
   // Watermark advances per successful hour so a throw mid-catch-up retries the rest.
   tick(now = Date.now()) {
     if (!this.lastTickAt) this.lastTickAt = now;

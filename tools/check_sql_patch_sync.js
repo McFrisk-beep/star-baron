@@ -123,7 +123,16 @@ assert.ok(pubT.includes("extractorid"),
 const restoreSql = fs.readFileSync(path.join(root, "docs/sql/restore_backup.sql"), "utf8");
 assert.ok(restoreSql.includes("app_restore_backup"),
   "restore_backup.sql must define app_restore_backup");
-assert.ok(/wiped\s*:=/.test(restoreSql) || /economy',\s*'kept'/.test(restoreSql),
-  "restore_backup.sql must refuse economy replace on a healthy ledger");
+assert.ok(restoreSql.includes("restore_snapshot"),
+  "restore_backup.sql must snapshot pre-wipe state server-side");
+assert.ok(/drop function if exists public\.app_restore_backup\s*\(\s*jsonb\s*\)/i.test(restoreSql),
+  "restore_backup.sql must drop the old client-payload signature");
+assert.ok(/create or replace function public\.app_restore_backup\s*\(\s*\)/i.test(restoreSql),
+  "app_restore_backup must take no economy payload");
+assert.ok(!/app_restore_backup\s*\(\s*p_state/i.test(restoreSql),
+  "app_restore_backup must not accept client economy values");
+const resetSql = fs.readFileSync(path.join(root, "docs/sql/reset_save.sql"), "utf8");
+assert.ok(resetSql.includes("restore_snapshot"),
+  "reset_save.sql must snapshot into restore_snapshot when the column exists");
 
 console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust + soft_income ✔`);

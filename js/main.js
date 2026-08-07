@@ -1132,7 +1132,7 @@ const Game = {
       if (this._knownRecipeId(id, recipeIds) && !s.craftedOnce.includes(id)) { s.craftedOnce.push(id); added++; }
     }
     if (!added) return { ok: false, msg: "Backup has nothing missing from this save." };
-    if (window.Economy) Economy.refreshNetWorth();
+    try { if (window.Economy) Economy.refreshNetWorth(); } catch (_) { /* harness / partial boot */ }
     // Persist via Store.save, which still no-ops the cloud side while
     // _cloudReady is false. Do NOT lift that gate or flush — merging into a
     // defaultState() boot and uploading would destroy server credits / story /
@@ -1164,24 +1164,39 @@ const Game = {
     // server (app_craft_adopt keeps its own 3-call budget, so this can't loop).
     delete next.workshopAdopt;
     this._noSave = false;
-    Store.localSave(Store._stampOwner(next));
     // Only re-open cloud writes when WE gated them for a corrupt-save reset.
     // Never clear a failed-cloud-load gate (unknown remote must stay protected).
-    // app_commit rejects credit/ship/cargo increases — use app_restore_backup
-    // so the wiped economy actually lands on the server row.
+    // Economy comes from the server snapshot (Reset Save undo) or the current
+    // cloud row (corrupt-migrate never wiped it) — never from the client blob.
     if (this._corruptSaveReset) {
       Store._cloudReady = true;
       if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady && Cloud.restoreBackup) {
         try {
-          const r = await Cloud.restoreBackup(next);
-          if (r && r.ok) {
-            // Server row replaced; local next already saved for reload.
-          } else if (r && r.missing) {
+          const r = await Cloud.restoreBackup();
+          if (r && r.missing) {
             console.warn("[Game] app_restore_backup missing — apply docs/sql/restore_backup.sql.");
             return { ok: false, msg: "Cloud restore isn't live yet — apply docs/sql/restore_backup.sql, then try again. Your backup is still in this browser." };
-          } else {
+          }
+          if (!(r && r.ok)) {
             console.warn("[Game] app_restore_backup:", (r && r.error) || r);
             return { ok: false, msg: (r && r.error) || "Couldn't restore the cloud save." };
+          }
+          // Adopt server economy; overlay Workshop / recipes from the browser backup.
+          // Economy stays on the server row even if the workshop overlay throws.
+          if (r.state) {
+            try {
+              const server = this.migrate(this._cloneSave(r.state));
+              server.market = next.market;
+              server.galaxy = next.galaxy;
+              server.lastSeenAt = next.lastSeenAt;
+              delete server.workshopAdopt;
+              next = server;
+              this.state = server;
+              try { this.mergeCorruptClientSlices(bak); next = this.state; }
+              catch (e) { console.warn("[Game] workshop overlay from backup failed:", e); }
+            } catch (e) {
+              console.warn("[Game] adopt server restore state failed:", e);
+            }
           }
         } catch (e) {
           console.warn("[Game] restore backup RPC failed:", e);
@@ -1191,6 +1206,7 @@ const Game = {
         try { await Store.flush(next); } catch (e) { /* best-effort guest / legacy */ }
       }
     }
+    Store.localSave(Store._stampOwner(next));
     location.reload();
     return { ok: true };
   },

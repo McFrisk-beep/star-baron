@@ -46,7 +46,7 @@ sandbox.Galaxy = {
 };
 sandbox.Market = {
   init() {}, hydrate() {}, serialize: () => ({ wipedSession: true }), advance() {},
-  effects: [], localEffects: [], volMult: 1, price: () => 10, stocks: () => true,
+  effects: [], localEffects: [], volMult: 1, price: () => 10, spot: () => 10, stocks: () => true,
 };
 sandbox.Bus = { on() {}, emit() {} };
 
@@ -160,7 +160,7 @@ function plantBackup(extra = {}) {
   assert(Game.state.workshop.queue.every(j => j.id !== "ckZero"), "readyAt < startedAt jobs dropped");
   assert(Store._cloudReady === false, "sanitize-path merge still leaves cloud gated");
 
-  // --- full restore: market/galaxy from backup; economy via app_restore_backup ---
+  // --- full restore: economy from server snapshot/row; workshop from browser backup ---
   cloudSaved.length = 0;
   reloads = 0;
   const restoredRpc = [];
@@ -169,9 +169,13 @@ function plantBackup(extra = {}) {
   Store._cloudReady = false;
   sandbox.Cloud.playersReady = true;
   sandbox.Cloud.restoreMissing = false;
-  sandbox.Cloud.restoreBackup = async (st) => {
-    restoredRpc.push(JSON.parse(JSON.stringify(st)));
-    return { ok: true, state: st };
+  sandbox.Cloud.restoreBackup = async (...args) => {
+    restoredRpc.push({ called: true, args: args.length });
+    // Corrupt-migrate never wiped the cloud row — RPC returns it unchanged.
+    const server = Game.defaultState();
+    server.credits = 50_000;
+    server.positions = { iron_ore: 10 };
+    return { ok: true, state: server, restored: false };
   };
   plantBackup();
   const rr = await Game.restoreCorruptBackup();
@@ -182,8 +186,10 @@ function plantBackup(extra = {}) {
   assert(saved.galaxy && saved.galaxy.news && saved.galaxy.news[0] === "from-backup", "full restore keeps backup galaxy");
   assert(!(saved.market && saved.market.wipedSession), "full restore did not snapshot live Market");
   assert(restoredRpc.length === 1, "corrupt-save reset calls app_restore_backup");
-  assert(restoredRpc[0].credits === 9000, "restore RPC gets the migrated backup credits");
-  assert(cloudSaved.length === 0, "restore does not fall back to app_commit flush when RPC is live");
+  assert(restoredRpc[0].args === 0, "restore RPC takes no client economy payload");
+  assert(saved.credits === 50_000, "economy comes from the server row, not the browser backup");
+  assert(saved.items && saved.items.i99, "workshop items overlaid from the browser backup");
+  assert(saved.knownRecipes && saved.knownRecipes.includes("ex_jack"), "blueprints overlaid from backup");
 
   // Missing RPC must not silently reload into a half-restored cloud row.
   restoredRpc.length = 0;
@@ -208,9 +214,9 @@ function plantBackup(extra = {}) {
   reloads = 0;
   Game._corruptSaveReset = false;
   Store._cloudReady = false;
-  sandbox.Cloud.restoreBackup = async (st) => {
-    restoredRpc.push(JSON.parse(JSON.stringify(st)));
-    return { ok: true, state: st };
+  sandbox.Cloud.restoreBackup = async () => {
+    restoredRpc.push({ called: true });
+    return { ok: true, state: Game.defaultState(), restored: false };
   };
   plantBackup();
   await Game.restoreCorruptBackup();

@@ -618,12 +618,13 @@ const Cloud = {
   async resetSave() {
     return this.rpc("app_reset_save");
   },
-  // Settings → Restore backup: replace protected economy slices from a migrated
-  // wiped-save backup (docs/sql/restore_backup.sql). app_commit can't do this.
+  // Settings → Restore backup: write players.restore_snapshot back onto state.
+  // No client economy payload — the snapshot was taken server-side by
+  // app_reset_save (docs/sql/restore_backup.sql).
   restoreMissing: false,
-  async restoreBackup(state) {
+  async restoreBackup() {
     if (this.restoreMissing) return { ok: false, missing: true, error: "Restore backup RPC not live." };
-    try { return await this.rpc("app_restore_backup", { p_state: state }); }
+    try { return await this.rpc("app_restore_backup"); }
     catch (e) {
       if (this._isMissingRpc(e)) {
         this.restoreMissing = true;
