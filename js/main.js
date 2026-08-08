@@ -149,8 +149,8 @@ const Game = {
         impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
         impound: !!(bands[c.band].impound > 0),
         resolved: false,
-        // Phase 3: hulls freed, payout waiting on app_charter_* — keep the flag
-        // so a reload doesn't re-lock the ships as "returns now".
+        // Legacy pre-auto-resolve "payout pending" rows: keep the flag so
+        // Charters.resolve can settle them (and doesn't re-lock their hulls).
         deferred: !!c.deferred,
       };
     }).filter(Boolean);
@@ -616,8 +616,8 @@ const Game = {
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
       }).catch(e => console.warn("[Missions] resolve failed:", e));
-      // Charters are client-local until app_charter_* — always resolve (Phase 3
-      // path frees hulls + defers pay; guest path mints). Don't gate on softIncome.
+      // Charters are client-local until app_charter_* — always resolve; matured
+      // jobs pay out (or report losses) and post a Dispatches report.
       const chartered = window.Charters ? Charters.resolve(now) : [];
       if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
@@ -827,8 +827,7 @@ const Game = {
   _softIncomeDue(now = Date.now()) {
     const s = this.state;
     if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
-    // Skip deferred rows (hulls freed, ledger pay pending) so they can't loop forever.
-    if ((s.charters || []).some(c => !c.resolved && !c.deferred && now >= c.startedAt + c.durationMs)) return true;
+    if ((s.charters || []).some(c => !c.resolved && now >= c.startedAt + c.durationMs)) return true;
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;

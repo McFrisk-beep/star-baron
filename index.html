@@ -83,7 +83,7 @@
         <div class="panel">
           <h2><span data-i18n="exchange.title">Galactic Exchange</span> <small id="exchange-sub"></small></h2>
           <div class="war-banner hidden" id="war-banner"></div>
-          <div class="table-wrap">
+          <div class="table-wrap" id="market-wrap">
             <table class="market" id="market-table">
               <thead><tr>
                 <th></th><th data-i18n="market.commodity">Commodity</th><th class="num" data-i18n="market.price">Price</th>
@@ -497,6 +497,17 @@
       <div class="tt-bar-wrap hidden" id="trade-bar-wrap"><div class="tt-bar" id="trade-bar"></div></div>
       <div class="tt-result hidden" id="trade-result"></div>
       <div class="settings-actions"><button class="btn btn-go btn-cta hidden" id="trade-close" data-i18n="trade.close">Close Trade Screen</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="confirm-modal">
+    <div class="modal trade-terminal confirm-box">
+      <div class="tt-head"><span class="tt-dot"></span><h3 id="confirm-title">Confirm</h3></div>
+      <div class="confirm-body" id="confirm-body"></div>
+      <div class="settings-actions">
+        <button class="btn btn-go btn-cta" id="confirm-ok">Confirm</button>
+        <button class="btn" id="confirm-cancel">Cancel</button>
+      </div>
     </div>
   </div>
 

@@ -74,11 +74,6 @@ const MissionStory = {
         "{TITLE} — convoy accounted for. Ops files the chit. {CREDITS}.",
         "Return burn complete. {TITLE} is off the active list. {CREDITS}.",
       ],
-      pending: [
-        "Wing is docked and accounted for. Ledger hasn't cleared — Ops says buy it out if you want the salvage now.",
-        "{TITLE} — hulls home, chit unsigned. The charter board owes you.",
-        "Return burn complete. Payment is stuck upstream; Ops recommends the buy-out.",
-      ],
       fail: [
         "{TITLE} ends without a returning wing. Ops stamps the loss.",
         "No hulls answered the recall. Charter wiped.",
@@ -95,7 +90,6 @@ const MissionStory = {
 
   _pick(report) {
     const bag = (this.LINES[report && report.type] || this.FALLBACK);
-    if (report && report.deferred && bag.pending) return Util.pick(bag.pending);
     return Util.pick(bag[report && report.success ? "ok" : "fail"] || this.FALLBACK.ok);
   },
 
@@ -118,9 +112,6 @@ const MissionStory = {
         const n = report.items.length;
         bits.push(n === 1 ? `salvage: ${report.items[0].name}` : `${n} accessories recovered`);
       }
-    } else if (report.deferred) {
-      // Phase-3 deferred close: hulls returned, ledger pay not minted.
-      bits.push("payout pending — Buy out the charter to recover salvage");
     } else {
       bits.push(report.wipe ? "total loss — no ships returned" : "contract failed");
     }
@@ -170,18 +161,15 @@ const MissionStory = {
               : "Wing is on the board. Damage reports attached if any." },
         { label: "Say less.", reply: "File it.",
           ack: report.success ? "Already did. Get back on the boards."
-            : report.deferred ? "Buy it out when you're ready — Ops filed the chit."
             : "Filed under lessons. Next contract." },
       ],
     }];
 
     const sl = {
       id, kind: "job", from: "Fleet Ops", portrait: this.PORTRAIT,
-      outro: report.deferred
-        ? `Fleet Ops: “${report.title} — hulls home, payout pending.”`
-        : report.success
-          ? `Fleet Ops: “${report.title} — closed successful.”`
-          : `Fleet Ops: “${report.title} — closed unsuccessful.”`,
+      outro: report.success
+        ? `Fleet Ops: “${report.title} — closed successful.”`
+        : `Fleet Ops: “${report.title} — closed unsuccessful.”`,
       steps, _missionReport: true, _reportUid: report.uid,
     };
 
