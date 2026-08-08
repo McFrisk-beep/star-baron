@@ -934,6 +934,9 @@ const Stations = {
       st.refitUntil = Date.now() + cost; // retooling < full refit
     }
     if (window.Game) Game.requestSave();
+    // Server after_hour reads stations.prod_comm — publish so the hold can grow
+    // even before the next occupy/autosave.
+    this._publishSoon();
     return { ok: true, retool, refitUntil: retool ? st.refitUntil : 0 };
   },
 
@@ -2620,9 +2623,13 @@ const Stations = {
       const gross = this._bayGross(st, bay);
       if (gross <= 0) continue;
       total += gross;
-      const isOwner = (bay.lesseeId === st.ownerId || bay.lesseeId === pid
-        || (this.accountId() && bay.lesseeId === this.accountId())) && !bay.npc
-        && st.ownerId === pid;
+      // Owner bay: local "player" id, account uuid, or matching st.ownerId.
+      // Use _mine (legacy ownerId "player" while signed in) — not st.ownerId === pid,
+      // which false-negatives when the station still says "player" and pid is a uuid.
+      const isOwner = !bay.npc && this._mine(st, pid) && (
+        bay.lesseeId === st.ownerId || bay.lesseeId === pid
+        || (this.accountId() && bay.lesseeId === this.accountId())
+        || this.bayMine(bay));
       if (isOwner) {
         ownerStaffed++;
         if (!serverHold) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
@@ -3255,8 +3262,12 @@ const Stations = {
       this._maybeRevolt(st, sentiment, hourIndex);
     }
     if (!remote) return;
-    // Hourly: server upkeep/auctions, refresh directory, leases, settle.
-    let chain = Promise.resolve();
+    // Hourly: publish staffing/prod_comm FIRST so after_hour can deposit into
+    // the shared hold, then upkeep/auctions, directory, leases, settle.
+    // Publishing after after_hour left newly occupied bays at 0 hold for an
+    // entire stock hour (and stamped upkeep_paid_through so it couldn't retry).
+    let chain = Promise.resolve()
+      .then(() => this.publishOwned());
     if (upkeepReports.length && window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady()) {
       chain = chain.then(() => Cloud.stationAfterHour(upkeepReports)).then(res => {
         if (res && res.ok) {
@@ -3280,7 +3291,6 @@ const Stations = {
     void chain
       .then(() => this.refreshAuctions())
       .then(() => this.refreshDirectory())
-      .then(() => this.publishOwned())
       .then(() => {
         this.reconcileRemoteLeases();
         return this.produceRemoteLeases(hourIndex);

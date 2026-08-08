@@ -265,5 +265,24 @@ Stations._playerProduce(own, 2);
 assert.strictEqual(own.hold[own.prodComm] | 0, 0,
   "local hold stays 0 when after_hour owns the shelf");
 
+// --- afterStockHour must publish staffing before after_hour deposits hold ---
+const order = [];
+Stations.publishOwned = async () => { order.push("publish"); return { ok: true }; };
+ctx.Cloud.stationAfterHour = async () => { order.push("after_hour"); return { ok: true, treasuries: [] }; };
+ctx.Cloud.treasuryReady = () => true;
+Stations.refreshAuctions = async () => {};
+Stations.refreshDirectory = async () => {};
+Stations.reconcileRemoteLeases = () => {};
+Stations.produceRemoteLeases = async () => 0;
+Stations.settleHall = async () => ({ payouts: 0, cargo: 0 });
+Stations._retryPendingHaulSettles = async () => {};
+Stations.auctionsShared = () => false;
+own.ownerId = Stations.playerId();
+own.status = "owned";
+Stations.afterStockHour(99, { remote: true });
+await new Promise(r => setTimeout(r, 30));
+assert.deepStrictEqual(order.slice(0, 2), ["publish", "after_hour"],
+  "publishOwned before stationAfterHour so prod_comm/extractorId land first");
+
 console.log("check_soft_income_gates: ok");
 })().catch(e => { console.error(e); process.exit(1); });

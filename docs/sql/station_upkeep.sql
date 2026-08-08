@@ -80,9 +80,11 @@ $$;
 
 create or replace function public._station_owner_staffed(p_bays jsonb, p_owner uuid)
 returns int language sql immutable as $$
+  -- Local saves key owner bays as "player"; publish rewrites to the uuid.
+  -- Count both so a publish race can't zero out after_hour production.
   select coalesce(count(*)::int, 0)
   from jsonb_array_elements(coalesce(p_bays, '[]'::jsonb)) b
-  where left(coalesce(b->>'lesseeId', ''), 64) = p_owner::text
+  where left(coalesce(b->>'lesseeId', ''), 64) in (p_owner::text, 'player')
     and not coalesce((b->>'npc')::boolean, false);
 $$;
 

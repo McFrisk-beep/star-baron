@@ -9,6 +9,16 @@
 --           (app._extractor_yield_mult / app._component_amount / app._lock_state).
 -- Safe to re-run.
 
+-- Owner-staffed bay count: accept legacy "player" lesseeId (local save key)
+-- as well as the account uuid publish rewrites to.
+create or replace function public._station_owner_staffed(p_bays jsonb, p_owner uuid)
+returns int language sql immutable as $$
+  select coalesce(count(*)::int, 0)
+  from jsonb_array_elements(coalesce(p_bays, '[]'::jsonb)) b
+  where left(coalesce(b->>'lesseeId', ''), 64) in (p_owner::text, 'player')
+    and not coalesce((b->>'npc')::boolean, false);
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Credit commodity units into a player's positions (zero cost basis).
 -- ---------------------------------------------------------------------------
@@ -287,31 +297,36 @@ begin
         bay_cap := greatest(1, public._station_bay_count(st.modules));
         per_bay := public._station_hub_yield(hub)::numeric / bay_cap;
         for bay in select value from jsonb_array_elements(coalesce(st.bays, '[]'::jsonb)) loop
-          continue when left(coalesce(bay->>'lesseeId', ''), 64) is distinct from uid::text;
+          -- Owner bay: uuid (published) or legacy "player" (pre-publish local key).
+          continue when left(coalesce(bay->>'lesseeId', ''), 64)
+            not in (uid::text, 'player');
           continue when coalesce((bay->>'npc')::boolean, false);
           ex_id := left(coalesce(bay->>'extractorId', ''), 40);
           ex := case when ex_id <> '' then pstate->'extractors'->ex_id else null end;
-          -- Match client _bayGross: no extractor → no output (not a free jack).
-          continue when ex is null or jsonb_typeof(ex) <> 'object';
-          can_prod := case ex->>'type'
-            when 'jack' then true
-            when 'specialized' then (st.prod_comm = (ex->>'scope'))
-            when 'semi' then (select c.cat from market.commodity(st.prod_comm) c)
-                            is not distinct from (ex->>'scope')
-            else false end;
-          continue when not can_prod;
-          ymult := app._extractor_yield_mult(ex->>'type');
+          ymult := app._extractor_yield_mult('jack');
           rate_bon := 1.0;
-          comp_n := 0;
-          for cuid in select jsonb_array_elements_text(coalesce(ex->'components', '[]'::jsonb)) loop
-            comp := pstate->'components'->cuid;
-            if comp is null then continue; end if;
-            comp_n := comp_n + 1;
-            exit when comp_n > 2;
-            if comp->>'kind' = 'rate' then
-              rate_bon := rate_bon + app._component_amount('rate', comp->>'rarity');
-            end if;
-          end loop;
+          -- Extractor quality when present; otherwise jack baseline so a missing
+          -- publish of extractorId can't leave a staffed hub at 0 hold forever.
+          if ex is not null and jsonb_typeof(ex) = 'object' then
+            can_prod := case ex->>'type'
+              when 'jack' then true
+              when 'specialized' then (st.prod_comm = (ex->>'scope'))
+              when 'semi' then (select c.cat from market.commodity(st.prod_comm) c)
+                              is not distinct from (ex->>'scope')
+              else false end;
+            continue when not can_prod;
+            ymult := app._extractor_yield_mult(ex->>'type');
+            comp_n := 0;
+            for cuid in select jsonb_array_elements_text(coalesce(ex->'components', '[]'::jsonb)) loop
+              comp := pstate->'components'->cuid;
+              if comp is null then continue; end if;
+              comp_n := comp_n + 1;
+              exit when comp_n > 2;
+              if comp->>'kind' = 'rate' then
+                rate_bon := rate_bon + app._component_amount('rate', comp->>'rarity');
+              end if;
+            end loop;
+          end if;
           bay_out := greatest(0, floor(per_bay * ymult * rate_bon));
           if strike then bay_out := floor(bay_out / 2); end if;
           produced := produced + bay_out;

@@ -115,6 +115,11 @@ assert.ok(softSql.includes("app._credit_positions"),
   "station_soft_income.sql must credit positions for bay keep / orphan tax");
 assert.ok(softSql.includes("app._extractor_yield_mult"),
   "station_soft_income.sql after_hour must apply extractor quality");
+assert.ok(/_extractor_yield_mult\('jack'\)/.test(softSql),
+  "station_soft_income.sql after_hour must jack-fallback when extractorId is missing");
+assert.ok(/not in \(uid::text, 'player'\)/.test(softSql)
+  || /in \(uid::text, 'player'\)/.test(softSql),
+  "station_soft_income.sql after_hour must accept legacy player lesseeId");
 assert.ok(softSql.includes("toPositions") || softSql.includes("_credit_positions"),
   "station_soft_income.sql settle must handle orphan bay tax");
 assert.ok(pubT.includes("extractorid"),
