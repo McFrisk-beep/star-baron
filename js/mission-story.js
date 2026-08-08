@@ -74,6 +74,11 @@ const MissionStory = {
         "{TITLE} — convoy accounted for. Ops files the chit. {CREDITS}.",
         "Return burn complete. {TITLE} is off the active list. {CREDITS}.",
       ],
+      pending: [
+        "Wing is docked and accounted for. Ledger hasn't cleared — Ops says buy it out if you want the salvage now.",
+        "{TITLE} — hulls home, chit unsigned. The charter board owes you.",
+        "Return burn complete. Payment is stuck upstream; Ops recommends the buy-out.",
+      ],
       fail: [
         "{TITLE} ends without a returning wing. Ops stamps the loss.",
         "No hulls answered the recall. Charter wiped.",
@@ -88,9 +93,10 @@ const MissionStory = {
 
   s() { return window.Game && window.Game.state; },
 
-  _pick(type, ok) {
-    const bag = (this.LINES[type] || this.FALLBACK)[ok ? "ok" : "fail"] || this.FALLBACK.ok;
-    return Util.pick(bag);
+  _pick(report) {
+    const bag = (this.LINES[report && report.type] || this.FALLBACK);
+    if (report && report.deferred && bag.pending) return Util.pick(bag.pending);
+    return Util.pick(bag[report && report.success ? "ok" : "fail"] || this.FALLBACK.ok);
   },
 
   _fill(text, ctx) {
@@ -112,7 +118,7 @@ const MissionStory = {
         const n = report.items.length;
         bits.push(n === 1 ? `salvage: ${report.items[0].name}` : `${n} accessories recovered`);
       }
-    } else if (report.type === "charter" && !(report.lost || []).length && !(report.impounded || []).length) {
+    } else if (report.deferred) {
       // Phase-3 deferred close: hulls returned, ledger pay not minted.
       bits.push("payout pending — Buy out the charter to recover salvage");
     } else {
@@ -144,9 +150,8 @@ const MissionStory = {
       lost: (report.lost || []).map(x => x.name).join(", ") || "none",
       item: (report.items && report.items[0] && report.items[0].name) || "gear",
     };
-    const flavor = this._fill(this._pick(report.type, !!report.success), ctx);
+    const flavor = this._fill(this._pick(report), ctx);
     const facts = this._facts(report);
-    const tone = report.success ? "green" : "red";
 
     const steps = [{
       key: "open",
@@ -164,15 +169,19 @@ const MissionStory = {
               ? "Survivors are in impound — pay the fine under Owned Ships."
               : "Wing is on the board. Damage reports attached if any." },
         { label: "Say less.", reply: "File it.",
-          ack: report.success ? "Already did. Get back on the boards." : "Filed under lessons. Next contract." },
+          ack: report.success ? "Already did. Get back on the boards."
+            : report.deferred ? "Buy it out when you're ready — Ops filed the chit."
+            : "Filed under lessons. Next contract." },
       ],
     }];
 
     const sl = {
       id, kind: "job", from: "Fleet Ops", portrait: this.PORTRAIT,
-      outro: report.success
-        ? `Fleet Ops: “${report.title} — closed ${tone === "green" ? "successful" : "messy"}.”`
-        : `Fleet Ops: “${report.title} — closed unsuccessful.”`,
+      outro: report.deferred
+        ? `Fleet Ops: “${report.title} — hulls home, payout pending.”`
+        : report.success
+          ? `Fleet Ops: “${report.title} — closed successful.”`
+          : `Fleet Ops: “${report.title} — closed unsuccessful.”`,
       steps, _missionReport: true, _reportUid: report.uid,
     };
 

@@ -83,9 +83,11 @@ ctx.Game = {
     return s;
   },
 };
+let _cancelRepCalls = 0;
 ctx.Rep = {
   edgeForCategory: () => 0, onTrade() {}, get: () => 0, discount: () => 0,
-  rewardMult: () => 1, onContract() {}, onContractCancel: () => 0,
+  rewardMult: () => 1, onContract() {},
+  onContractCancel() { _cancelRepCalls++; return 5; },
   successBonus: () => 0, factionForCategory: () => "free_trade",
   sponsor: () => null, gated: () => false, meetsGate: () => true,
 };

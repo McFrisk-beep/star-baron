@@ -228,7 +228,8 @@ const Charters = {
     if (value < 0 && s.credits < -value)
       return { ok: false, msg: `Need ${Util.credits(-value)}c to abort — not enough credits.` };
     s.credits += value;
-    const repHit = c.faction ? Rep.onContractCancel(c.faction, c.band) : 0;
+    // Deferred Buy out is collecting on a completed return — not an abort.
+    const repHit = (c.faction && !c.deferred) ? Rep.onContractCancel(c.faction, c.band) : 0;
     // Drop the row first so ofShip/running see the remaining lock set — a
     // deferred Buy out must not idle a hull already re-dispatched elsewhere.
     s.charters = this.list().filter(x => x.id !== id);
@@ -274,6 +275,7 @@ const Charters = {
         for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
         c.deferred = true;
         report.success = false;
+        report.deferred = true;
         report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
       } else {
         c.resolved = true;
