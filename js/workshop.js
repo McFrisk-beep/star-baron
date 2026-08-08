@@ -300,7 +300,8 @@ const Workshop = {
     );
   },
 
-  // Docked station bay for finished goods (HAULING.md §5). Travel → hold.
+  // Docked system id for toast labels. null while traveling — parkGear itself
+  // routes finished gear to the hold when given null / while s.travel is set.
   _baySystem(s) {
     s = s || this.s();
     if (s.travel) return null;
@@ -316,12 +317,12 @@ const Workshop = {
     if (recipe.outputType === "gear" && window.Items) {
       const it = Items.gen({ kind: out.kind, rarity: out.rarity });
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, baySystem || s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem);
       label = it.name;
     } else if (recipe.outputType === "blackbox" && window.Items) {
       const it = Items.genBlackbox(out.effectId);
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, baySystem || s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem);
       label = it.name;
     } else if (recipe.outputType === "extractor" && window.Extractors) {
       let scope = out.scope || "all";
@@ -395,20 +396,6 @@ const Workshop = {
   dueCount(now = Date.now()) {
     return (this.meta().queue || []).filter(j => j && now >= j.readyAt).length;
   },
-  // After a server claim, park newly minted gear/blackboxes into the docked
-  // inventory bay (parkOrphanGear also does this; calling it here keeps the
-  // baySystem label accurate for the toast even if Assets migrates later).
-  _parkClaimedGear(beforeUids) {
-    const s = this.s();
-    const baySystem = this._baySystem(s);
-    if (!window.Assets) return baySystem;
-    for (const it of Object.values(s.items || {})) {
-      if (!it || !it.uid || beforeUids.has(it.uid)) continue;
-      if (it.kind === "blueprint") continue;
-      Assets.parkGear(it.uid, baySystem || s.currentSystem);
-    }
-    return baySystem;
-  },
   async claimDue(now = Date.now()) {
     if (this._claiming || !this.authoritative() || !this.dueCount(now)) return [];
     // Transient RPC failures used to re-fire every market tick while a job sat
@@ -416,15 +403,16 @@ const Workshop = {
     if (now < this._claimBackoffUntil) return [];
     this._claiming = true;
     try {
-      const beforeUids = new Set(Object.keys(this.s().items || {}));
       const r = await Cloud.craftClaim();
       if (!r || !r.ok) {
         this._claimBackoffUntil = now + 15000;
         return [];
       }
+      // _applyServerSlice → parkOrphanGear parks new gear into the docked bay
+      // without duplicating uids already sitting in another bag.
       Economy._applyServerSlice(r);
-      const baySystem = this._parkClaimedGear(beforeUids);
       Economy.refreshNetWorth();
+      const baySystem = this._baySystem();
       const done = (r.delivered || []).map(d => Object.assign({}, d, { baySystem }));
       if (done.length) {
         this._claimBackoffUntil = 0;

@@ -360,6 +360,9 @@ const UI = {
     const label = names.length ? names.join(", ") : "Unknown hull";
     const danger = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
     const left = Math.max(0, c.startedAt + c.durationMs - Date.now());
+    const eta = c.deferred
+      ? this.t("comms.payoutPending", "payout pending")
+      : `returns ${Util.duration(left)}`;
     const val = Charters.cancelValue(c);
     const btnLabel = val < 0
       ? `${this.t("comms.cancelCharter", "Cancel")} — ${Util.credits(-val)}c`
@@ -368,7 +371,7 @@ const UI = {
     const nTag = uids.length > 1 ? ` · ${uids.length} hulls` : "";
     return `<div class="contract pending-card">
       <div class="c-head"><b>${label}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
-      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · returns ${Util.duration(left)}</div>
+      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · ${eta}</div>
       <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
@@ -2420,6 +2423,13 @@ const UI = {
   // ===== workshop ==========================================================
   renderWorkshop(now = Date.now()) {
     if (!window.Workshop || !this.refs.workshopRecipes) return;
+    // resolve() may emit "crafted" which re-enters here — paint once.
+    if (this._inWorkshopRender) return;
+    this._inWorkshopRender = true;
+    try { this._renderWorkshopBody(now); }
+    finally { this._inWorkshopRender = false; }
+  },
+  _renderWorkshopBody(now = Date.now()) {
     Workshop.ensureAutoUnlocks();
     Workshop.resolve(now); // deliver anything that's ready before paint
     const q = Workshop.meta().queue;

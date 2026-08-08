@@ -107,12 +107,14 @@ const MissionStory = {
     const bits = [];
     if (report.success) {
       if (report.credits) bits.push(`+${Util.credits(report.credits)}c wired`);
-      else if (report.type === "charter") bits.push("payout pending charter ledger");
       if (report.stock) bits.push(`+${report.stock.qty} ${report.stock.name} in hold`);
       if ((report.items || []).length) {
         const n = report.items.length;
         bits.push(n === 1 ? `salvage: ${report.items[0].name}` : `${n} accessories recovered`);
       }
+    } else if (report.type === "charter" && !(report.lost || []).length && !(report.impounded || []).length) {
+      // Phase-3 deferred close: hulls returned, ledger pay not minted.
+      bits.push("payout pending — Buy out the charter to recover salvage");
     } else {
       bits.push(report.wipe ? "total loss — no ships returned" : "contract failed");
     }

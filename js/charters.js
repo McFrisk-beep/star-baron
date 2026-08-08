@@ -13,9 +13,12 @@
 const Charters = {
   s() { return window.Game.state; },
   list() { return this.s().charters || (this.s().charters = []); },
-  // deferred = hulls freed under Phase 3, row kept for a later app_charter_* pay.
-  active() { return this.list().filter(c => !c.resolved && !c.deferred); },
-  ofShip(uid) { return this.active().find(c => this.shipUids(c).includes(uid)) || null; },
+  // Unresolved rows — includes Phase-3 "payout pending" (deferred) so the
+  // player can still Buy out and recover cancelValue until app_charter_* lands.
+  active() { return this.list().filter(c => !c.resolved); },
+  // Hulls still locked / count toward maxActive. Deferred rows have freed ships.
+  running() { return this.list().filter(c => !c.resolved && !c.deferred); },
+  ofShip(uid) { return this.running().find(c => this.shipUids(c).includes(uid)) || null; },
 
   // Prefer shipUids[]; legacy single-ship rows keep shipUid.
   shipUids(charter) {
@@ -165,7 +168,8 @@ const Charters = {
       return { ok: false, msg: `At most ${CHARTERCFG.maxShips} ships per charter.` };
     if (!CHARTER_BANDS[band]) return { ok: false, msg: "Unknown risk band." };
     if (!CHARTERCFG.durations.includes(+durationMin)) return { ok: false, msg: "Pick a listed duration." };
-    if (this.active().length >= CHARTERCFG.maxActive) return { ok: false, msg: `At most ${CHARTERCFG.maxActive} charters at once.` };
+    // Deferred (payout-pending) rows don't block new dispatches — hulls are free.
+    if (this.running().length >= CHARTERCFG.maxActive) return { ok: false, msg: `At most ${CHARTERCFG.maxActive} charters at once.` };
 
     const ships = [];
     for (const uid of uids) {
@@ -262,13 +266,13 @@ const Charters = {
         report.success = false;
         report.summary = "Charter closed — hulls already gone.";
       } else if (!mint) {
-        // Hulls now, ledger later — flag deferred; don't resolve/drop the row.
-        // Still treat as a successful return so Dispatches opens a clean report
-        // (credits stay 0 until app_charter_* lands).
+        // Hulls now, ledger later — flag deferred; keep the row visible as
+        // "payout pending" so Buy out can still recover cancelValue. Zero-credit
+        // close is not a win (Dispatches still opens from the report existing).
         for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
         c.deferred = true;
-        report.success = true;
-        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout pending the charter ledger.`;
+        report.success = false;
+        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
       } else {
         c.resolved = true;
         // Each hull rolls the convoy chance — escorts lower that shared rate.
@@ -342,7 +346,8 @@ const Charters = {
   // ponytail: drop once app_charter_* owns ship status on the ledger.
   reconcileShips() {
     const locked = new Set();
-    for (const c of this.active()) for (const uid of this.shipUids(c)) locked.add(uid);
+    // Only re-lock hulls still on a running charter — deferred must stay idle.
+    for (const c of this.running()) for (const uid of this.shipUids(c)) locked.add(uid);
     for (const sh of this.s().ships || []) {
       if (locked.has(sh.uid) && sh.status !== "charter" && sh.status !== "impounded")
         sh.status = "charter";

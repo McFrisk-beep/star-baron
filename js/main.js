@@ -827,8 +827,7 @@ const Game = {
   _softIncomeDue(now = Date.now()) {
     const s = this.state;
     if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
-    // Charters resolve client-side — don't hammer app_pull for them. Skip
-    // deferred rows (hulls freed, ledger pay pending) so they can't loop forever.
+    // Skip deferred rows (hulls freed, ledger pay pending) so they can't loop forever.
     if ((s.charters || []).some(c => !c.resolved && !c.deferred && now >= c.startedAt + c.durationMs)) return true;
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
