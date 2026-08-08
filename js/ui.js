@@ -360,6 +360,9 @@ const UI = {
     const label = names.length ? names.join(", ") : "Unknown hull";
     const danger = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
     const left = Math.max(0, c.startedAt + c.durationMs - Date.now());
+    const eta = c.deferred
+      ? this.t("comms.payoutPending", "payout pending")
+      : `returns ${Util.duration(left)}`;
     const val = Charters.cancelValue(c);
     const btnLabel = val < 0
       ? `${this.t("comms.cancelCharter", "Cancel")} — ${Util.credits(-val)}c`
@@ -368,7 +371,7 @@ const UI = {
     const nTag = uids.length > 1 ? ` · ${uids.length} hulls` : "";
     return `<div class="contract pending-card">
       <div class="c-head"><b>${label}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
-      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · returns ${Util.duration(left)}</div>
+      <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · ${eta}</div>
       <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
@@ -1703,7 +1706,11 @@ const UI = {
         return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
           <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
       }
-      if (r.success) {
+      if (r.deferred) {
+        // Hulls came home — only the Phase-3 ledger pay is outstanding, so this
+        // must not read FAILED next to "ships returned safely".
+        detail = `<span class="warn">RETURNED</span> · payout pending — Buy out to recover salvage`;
+      } else if (r.success) {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
         if (r.blueprint) detail += ` · blueprint: ${r.blueprint}`;
@@ -1716,7 +1723,7 @@ const UI = {
         if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
       }
       if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
-      return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
+      return `<div class="report ${r.deferred ? "pending" : r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
         <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
     }).join("");
     this.refs.fleetReports.onclick = e => {
@@ -2143,7 +2150,8 @@ const UI = {
     const bandInfo = CHARTER_BANDS[pick.band] || {};
     const freeLeft = idle.filter(x => !pick.shipUids.includes(x.uid)).length;
     const stranded = freeLeft === 0 && this.s().credits <= 0;
-    const atCap = Charters.active().length >= CHARTERCFG.maxActive;
+    // Cap matches Charters.dispatch — deferred (payout-pending) rows don't count.
+    const atCap = Charters.running().length >= CHARTERCFG.maxActive;
     const shipRows = idle.map(s => {
       const sst = Fleet.stats(s);
       const on = pick.shipUids.includes(s.uid);
@@ -2420,6 +2428,13 @@ const UI = {
   // ===== workshop ==========================================================
   renderWorkshop(now = Date.now()) {
     if (!window.Workshop || !this.refs.workshopRecipes) return;
+    // resolve() may emit "crafted" which re-enters here — paint once.
+    if (this._inWorkshopRender) return;
+    this._inWorkshopRender = true;
+    try { this._renderWorkshopBody(now); }
+    finally { this._inWorkshopRender = false; }
+  },
+  _renderWorkshopBody(now = Date.now()) {
     Workshop.ensureAutoUnlocks();
     Workshop.resolve(now); // deliver anything that's ready before paint
     const q = Workshop.meta().queue;
@@ -3745,7 +3760,7 @@ const UI = {
       html += `<ul class="wywa-runs">` + reports.map(r => {
         const wear = (r.damaged || []).length ? ` · 🔧 ${r.damaged.length} damaged` : "";
         if (r.type === "survey") return `<li>🛰 <span class="${r.success ? "up" : "down"}">${r.summary}</span></li>`;
-        if (r.type === "charter") return `<li>📜 <span class="${r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
+        if (r.type === "charter") return `<li>📜 <span class="${r.deferred ? "warn" : r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
         return r.success
           ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : ""}${wear}</li>`
           : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
@@ -4030,19 +4045,28 @@ const UI = {
     });
     Bus.on("charterDone", r => {
       if (window.Game._booting) return;   // offline charters land in the "while you were away" recap
-      this.toast(r.summary || r.title, r.success ? "good" : "bad", 6000);
+      // Deferred = hulls home, ledger pay outstanding — a heads-up, not a loss.
+      this.toast(r.summary || r.title, r.deferred ? "pending" : r.success ? "good" : "bad", 6000);
+      this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "bazaar" && this.bazaarTab === "charters") this.renderBazaar();
-      if (this.commsTab === "pending") this.renderPendingContracts();
+      if (this.page === "comms") {
+        if (this.commsTab === "pending") this.renderPendingContracts();
+        if (this.commsTab === "dispatches") this.renderDispatches();
+      }
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });
     // Server-side craft delivery lands asynchronously (Workshop.claimDue), so
     // the goods announce themselves instead of appearing during a render.
     Bus.on("crafted", done => {
-      for (const d of done) this.toast(`Workshop finished ${d.name}.`, "good", 5000);
+      for (const d of done) {
+        const where = d.baySystem ? ` → ${this.sysName(d.baySystem)} bay` : "";
+        this.toast(`Workshop finished ${d.name}.${where}`, "good", 5000);
+      }
       this.updateHeader();
       if (this.page === "workshop") this.renderWorkshop();
       if (this.page === "fleet") this.renderInventory();
+      if (this.page === "assets") this.renderAssets();
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => {

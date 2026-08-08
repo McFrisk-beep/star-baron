@@ -47,6 +47,7 @@ body::after {
 .hidden { display: none !important; }
 .up { color: var(--up); }
 .down { color: var(--down); }
+.warn { color: var(--warn); }
 b { color: #fff; font-weight: 600; }
 
 /* ===== top bar ===== */
@@ -425,6 +426,9 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 .toast-good { border-left-color: var(--up); }
 .toast-bad, .toast-warn { border-left-color: var(--down); }
 .toast-buy { border-left-color: var(--accent2); }
+/* ponytail: only the deferred-charter return uses this — fold into .toast-warn
+   if that ever stops sharing the red .toast-bad border. */
+.toast-pending { border-left-color: var(--warn); }
 
 /* ===== modals ===== */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(4,6,12,.7); display: flex;
@@ -1126,6 +1130,7 @@ body.reduced .floatnav-indicator { transition: none; }
 .report { display: flex; justify-content: space-between; align-items: center; gap: 10px;
   background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; margin-bottom: 7px; }
 .report.ok { border-left: 3px solid var(--up); } .report.bad { border-left: 3px solid var(--down); }
+.report.pending { border-left: 3px solid var(--warn); }
 .rep-detail { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
 
 /* trade routes */

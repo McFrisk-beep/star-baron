@@ -300,20 +300,29 @@ const Workshop = {
     );
   },
 
+  // Docked system id for toast labels. null while traveling — parkGear itself
+  // routes finished gear to the hold when given null / while s.travel is set.
+  _baySystem(s) {
+    s = s || this.s();
+    if (s.travel) return null;
+    return (typeof s.currentSystem === "string" && s.currentSystem) || null;
+  },
+
   _deliver(job) {
     const recipe = this.recipe(job.recipeId); if (!recipe) return null;
     const s = this.s();
     const out = recipe.output || {};
+    const baySystem = this._baySystem(s);
     let label = recipe.name;
     if (recipe.outputType === "gear" && window.Items) {
       const it = Items.gen({ kind: out.kind, rarity: out.rarity });
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem);
       label = it.name;
     } else if (recipe.outputType === "blackbox" && window.Items) {
       const it = Items.genBlackbox(out.effectId);
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem);
       label = it.name;
     } else if (recipe.outputType === "extractor" && window.Extractors) {
       let scope = out.scope || "all";
@@ -347,7 +356,7 @@ const Workshop = {
       if (!s.craftedOnce.includes(recipe.id)) s.craftedOnce.push(recipe.id);
       s.knownRecipes = (s.knownRecipes || []).filter(id => id !== recipe.id);
     }
-    return { recipeId: recipe.id, name: label, outputType: recipe.outputType };
+    return { recipeId: recipe.id, name: label, outputType: recipe.outputType, baySystem };
   },
 
   _resolveLocal(now = Date.now()) {
@@ -366,6 +375,8 @@ const Workshop = {
     }
     this.meta().queue = keep;
     if (done.length && window.Economy) Economy.refreshNetWorth();
+    // One announce per resolve — not every Workshop paint while a job is due.
+    if (done.length && !(window.Game && Game._booting)) Bus.emit("crafted", done);
     return done;
   },
 
@@ -381,25 +392,43 @@ const Workshop = {
   },
 
   _claiming: false,
+  _claimBackoffUntil: 0,
   dueCount(now = Date.now()) {
     return (this.meta().queue || []).filter(j => j && now >= j.readyAt).length;
   },
   async claimDue(now = Date.now()) {
     if (this._claiming || !this.authoritative() || !this.dueCount(now)) return [];
+    // Transient RPC failures used to re-fire every market tick while a job sat
+    // ready — back off so a finished craft can't hammer the ledger.
+    if (now < this._claimBackoffUntil) return [];
     this._claiming = true;
     try {
       const r = await Cloud.craftClaim();
-      if (!r || !r.ok) return [];
+      if (!r || !r.ok) {
+        this._claimBackoffUntil = now + 15000;
+        return [];
+      }
+      // _applyServerSlice → parkOrphanGear parks new gear into the docked bay
+      // without duplicating uids already sitting in another bag.
       Economy._applyServerSlice(r);
       Economy.refreshNetWorth();
-      const done = r.delivered || [];
+      const baySystem = this._baySystem();
+      const done = (r.delivered || []).map(d => Object.assign({}, d, { baySystem }));
       if (done.length) {
+        this._claimBackoffUntil = 0;
         window.Game.requestSave();
         Bus.emit("crafted", done);
+      } else if (this.dueCount(now)) {
+        // Still due after an empty claim (parked unknown recipe, clock skew) —
+        // don't re-fire every market tick.
+        this._claimBackoffUntil = now + 15000;
+      } else {
+        this._claimBackoffUntil = 0;
       }
       return done;
     } catch (e) {
       console.warn("[Workshop] claim failed:", e);
+      this._claimBackoffUntil = now + 15000;
       return [];
     } finally { this._claiming = false; }
   },

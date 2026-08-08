@@ -149,10 +149,13 @@ const Game = {
         impoundChance: Util.clamp(+c.impoundChance || 0, 0, 0.85),
         impound: !!(bands[c.band].impound > 0),
         resolved: false,
+        // Phase 3: hulls freed, payout waiting on app_charter_* — keep the flag
+        // so a reload doesn't re-lock the ships as "returns now".
+        deferred: !!c.deferred,
       };
     }).filter(Boolean);
     const onCharter = (uid) => s.charters.some(c =>
-      (Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid);
+      !c.deferred && ((Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid));
     for (const sh of s.ships) {
       if (sh.status === "charter" && !onCharter(sh.uid))
         sh.status = "idle";
@@ -415,7 +418,10 @@ const Game = {
         usedPull = true;
         offlineReports = (pulled.resolved || []).concat(pulled.surveys || []);
         offlineSold = pulled.sold || [];
-        offlineCharters = []; // charters are client-local until app_charter_* lands
+        // Charters stay client-local until app_charter_* — still resolve so
+        // matured jobs leave "returns now" and open a Dispatches report.
+        offlineCharters = window.Charters ? Charters.resolve(now) : [];
+        offlineReports = offlineReports.concat(offlineCharters);
         offlineIndustry = pulled.industry || [];
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
@@ -610,9 +616,11 @@ const Game = {
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
       }).catch(e => console.warn("[Missions] resolve failed:", e));
+      // Charters are client-local until app_charter_* — always resolve (Phase 3
+      // path frees hulls + defers pay; guest path mints). Don't gate on softIncome.
+      const chartered = window.Charters ? Charters.resolve(now) : [];
       if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
-        const chartered = Charters.resolve(now);
         const made = Industries.resolve(now);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
@@ -620,7 +628,7 @@ const Game = {
       } else {
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
-        if (shipped.length || crafted.length) this.requestSave();
+        if (shipped.length || chartered.length || crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
       Rivals.tick(now);
@@ -725,10 +733,11 @@ const Game = {
             Expeditions.resolve(now);
             Fleet.pruneMercs(now);
             Bazaar.tick(now);
-            Charters.resolve(now);
             void Orders.process();
             Industries.resolve(now);
           }
+          // Always bank matured charters (client-local until app_charter_*).
+          if (window.Charters) Charters.resolve(now);
           if (window.Workshop) Workshop.resolve(now);
           finish();
         });
@@ -818,7 +827,8 @@ const Game = {
   _softIncomeDue(now = Date.now()) {
     const s = this.state;
     if ((s.missions || []).some(m => !m.resolved && now >= m.startedAt + m.totalMs)) return true;
-    if ((s.charters || []).some(c => !c.resolved && now >= c.startedAt + c.durationMs)) return true;
+    // Skip deferred rows (hulls freed, ledger pay pending) so they can't loop forever.
+    if ((s.charters || []).some(c => !c.resolved && !c.deferred && now >= c.startedAt + c.durationMs)) return true;
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;
