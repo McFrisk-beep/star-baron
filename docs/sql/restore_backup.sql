@@ -10,9 +10,10 @@
 -- until Settings grows an Undo Reset path that actually invokes it.)
 --
 -- Prereq: docs/sql/phase1_players.sql.
--- Safe to re-run. If an older paste left players.restore_snapshot / a snapshotting
--- app_reset_save, re-paste docs/sql/reset_save.sql after this file so Reset Save
--- no longer writes the dead column.
+-- Paste order: docs/sql/reset_save.sql → this file (same as docs/PHASE1_SETUP.md).
+-- Safe to re-run. If an older draft left a snapshotting app_reset_save /
+-- players.restore_snapshot, re-paste reset_save.sql first so Reset Save no
+-- longer references the column, then this file to drop it.
 
 -- Drop leftover undo buffer from earlier drafts (nothing reads it back).
 alter table public.players
@@ -41,7 +42,7 @@ begin
     return jsonb_build_object('ok', false, 'error', 'no player row');
   end if;
 
-  return jsonb_build_object('ok', true, 'state', st, 'restored', false);
+  return jsonb_build_object('ok', true, 'state', st);
 end;
 $$;
 

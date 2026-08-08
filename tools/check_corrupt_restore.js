@@ -175,7 +175,7 @@ function plantBackup(extra = {}) {
     const server = Game.defaultState();
     server.credits = 50_000;
     server.positions = { iron_ore: 10 };
-    return { ok: true, state: server, restored: false };
+    return { ok: true, state: server };
   };
   plantBackup();
   const rr = await Game.restoreCorruptBackup();
@@ -231,7 +231,7 @@ function plantBackup(extra = {}) {
   Store._cloudReady = false;
   sandbox.Cloud.restoreBackup = async () => {
     restoredRpc.push({ called: true });
-    return { ok: true, state: Game.defaultState(), restored: false };
+    return { ok: true, state: Game.defaultState() };
   };
   plantBackup();
   await Game.restoreCorruptBackup();

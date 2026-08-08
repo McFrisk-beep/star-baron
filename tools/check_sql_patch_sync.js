@@ -133,6 +133,10 @@ assert.ok(!/create or replace function public\.app_reset_save/i.test(restoreSql)
   "restore_backup.sql must not redefine app_reset_save (single owner in reset_save.sql)");
 assert.ok(/drop column if exists restore_snapshot/i.test(restoreSql),
   "restore_backup.sql must drop leftover restore_snapshot from earlier drafts");
+assert.ok(!/['"]restored['"]/.test(restoreSql),
+  "app_restore_backup must not return a dead restored field");
+assert.ok(/reset_save\.sql\s*→\s*this file|Paste order:.*reset_save\.sql/i.test(restoreSql),
+  "restore_backup.sql paste order must match PHASE1_SETUP (reset_save first)");
 const resetSql = fs.readFileSync(path.join(root, "docs/sql/reset_save.sql"), "utf8");
 assert.ok(!resetSql.includes("restore_snapshot"),
   "reset_save.sql must not maintain an unreachable restore_snapshot");
