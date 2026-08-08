@@ -83,11 +83,12 @@ ctx.Game = {
     return s;
   },
 };
-let _cancelRepCalls = 0;
+// Note: reputation.js declares `const Rep`, which is a lexical binding inside the
+// vm context — assigning ctx.Rep here cannot shadow it for code running in there.
+// Charter rep effects are asserted against state.reputation instead (§16).
 ctx.Rep = {
   edgeForCategory: () => 0, onTrade() {}, get: () => 0, discount: () => 0,
-  rewardMult: () => 1, onContract() {},
-  onContractCancel() { _cancelRepCalls++; return 5; },
+  rewardMult: () => 1, onContract() {}, onContractCancel: () => 0,
   successBonus: () => 0, factionForCategory: () => "free_trade",
   sponsor: () => null, gated: () => false, meetsGate: () => true,
 };
@@ -354,6 +355,7 @@ assert.strictEqual(Charters.active().length, 1, "deferred stays visible (Buy out
 assert.strictEqual(Charters.running().length, 0, "deferred does not count toward maxActive / ship lock");
 Charters.reconcileShips();
 assert.strictEqual(shLock.status, "idle", "reconcile must not re-lock a deferred charter");
+assert.ok(rLock[0].deferred, "report flagged deferred for Dispatches/report styling");
 // Buy out still recovers salvage on a deferred matured charter.
 const buy = Charters.cancel(ctx.Game.state.charters[0].id, T);
 assert(buy.ok && buy.value > 0, "Buy out recovers salvage on deferred charter");
@@ -399,6 +401,39 @@ assert.strictEqual(shReuse.status, "charter", "Buy out must not free a re-dispat
 assert.ok(Charters.ofShip(shReuse.uid), "newer charter still locks the hull");
 assert.strictEqual(Charters.running().length, 1);
 assert.strictEqual(Charters.active().length, 1, "only the newer charter remains");
+delete ctx.Cloud;
+
+// 16) Aborting a running charter costs faction standing; collecting on a
+// deferred (already-returned) one must not. Banded charter on purpose — "safe"
+// carries faction null, so it would pass either way.
+ctx.Game.state = fresh();
+ctx.Game.state.credits = 50_000;
+const shRep = mule(); ctx.Game.state.ships.push(shRep);
+const dRun = Charters.dispatch(shRep.uid, "low", 60, T);
+assert(dRun.ok, dRun.msg);
+const repFaction = dRun.charter.faction;
+assert.ok(repFaction, "banded charter carries a faction");
+const repBeforeAbort = ctx.Game.state.reputation[repFaction];
+const abort = Charters.cancel(dRun.charter.id, T + 60000);
+assert(abort.ok, abort.msg);
+assert(abort.repHit > 0, "running cancel still reports a rep hit");
+assert.strictEqual(ctx.Game.state.reputation[repFaction], repBeforeAbort - abort.repHit,
+  "running cancel docks standing");
+
+const shRep2 = mule(); ctx.Game.state.ships.push(shRep2);
+const dDef = Charters.dispatch(shRep2.uid, "low", 60, T);
+assert(dDef.ok, dDef.msg);
+assert.strictEqual(dDef.charter.faction, repFaction);
+ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
+T += 3600000;
+Charters.resolve(T);
+assert.ok(dDef.charter.deferred, "matured under Phase 3 → deferred");
+const repBeforeBuy = ctx.Game.state.reputation[repFaction];
+const buyDef = Charters.cancel(dDef.charter.id, T);
+assert(buyDef.ok && buyDef.value > 0, "deferred Buy out pays salvage");
+assert.strictEqual(buyDef.repHit, 0, "deferred Buy out reports no rep hit");
+assert.strictEqual(ctx.Game.state.reputation[repFaction], repBeforeBuy,
+  "deferred Buy out leaves standing untouched");
 delete ctx.Cloud;
 
 console.log("check_charters: ok");

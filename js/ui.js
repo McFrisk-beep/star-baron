@@ -1706,7 +1706,11 @@ const UI = {
         return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
           <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
       }
-      if (r.success) {
+      if (r.deferred) {
+        // Hulls came home — only the Phase-3 ledger pay is outstanding, so this
+        // must not read FAILED next to "ships returned safely".
+        detail = `<span class="warn">RETURNED</span> · payout pending — Buy out to recover salvage`;
+      } else if (r.success) {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
         if (r.blueprint) detail += ` · blueprint: ${r.blueprint}`;
@@ -1719,7 +1723,7 @@ const UI = {
         if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
       }
       if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
-      return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
+      return `<div class="report ${r.deferred ? "pending" : r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
         <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
     }).join("");
     this.refs.fleetReports.onclick = e => {
@@ -3756,7 +3760,7 @@ const UI = {
       html += `<ul class="wywa-runs">` + reports.map(r => {
         const wear = (r.damaged || []).length ? ` · 🔧 ${r.damaged.length} damaged` : "";
         if (r.type === "survey") return `<li>🛰 <span class="${r.success ? "up" : "down"}">${r.summary}</span></li>`;
-        if (r.type === "charter") return `<li>📜 <span class="${r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
+        if (r.type === "charter") return `<li>📜 <span class="${r.deferred ? "warn" : r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
         return r.success
           ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : ""}${wear}</li>`
           : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
@@ -4041,7 +4045,8 @@ const UI = {
     });
     Bus.on("charterDone", r => {
       if (window.Game._booting) return;   // offline charters land in the "while you were away" recap
-      this.toast(r.summary || r.title, r.success ? "good" : "bad", 6000);
+      // Deferred = hulls home, ledger pay outstanding — a heads-up, not a loss.
+      this.toast(r.summary || r.title, r.deferred ? "pending" : r.success ? "good" : "bad", 6000);
       this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "bazaar" && this.bazaarTab === "charters") this.renderBazaar();
