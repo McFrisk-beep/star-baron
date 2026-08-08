@@ -444,19 +444,19 @@ const Workshop = {
       Economy.refreshNetWorth();
       const baySystem = this._baySystem();
       const done = (r.delivered || []).map(d => Object.assign({}, d, { baySystem }));
-      if (done.length) {
-        // Prefer explicit jobIds from the RPC; else any due id that vanished
-        // from the server's queue; else one due id per delivered row so a
-        // missing workshop slice can't remint forever.
+      // Mark finished jobs even when delivered is empty (idempotent re-claim
+      // drains the queue without re-announcing) or a batch only announces some
+      // of the due ids. Prefer the server's post-claim queue; fall back to
+      // delivered.jobId / one-due-per-delivery when the slice omitted workshop.
+      if (r.workshop && Array.isArray(r.workshop.queue)) {
+        const remain = new Set(r.workshop.queue.map(j => j && j.id));
+        this._markClaimed(dueIds.filter(id => !remain.has(id)));
+      } else {
         const fromRpc = done.map(d => d.jobId).filter(Boolean);
-        if (fromRpc.length) {
-          this._markClaimed(fromRpc);
-        } else if (r.workshop && Array.isArray(r.workshop.queue)) {
-          const remain = new Set(r.workshop.queue.map(j => j && j.id));
-          this._markClaimed(dueIds.filter(id => !remain.has(id)));
-        } else {
-          this._markClaimed(dueIds.slice(0, done.length));
-        }
+        if (fromRpc.length) this._markClaimed(fromRpc);
+        else if (done.length) this._markClaimed(dueIds.slice(0, done.length));
+      }
+      if (done.length) {
         this._claimBackoffUntil = 0;
         window.Game.requestSave();
         Bus.emit("crafted", done);
