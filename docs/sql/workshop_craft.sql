@@ -744,8 +744,14 @@ begin
       label := ex->>'name';
       if already then continue; end if;
     elsif recipe->>'outputType' = 'ship' then
-      -- Ships keep seq-based uids (make_ship); idempotent on hull already present
-      -- for unique recipes, otherwise a re-queued job can still add another hull.
+      -- Idempotent on craftJobId (same role as craft-<jobId> for gear) so a
+      -- re-queued finish can't append a second hull. Unique recipes also refuse
+      -- a second copy of the hull type.
+      if exists (
+        select 1 from jsonb_array_elements(ships) as s2(v)
+         where s2.v->>'craftJobId' = job->>'id') then
+        continue;
+      end if;
       if (recipe->>'unique')::boolean and exists (
         select 1 from jsonb_array_elements(ships) as s2(v)
          where s2.v->>'type' = recipe->'output'->>'shipType') then
@@ -762,6 +768,7 @@ begin
         seq := seq - 1;
         continue;
       end if;
+      sh := jsonb_set(sh, '{craftJobId}', to_jsonb(job->>'id'), true);
       ships := ships || jsonb_build_array(sh);
       label := sh->>'name';
     end if;

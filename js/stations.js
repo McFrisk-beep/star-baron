@@ -345,12 +345,18 @@ const Stations = {
         if (b.npc && this.bayShared(st.systemId))
           return { lesseeId: "", npc: false };
         let lessee = b.lesseeId || "";
-        if (lessee && !b.npc && lessee === this.playerId() && this.accountId())
-          lessee = this.accountId();
+        // Guest saves and older occupy paths key owner bays as "player". When
+        // signed in, playerId() is already the account uuid — so rewrite both
+        // the uuid and the legacy "player" label, otherwise extractorId never
+        // publishes and after_hour deposits nothing into the hold.
+        const me = this.accountId();
+        if (lessee && !b.npc && me
+            && (lessee === me || lessee === this.playerId() || lessee === "player"))
+          lessee = me;
         // Owner-staffed bays publish extractorId so after_hour can apply quality
         // (server validates against players.extractors — never trusts yield alone).
         const row = { lesseeId: lessee, npc: !!b.npc };
-        if (lessee && this.accountId() && lessee === this.accountId() && b.extractorId)
+        if (lessee && me && lessee === me && b.extractorId)
           row.extractorId = String(b.extractorId).slice(0, 40);
         return row;
       }),
@@ -2628,8 +2634,8 @@ const Stations = {
       // which false-negatives when the station still says "player" and pid is a uuid.
       const isOwner = !bay.npc && this._mine(st, pid) && (
         bay.lesseeId === st.ownerId || bay.lesseeId === pid
-        || (this.accountId() && bay.lesseeId === this.accountId())
-        || this.bayMine(bay));
+        || bay.lesseeId === "player"
+        || (this.accountId() && bay.lesseeId === this.accountId()));
       if (isOwner) {
         ownerStaffed++;
         if (!serverHold) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;

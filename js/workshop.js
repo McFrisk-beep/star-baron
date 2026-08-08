@@ -426,13 +426,13 @@ const Workshop = {
     // ready — back off so a finished craft can't hammer the ledger.
     if (now < this._claimBackoffUntil) return [];
     this._claiming = true;
-    // Defer app_commit / app_pull while the claim owns the workshop row — the
-    // same Economy.busy() gate that stops mid-trade cloud writes.
-    if (window.Economy) Economy._pending++;
-    const dueIds = (this.meta().queue || [])
-      .filter(j => j && now >= j.readyAt && !this._claimedJobIds.has(j.id))
-      .map(j => j.id);
     try {
+      // Defer app_commit / app_pull while the claim owns the workshop row — the
+      // same Economy.busy() gate that stops mid-trade cloud writes.
+      if (window.Economy) Economy._pending++;
+      const dueIds = (this.meta().queue || [])
+        .filter(j => j && now >= j.readyAt && !this._claimedJobIds.has(j.id))
+        .map(j => j.id);
       const r = await Cloud.craftClaim();
       if (!r || !r.ok) {
         this._claimBackoffUntil = now + 15000;

@@ -129,6 +129,10 @@ assert.ok((hub.pendingCargo[Stations.playerId()] || {})[hub.prodComm] > 0,
 let afterCalls = 0;
 let remoteCalls = 0;
 const realAfter = Stations.afterStockHour.bind(Stations);
+// afterStockHour now publishes before after_hour — stub publish so the stock
+// tick tests don't hit a null Cloud client and spam the console.
+const realPublish = Stations.publishOwned.bind(Stations);
+Stations.publishOwned = async () => ({ ok: true });
 Stations.afterStockHour = (h, opts) => {
   afterCalls++;
   if (!(opts && opts.remote === false)) remoteCalls++;
@@ -283,6 +287,22 @@ Stations.afterStockHour(99, { remote: true });
 await new Promise(r => setTimeout(r, 30));
 assert.deepStrictEqual(order.slice(0, 2), ["publish", "after_hour"],
   "publishOwned before stationAfterHour so prod_comm/extractorId land first");
+
+// --- publishOwned rewrites legacy "player" bays + carries extractorId ---
+Stations.publishOwned = realPublish;
+ctx.Cloud.signedIn = () => true;
+ctx.Cloud.user = () => ({ id: "acct-owner" });
+ctx.Cloud.stationPublish = async (rows) => {
+  const bay = rows[0] && rows[0].bays && rows[0].bays[0];
+  assert.strictEqual(bay.lesseeId, "acct-owner", "legacy player lessee rewritten to account uuid");
+  assert.strictEqual(bay.extractorId, "exLegacy", "owner extractorId published with the rewrite");
+  return { ok: true, treasuries: [] };
+};
+own.ownerId = "player";
+own.status = "owned";
+own.bays[0] = { lesseeId: "player", extractorId: "exLegacy", npc: false };
+const pub = await Stations.publishOwned();
+assert.ok(pub && pub.ok, "publishOwned ok for legacy player bay");
 
 console.log("check_soft_income_gates: ok");
 })().catch(e => { console.error(e); process.exit(1); });

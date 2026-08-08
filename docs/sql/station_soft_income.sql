@@ -176,7 +176,9 @@ grant execute on function public.app_station_bay_produce(text, int, int) to auth
 
 -- ---------------------------------------------------------------------------
 -- After-hour hub output — per owner bay, apply extractor yieldMult + rate.
--- Falls back to jack (0.6) when extractorId is missing / invalid.
+-- Owner bay with no/invalid extractorId deposits nothing (matches client
+-- _bayGross). publishOwned must rewrite legacy "player" bays and carry
+-- extractorId so after_hour can apply quality.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_after_hour(p_reports jsonb)
 returns jsonb
@@ -297,36 +299,35 @@ begin
         bay_cap := greatest(1, public._station_bay_count(st.modules));
         per_bay := public._station_hub_yield(hub)::numeric / bay_cap;
         for bay in select value from jsonb_array_elements(coalesce(st.bays, '[]'::jsonb)) loop
-          -- Owner bay: uuid (published) or legacy "player" (pre-publish local key).
+          -- Owner bay: uuid (published) or legacy "player" (one-hour race before
+          -- publishOwned rewrites it). No jack-fake when extractorId is missing —
+          -- that would keep depositing after a retool while the UI shows 0.
           continue when left(coalesce(bay->>'lesseeId', ''), 64)
             not in (uid::text, 'player');
           continue when coalesce((bay->>'npc')::boolean, false);
           ex_id := left(coalesce(bay->>'extractorId', ''), 40);
           ex := case when ex_id <> '' then pstate->'extractors'->ex_id else null end;
-          ymult := app._extractor_yield_mult('jack');
+          -- Match client _bayGross: no extractor → no output.
+          continue when ex is null or jsonb_typeof(ex) <> 'object';
+          can_prod := case ex->>'type'
+            when 'jack' then true
+            when 'specialized' then (st.prod_comm = (ex->>'scope'))
+            when 'semi' then (select c.cat from market.commodity(st.prod_comm) c)
+                            is not distinct from (ex->>'scope')
+            else false end;
+          continue when not can_prod;
+          ymult := app._extractor_yield_mult(ex->>'type');
           rate_bon := 1.0;
-          -- Extractor quality when present; otherwise jack baseline so a missing
-          -- publish of extractorId can't leave a staffed hub at 0 hold forever.
-          if ex is not null and jsonb_typeof(ex) = 'object' then
-            can_prod := case ex->>'type'
-              when 'jack' then true
-              when 'specialized' then (st.prod_comm = (ex->>'scope'))
-              when 'semi' then (select c.cat from market.commodity(st.prod_comm) c)
-                              is not distinct from (ex->>'scope')
-              else false end;
-            continue when not can_prod;
-            ymult := app._extractor_yield_mult(ex->>'type');
-            comp_n := 0;
-            for cuid in select jsonb_array_elements_text(coalesce(ex->'components', '[]'::jsonb)) loop
-              comp := pstate->'components'->cuid;
-              if comp is null then continue; end if;
-              comp_n := comp_n + 1;
-              exit when comp_n > 2;
-              if comp->>'kind' = 'rate' then
-                rate_bon := rate_bon + app._component_amount('rate', comp->>'rarity');
-              end if;
-            end loop;
-          end if;
+          comp_n := 0;
+          for cuid in select jsonb_array_elements_text(coalesce(ex->'components', '[]'::jsonb)) loop
+            comp := pstate->'components'->cuid;
+            if comp is null then continue; end if;
+            comp_n := comp_n + 1;
+            exit when comp_n > 2;
+            if comp->>'kind' = 'rate' then
+              rate_bon := rate_bon + app._component_amount('rate', comp->>'rarity');
+            end if;
+          end loop;
           bay_out := greatest(0, floor(per_bay * ymult * rate_bon));
           if strike then bay_out := floor(bay_out / 2); end if;
           produced := produced + bay_out;
