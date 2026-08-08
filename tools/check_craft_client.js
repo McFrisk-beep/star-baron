@@ -79,6 +79,8 @@ function freshState() {
   Game.state.craftedOnce = [];
   Game.state.workshop = { upgrades: 0, queue: [] };
   Game.requestSave = () => {};
+  Workshop._claiming = false;
+  Workshop._claimBackoffUntil = 0;
   calls.length = 0;
 }
 // Server ledger on/off. Every craft RPC is recorded and answered from `replies`.
@@ -118,8 +120,11 @@ async function main() {
   assert(typeof r.then !== "function", "guest craft is synchronous");
   assert(Game.state.workshop.queue.length === 1, "job queued locally");
   assert(Game.state.positions.iron_ore === 44, "ingredients spent locally");
+  let guestCrafted = null;
+  Bus.on("crafted", d => { guestCrafted = d; });
   assert(Workshop.resolve(1000 + CRAFT_MS + 1).length === 1, "guest resolve delivers the craft");
   assert(Object.keys(Game.state.items).length === 1, "guest gets the item locally");
+  assert(guestCrafted && guestCrafted.length === 1, "guest resolve announces crafted once");
   assert(calls.length === 0, "guest never calls an RPC");
 
   // ---- 2) the regression: no local mint on the server ledger ---------------

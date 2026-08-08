@@ -263,10 +263,12 @@ const Charters = {
         report.summary = "Charter closed — hulls already gone.";
       } else if (!mint) {
         // Hulls now, ledger later — flag deferred; don't resolve/drop the row.
+        // Still treat as a successful return so Dispatches opens a clean report
+        // (credits stay 0 until app_charter_* lands).
         for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
         c.deferred = true;
-        report.success = false;
-        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
+        report.success = true;
+        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout pending the charter ledger.`;
       } else {
         c.resolved = true;
         // Each hull rolls the convoy chance — escorts lower that shared rate.
@@ -324,6 +326,8 @@ const Charters = {
       s.reports.unshift(report);
       if (s.reports.length > 20) s.reports.length = 20;
       out.push(report);
+      // Same after-action inbox as Fleet contracts (Dispatches → Fleet Ops).
+      if (window.MissionStory) MissionStory.begin(report);
       Bus.emit("charterDone", report);
     }
     if (out.length) {

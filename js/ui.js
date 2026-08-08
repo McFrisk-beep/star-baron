@@ -4031,18 +4031,26 @@ const UI = {
     Bus.on("charterDone", r => {
       if (window.Game._booting) return;   // offline charters land in the "while you were away" recap
       this.toast(r.summary || r.title, r.success ? "good" : "bad", 6000);
+      this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "bazaar" && this.bazaarTab === "charters") this.renderBazaar();
-      if (this.commsTab === "pending") this.renderPendingContracts();
+      if (this.page === "comms") {
+        if (this.commsTab === "pending") this.renderPendingContracts();
+        if (this.commsTab === "dispatches") this.renderDispatches();
+      }
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
     });
     // Server-side craft delivery lands asynchronously (Workshop.claimDue), so
     // the goods announce themselves instead of appearing during a render.
     Bus.on("crafted", done => {
-      for (const d of done) this.toast(`Workshop finished ${d.name}.`, "good", 5000);
+      for (const d of done) {
+        const where = d.baySystem ? ` → ${this.sysName(d.baySystem)} bay` : "";
+        this.toast(`Workshop finished ${d.name}.${where}`, "good", 5000);
+      }
       this.updateHeader();
       if (this.page === "workshop") this.renderWorkshop();
       if (this.page === "fleet") this.renderInventory();
+      if (this.page === "assets") this.renderAssets();
     });
     Bus.on("listingSold", sl => { this.toast(`Sold ${sl.name} on the market: +${Util.credits(sl.price)}c`, "buy"); if (this.page === "fleet") this.renderInventory(); });
     Bus.on("dock", d => {

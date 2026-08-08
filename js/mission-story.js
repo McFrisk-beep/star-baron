@@ -68,6 +68,18 @@ const MissionStory = {
         "Botched run near {SYS}. Burn the channel.",
       ],
     },
+    charter: {
+      ok: [
+        "Charter closed. Hulls back on the board. {CREDITS}.",
+        "{TITLE} — convoy accounted for. Ops files the chit. {CREDITS}.",
+        "Return burn complete. {TITLE} is off the active list. {CREDITS}.",
+      ],
+      fail: [
+        "{TITLE} ends without a returning wing. Ops stamps the loss.",
+        "No hulls answered the recall. Charter wiped.",
+        "The charter board writes {TITLE} off. Bad day in the lanes.",
+      ],
+    },
   },
   FALLBACK: {
     ok: ["{TITLE} complete. Ops stamps it done. {CREDITS}."],
@@ -95,6 +107,7 @@ const MissionStory = {
     const bits = [];
     if (report.success) {
       if (report.credits) bits.push(`+${Util.credits(report.credits)}c wired`);
+      else if (report.type === "charter") bits.push("payout pending charter ledger");
       if (report.stock) bits.push(`+${report.stock.qty} ${report.stock.name} in hold`);
       if ((report.items || []).length) {
         const n = report.items.length;

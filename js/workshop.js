@@ -300,20 +300,28 @@ const Workshop = {
     );
   },
 
+  // Docked station bay for finished goods (HAULING.md §5). Travel → hold.
+  _baySystem(s) {
+    s = s || this.s();
+    if (s.travel) return null;
+    return (typeof s.currentSystem === "string" && s.currentSystem) || null;
+  },
+
   _deliver(job) {
     const recipe = this.recipe(job.recipeId); if (!recipe) return null;
     const s = this.s();
     const out = recipe.output || {};
+    const baySystem = this._baySystem(s);
     let label = recipe.name;
     if (recipe.outputType === "gear" && window.Items) {
       const it = Items.gen({ kind: out.kind, rarity: out.rarity });
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem || s.currentSystem);
       label = it.name;
     } else if (recipe.outputType === "blackbox" && window.Items) {
       const it = Items.genBlackbox(out.effectId);
       s.items[it.uid] = it;
-      if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
+      if (window.Assets) Assets.parkGear(it.uid, baySystem || s.currentSystem);
       label = it.name;
     } else if (recipe.outputType === "extractor" && window.Extractors) {
       let scope = out.scope || "all";
@@ -347,7 +355,7 @@ const Workshop = {
       if (!s.craftedOnce.includes(recipe.id)) s.craftedOnce.push(recipe.id);
       s.knownRecipes = (s.knownRecipes || []).filter(id => id !== recipe.id);
     }
-    return { recipeId: recipe.id, name: label, outputType: recipe.outputType };
+    return { recipeId: recipe.id, name: label, outputType: recipe.outputType, baySystem };
   },
 
   _resolveLocal(now = Date.now()) {
@@ -366,6 +374,8 @@ const Workshop = {
     }
     this.meta().queue = keep;
     if (done.length && window.Economy) Economy.refreshNetWorth();
+    // One announce per resolve — not every Workshop paint while a job is due.
+    if (done.length && !(window.Game && Game._booting)) Bus.emit("crafted", done);
     return done;
   },
 
@@ -381,25 +391,56 @@ const Workshop = {
   },
 
   _claiming: false,
+  _claimBackoffUntil: 0,
   dueCount(now = Date.now()) {
     return (this.meta().queue || []).filter(j => j && now >= j.readyAt).length;
   },
+  // After a server claim, park newly minted gear/blackboxes into the docked
+  // inventory bay (parkOrphanGear also does this; calling it here keeps the
+  // baySystem label accurate for the toast even if Assets migrates later).
+  _parkClaimedGear(beforeUids) {
+    const s = this.s();
+    const baySystem = this._baySystem(s);
+    if (!window.Assets) return baySystem;
+    for (const it of Object.values(s.items || {})) {
+      if (!it || !it.uid || beforeUids.has(it.uid)) continue;
+      if (it.kind === "blueprint") continue;
+      Assets.parkGear(it.uid, baySystem || s.currentSystem);
+    }
+    return baySystem;
+  },
   async claimDue(now = Date.now()) {
     if (this._claiming || !this.authoritative() || !this.dueCount(now)) return [];
+    // Transient RPC failures used to re-fire every market tick while a job sat
+    // ready — back off so a finished craft can't hammer the ledger.
+    if (now < this._claimBackoffUntil) return [];
     this._claiming = true;
     try {
+      const beforeUids = new Set(Object.keys(this.s().items || {}));
       const r = await Cloud.craftClaim();
-      if (!r || !r.ok) return [];
+      if (!r || !r.ok) {
+        this._claimBackoffUntil = now + 15000;
+        return [];
+      }
       Economy._applyServerSlice(r);
+      const baySystem = this._parkClaimedGear(beforeUids);
       Economy.refreshNetWorth();
-      const done = r.delivered || [];
+      const done = (r.delivered || []).map(d => Object.assign({}, d, { baySystem }));
       if (done.length) {
+        this._claimBackoffUntil = 0;
         window.Game.requestSave();
         Bus.emit("crafted", done);
+      } else if (this.dueCount(now)) {
+        // Still due after an empty claim (parked unknown recipe, clock skew) —
+        // don't re-fire every market tick.
+        this._claimBackoffUntil = now + 15000;
+      } else {
+        this._claimBackoffUntil = 0;
       }
       return done;
     } catch (e) {
       console.warn("[Workshop] claim failed:", e);
+      this._claimBackoffUntil = now + 15000;
       return [];
     } finally { this._claiming = false; }
   },

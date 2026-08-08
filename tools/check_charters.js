@@ -71,10 +71,11 @@ ctx.Game = {
         destroyChance: ctx.Util.clamp(+c.destroyChance || 0, 0, 0.85),
         impoundChance: ctx.Util.clamp(+c.impoundChance || 0, 0, 0.85),
         impound: !!(bands[c.band].impound > 0), resolved: false,
+        deferred: !!c.deferred,
       };
     }).filter(Boolean);
     const onCharter = (uid) => s.charters.some(c =>
-      (Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid);
+      !c.deferred && ((Array.isArray(c.shipUids) && c.shipUids.includes(uid)) || c.shipUid === uid));
     for (const sh of s.ships) {
       if (sh.status === "charter" && !onCharter(sh.uid)) sh.status = "idle";
       else if (onCharter(sh.uid) && sh.status !== "impounded") sh.status = "charter";
@@ -343,13 +344,23 @@ assert.strictEqual(rLock.length, 1, "matured charter still resolves under Phase 
 assert.strictEqual(shLock.status, "idle", "hull freed even when payout is server-owned");
 assert.strictEqual(ctx.Game.state.credits, beforeLock, "no credit mint under Phase 3");
 assert.strictEqual(rLock[0].credits, 0);
-assert.strictEqual(rLock[0].success, false, "zero-credit Phase 3 return is not a win");
-assert.ok(/defer/i.test(rLock[0].summary || ""), "report notes deferred payout");
+assert.strictEqual(rLock[0].success, true, "hulls returned — Dispatches treats it as a clean close");
+assert.ok(/pending|defer/i.test(rLock[0].summary || ""), "report notes pending/deferred payout");
 assert.strictEqual(ctx.Game.state.charters.length, 1, "row kept for later app_charter_*");
 assert.ok(ctx.Game.state.charters[0].deferred, "flagged deferred, not resolved");
 assert.strictEqual(Charters.active().length, 0, "deferred does not count as active");
 Charters.reconcileShips();
 assert.strictEqual(shLock.status, "idle", "reconcile must not re-lock a deferred charter");
+// Reload must keep deferred and must not put the hull back on "returns now".
+const reloaded = ctx.Game.migrate({
+  credits: ctx.Game.state.credits,
+  ships: ctx.Game.state.ships.map(sh => Object.assign({}, sh)),
+  charters: ctx.Game.state.charters.map(c => Object.assign({}, c)),
+});
+assert.strictEqual(reloaded.charters.length, 1, "deferred charter survives migrate");
+assert.ok(reloaded.charters[0].deferred, "deferred flag preserved on migrate");
+assert.strictEqual(reloaded.ships.find(s => s.uid === shLock.uid).status, "idle",
+  "migrate must not re-lock a deferred charter's hull");
 delete ctx.Cloud;
 
 console.log("check_charters: ok");
