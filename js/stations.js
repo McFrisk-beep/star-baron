@@ -1220,13 +1220,20 @@ const Stations = {
     return this.escrowTotal(pid) + this.hallEscrowValue(pid) + this.contractEscrowValue(pid);
   },
 
-  _takeListable(kind, ref) {
+  _takeListable(kind, ref, systemId) {
     const s = Game.state;
     if (kind === "gear" || kind === "blackbox") {
       const it = s.items[ref]; if (!it) return { ok: false, msg: "Item not found." };
       if (window.Bazaar && Bazaar.equippedSet().has(ref)) return { ok: false, msg: "Unequip it first." };
       if (kind === "blackbox" && !(window.Items && Items.isBlackbox(it))) return { ok: false, msg: "Not a blackbox." };
       if (kind === "gear" && window.Items && Items.isBlackbox(it)) return { ok: false, msg: "List blackboxes as blackbox." };
+      if (window.Assets && systemId) {
+        // Bay-only: the stall sells out of this station's bay, not the hold or
+        // a bay elsewhere. Withdraw so the freed slot is usable while listed.
+        if (Assets.gearLocation(ref) !== systemId)
+          return { ok: false, msg: "Only gear in this station's bay can be listed — haul it here first." };
+        Assets.withdraw(systemId, "gear", ref);
+      }
       delete s.items[ref];
       return { ok: true, name: it.name, value: it.value || 0, payload: it };
     }
@@ -1250,6 +1257,7 @@ const Stations = {
       const sh = (s.ships || []).find(x => x.uid === ref);
       if (!sh) return { ok: false, msg: "Ship not found." };
       if (sh.status !== "idle") return { ok: false, msg: "Ship must be idle." };
+      if (s.travel) return { ok: false, msg: "Fleet is in transit — dock before listing a hull." };
       if (sh.mercenary) return { ok: false, msg: "Can't list a mercenary." };
       const payload = JSON.parse(JSON.stringify(sh));
       s.ships = s.ships.filter(x => x.uid !== ref);
@@ -1257,12 +1265,9 @@ const Stations = {
       return { ok: true, name: payload.name || payload.type, value: def ? def.price : 0, payload };
     }
     if (kind === "blueprint") {
-      const recipes = s.knownRecipes || [];
-      if (!recipes.includes(ref)) return { ok: false, msg: "Blueprint not unlocked." };
-      const recipe = (typeof RECIPES !== "undefined" ? RECIPES : []).find(r => r.id === ref);
-      if (!recipe) return { ok: false, msg: "Unknown recipe." };
-      s.knownRecipes = recipes.filter(id => id !== ref);
-      return { ok: true, name: `${recipe.name} Blueprint`, value: 8000, payload: { recipeId: ref } };
+      // Blueprints are knowledge, not stock — never sellable. Existing
+      // blueprint listings still resolve (buy / cancel / expire restore paths).
+      return { ok: false, msg: "Blueprints can't be sold." };
     }
     return { ok: false, msg: "Unsupported listing type." };
   },
@@ -1275,6 +1280,9 @@ const Stations = {
     const p = listing.payload;
     if (listing.kind === "gear" || listing.kind === "blackbox") {
       s.items[p.uid] = p;
+      // The stall withdrew it from a bay on take — park it back (docked bay or
+      // hold; idempotent when an older listing left the bag reference alone).
+      if (window.Assets) Assets.parkOrphanGear();
     } else if (listing.kind === "extractor" && window.Extractors) {
       Extractors.pool()[p.uid] = p;
     } else if (listing.kind === "component" && window.Components) {
@@ -1297,6 +1305,7 @@ const Stations = {
       if (window.Bazaar && Bazaar.inventoryUsed() >= Bazaar.capacity())
         return { ok: false, msg: "Inventory full." };
       s.items[p.uid] = p;
+      if (window.Assets) Assets.parkOrphanGear();   // into the docked bay / hold
       return { ok: true };
     }
     if (listing.kind === "extractor" && window.Extractors) {
@@ -1331,7 +1340,7 @@ const Stations = {
       return { ok: false, msg: "Blackboxes need a Black Market." };
     price = Math.floor(+price || 0);
     if (price < (STATIONCFG.hallMinPrice || 50)) return { ok: false, msg: `Price at least ${STATIONCFG.hallMinPrice}c.` };
-    const taken = this._takeListable(kind, ref);
+    const taken = this._takeListable(kind, ref, systemId);
     if (!taken.ok) return taken;
     // Shared shelf: the item goes into server-side escrow, not into our save.
     // If the post fails it comes straight back — it must never be in neither.

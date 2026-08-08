@@ -633,7 +633,8 @@ const UI = {
       const risk = c.cat === "illicit" ? `<span class="risk-flag" title="illicit — customs may seize this if you dock while holding it">⚠</span>` : "";
       const name = this.el("td", "name", `${c.name}<span class="cat cat-${c.cat}">${c.cat}</span>${risk}`);
       const price = this.el("td", "num price"), chg = this.el("td", "num chg"), trend = this.el("td", "trend");
-      const held = this.el("td", "num held"), pnl = this.el("td", "num pnl"), act = this.el("td", "actions");
+      const stock = this.el("td", "num stock"), held = this.el("td", "num held"),
+        pnl = this.el("td", "num pnl"), act = this.el("td", "actions");
       const T = k => (window.I18n ? I18n.t(k) : k);
       act.innerHTML = `<div class="qrow">
         <input type="number" class="qin" min="1" value="10" aria-label="qty ${c.name}" />
@@ -642,11 +643,11 @@ const UI = {
         <button class="btn btn-mini" data-act="max">${T("btn.buyMax")}</button>
         <button class="btn btn-mini" data-act="all">${T("btn.sellAll")}</button></div>
         <div class="ban-edict muted-note hidden" data-ban></div>`;
-      tr.append(icon, name, price, chg, trend, held, pnl, act);
+      tr.append(icon, name, price, chg, trend, stock, held, pnl, act);
       body.appendChild(tr);
       const qin = act.querySelector(".qin");
       qin.addEventListener("input", () => this.updateAfford(c.id));
-      this.rows[c.id] = { tr, name, price, chg, trend, held, pnl, qin,
+      this.rows[c.id] = { tr, name, price, chg, trend, stock, held, pnl, qin,
         buyBtn: act.querySelector('[data-act="buy"]'), maxBtn: act.querySelector('[data-act="max"]'),
         sellBtn: act.querySelector('[data-act="sell"]'), allBtn: act.querySelector('[data-act="all"]'),
         banNote: act.querySelector("[data-ban]") };
@@ -813,7 +814,14 @@ const UI = {
       if (!stocked && !totalQ) continue;
       const p = Market.systemPrice(c.id, sys), prev = this.lastPrice[c.id];
       r.price.textContent = Util.price(p);
-      if (shelf != null) r.price.title = `Sector stock: ${shelf} units`;
+      if (r.stock) {
+        if (shelf != null) {
+          const eat = Stock.est24hHere(sys, c.id);
+          r.stock.innerHTML = `${shelf}<span class="stock-eat">−${eat}/24h</span>`;
+          r.stock.title = `${shelf} units on the sector shelf · sector consumes ≈${eat} units per 24h`;
+          r.stock.className = "num stock" + (eat > 0 && shelf < eat ? " down" : "");
+        } else { r.stock.textContent = "·"; r.stock.title = ""; r.stock.className = "num stock"; }
+      }
       if (prev != null && Math.abs(p - prev) > 1e-6) { r.price.classList.remove("up", "down"); void r.price.offsetWidth; r.price.classList.add(p > prev ? "up" : "down"); }
       this.lastPrice[c.id] = p;
       const pct = Market.changePct(c.id);
@@ -1174,6 +1182,7 @@ const UI = {
     let html = `<div class="haul-transfer">
       <div class="haul-panel" data-haul="hold">
         <div class="haul-head ${capClass(holdUsed, holdCap)}">Flagship Hold <b>${holdUsed}/${holdCap}</b></div>
+        <div class="muted-note haul-rule">Cargo in transit — selling happens from the station bay (⇄ to move).</div>
         <div class="haul-tools"><input type="search" class="haul-filter" data-filter="hold" placeholder="filter…" aria-label="Filter hold"/></div>
         <div class="haul-grid" id="haul-hold">${this._haulTiles(hold, "hold")}</div>
       </div>
@@ -1239,7 +1248,7 @@ const UI = {
           <div class="haul-name">${it.name}</div>
           <div class="haul-acts">${act}
             <button type="button" class="btn btn-mini haul-move" data-move-gear="${side}:${uid}" title="Move">⇄</button>
-            <button class="btn btn-mini" data-sellnow="${it.uid}">Sell</button>
+            ${side === "bay" ? `<button class="btn btn-mini" data-sellnow="${it.uid}">Sell</button>` : ""}
           </div>
         </div>`,
       });
@@ -3079,9 +3088,10 @@ const UI = {
       <h3>Contract Office <small>${relTxt}</small></h3>
       <p class="muted-note">Post haul orders to the Bazaar Contracts board. Bounty is escrowed at post (${feePct}% faction fee). Goods leave the hold until filled, expired, or cancelled.</p>
       <div class="st-hall-list" style="margin-top:10px">
-        <select id="st-haul-comm">${opts}</select>
-        <input type="number" id="st-haul-qty" min="1" value="20" aria-label="quantity">
-        <input type="number" id="st-haul-rate" min="${STATIONCFG.contractMinRate || 5}" value="40" aria-label="credits per unit">
+        <label class="fld"><span>Commodity (from hold)</span><select id="st-haul-comm">${opts}</select></label>
+        <label class="fld"><span>Units</span><input type="number" id="st-haul-qty" min="1" value="20"></label>
+        <label class="fld"><span>Bounty / unit (c)</span>
+          <input type="number" id="st-haul-rate" min="${STATIONCFG.contractMinRate || 5}" value="40"></label>
         <button class="btn btn-go" id="st-haul-post">Post haul</button>
       </div>
       <div class="table-wrap" style="margin-top:10px"><table class="market">
@@ -3115,10 +3125,18 @@ const UI = {
   _renderHallPanel(st) {
     if (!(st.modules.exchange_hall | 0)) {
       return `<div class="panel" style="margin-top:14px"><h3>Exchange Hall</h3>
-        <p class="muted-note">Install an Exchange Hall to open a player marketplace for gear, ships, extractors, components, blackboxes, and blueprints (not commodities).</p></div>`;
+        <p class="muted-note">Install an Exchange Hall to open a player marketplace for gear, ships, extractors, components, and blackboxes (not commodities or blueprints).</p></div>`;
     }
     const listings = Stations.hallListings(st.systemId);
-    const inv = (window.Bazaar ? Bazaar.inventoryItems() : []).map(it => {
+    // Sellable = what's physically in THIS station's bay (equipped / already
+    // listed gear excluded). Ships are the exception — they list from the fleet
+    // (idle, not mid-transit). Blueprints are never sellable.
+    const eqSet = window.Bazaar ? Bazaar.equippedSet() : new Set();
+    const liSet = window.Bazaar ? Bazaar.listedSet() : new Set();
+    const bayGear = window.Assets
+      ? Assets.bay(st.systemId).gear.map(u => this.s().items[u]).filter(Boolean)
+      : (window.Bazaar ? Bazaar.inventoryItems() : []);
+    const inv = bayGear.filter(it => !eqSet.has(it.uid) && !liSet.has(it.uid)).map(it => {
       const kind = window.Items && Items.isBlackbox(it) ? "blackbox" : "gear";
       return `<option value="${kind}:${it.uid}">${it.name} (${kind})</option>`;
     });
@@ -3126,13 +3144,10 @@ const UI = {
       `<option value="extractor:${ex.uid}">${ex.name}</option>`);
     const comps = (window.Components ? Components.unequipped() : []).map(c =>
       `<option value="component:${c.uid}">${c.name || c.uid}</option>`);
-    const ships = (this.s().ships || []).filter(sh => sh.status === "idle" && !sh.mercenary).map(sh =>
-      `<option value="ship:${sh.uid}">${sh.name || sh.type}</option>`);
-    const bps = (this.s().knownRecipes || []).map(id => {
-      const r = (typeof RECIPES !== "undefined" ? RECIPES : []).find(x => x.id === id);
-      return r ? `<option value="blueprint:${id}">${r.name} Blueprint</option>` : "";
-    }).filter(Boolean);
-    const opts = [...inv, ...exs, ...comps, ...ships, ...bps].join("") || `<option value="">Nothing listable</option>`;
+    const ships = this.s().travel ? []
+      : (this.s().ships || []).filter(sh => sh.status === "idle" && !sh.mercenary).map(sh =>
+        `<option value="ship:${sh.uid}">${sh.name || sh.type}</option>`);
+    const opts = [...inv, ...exs, ...comps, ...ships].join("") || `<option value="">Nothing listable</option>`;
     const rows = listings.map(l => {
       const mine = Stations.listingMine(l);
       const left = Math.max(0, l.expiresAt - Date.now());
@@ -3148,14 +3163,17 @@ const UI = {
     return `<div class="panel st-hall" style="margin-top:14px">
       <h3>Exchange Hall <small>sale tariff ${((st.saleTariffBps || 0) / 100).toFixed(0)}%</small></h3>
       <p class="muted-note">Crafted goods only — commodities stay on the capital exchange. Visitors must dock here.
+        Gear lists from <b>this station's bay</b> (haul it here first); ships list from your idle fleet.
+        Equipped gear, hulls in transit, and blueprints can't be sold.
         ${Stations.hallShared(st.systemId)
           ? "This shelf is shared: other barons stock it and buy from it, and your tariff on every sale lands in the treasury."
           : "NPC traders sometimes clear stalls in guest mode."}</p>
       <label>Tariff % <input type="number" id="st-tariff" min="0" max="15" value="${((st.saleTariffBps || 0) / 100).toFixed(0)}"></label>
       <button class="btn btn-mini" id="st-set-tariff">Set</button>
       <div class="st-hall-list" style="margin-top:10px">
-        <select id="st-hall-item">${opts}</select>
-        <input type="number" id="st-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500" aria-label="list price">
+        <label class="fld"><span>Item to list</span><select id="st-hall-item">${opts}</select></label>
+        <label class="fld"><span>Asking price (c)</span>
+          <input type="number" id="st-hall-price" min="${STATIONCFG.hallMinPrice || 50}" value="500"></label>
         <button class="btn btn-go" id="st-hall-list">List</button>
       </div>
       <div class="table-wrap" style="margin-top:10px"><table class="market">

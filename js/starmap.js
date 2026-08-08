@@ -85,6 +85,8 @@ const StarMap = {
     this.refs.galaxyView.classList.remove("hidden");
     this.refs.crumbSys.textContent = "";
     this.refs.title.textContent = "GALACTIC CHART";
+    // The command dock floats over the chart — it's how you leave, so no ✕.
+    this.refs.btnClose.classList.add("hidden");
     this.renderGalaxy();
     this.startStars();
     clearInterval(this.galaxyTimer);
@@ -338,6 +340,7 @@ const StarMap = {
     this.stopStars();
     this.refs.galaxyView.classList.add("hidden");
     this.refs.systemView.classList.remove("hidden");
+    this.refs.btnClose.classList.remove("hidden");
     this.refs.crumbSys.textContent = " ▸ " + sys.name;
     this.refs.title.textContent = sys.name.toUpperCase();
     this.renderInfo(sys);

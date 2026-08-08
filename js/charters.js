@@ -256,6 +256,7 @@ const Charters = {
       const uids = this.shipUids(c);
       const ships = uids.map(u => Fleet.ship(u)).filter(Boolean);
       const bandLabel = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
+      const art = /^[aeiou]/i.test(bandLabel) ? "an" : "a"; // "an extreme charter"
       const names = ships.map(sh => sh.name);
       const report = {
         uid: c.id, title: `Charter — ${bandLabel}`, type: "charter",
@@ -276,7 +277,7 @@ const Charters = {
         c.deferred = true;
         report.success = false;
         report.deferred = true;
-        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
+        report.summary = `${names.join(", ")} returned from ${art} ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
       } else {
         c.resolved = true;
         // Each hull rolls the convoy chance — escorts lower that shared rate.
@@ -327,7 +328,7 @@ const Charters = {
             ? ` Impounded ${report.impounded.map(x => x.name).join(", ")}.` : "";
           const cutNote = frac < 1 - 1e-9
             ? ` Payout cut to ${Math.round(frac * 100)}% — cargo hulls missing.` : "";
-          report.summary = `${survivors.map(sh => sh.name).join(", ")} returned from a ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).${lostNote}${impNote}${cutNote}`;
+          report.summary = `${survivors.map(sh => sh.name).join(", ")} returned from ${art} ${bandLabel.toLowerCase()} charter (+${Util.credits(report.credits)}c).${lostNote}${impNote}${cutNote}`;
         }
       }
 
