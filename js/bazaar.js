@@ -642,6 +642,7 @@ const Bazaar = {
     if (!sh) return { ok: false, msg: "Ship not found." };
     if (sh.mercenary) return { ok: false, msg: "Mercenaries are rented, not owned." };
     if (sh.status !== "idle") return { ok: false, msg: "Ship is busy — recall it first." };
+    if (s.travel) return { ok: false, msg: "Fleet is in transit — dock before selling a hull." };
     const credits = this.shipSaleValue(sh);
     const soldGear = (sh.accessories || []).length;
     for (const itemUid of sh.accessories || []) delete s.items[itemUid];  // installed gear goes with the ship
@@ -970,9 +971,11 @@ const Bazaar = {
       const loc = Assets.gearLocation(itemUid);
       if (!loc) return { ok: false, msg: "Item isn't in a bay you can access." };
       const s = this.s();
-      if (loc !== "hold" && (s.travel || loc !== s.currentSystem))
+      // Bay-only economy: gear sells from the docked station bay, never the hold.
+      if (loc === "hold") return { ok: false, msg: "Move it to the station bay first — gear sells from the bay." };
+      if (s.travel || loc !== s.currentSystem)
         return { ok: false, msg: "Dock where the item is stored to sell it." };
-      Assets.withdraw(loc === "hold" ? "hold" : loc, "gear", itemUid);
+      Assets.withdraw(loc, "gear", itemUid);
     }
     const credits = Math.round(it.value * BAZAARCFG.itemResaleMult);
     this.s().credits += credits; delete this.s().items[itemUid];

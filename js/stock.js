@@ -129,6 +129,28 @@ const Stock = {
     return Math.max(0, base * pop * catMult * (1 + noise));
   },
 
+  // Estimated units consumed over the trailing 24h — the same deterministic
+  // demand() the local tick eats, summed over the last 24 hour indexes. An
+  // estimate either way: the server tick uses coarser demand, and famine hours
+  // consume less than demand. Cached per sector+hour so renders stay cheap.
+  _est24h: {},        // sectorId -> { hourIndex, byComm: { commId -> units } }
+  est24h(sectorId, commId, now = Date.now()) {
+    const ms = STOCKCFG.tickMs || 3600000;
+    const hourIndex = Math.floor(now / ms);
+    let cache = this._est24h[sectorId];
+    if (!cache || cache.hourIndex !== hourIndex)
+      cache = this._est24h[sectorId] = { hourIndex, byComm: {} };
+    if (cache.byComm[commId] != null) return cache.byComm[commId];
+    let sum = 0;
+    for (let h = hourIndex - 23; h <= hourIndex; h++)
+      sum += Math.floor(this.demand(sectorId, commId, h));
+    return cache.byComm[commId] = sum;
+  },
+  est24hHere(systemId, commId, now = Date.now()) {
+    const sid = this.sectorOf(systemId);
+    return sid ? this.est24h(sid, commId, now) : 0;
+  },
+
   npcOutputMult(sectorId, commId) {
     const r = Math.min(this.ratio(sectorId, commId), 1);
     return Util.clamp(1 + (1 - r) * STOCKCFG.npcOutputBoost, 1, STOCKCFG.npcOutputMultMax);

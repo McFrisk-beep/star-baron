@@ -58,4 +58,12 @@ Stock.take("core", "iron_ore", 200);
 assert.strictEqual(Stock.available("core", "iron_ore"), before - 200);
 assert.ok(Stock.scarcityMult("core", "iron_ore") > 1, "taking stock raises scarcity");
 
+// est24h (exchange Stock column): deterministic, cached, ≈ 24× hourly demand
+const e1 = Stock.est24h("core", "iron_ore", T);
+const e2 = Stock.est24h("core", "iron_ore", T);
+assert.strictEqual(e1, e2, "est24h is cached/deterministic within the hour");
+const hourly = Stock.demand("core", "iron_ore", Math.floor(T / STOCKCFG.tickMs));
+assert.ok(e1 >= 24 * Math.floor(hourly) * 0.5 && e1 <= 24 * (hourly + 1) * 1.5,
+  `est24h ${e1} out of band vs hourly ${hourly}`);
+
 console.log("OK check_stock_economy");
