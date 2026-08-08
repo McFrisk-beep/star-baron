@@ -514,7 +514,7 @@ Client side, `Stations.bayShared(systemId)` is the seam: a published station's f
 | **D4** | Cross-player auctions (open, bid, close) | `station_auctions.sql` |
 | **Trust** | Haul flight gate, no client wealth/standing bootstrap, release/deliver, cooldown-aware publish | `station_economy_trust.sql` (paste last; requires phase2 with station-mission skip) |
 
-**Paste order (stations):** `station_treasury.sql` → `station_contracts.sql` → `station_upkeep.sql` → `station_modules.sql` → `station_auctions.sql` → `station_economy_trust.sql`. Trust raises if `app_mission_resolve` lacks the `source = 'station'` skip — re-paste `phase2_missions_bazaar.sql` first if it errors.
+**Paste order (stations):** `station_treasury.sql` → `station_contracts.sql` → `station_upkeep.sql` → `station_modules.sql` → `station_auctions.sql` → `station_economy_trust.sql` → `station_soft_income.sql`. Trust raises if `app_mission_resolve` lacks the `source = 'station'` skip — re-paste `phase2_missions_bazaar.sql` first if it errors. Soft-income credits lessee bay keep + orphan tax into `positions`, and applies owner extractor quality in `after_hour`. For Settings → Restore backup (no-arg current-row RPC), also paste `docs/sql/restore_backup.sql`.
 
 Remaining client-side until later: revolt rolls, sentiment, bay produce keep.
 

@@ -618,6 +618,22 @@ const Cloud = {
   async resetSave() {
     return this.rpc("app_reset_save");
   },
+  // Settings → Restore backup: return the caller's current players.state.
+  // No client economy payload (docs/sql/restore_backup.sql). Corrupt-migrate
+  // never wiped the cloud row — the client overlays Workshop from the browser backup.
+  restoreMissing: false,
+  async restoreBackup() {
+    if (this.restoreMissing) return { ok: false, missing: true, error: "Restore backup RPC not live." };
+    try { return await this.rpc("app_restore_backup"); }
+    catch (e) {
+      if (this._isMissingRpc(e)) {
+        this.restoreMissing = true;
+        console.warn("[Cloud] app_restore_backup missing — run docs/sql/restore_backup.sql");
+        return { ok: false, missing: true, error: "Restore backup RPC not live." };
+      }
+      throw e;
+    }
+  },
   // Admin → Issue Global Reset: consume the shared world_reset epoch server-side
   // (docs/sql/reset_save.sql). The epoch is read from the table by the RPC, never
   // sent from here. Returns { ok, applied, epoch, state }.

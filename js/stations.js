@@ -19,6 +19,23 @@ const Stations = {
     return "player";
   },
 
+  // Phase 3 app_commit protects credits/positions — local mint then delete of an
+  // owed balance is a permanent wipe. Guests / pullMissing may still mint.
+  _softMintLocal() {
+    return !(window.Economy && !Economy.softIncomeLocal());
+  },
+
+  // Soft-mint cargo into positions (zero cost basis). No-op when the ledger
+  // would erase it — caller must leave the owed balance intact in that case.
+  _mintPositions(commId, qty) {
+    if (!this._softMintLocal() || !window.Game || !(qty > 0)) return false;
+    const s = Game.state;
+    const held = s.positions[commId] || 0;
+    s.positions[commId] = held + qty;
+    s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+    return true;
+  },
+
   tierOf(stationName) {
     if (!stationName) return "Berth";
     const parts = String(stationName).split(/\s+/);
@@ -330,7 +347,12 @@ const Stations = {
         let lessee = b.lesseeId || "";
         if (lessee && !b.npc && lessee === this.playerId() && this.accountId())
           lessee = this.accountId();
-        return { lesseeId: lessee, npc: !!b.npc };
+        // Owner-staffed bays publish extractorId so after_hour can apply quality
+        // (server validates against players.extractors — never trusts yield alone).
+        const row = { lesseeId: lessee, npc: !!b.npc };
+        if (lessee && this.accountId() && lessee === this.accountId() && b.extractorId)
+          row.extractorId = String(b.extractorId).slice(0, 40);
+        return row;
       }),
     }));
     try {
@@ -536,11 +558,11 @@ const Stations = {
         if (st && this.ownerHeld(st) && this._mine(st)) {
           this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
           cargo += qty;
-        } else {
-          const s = Game.state;
-          const held = s.positions[commId] || 0;
-          s.positions[commId] = held + qty;
-          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+        } else if (res.positions || row.toPositions) {
+          // Orphan tax credited into positions by the soft-income settle paste.
+          cargo += qty;
+        } else if (this._mintPositions(commId, qty)) {
+          // D1 holds response without soft-income positions — guest / pullMissing.
           cargo += qty;
         }
       }
@@ -556,17 +578,22 @@ const Stations = {
           st.hold[commId] = (st.hold[commId] | 0) + qty;
           this._ledger(st, 0, "lease_tax", `${qty}× ${commId}`);
           cargo += qty;
-        } else {
-          // Lost the station since the tax was queued — residual follows us out.
-          const s = Game.state;
-          const held = s.positions[commId] || 0;
-          s.positions[commId] = held + qty;
-          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + qty) : 0;
+        } else if (this._mintPositions(commId, qty)) {
+          // Pre-D1 settle: tax follows us out as cargo (guest / pullMissing).
+          if (window.Assets) Assets.reconcileFromPositions(Game.state.currentSystem);
           cargo += qty;
         }
       }
     }
-    if (credits || tariffs || items || cargo) {
+    // Authoritative cargo into the wallet ledger (orphan tax). Must file the
+    // delta into the hauling bay — a bare positions write is wiped by the next
+    // Assets.reconcile() on buy/sell/transfer (HAULING.md §4).
+    if (res.positions && typeof res.positions === "object" && window.Game) {
+      Game.state.positions = res.positions;
+      if (res.avgCost && typeof res.avgCost === "object") Game.state.avgCost = res.avgCost;
+      if (window.Assets) Assets.reconcileFromPositions(Game.state.currentSystem);
+    }
+    if (credits || tariffs || items || cargo || res.positions) {
       if (window.Economy) Economy.refreshNetWorth();
       if (window.Game) Game.requestSave();
     }
@@ -865,7 +892,7 @@ const Stations = {
         } else delete st.modules[moduleId];
         if ((st.modules.production_hub | 0) < 2) delete st.modules.refinery;
         if (res.credits != null) Game.state.credits = +res.credits;
-        else Game.state.credits += refund;
+        else if (this._softMintLocal()) Game.state.credits += refund;
         st.status = "refit";
         st.refitUntil = Date.now() + STATIONCFG.refitMs;
         this._ledger(st, res.refund || refund, "uninstall", `${def.name} refund`);
@@ -1476,7 +1503,10 @@ const Stations = {
   },
 
   // Claim any pending sale proceeds (multiplayer / identity handoff).
+  // Shared halls pay via settleHall → res.credits; don't consume a local queue
+  // entry under Phase 3 or app_commit erases the mint and the claim is gone.
   claimHallPayouts() {
+    if (!this._softMintLocal()) return { ok: true, amount: 0 };
     const stList = this.list();
     const pid = this.playerId();
     let got = 0;
@@ -2314,21 +2344,20 @@ const Stations = {
   },
 
   // Credit leased keep-cargo parked while the lessee was offline / remote.
-  // Guest-local only — on a shared floor the lessee mints keep themselves.
+  // Guest-local only — under Phase 3 leave the bag intact (app_commit would
+  // erase a positions mint and the claim is already spent).
   claimPendingCargo(systemId) {
     const st = this.get(systemId);
     if (!st || !st.pendingCargo) return { ok: true, claimed: {} };
+    if (!this._softMintLocal()) return { ok: true, claimed: {} };
     const pid = this.playerId();
     const bag = st.pendingCargo[pid];
     if (!bag || typeof bag !== "object") return { ok: true, claimed: {} };
-    const s = Game.state;
     const claimed = {};
     for (const [commId, qty] of Object.entries(bag)) {
       const n = Math.floor(+qty || 0);
       if (n <= 0) continue;
-      const held = s.positions[commId] || 0;
-      s.positions[commId] = held + n;
-      s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + n) : 0;
+      if (!this._mintPositions(commId, n)) continue;
       if (window.Assets) Assets.parkBlocks(systemId, commId, n);
       claimed[commId] = n;
     }
@@ -2475,14 +2504,29 @@ const Stations = {
         }
         const keep = Math.max(0, Math.min(300, Math.floor(+(res.keep) || 0)));
         const commId = COMMODITIES.some(c => c.id === res.commId) ? res.commId : v.prodComm;
-        if (keep > 0 && window.Game) {
-          const s = Game.state;
-          const held = s.positions[commId] || 0;
-          s.positions[commId] = held + keep;
-          s.avgCost[commId] = held > 0 ? ((s.avgCost[commId] || 0) * held) / (held + keep) : 0;
+        // Prefer server-credited positions (bay_produce paste). Soft-mint only
+        // when the ledger allows it — never mint then lose it on app_commit.
+        let landed = false;
+        if (res.positions && typeof res.positions === "object" && window.Game) {
+          Game.state.positions = res.positions;
+          if (res.avgCost && typeof res.avgCost === "object") Game.state.avgCost = res.avgCost;
+          if (keep > 0 && window.Assets) Assets.parkBlocks(sid, commId, keep);
+          total += keep;
+          landed = true;
+        } else if (keep > 0 && this._mintPositions(commId, keep)) {
           if (window.Assets) Assets.parkBlocks(sid, commId, keep);
+          total += keep;
+          landed = true;
         }
-        total += keep;
+        // Only clear the bag when keep actually landed — a Phase 3 floor without
+        // the soft-income paste must not erase the only record of owed cargo.
+        if (landed) {
+          const local = this.get(sid);
+          if (local && local.pendingCargo) {
+            delete local.pendingCargo[this.playerId()];
+            if (this.accountId()) delete local.pendingCargo[this.accountId()];
+          }
+        }
       }
       if (!Object.keys(slots).length) delete this.remoteLeases[sid];
     }
@@ -2534,7 +2578,8 @@ const Stations = {
     if (window.Extractors && !Extractors.canProduce(ex, st.prodComm) && !bay.npc) return 0;
     const yMult = window.Extractors ? Extractors.yieldMult(ex) : 1;
     const bon = window.Extractors ? Extractors.bonuses(ex) : { rate: 1 };
-    let gross = Math.round(perBay * yMult * bon.rate);
+    // floor — matches docs/sql/station_soft_income.sql after_hour bay_out.
+    let gross = Math.floor(perBay * yMult * bon.rate);
     if ((st.standing | 0) < 20) gross = Math.floor(gross / 2); // general strike
     return Math.max(0, gross);
   },
@@ -2562,6 +2607,12 @@ const Stations = {
     let ownerStaffed = 0;
     const pid = this.playerId();
     const shared = this.bayShared(st.systemId);
+    // Phase D after_hour owns hold — local increments would double-count
+    // (and a multi-hour catch-up multiplies against one server hour).
+    // ponytail: Stock.tick coalesces remote after_hour to the final catch-up
+    // hour, so a 48h offline gap yields ~1 server hour of hub output, not 48.
+    // Exact multi-hour server catch-up belongs in after_hour / a pull RPC.
+    const serverHold = this.upkeepShared(st.systemId);
     for (const bay of st.bays) {
       if (!bay.lesseeId) continue;
       // Shared floor: foreign lessees report their own cycle + tax RPC.
@@ -2574,25 +2625,31 @@ const Stations = {
         && st.ownerId === pid;
       if (isOwner) {
         ownerStaffed++;
-        st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
+        if (!serverHold) st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + gross;
         continue;
       }
       const taxQty = Math.floor(gross * taxBps / 10000);
       const keep = gross - taxQty;
-      if (taxQty > 0) {
+      if (taxQty > 0 && !serverHold) {
         st.hold[st.prodComm] = (st.hold[st.prodComm] | 0) + taxQty;
       }
       if (keep <= 0) continue;
       if (bay.npc) continue; // NPC keeps residual off-map
-      if (bay.lesseeId === pid && window.Game) {
-        const s = Game.state;
-        const held = s.positions[st.prodComm] || 0;
-        s.positions[st.prodComm] = held + keep;
-        // Soft income at zero cost basis (same as industry minting).
-        s.avgCost[st.prodComm] = held > 0 ? ((s.avgCost[st.prodComm] || 0) * held) / (held + keep) : 0;
-        if (window.Assets) Assets.parkBlocks(st.systemId, st.prodComm, keep);
-      } else {
-        // Remote / third-party lessee (guest-local) — park keep until they claim.
+      if (bay.lesseeId === pid || (this.accountId() && bay.lesseeId === this.accountId())) {
+        // Soft-mint keep when the ledger allows it.
+        if (window.Game && this._mintPositions(st.prodComm, keep)) {
+          if (window.Assets) Assets.parkBlocks(st.systemId, st.prodComm, keep);
+        } else if (!shared && !(this.remoteLeases && this.remoteLeases[st.systemId])) {
+          // Guest-local only. Shared / remoteLeases floors credit keep via
+          // produceRemoteLeases — parking here duplicates that payout, and a
+          // multi-hour catch-up multiplies the phantom bag before the RPC runs.
+          if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
+          const bag = st.pendingCargo[pid] || (st.pendingCargo[pid] = {});
+          bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;
+        }
+      } else if (!shared) {
+        // Guest-local third-party lessee — park keep until they claim.
+        // Shared floors: the lessee mints themselves; don't accrue a ghost bag.
         if (!st.pendingCargo || typeof st.pendingCargo !== "object") st.pendingCargo = {};
         const bag = st.pendingCargo[bay.lesseeId] || (st.pendingCargo[bay.lesseeId] = {});
         bag[st.prodComm] = (bag[st.prodComm] | 0) + keep;
@@ -2602,9 +2659,8 @@ const Stations = {
     const staffFactor = Math.max(0.35, ownerStaffed / Math.max(1, st.bays.length));
     st.expected = Math.round(STATIONCFG.expectedDeliveryBase * hub
       * (1 + this.tierInfo(st.tier).rank * 0.15) * staffFactor);
-    // Shared hold grows in app_station_after_hour (server-derived baseline).
-    // Local hold still updates above for the Stations tab; after_hour sync
-    // replaces it. No client deposit — that was a mint vector.
+    // Shared hold grows in app_station_after_hour; local hold updates above
+    // only when that RPC isn't live. No client deposit — that was a mint vector.
     return total;
   },
 
@@ -2683,7 +2739,7 @@ const Stations = {
       if (!res || !res.ok) return { ok: false, msg: (res && res.error) || "Withdraw refused." };
       st.treasury = Math.max(0, Math.floor(+res.treasury || 0));
       if (res.credits != null) Game.state.credits = +res.credits;
-      else Game.state.credits += amount;
+      else if (this._softMintLocal()) Game.state.credits += amount;
       this._ledger(st, -amount, "withdraw", "treasury");
       if (window.Economy) Economy.refreshNetWorth();
       if (window.Game) Game.requestSave();
@@ -2813,6 +2869,9 @@ const Stations = {
       // Guest mode: only one real player; treat other bidders as NPC (credits burned/sunk).
       // If somehow same save: refund into credits when highBidder === "player" handled below.
       if (auc.highBidder === "player" || auc.highBidder === this.playerId()) {
+        // Phase 3 would erase a credit mint — refuse rather than consume the escrow.
+        if (!this._softMintLocal())
+          return { ok: false, msg: "Auction refunds need the server ledger (docs/sql/station_auctions.sql)." };
         s.credits += auc.highBid;
       }
     } else if (auc.highBidder === pid) {
@@ -2950,6 +3009,11 @@ const Stations = {
       }
     }
 
+    // Local cash-out: under Phase 3 a credit mint is erased by app_commit, so
+    // refuse rather than zero the treasury/hold and strand the wealth.
+    if (!this._softMintLocal()) {
+      return { ok: false, msg: "Relinquish payout needs the station treasury RPC (docs/sql/station_treasury.sql)." };
+    }
     const treasury = st.treasury | 0;
     const holdCredits = this.holdValue(st);
     if (treasury > 0) {
@@ -3068,6 +3132,8 @@ const Stations = {
         continue;
       }
       if (st.status === "cooldown") continue;
+      // Phase 4 shelf is server-cron — don't fight it with local NPC puts.
+      if (window.Stock && Stock.authoritative && Stock.authoritative()) continue;
       const basket = this._npcBasket(st, hourIndex);
       for (const c of basket) {
         const rarity = c.rarity || "common";
@@ -3086,7 +3152,10 @@ const Stations = {
   },
 
   // ---- Standing / revolt (after stock hour) ------------------------------
-  afterStockHour(hourIndex) {
+  // opts.remote === false: local standing/hall/haul only — skip the RPC chain
+  // (used during multi-hour Stock catch-up so only the final hour hits the server).
+  afterStockHour(hourIndex, opts) {
+    const remote = !(opts && opts.remote === false);
     const now = Date.now();
     if (!this.auctionsShared()) {
       for (const id of Object.keys(this.auctions)) this._closeAuction(id, now);
@@ -3185,6 +3254,7 @@ const Stations = {
       this._warnStages(st, sentiment);
       this._maybeRevolt(st, sentiment, hourIndex);
     }
+    if (!remote) return;
     // Hourly: server upkeep/auctions, refresh directory, leases, settle.
     let chain = Promise.resolve();
     if (upkeepReports.length && window.Cloud && Cloud.treasuryReady && Cloud.treasuryReady()) {

@@ -41,9 +41,14 @@ Ship the build that routes signed-in trades through `Cloud.rpc('app_*')`
 
 ### Required for the two wipes — Reset Save + Global Reset
 
-New query → paste [`docs/sql/reset_save.sql`](sql/reset_save.sql) → **Run**.
-It creates `app_reset_save()` (Settings → Reset Save) and
+New query → paste [`docs/sql/reset_save.sql`](sql/reset_save.sql) → **Run**,
+then [`docs/sql/restore_backup.sql`](sql/restore_backup.sql) → **Run**.
+`reset_save.sql` creates `app_reset_save()` (Settings → Reset Save) and
 `app_world_reset_apply()` (Admin → Issue Global Reset).
+`restore_backup.sql` creates no-arg `app_restore_backup()` so Settings →
+Restore backup adopts the current server ledger (corrupt-migrate never wiped
+it) and overlays Workshop / recipes from the browser backup — never client
+credits / ships / positions.
 
 `app_commit` deliberately protects credits / positions / ships / items /
 prestige, so **no client-side wipe can reach `players.state`** — both resets

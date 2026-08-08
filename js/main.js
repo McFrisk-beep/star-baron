@@ -393,8 +393,10 @@ const Game = {
       priceBefore: Object.fromEntries(COMMODITIES.map(c => [c.id, Market.price(c.id)])),
       indBefore: this.state.industries.map(i => ({ id: i.id, systemId: i.systemId, planetIdx: i.planetIdx })) };
     if (elapsed > CONFIG.marketTickMs) Market.advance(elapsed, now);
-    // Phase 4: signed-in shelf is server-owned — skip local Stock.advance.
-    if (window.Stock && !(window.Economy && Economy.authoritative())) Stock.advance(elapsed, now);
+    // Stock.tick skips shelf mutations when authoritative but still runs the
+    // station hour (afterStockHour / owned-hub produce). Always advance here
+    // under _booting so offline strike/revolt toasts don't fire as live chatter.
+    if (window.Stock) Stock.advance(elapsed, now);
     if (window.Stations) Stations.tick(now);
     const arrival = Economy.checkArrival(now);
     away.customs = (arrival && arrival.customs) || null;   // contraband seized at the gate while away
@@ -1130,7 +1132,7 @@ const Game = {
       if (this._knownRecipeId(id, recipeIds) && !s.craftedOnce.includes(id)) { s.craftedOnce.push(id); added++; }
     }
     if (!added) return { ok: false, msg: "Backup has nothing missing from this save." };
-    if (window.Economy) Economy.refreshNetWorth();
+    try { if (window.Economy) Economy.refreshNetWorth(); } catch (_) { /* harness / partial boot */ }
     // Persist via Store.save, which still no-ops the cloud side while
     // _cloudReady is false. Do NOT lift that gate or flush — merging into a
     // defaultState() boot and uploading would destroy server credits / story /
@@ -1162,15 +1164,53 @@ const Game = {
     // server (app_craft_adopt keeps its own 3-call budget, so this can't loop).
     delete next.workshopAdopt;
     this._noSave = false;
-    Store.localSave(Store._stampOwner(next));
     // Only re-open cloud writes when WE gated them for a corrupt-save reset.
     // Never clear a failed-cloud-load gate (unknown remote must stay protected).
-    // Flush the migrated backup (not defaultState) so client-owned slices sync;
-    // app_commit still rejects credit increases.
+    // Economy comes from the current cloud row (corrupt-migrate never wiped it)
+    // — never from the client blob.
     if (this._corruptSaveReset) {
       Store._cloudReady = true;
-      try { await Store.flush(next); } catch (e) { /* best-effort */ }
+      if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady && Cloud.restoreBackup) {
+        try {
+          const r = await Cloud.restoreBackup();
+          if (r && r.missing) {
+            // Keep the wipe gated — next autosave must not app_commit 1500c over the ledger.
+            Store._cloudReady = false;
+            console.warn("[Game] app_restore_backup missing — apply docs/sql/restore_backup.sql.");
+            return { ok: false, msg: "Cloud restore isn't live yet — apply docs/sql/restore_backup.sql, then try again. Your backup is still in this browser." };
+          }
+          if (!(r && r.ok)) {
+            Store._cloudReady = false;
+            console.warn("[Game] app_restore_backup:", (r && r.error) || r);
+            return { ok: false, msg: (r && r.error) || "Couldn't restore the cloud save." };
+          }
+          // Adopt server economy; overlay Workshop / recipes from the browser backup.
+          // Economy stays on the server row even if the workshop overlay throws.
+          if (r.state) {
+            try {
+              const server = this.migrate(this._cloneSave(r.state));
+              server.market = next.market;
+              server.galaxy = next.galaxy;
+              server.lastSeenAt = next.lastSeenAt;
+              delete server.workshopAdopt;
+              next = server;
+              this.state = server;
+              try { this.mergeCorruptClientSlices(bak); next = this.state; }
+              catch (e) { console.warn("[Game] workshop overlay from backup failed:", e); }
+            } catch (e) {
+              console.warn("[Game] adopt server restore state failed:", e);
+            }
+          }
+        } catch (e) {
+          Store._cloudReady = false;
+          console.warn("[Game] restore backup RPC failed:", e);
+          return { ok: false, msg: "Couldn't reach the cloud save to restore credits and ships." };
+        }
+      } else {
+        try { await Store.flush(next); } catch (e) { /* best-effort guest / legacy */ }
+      }
     }
+    Store.localSave(Store._stampOwner(next));
     location.reload();
     return { ok: true };
   },

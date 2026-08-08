@@ -110,4 +110,35 @@ assert.ok(trustSql.includes("double escrow"),
 assert.ok(phase2Sql.includes("m->>'source' = 'station'"),
   "phase2_missions_bazaar.sql must skip source=station in app_mission_resolve");
 
-console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust ✔`);
+const softSql = fs.readFileSync(path.join(root, "docs/sql/station_soft_income.sql"), "utf8");
+assert.ok(softSql.includes("app._credit_positions"),
+  "station_soft_income.sql must credit positions for bay keep / orphan tax");
+assert.ok(softSql.includes("app._extractor_yield_mult"),
+  "station_soft_income.sql after_hour must apply extractor quality");
+assert.ok(softSql.includes("toPositions") || softSql.includes("_credit_positions"),
+  "station_soft_income.sql settle must handle orphan bay tax");
+assert.ok(pubT.includes("extractorid"),
+  "station_economy_trust.sql publish must carry owner extractorId for after_hour");
+
+const restoreSql = fs.readFileSync(path.join(root, "docs/sql/restore_backup.sql"), "utf8");
+assert.ok(restoreSql.includes("app_restore_backup"),
+  "restore_backup.sql must define app_restore_backup");
+assert.ok(/drop function if exists public\.app_restore_backup\s*\(\s*jsonb\s*\)/i.test(restoreSql),
+  "restore_backup.sql must drop the old client-payload signature");
+assert.ok(/create or replace function public\.app_restore_backup\s*\(\s*\)/i.test(restoreSql),
+  "app_restore_backup must take no economy payload");
+assert.ok(!/app_restore_backup\s*\(\s*p_state/i.test(restoreSql),
+  "app_restore_backup must not accept client economy values");
+assert.ok(!/create or replace function public\.app_reset_save/i.test(restoreSql),
+  "restore_backup.sql must not redefine app_reset_save (single owner in reset_save.sql)");
+assert.ok(/drop column if exists restore_snapshot/i.test(restoreSql),
+  "restore_backup.sql must drop leftover restore_snapshot from earlier drafts");
+assert.ok(!/['"]restored['"]/.test(restoreSql),
+  "app_restore_backup must not return a dead restored field");
+assert.ok(/reset_save\.sql\s*→\s*this file|Paste order:.*reset_save\.sql/i.test(restoreSql),
+  "restore_backup.sql paste order must match PHASE1_SETUP (reset_save first)");
+const resetSql = fs.readFileSync(path.join(root, "docs/sql/reset_save.sql"), "utf8");
+assert.ok(!resetSql.includes("restore_snapshot"),
+  "reset_save.sql must not maintain an unreachable restore_snapshot");
+
+console.log(`check_sql_patch_sync: ${FNS.length} synced fns + app_station_publish + economy_trust + soft_income ✔`);

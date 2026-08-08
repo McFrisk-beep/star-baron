@@ -46,7 +46,7 @@ sandbox.Galaxy = {
 };
 sandbox.Market = {
   init() {}, hydrate() {}, serialize: () => ({ wipedSession: true }), advance() {},
-  effects: [], localEffects: [], volMult: 1, price: () => 10, stocks: () => true,
+  effects: [], localEffects: [], volMult: 1, price: () => 10, spot: () => 10, stocks: () => true,
 };
 sandbox.Bus = { on() {}, emit() {} };
 
@@ -160,12 +160,23 @@ function plantBackup(extra = {}) {
   assert(Game.state.workshop.queue.every(j => j.id !== "ckZero"), "readyAt < startedAt jobs dropped");
   assert(Store._cloudReady === false, "sanitize-path merge still leaves cloud gated");
 
-  // --- full restore: market/galaxy from backup, not live session ---
+  // --- full restore: economy from server snapshot/row; workshop from browser backup ---
   cloudSaved.length = 0;
   reloads = 0;
+  const restoredRpc = [];
   Game.state = Game.defaultState();
   Game._corruptSaveReset = true;
   Store._cloudReady = false;
+  sandbox.Cloud.playersReady = true;
+  sandbox.Cloud.restoreMissing = false;
+  sandbox.Cloud.restoreBackup = async (...args) => {
+    restoredRpc.push({ called: true, args: args.length });
+    // Corrupt-migrate never wiped the cloud row — RPC returns it unchanged.
+    const server = Game.defaultState();
+    server.credits = 50_000;
+    server.positions = { iron_ore: 10 };
+    return { ok: true, state: server };
+  };
   plantBackup();
   const rr = await Game.restoreCorruptBackup();
   assert(rr.ok, "full restore ok");
@@ -174,18 +185,59 @@ function plantBackup(extra = {}) {
   assert(saved.market && saved.market.fromBackup === true, "full restore keeps backup market");
   assert(saved.galaxy && saved.galaxy.news && saved.galaxy.news[0] === "from-backup", "full restore keeps backup galaxy");
   assert(!(saved.market && saved.market.wipedSession), "full restore did not snapshot live Market");
-  assert(cloudSaved.length === 1, "corrupt-save reset may flush migrated backup once");
-  assert(cloudSaved[0].credits === 9000, "flushed backup is the migrated save, not 1500c default");
+  assert(restoredRpc.length === 1, "corrupt-save reset calls app_restore_backup");
+  assert(restoredRpc[0].args === 0, "restore RPC takes no client economy payload");
+  assert(saved.credits === 50_000, "economy comes from the server row, not the browser backup");
+  assert(saved.items && saved.items.i99, "workshop items overlaid from the browser backup");
+  assert(saved.knownRecipes && saved.knownRecipes.includes("ex_jack"), "blueprints overlaid from backup");
+
+  // Missing RPC must not silently reload into a half-restored cloud row,
+  // and must re-close cloud writes so autosave can't app_commit the wiped 1500c.
+  restoredRpc.length = 0;
+  reloads = 0;
+  Game._corruptSaveReset = true;
+  Store._cloudReady = false;
+  sandbox.Cloud.restoreBackup = async () => ({ ok: false, missing: true, error: "Restore backup RPC not live." });
+  plantBackup();
+  const missing = await Game.restoreCorruptBackup();
+  assert(!missing.ok && /restore_backup\.sql/i.test(missing.msg || ""), "missing RPC refuses restore");
+  assert(reloads === 0, "missing RPC does not reload");
+  assert(Store._cloudReady === false, "missing RPC re-closes the cloud write gate");
+
+  // Null / failed RPC likewise refuses instead of reloading.
+  reloads = 0;
+  Store._cloudReady = false;
+  Game._corruptSaveReset = true;
+  sandbox.Cloud.restoreBackup = async () => null;
+  const nulled = await Game.restoreCorruptBackup();
+  assert(!nulled.ok, "null RPC refuses restore");
+  assert(reloads === 0, "null RPC does not reload");
+  assert(Store._cloudReady === false, "null RPC re-closes the cloud write gate");
+
+  // Thrown RPC also keeps the wipe gated.
+  reloads = 0;
+  Store._cloudReady = false;
+  Game._corruptSaveReset = true;
+  sandbox.Cloud.restoreBackup = async () => { throw new Error("network down"); };
+  const thrown = await Game.restoreCorruptBackup();
+  assert(!thrown.ok, "thrown RPC refuses restore");
+  assert(reloads === 0, "thrown RPC does not reload");
+  assert(Store._cloudReady === false, "thrown RPC re-closes the cloud write gate");
 
   // Full restore must NOT lift a failed-cloud-load gate.
   cloudSaved.length = 0;
   reloads = 0;
   Game._corruptSaveReset = false;
   Store._cloudReady = false;
+  sandbox.Cloud.restoreBackup = async () => {
+    restoredRpc.push({ called: true });
+    return { ok: true, state: Game.defaultState() };
+  };
   plantBackup();
   await Game.restoreCorruptBackup();
   assert(Store._cloudReady === false, "full restore leaves failed-load gate closed");
   assert(cloudSaved.length === 0, "full restore does not flush when not a corrupt-save reset");
+  assert(restoredRpc.length === 0, "non-corrupt-reset path does not call restore RPC");
 
   // Migrate-fail message points at the fix, not "too damaged".
   Game.migrate = () => { throw new Error("still broken"); };

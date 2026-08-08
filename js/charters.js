@@ -6,14 +6,15 @@
    Cancelling early costs credits; after bailoutAt the sponsor buys the ship out.
    Replaces automated trade routes (routes.js retired).
 
-   ponytail: Phase 3 has no charter RPCs yet — resolve/mint stays behind
-   Economy.softIncomeLocal() like the old routes. Add app_charter_* when the
-   ledger needs to own these payouts.                                          */
+   ponytail: Phase 3 has no charter RPCs yet — resolve frees hulls and flags
+   deferred (row kept) behind Economy.softIncomeLocal(). Add app_charter_* to
+   pay the deferred rows.                                                      */
 
 const Charters = {
   s() { return window.Game.state; },
   list() { return this.s().charters || (this.s().charters = []); },
-  active() { return this.list().filter(c => !c.resolved); },
+  // deferred = hulls freed under Phase 3, row kept for a later app_charter_* pay.
+  active() { return this.list().filter(c => !c.resolved && !c.deferred); },
   ofShip(uid) { return this.active().find(c => this.shipUids(c).includes(uid)) || null; },
 
   // Prefer shipUids[]; legacy single-ship rows keep shipUid.
@@ -236,14 +237,15 @@ const Charters = {
 
   // Resolve matured charters. Returns reports (also pushed to state.reports).
   resolve(now = Date.now()) {
-    // Phase 3 live: server ledger owns soft income — don't mint (or free the
-    // hull) until app_charter_* exists. Guests / pullMissing fall through.
-    if (window.Economy && !Economy.softIncomeLocal()) return [];
+    // Phase 3 live: app_commit owns ships/credits and app_charter_* isn't
+    // pasted yet — still free hulls on the timer so dispatch isn't a soft-lock.
+    // Skip credit mint, attrition, and damage (they'd bounce on the next commit).
+    // Keep the row as deferred so a later ledger RPC still has something to pay.
+    const mint = !(window.Economy && !Economy.softIncomeLocal());
     const s = this.s();
     const out = [];
     for (const c of this.list()) {
-      if (c.resolved || now < c.startedAt + c.durationMs) continue;
-      c.resolved = true;
+      if (c.resolved || c.deferred || now < c.startedAt + c.durationMs) continue;
       const uids = this.shipUids(c);
       const ships = uids.map(u => Fleet.ship(u)).filter(Boolean);
       const bandLabel = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
@@ -256,9 +258,17 @@ const Charters = {
       };
 
       if (!ships.length) {
+        c.resolved = true;
         report.success = false;
         report.summary = "Charter closed — hulls already gone.";
+      } else if (!mint) {
+        // Hulls now, ledger later — flag deferred; don't resolve/drop the row.
+        for (const sh of ships) if (sh.status === "charter") sh.status = "idle";
+        c.deferred = true;
+        report.success = false;
+        report.summary = `${names.join(", ")} returned from a ${bandLabel.toLowerCase()} charter — payout deferred until the charter ledger is live.`;
       } else {
+        c.resolved = true;
         // Each hull rolls the convoy chance — escorts lower that shared rate.
         const survivors = [];
         for (const sh of ships) {
@@ -319,7 +329,7 @@ const Charters = {
     if (out.length) {
       s.charters = this.list().filter(c => !c.resolved);
       Economy.refreshNetWorth();
-      Economy.checkAchievements();
+      if (mint) Economy.checkAchievements();
     }
     return out;
   },

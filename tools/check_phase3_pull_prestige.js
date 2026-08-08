@@ -118,7 +118,10 @@ ctx.Extractors = ctx.Extractors || {
   assert(d2.ok);
   T += 3600000;
   const rSkip = Charters.resolve(T);
-  assert.strictEqual(rSkip.length, 0, "auth+pullReady skips local charter banking");
+  // Free hulls on the timer (no app_charter_* yet) but never mint credits.
+  assert.strictEqual(rSkip.length, 1, "auth+pullReady still frees matured charter hulls");
+  assert.strictEqual(rSkip[0].credits, 0, "no local charter payout under Phase 3");
+  assert.strictEqual(sh2.status, "idle", "chartered hull unlocked");
   assert.strictEqual(ctx.Game.state.credits, before, "credits unchanged by local resolve");
   assert.strictEqual(Industries.resolve(T).length, 0);
   assert.strictEqual(Expeditions.resolve(T).length, 0);
@@ -147,10 +150,19 @@ ctx.Extractors = ctx.Extractors || {
   ctx.Game.state.ships.push(sh3, Object.assign(Fleet.makeShip("mule"), { status: "idle" }));
   Charters.dispatch(sh3.uid, "safe", 60, T);
   T += 3600000;
-  assert.strictEqual(Charters.resolve(T).length, 0, "auth without pullReady skips local mint");
+  const gated = Charters.resolve(T);
+  assert.strictEqual(gated.length, 1, "auth without pullReady still frees hulls");
+  assert.strictEqual(gated[0].credits, 0, "auth without pullReady skips local mint");
+  assert.strictEqual(ctx.Game.state.credits, fresh().credits, "credits unchanged while pull retries");
+  // Dispatch another under pullMissing (Phase 2 fallback allows mint)
   ctx.Cloud.pullMissing = true;
+  const sh3b = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
+  ctx.Game.state.ships.push(sh3b);
+  Charters.dispatch(sh3b.uid, "safe", 60, T);
+  T += 3600000;
   const local = Charters.resolve(T);
   assert.strictEqual(local.length, 1, "pullMissing Phase 2 fallback allowed");
+  assert.ok(local[0].credits > 0, "pullMissing still pays charter credits");
 
   // 6) Charter reconcile restores status after a server ship slice
   ctx.Cloud.pullReady = true;
