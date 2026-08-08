@@ -183,8 +183,12 @@ const Economy = {
     if (r.components) s.components = r.components;
     // Workshop queue/upgrades are server-owned once docs/sql/workshop_craft.sql
     // is applied; knownRecipes/craftedOnce still come back so a burned unique
-    // blueprint sticks after a claim.
-    if (r.workshop) s.workshop = r.workshop;
+    // blueprint sticks after a claim. Scrub ids already claimed this session so
+    // a stale commit/pull can't re-queue a finish and mint forever.
+    if (r.workshop) {
+      s.workshop = r.workshop;
+      if (window.Workshop) Workshop.scrubQueue(s.workshop);
+    }
     if (r.knownRecipes) s.knownRecipes = r.knownRecipes;
     if (r.craftedOnce) s.craftedOnce = r.craftedOnce;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
@@ -298,7 +302,12 @@ const Economy = {
     if (st.components) s.components = st.components;
     // app_commit forces the workshop slice from the server row, so the queue the
     // client just sent is echoed back authoritative (a forged job is gone here).
-    if (st.workshop) s.workshop = st.workshop;
+    // Scrub session-claimed ids — a commit that locked before app_craft_claim
+    // can otherwise put a just-finished job back on the slips.
+    if (st.workshop) {
+      s.workshop = st.workshop;
+      if (window.Workshop) Workshop.scrubQueue(s.workshop);
+    }
     if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
     if (st.stats) {
       if (st.stats.peakNetWorth != null) s.stats.peakNetWorth = st.stats.peakNetWorth;

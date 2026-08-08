@@ -680,6 +680,8 @@ declare
   sh jsonb;
   scope_cat text;
   label text;
+  uid text;
+  already boolean;
 begin
   st := app._lock_state(now_ms);
   if st is null then
@@ -709,30 +711,47 @@ begin
       continue;
     end if;
     n := n + 1;
-    seq := seq + 1;
     label := recipe->>'name';
+    -- Deterministic uid from job id so a retried claim (stale app_commit putting
+    -- the finished job back on the queue) upserts the same row instead of minting
+    -- another Mechan Mk.III Plating every tick.
+    uid := 'craft-' || coalesce(nullif(job->>'id', ''), 'x' || n);
 
     if recipe->>'outputType' = 'gear' then
-      it := app.gen_craft_gear('i' || seq, job->>'id',
+      already := items ? uid;
+      it := app.gen_craft_gear(uid, job->>'id',
                                recipe->'output'->>'kind', recipe->'output'->>'rarity');
       items := jsonb_set(items, array[it->>'uid'], it, true);
       label := it->>'name';
+      if already then continue; end if;   -- drop job, do not re-announce
     elsif recipe->>'outputType' = 'blackbox' then
-      it := app.gen_craft_blackbox('i' || seq, recipe->'output'->>'effectId');
+      already := items ? uid;
+      it := app.gen_craft_blackbox(uid, recipe->'output'->>'effectId');
       if it is not null then
         items := jsonb_set(items, array[it->>'uid'], it, true);
         label := it->>'name';
       end if;
+      if already then continue; end if;
     elsif recipe->>'outputType' = 'extractor' then
+      already := extractors ? uid;
       select f.v->>'scopeCat' into scope_cat
         from jsonb_array_elements(coalesce(recipe->'flavor', '[]'::jsonb)) as f(v)
        where f.v->>'id' = job->>'flavorId' limit 1;
-      ex := app.gen_craft_extractor('ex' || seq, job->>'id',
+      ex := app.gen_craft_extractor(uid, job->>'id',
                                     recipe->'output'->>'extractorType',
                                     recipe->'output'->>'scope', scope_cat);
       extractors := jsonb_set(extractors, array[ex->>'uid'], ex, true);
       label := ex->>'name';
+      if already then continue; end if;
     elsif recipe->>'outputType' = 'ship' then
+      -- Ships keep seq-based uids (make_ship); idempotent on hull already present
+      -- for unique recipes, otherwise a re-queued job can still add another hull.
+      if (recipe->>'unique')::boolean and exists (
+        select 1 from jsonb_array_elements(ships) as s2(v)
+         where s2.v->>'type' = recipe->'output'->>'shipType') then
+        continue;
+      end if;
+      seq := seq + 1;
       sh := app.make_ship(seq, recipe->'output'->>'shipType', null, false, null);
       if sh is null then
         -- Hull missing from app.ship_def (re-apply phase2_missions_bazaar.sql).
@@ -740,6 +759,7 @@ begin
         -- so a silent drop would destroy them. It builds once the def exists.
         keep := keep || jsonb_build_array(job);
         n := n - 1;
+        seq := seq - 1;
         continue;
       end if;
       ships := ships || jsonb_build_array(sh);
@@ -756,7 +776,8 @@ begin
     end if;
 
     done := done || jsonb_build_array(jsonb_build_object(
-      'recipeId', recipe->>'id', 'name', label, 'outputType', recipe->>'outputType'));
+      'recipeId', recipe->>'id', 'name', label, 'outputType', recipe->>'outputType',
+      'jobId', job->>'id'));
   end loop;
 
   st := jsonb_set(st, '{items}', items);
