@@ -191,7 +191,8 @@ function plantBackup(extra = {}) {
   assert(saved.items && saved.items.i99, "workshop items overlaid from the browser backup");
   assert(saved.knownRecipes && saved.knownRecipes.includes("ex_jack"), "blueprints overlaid from backup");
 
-  // Missing RPC must not silently reload into a half-restored cloud row.
+  // Missing RPC must not silently reload into a half-restored cloud row,
+  // and must re-close cloud writes so autosave can't app_commit the wiped 1500c.
   restoredRpc.length = 0;
   reloads = 0;
   Game._corruptSaveReset = true;
@@ -201,13 +202,27 @@ function plantBackup(extra = {}) {
   const missing = await Game.restoreCorruptBackup();
   assert(!missing.ok && /restore_backup\.sql/i.test(missing.msg || ""), "missing RPC refuses restore");
   assert(reloads === 0, "missing RPC does not reload");
+  assert(Store._cloudReady === false, "missing RPC re-closes the cloud write gate");
 
   // Null / failed RPC likewise refuses instead of reloading.
   reloads = 0;
+  Store._cloudReady = false;
+  Game._corruptSaveReset = true;
   sandbox.Cloud.restoreBackup = async () => null;
   const nulled = await Game.restoreCorruptBackup();
   assert(!nulled.ok, "null RPC refuses restore");
   assert(reloads === 0, "null RPC does not reload");
+  assert(Store._cloudReady === false, "null RPC re-closes the cloud write gate");
+
+  // Thrown RPC also keeps the wipe gated.
+  reloads = 0;
+  Store._cloudReady = false;
+  Game._corruptSaveReset = true;
+  sandbox.Cloud.restoreBackup = async () => { throw new Error("network down"); };
+  const thrown = await Game.restoreCorruptBackup();
+  assert(!thrown.ok, "thrown RPC refuses restore");
+  assert(reloads === 0, "thrown RPC does not reload");
+  assert(Store._cloudReady === false, "thrown RPC re-closes the cloud write gate");
 
   // Full restore must NOT lift a failed-cloud-load gate.
   cloudSaved.length = 0;

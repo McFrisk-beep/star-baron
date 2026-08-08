@@ -7,12 +7,6 @@
 -- global reset, the shared senate. Credits, fleet, cargo, unlocks, prestige,
 -- etc. all wipe. Idempotent — safe to re-run.
 --
--- Reset Save also snapshots the pre-wipe row into players.restore_snapshot
--- when that column exists (added by docs/sql/restore_backup.sql) so
--- app_restore_backup() can undo without taking economy values from the client.
--- Paste restore_backup.sql AFTER this file — it redefines app_reset_save with
--- the snapshot wired in. This copy is defensive if the column isn't there yet.
---
 -- Prereq: docs/sql/phase1_players.sql (app._default_state, app._lock_state,
 --         app._write_state, app._now_ms). app_world_reset_apply also reads
 --         public.world_reset (docs/ADMIN_SETUP.md) — missing table = no-op.
@@ -68,13 +62,6 @@ begin
   -- which would make the next boot re-run the admin reset (popup and all) for a
   -- player who just wiped themselves.
   keep_epoch := app._applied_epoch(st);
-
-  -- Snapshot pre-wipe state when restore_backup.sql has added the column.
-  begin
-    update public.players set restore_snapshot = st where user_id = uid;
-  exception when undefined_column then
-    null; -- paste docs/sql/restore_backup.sql for undo support
-  end;
 
   st := app._default_state();
   if keep_settings is not null then

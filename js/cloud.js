@@ -618,9 +618,9 @@ const Cloud = {
   async resetSave() {
     return this.rpc("app_reset_save");
   },
-  // Settings → Restore backup: write players.restore_snapshot back onto state.
-  // No client economy payload — the snapshot was taken server-side by
-  // app_reset_save (docs/sql/restore_backup.sql).
+  // Settings → Restore backup: return the caller's current players.state.
+  // No client economy payload (docs/sql/restore_backup.sql). Corrupt-migrate
+  // never wiped the cloud row — the client overlays Workshop from the browser backup.
   restoreMissing: false,
   async restoreBackup() {
     if (this.restoreMissing) return { ok: false, missing: true, error: "Restore backup RPC not live." };

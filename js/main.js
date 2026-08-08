@@ -1166,18 +1166,21 @@ const Game = {
     this._noSave = false;
     // Only re-open cloud writes when WE gated them for a corrupt-save reset.
     // Never clear a failed-cloud-load gate (unknown remote must stay protected).
-    // Economy comes from the server snapshot (Reset Save undo) or the current
-    // cloud row (corrupt-migrate never wiped it) — never from the client blob.
+    // Economy comes from the current cloud row (corrupt-migrate never wiped it)
+    // — never from the client blob.
     if (this._corruptSaveReset) {
       Store._cloudReady = true;
       if (window.Cloud && Cloud.signedIn && Cloud.signedIn() && Cloud.playersReady && Cloud.restoreBackup) {
         try {
           const r = await Cloud.restoreBackup();
           if (r && r.missing) {
+            // Keep the wipe gated — next autosave must not app_commit 1500c over the ledger.
+            Store._cloudReady = false;
             console.warn("[Game] app_restore_backup missing — apply docs/sql/restore_backup.sql.");
             return { ok: false, msg: "Cloud restore isn't live yet — apply docs/sql/restore_backup.sql, then try again. Your backup is still in this browser." };
           }
           if (!(r && r.ok)) {
+            Store._cloudReady = false;
             console.warn("[Game] app_restore_backup:", (r && r.error) || r);
             return { ok: false, msg: (r && r.error) || "Couldn't restore the cloud save." };
           }
@@ -1199,6 +1202,7 @@ const Game = {
             }
           }
         } catch (e) {
+          Store._cloudReady = false;
           console.warn("[Game] restore backup RPC failed:", e);
           return { ok: false, msg: "Couldn't reach the cloud save to restore credits and ships." };
         }
