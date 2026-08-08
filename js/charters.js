@@ -228,12 +228,14 @@ const Charters = {
     if (value < 0 && s.credits < -value)
       return { ok: false, msg: `Need ${Util.credits(-value)}c to abort — not enough credits.` };
     s.credits += value;
+    const repHit = c.faction ? Rep.onContractCancel(c.faction, c.band) : 0;
+    // Drop the row first so ofShip/running see the remaining lock set — a
+    // deferred Buy out must not idle a hull already re-dispatched elsewhere.
+    s.charters = this.list().filter(x => x.id !== id);
     for (const uid of this.shipUids(c)) {
       const sh = Fleet.ship(uid);
-      if (sh && sh.status === "charter") sh.status = "idle";
+      if (sh && sh.status === "charter" && !this.ofShip(uid)) sh.status = "idle";
     }
-    const repHit = c.faction ? Rep.onContractCancel(c.faction, c.band) : 0;
-    s.charters = this.list().filter(x => x.id !== id);
     Economy.refreshNetWorth();
     Bus.emit("charterCancel", { charter: c, value, repHit });
     return { ok: true, value, repHit, charter: c };

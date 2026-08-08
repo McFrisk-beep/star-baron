@@ -2146,7 +2146,8 @@ const UI = {
     const bandInfo = CHARTER_BANDS[pick.band] || {};
     const freeLeft = idle.filter(x => !pick.shipUids.includes(x.uid)).length;
     const stranded = freeLeft === 0 && this.s().credits <= 0;
-    const atCap = Charters.active().length >= CHARTERCFG.maxActive;
+    // Cap matches Charters.dispatch — deferred (payout-pending) rows don't count.
+    const atCap = Charters.running().length >= CHARTERCFG.maxActive;
     const shipRows = idle.map(s => {
       const sst = Fleet.stats(s);
       const on = pick.shipUids.includes(s.uid);

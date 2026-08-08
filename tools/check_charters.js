@@ -375,6 +375,28 @@ assert.strictEqual(reloaded.charters.length, 1, "deferred charter survives migra
 assert.ok(reloaded.charters[0].deferred, "deferred flag preserved on migrate");
 assert.strictEqual(reloaded.ships.find(s => s.uid === shLock2.uid).status, "idle",
   "migrate must not re-lock a deferred charter's hull");
+// 15) Deferred buy-out must not unlock a hull already on a newer charter.
+ctx.Game.state = fresh();
+ctx.Game.state.credits = 50_000;
+ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
+const shReuse = mule(); ctx.Game.state.ships.push(shReuse, mule());
+const dOld = Charters.dispatch(shReuse.uid, "safe", 60, T);
+assert(dOld.ok);
+T += 3600000;
+Charters.resolve(T);
+assert.ok(dOld.charter.deferred, "old charter deferred");
+assert.strictEqual(shReuse.status, "idle");
+const dNew = Charters.dispatch(shReuse.uid, "safe", 60, T);
+assert(dNew.ok, dNew.msg);
+assert.strictEqual(shReuse.status, "charter");
+assert.strictEqual(Charters.running().length, 1);
+assert.strictEqual(Charters.active().length, 2, "deferred + running both listed");
+const buyOld = Charters.cancel(dOld.charter.id, T);
+assert(buyOld.ok && buyOld.value > 0, "deferred Buy out still pays salvage");
+assert.strictEqual(shReuse.status, "charter", "Buy out must not free a re-dispatched hull");
+assert.ok(Charters.ofShip(shReuse.uid), "newer charter still locks the hull");
+assert.strictEqual(Charters.running().length, 1);
+assert.strictEqual(Charters.active().length, 1, "only the newer charter remains");
 delete ctx.Cloud;
 
 console.log("check_charters: ok");
