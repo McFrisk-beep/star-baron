@@ -393,9 +393,33 @@ const Workshop = {
 
   _claiming: false,
   _claimBackoffUntil: 0,
+  // Job ids already delivered this session. A concurrent app_commit can echo a
+  // pre-claim workshop queue back over the live state (and, if an older
+  // app_commit without the workshop override is installed, even rewrite the
+  // server row). Remembering claimed ids stops the same finish from minting
+  // forever and from re-toasting on every tick.
+  _claimedJobIds: new Set(),
+
   dueCount(now = Date.now()) {
-    return (this.meta().queue || []).filter(j => j && now >= j.readyAt).length;
+    return (this.meta().queue || []).filter(j => j && now >= j.readyAt
+      && !this._claimedJobIds.has(j.id)).length;
   },
+
+  // Drop jobs we've already claimed from any workshop slice about to land.
+  scrubQueue(workshop) {
+    if (!workshop || typeof workshop !== "object") return workshop;
+    if (!Array.isArray(workshop.queue) || !this._claimedJobIds.size) return workshop;
+    workshop.queue = workshop.queue.filter(j => j && !this._claimedJobIds.has(j.id));
+    return workshop;
+  },
+
+  _markClaimed(jobIds) {
+    if (!jobIds || !jobIds.length) return;
+    for (const id of jobIds) if (id) this._claimedJobIds.add(id);
+    const q = this.meta().queue;
+    if (q && q.length) this.meta().queue = q.filter(j => j && !this._claimedJobIds.has(j.id));
+  },
+
   async claimDue(now = Date.now()) {
     if (this._claiming || !this.authoritative() || !this.dueCount(now)) return [];
     // Transient RPC failures used to re-fire every market tick while a job sat
@@ -403,6 +427,12 @@ const Workshop = {
     if (now < this._claimBackoffUntil) return [];
     this._claiming = true;
     try {
+      // Defer app_commit / app_pull while the claim owns the workshop row — the
+      // same Economy.busy() gate that stops mid-trade cloud writes.
+      if (window.Economy) Economy._pending++;
+      const dueIds = (this.meta().queue || [])
+        .filter(j => j && now >= j.readyAt && !this._claimedJobIds.has(j.id))
+        .map(j => j.id);
       const r = await Cloud.craftClaim();
       if (!r || !r.ok) {
         this._claimBackoffUntil = now + 15000;
@@ -414,6 +444,18 @@ const Workshop = {
       Economy.refreshNetWorth();
       const baySystem = this._baySystem();
       const done = (r.delivered || []).map(d => Object.assign({}, d, { baySystem }));
+      // Mark finished jobs even when delivered is empty (idempotent re-claim
+      // drains the queue without re-announcing) or a batch only announces some
+      // of the due ids. Prefer the server's post-claim queue; fall back to
+      // delivered.jobId / one-due-per-delivery when the slice omitted workshop.
+      if (r.workshop && Array.isArray(r.workshop.queue)) {
+        const remain = new Set(r.workshop.queue.map(j => j && j.id));
+        this._markClaimed(dueIds.filter(id => !remain.has(id)));
+      } else {
+        const fromRpc = done.map(d => d.jobId).filter(Boolean);
+        if (fromRpc.length) this._markClaimed(fromRpc);
+        else if (done.length) this._markClaimed(dueIds.slice(0, done.length));
+      }
       if (done.length) {
         this._claimBackoffUntil = 0;
         window.Game.requestSave();
@@ -430,7 +472,10 @@ const Workshop = {
       console.warn("[Workshop] claim failed:", e);
       this._claimBackoffUntil = now + 15000;
       return [];
-    } finally { this._claiming = false; }
+    } finally {
+      if (window.Economy) Economy._pending = Math.max(0, Economy._pending - 1);
+      this._claiming = false;
+    }
   },
 
   // Handoff of pre-ledger Workshop state (queue, slot upgrades, and the crafted

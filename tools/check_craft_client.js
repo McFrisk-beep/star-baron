@@ -81,6 +81,7 @@ function freshState() {
   Game.requestSave = () => {};
   Workshop._claiming = false;
   Workshop._claimBackoffUntil = 0;
+  Workshop._claimedJobIds = new Set();
   calls.length = 0;
 }
 // Server ledger on/off. Every craft RPC is recorded and answered from `replies`.
@@ -175,6 +176,72 @@ async function main() {
     "the item the player receives is the server's");
   assert(Game.state.workshop.queue.length === 0, "server drained the queue");
   assert(announced && announced.length === 1, "a 'crafted' event announced the delivery");
+  delete replies.craftClaim;
+
+  // ---- 4b) stale app_commit must not remint the same finish ----------------
+  // Race: claim drains the queue, then a commit that locked pre-claim echoes
+  // the ready job back. Without scrubbing claimed ids, the next tick claims
+  // again and the player gets infinite Mechan Mk.III Plating.
+  freshState();
+  Game.state.workshop.queue = [{ id: "ckLoop", recipeId: RECIPE, startedAt: 1, readyAt: 2, flavorId: null }];
+  let claimN = 0;
+  replies.craftClaim = () => {
+    claimN++;
+    return slice({
+      items: Object.assign({}, Game.state.items, {
+        ["i" + claimN]: { uid: "i" + claimN, kind: "plating", rarity: "common",
+          name: "Mechan Mk.III Plating", primary: { stat: "armor", amount: 18, pct: false, kind: "plating" }, value: 1620 },
+      }),
+      workshop: { upgrades: 0, queue: [] },
+      delivered: [{ recipeId: RECIPE, name: "Mechan Mk.III Plating", outputType: "gear", jobId: "ckLoop" }],
+    });
+  };
+  let toasts = 0;
+  Bus.on("crafted", d => { toasts += d.length; });
+  await Workshop.claimDue(1000);
+  assert(claimN === 1 && toasts === 1, "first claim delivers once");
+  // Stale commit restores the finished job onto the live queue.
+  Economy.applyCommitState({
+    ok: true,
+    workshop: { upgrades: 0, queue: [{ id: "ckLoop", recipeId: RECIPE, startedAt: 1, readyAt: 2, flavorId: null }] },
+    items: Game.state.items,
+  });
+  assert(Game.state.workshop.queue.length === 0, "claimed job scrubbed out of the stale commit");
+  assert(Workshop.dueCount(1000) === 0, "dueCount ignores already-claimed jobs");
+  await Workshop.claimDue(1000);
+  assert(claimN === 1 && toasts === 1, "stale re-queue does not claim or toast again");
+  assert(Object.keys(Game.state.items).length === 1, "still exactly one minted item");
+  delete replies.craftClaim;
+
+  // ---- 4c) idempotent empty claim still marks the drained job --------------
+  // Server re-claim of an already-minted craft-<jobId> returns delivered:[],
+  // queue:[]. Without marking claimed, dueCount stays > 0 and we hammer
+  // app_craft_claim every 15s after backoff.
+  freshState();
+  Game.state.workshop.queue = [{ id: "ckIdem", recipeId: RECIPE, startedAt: 1, readyAt: 2, flavorId: null }];
+  Game.state.items = { "craft-ckIdem": { uid: "craft-ckIdem", kind: "plating", rarity: "common",
+    name: "Mechan Mk.III Plating", primary: { stat: "armor", amount: 18, pct: false, kind: "plating" }, value: 1620 } };
+  claimN = 0;
+  replies.craftClaim = () => {
+    claimN++;
+    return slice({
+      items: Game.state.items,
+      workshop: { upgrades: 0, queue: [] },
+      delivered: [],
+    });
+  };
+  const empty = await Workshop.claimDue(1000);
+  assert(empty.length === 0 && claimN === 1, "idempotent claim returns no delivery");
+  assert(Workshop._claimedJobIds.has("ckIdem"), "drained job marked claimed despite empty delivered");
+  assert(Workshop.dueCount(1000) === 0, "idempotent drain clears dueCount");
+  Economy.applyCommitState({
+    ok: true,
+    workshop: { upgrades: 0, queue: [{ id: "ckIdem", recipeId: RECIPE, startedAt: 1, readyAt: 2, flavorId: null }] },
+    items: Game.state.items,
+  });
+  assert(Game.state.workshop.queue.length === 0, "idempotent claim scrubbed from stale commit");
+  await Workshop.claimDue(1000);
+  assert(claimN === 1, "idempotent drain does not re-fire app_craft_claim");
   delete replies.craftClaim;
 
   // ---- 5) adopt -------------------------------------------------------------

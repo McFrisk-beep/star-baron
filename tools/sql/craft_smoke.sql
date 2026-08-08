@@ -105,6 +105,23 @@ begin
   perform app.t_assert((item->>'value')::float8 > 0, 'item has a server-computed value');
   perform app.t_assert((item->'primary'->>'amount')::float8 > 0, 'item has a rolled stat');
   perform app.t_assert(item->>'name' not like '%null%', 'item name rendered');
+  perform app.t_assert(item->>'uid' like 'craft-%', 'deterministic craft uid from job id');
+
+  -- Re-queue the finished job (stale unprotected commit) and claim again —
+  -- must NOT mint a second item or re-announce. uid is craft-<jobId>.
+  perform app._write_state(
+    jsonb_set(st, '{workshop,queue}', jsonb_build_array(
+      jsonb_build_object('id', substr(item->>'uid', 7), 'recipeId', 'gear_shield_rare',
+                         'startedAt', 1, 'readyAt', 2, 'flavorId', null))),
+    app._now_ms());
+  r := public.app_craft_claim();
+  perform app.t_assert(jsonb_array_length(r->'delivered') = 0, 'idempotent claim does not re-announce');
+  perform app.t_assert(
+    (select count(*) from jsonb_object_keys(app.t_state()->'items')) = 1,
+    'idempotent claim does not mint a second item');
+  perform app.t_assert(jsonb_array_length(app.t_state()->'workshop'->'queue') = 0,
+    'idempotent claim still drains the re-queued job');
+  st := app.t_state();
 
   -- ============ the actual bug: commit must not delete it ==============
   -- Simulate the client autosave round-trip that used to wipe crafted gear.

@@ -2739,7 +2739,9 @@ const UI = {
         const c = COMMODITIES.find(x => x.id === id);
         return `<li class="st-hold-row"><b>${c ? c.name : id}</b> ×${q}
           <button class="btn btn-mini" data-st-deliver="${id}">Deliver all</button></li>`;
-      }).join("") || `<li class="muted-note">Hold empty — assign a Production Hub commodity.</li>`;
+      }).join("") || `<li class="muted-note">${st.prodComm
+        ? "Hold empty — owner bay output lands here each stock hour (haul it to the sector capital to sell)."
+        : "Hold empty — assign a Production Hub commodity."}</li>`;
 
     const modRows = Object.keys(STATION_MODULES).map(id => {
       const def = STATION_MODULES[id];
@@ -2800,7 +2802,7 @@ const UI = {
       } else if (bay.npc) {
         who = `<span class="tip-dim">NPC tenant</span> · tax in`;
         acts = `<button class="btn btn-mini btn-warn" data-st-vacate="${i}">Evict</button>`;
-      } else if (bay.lesseeId === st.ownerId) {
+      } else if (Stations.bayMine(bay) || bay.lesseeId === st.ownerId) {
         const ex = window.Extractors && Extractors.get(bay.extractorId);
         who = `<b>You</b> · ${ex ? ex.name : "extractor"}`;
         acts = `<button class="btn btn-mini" data-st-vacate="${i}">Remove</button>`;

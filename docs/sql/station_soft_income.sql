@@ -9,6 +9,16 @@
 --           (app._extractor_yield_mult / app._component_amount / app._lock_state).
 -- Safe to re-run.
 
+-- Owner-staffed bay count: accept legacy "player" lesseeId (local save key)
+-- as well as the account uuid publish rewrites to.
+create or replace function public._station_owner_staffed(p_bays jsonb, p_owner uuid)
+returns int language sql immutable as $$
+  select coalesce(count(*)::int, 0)
+  from jsonb_array_elements(coalesce(p_bays, '[]'::jsonb)) b
+  where left(coalesce(b->>'lesseeId', ''), 64) in (p_owner::text, 'player')
+    and not coalesce((b->>'npc')::boolean, false);
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Credit commodity units into a player's positions (zero cost basis).
 -- ---------------------------------------------------------------------------
@@ -166,7 +176,9 @@ grant execute on function public.app_station_bay_produce(text, int, int) to auth
 
 -- ---------------------------------------------------------------------------
 -- After-hour hub output — per owner bay, apply extractor yieldMult + rate.
--- Falls back to jack (0.6) when extractorId is missing / invalid.
+-- Owner bay with no/invalid extractorId deposits nothing (matches client
+-- _bayGross). publishOwned must rewrite legacy "player" bays and carry
+-- extractorId so after_hour can apply quality.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_station_after_hour(p_reports jsonb)
 returns jsonb
@@ -287,11 +299,15 @@ begin
         bay_cap := greatest(1, public._station_bay_count(st.modules));
         per_bay := public._station_hub_yield(hub)::numeric / bay_cap;
         for bay in select value from jsonb_array_elements(coalesce(st.bays, '[]'::jsonb)) loop
-          continue when left(coalesce(bay->>'lesseeId', ''), 64) is distinct from uid::text;
+          -- Owner bay: uuid (published) or legacy "player" (one-hour race before
+          -- publishOwned rewrites it). No jack-fake when extractorId is missing —
+          -- that would keep depositing after a retool while the UI shows 0.
+          continue when left(coalesce(bay->>'lesseeId', ''), 64)
+            not in (uid::text, 'player');
           continue when coalesce((bay->>'npc')::boolean, false);
           ex_id := left(coalesce(bay->>'extractorId', ''), 40);
           ex := case when ex_id <> '' then pstate->'extractors'->ex_id else null end;
-          -- Match client _bayGross: no extractor → no output (not a free jack).
+          -- Match client _bayGross: no extractor → no output.
           continue when ex is null or jsonb_typeof(ex) <> 'object';
           can_prod := case ex->>'type'
             when 'jack' then true

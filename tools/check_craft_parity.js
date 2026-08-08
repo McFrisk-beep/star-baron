@@ -183,6 +183,8 @@ assert.match(fn("app\\._craft_slot_cost"), new RegExp(`${WORKSHOPCFG.slotUpgrade
   "app._craft_slot_cost uses WORKSHOPCFG.slotUpgradeBase");
 assert.match(fn("public\\.app_craft_claim"), new RegExp(`n >= ${WORKSHOPCFG.maxResolvePerCatchup}\\b`),
   "app_craft_claim uses WORKSHOPCFG.maxResolvePerCatchup");
+assert.match(fn("public\\.app_craft_claim"), /craftJobId/,
+  "app_craft_claim stamps craftJobId on ships for idempotent re-claims");
 assert.match(adopt, new RegExp(`least\\(${WORKSHOPCFG.maxSlots - WORKSHOPCFG.baseSlots}, greatest\\(0`),
   "adopt caps slot upgrades at maxSlots - baseSlots");
 
