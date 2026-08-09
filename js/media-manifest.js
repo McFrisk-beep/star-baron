@@ -14,5 +14,14 @@ window.LOCAL_ASSET_POOLS = Object.assign(window.LOCAL_ASSET_POOLS || {}, {
 });
 
 window.BGM_TRACKS = [
-  { url: "assets/bgm/abandoned_outpost.mp3", name: "Abandoned Outpost" },
+  { url: "assets/bgm/1. Abandoned Outpost.mp3", name: "Abandoned Outpost" },
+  { url: "assets/bgm/2. Entering the Void.mp3", name: "Entering The Void" },
+  { url: "assets/bgm/3. Approaching the Singularity.mp3", name: "Approaching The Singularity" },
+  { url: "assets/bgm/4. Lost Signal.mp3", name: "Lost Signal" },
+  { url: "assets/bgm/5. Beyond the Star Gate.mp3", name: "Beyond The Star Gate" },
+  { url: "assets/bgm/6. Signal from Beyond.mp3", name: "Signal From Beyond" },
+  { url: "assets/bgm/7. Awakening the Relic.mp3", name: "Awakening The Relic" },
+  { url: "assets/bgm/8. Lost Star System.mp3", name: "Lost Star System" },
+  { url: "assets/bgm/9. Ruins of Tomorrow.mp3", name: "Ruins Of Tomorrow" },
+  { url: "assets/bgm/10. Edge of the Galaxy.mp3", name: "Edge Of The Galaxy" },
 ];
