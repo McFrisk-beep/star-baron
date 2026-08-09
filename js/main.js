@@ -47,7 +47,7 @@ const Game = {
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
       story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
-      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "" },
+      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "", bgmBackground: false },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
@@ -87,6 +87,7 @@ const Game = {
     s.settings.bgmOrder = Array.isArray(s.settings.bgmOrder)
       ? s.settings.bgmOrder.filter(u => typeof u === "string" && u).slice(0, 200) : [];
     if (typeof s.settings.bgmStart !== "string") s.settings.bgmStart = "";
+    s.settings.bgmBackground = !!s.settings.bgmBackground;
     if (window.Senate) {
       const ls = loaded.senate || {};
       s.senate = Object.assign(Senate.defaultState(), ls);
@@ -576,10 +577,14 @@ const Game = {
     // animation) so an open tab costs ~nothing over long idle periods; on return
     // we fast-forward the simulation to "now". Keeps the game light indefinitely.
     document.addEventListener("visibilitychange", () => {
-      // The extra pause covers idle→hidden: already suspended (audio kept), so
-      // suspend() alone would leave music playing in a background tab.
-      if (document.hidden) { this.suspend(); if (window.Bgm) Bgm.pause(); }
-      else this.resume();
+      if (document.hidden) {
+        // Music in a background tab is opt-in (Settings → Music). The explicit
+        // pause also covers idle→hidden, where suspend() early-returns because
+        // the idle path already suspended with audio deliberately left running.
+        const keep = !!(this.state.settings && this.state.settings.bgmBackground);
+        this.suspend();
+        if (!keep && window.Bgm) Bgm.pause();
+      } else this.resume();
     });
     window.addEventListener("beforeunload", () => this.save());
 
@@ -592,7 +597,7 @@ const Game = {
         this._idleTimer = setTimeout(() => {
           if (document.hidden || this._suspended) return;
           this._idleSuspended = true;
-          this.suspend({ pauseAudio: false });
+          this.suspend();                 // music keeps playing — it's a cached file
           UI.showIdle(true);
         }, CONFIG.idleAfterMs);
       };
@@ -719,8 +724,10 @@ const Game = {
   },
 
   // Tab hidden (or visibly idle) → freeze everything after a final save.
-  // pauseAudio:false keeps music going for the visible-idle case.
-  suspend({ pauseAudio = true } = {}) {
+  // Audio is the caller's call: idle keeps it, tab-hide honours the player's
+  // "keep playing when I switch tabs" setting. Keeping it out of here means one
+  // pause path instead of two firing on the same transition.
+  suspend() {
     if (this._suspended) return;
     this._suspended = true;
     this.save();                            // local cache + queue cloud
@@ -730,7 +737,6 @@ const Game = {
     if (window.SenateWorld) SenateWorld.stop();
     if (window.StarMap) StarMap.suspend();
     if (window.Senate) Senate.suspend();
-    if (pauseAudio && window.Bgm) Bgm.pause();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
   resume() {
