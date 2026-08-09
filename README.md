@@ -174,8 +174,11 @@ star-baron/
 │   ├── starmap.js        # galaxy view + animated system view (canvas)
 │   └── main.js           # bootstrap, game loop, schedulers, save
 ├── assets/               # placeholder PNGs (swap freely, keep filenames)
+│   ├── broadcast/        # TV/news frames — file name is the channel (news1.png → news)
+│   └── bgm/              # background music — every file is a track in the loop
 ├── docs/GRAPHICS_SPEC.md # art drop-in guide: sizes, paths, races, how to add
-└── tools/gen_placeholders.py   # regenerate placeholder art (pip install pillow)
+├── tools/gen_placeholders.py       # regenerate placeholder art (pip install pillow)
+└── tools/gen_media_manifest.py     # re-run after adding broadcast art or music
 ```
 
 See **`docs/GRAPHICS_SPEC.md`** to drop in your own PNGs (planets, race ships,

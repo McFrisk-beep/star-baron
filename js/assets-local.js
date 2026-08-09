@@ -284,9 +284,6 @@ const LOCAL_ASSET_POOLS = {
   "station:voidkin": "assets/stations/voidkin.png",
 };
 
-const BGM_PLAYLIST_LOCAL = [
-  { url: "assets/bgm/abandoned_outpost.mp3", name: "1. Abandoned Outpost" },
-];
-
+// Broadcast pools and the BGM playlist are generated from the file names in
+// assets/broadcast/ and assets/bgm/ — see js/media-manifest.js.
 window.LOCAL_ASSET_POOLS = LOCAL_ASSET_POOLS;
-window.BGM_PLAYLIST_LOCAL = BGM_PLAYLIST_LOCAL;
