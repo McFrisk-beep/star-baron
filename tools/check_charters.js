@@ -331,7 +331,8 @@ assert.strictEqual(rPr[0].credits, expected, "payout pro-rated to surviving carg
 assert.strictEqual(ctx.Game.state.credits, beforePr + expected);
 assert.ok(/Payout cut/i.test(rPr[0].summary || ""), "report notes cargo cut");
 
-// 14) Phase 3 softIncomeLocal=false: free hulls, do not mint credits
+// 14) Phase 3 softIncomeLocal=false: charters still auto-resolve and pay —
+// no payout-pending limbo, no leftover row.
 ctx.Game.state = fresh();
 ctx.Game.state.credits = 50_000;
 const shLock = mule(); ctx.Game.state.ships.push(shLock);
@@ -343,69 +344,43 @@ ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
 assert.strictEqual(Economy.softIncomeLocal(), false, "phase 3 live → no local soft income");
 T += 3600000;
 const rLock = Charters.resolve(T);
-assert.strictEqual(rLock.length, 1, "matured charter still resolves under Phase 3");
-assert.strictEqual(shLock.status, "idle", "hull freed even when payout is server-owned");
-assert.strictEqual(ctx.Game.state.credits, beforeLock, "no credit mint under Phase 3");
-assert.strictEqual(rLock[0].credits, 0);
-assert.strictEqual(rLock[0].success, false, "zero-credit Phase 3 return is not a win");
-assert.ok(/defer/i.test(rLock[0].summary || ""), "report notes deferred payout");
-assert.strictEqual(ctx.Game.state.charters.length, 1, "row kept for later app_charter_*");
-assert.ok(ctx.Game.state.charters[0].deferred, "flagged deferred, not resolved");
-assert.strictEqual(Charters.active().length, 1, "deferred stays visible (Buy out recoverable)");
-assert.strictEqual(Charters.running().length, 0, "deferred does not count toward maxActive / ship lock");
-Charters.reconcileShips();
-assert.strictEqual(shLock.status, "idle", "reconcile must not re-lock a deferred charter");
-assert.ok(rLock[0].deferred, "report flagged deferred for Dispatches/report styling");
-// Buy out still recovers salvage on a deferred matured charter.
-const buy = Charters.cancel(ctx.Game.state.charters[0].id, T);
-assert(buy.ok && buy.value > 0, "Buy out recovers salvage on deferred charter");
-assert.strictEqual(ctx.Game.state.charters.length, 0, "Buy out clears the deferred row");
-assert.strictEqual(ctx.Game.state.credits, beforeLock + buy.value, "salvage credited");
-// Reload must keep deferred and must not put the hull back on "returns now".
+assert.strictEqual(rLock.length, 1, "matured charter resolves under Phase 3");
+assert.strictEqual(shLock.status, "idle", "hull freed");
+assert.strictEqual(rLock[0].success, true, "clean safe return is a win");
+assert.strictEqual(rLock[0].credits, Economy.afterTax(dLock.charter.reward), "payout credited");
+assert.strictEqual(ctx.Game.state.credits, beforeLock + rLock[0].credits);
+assert.strictEqual(ctx.Game.state.charters.length, 0, "row closed — no deferred limbo");
+delete ctx.Cloud;
+
+// 15) Legacy "payout pending" rows from old saves settle on the next resolve,
+// and settling must not free a hull already re-dispatched on a newer charter.
 ctx.Game.state = fresh();
 ctx.Game.state.credits = 50_000;
-const shLock2 = mule(); ctx.Game.state.ships.push(shLock2);
-const dLock2 = Charters.dispatch(shLock2.uid, "safe", 60, T);
-assert(dLock2.ok);
-ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
-T += 3600000;
-Charters.resolve(T);
-const reloaded = ctx.Game.migrate({
+const shOld = mule(); ctx.Game.state.ships.push(shOld, mule());
+const dLegacy = Charters.dispatch(shOld.uid, "safe", 60, T);
+assert(dLegacy.ok);
+dLegacy.charter.deferred = true;   // simulate a pre-auto-resolve save
+shOld.status = "idle";             // deferred hulls were freed back then
+const migLegacy = ctx.Game.migrate({
   credits: ctx.Game.state.credits,
   ships: ctx.Game.state.ships.map(sh => Object.assign({}, sh)),
   charters: ctx.Game.state.charters.map(c => Object.assign({}, c)),
 });
-assert.strictEqual(reloaded.charters.length, 1, "deferred charter survives migrate");
-assert.ok(reloaded.charters[0].deferred, "deferred flag preserved on migrate");
-assert.strictEqual(reloaded.ships.find(s => s.uid === shLock2.uid).status, "idle",
-  "migrate must not re-lock a deferred charter's hull");
-// 15) Deferred buy-out must not unlock a hull already on a newer charter.
-ctx.Game.state = fresh();
-ctx.Game.state.credits = 50_000;
-ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
-const shReuse = mule(); ctx.Game.state.ships.push(shReuse, mule());
-const dOld = Charters.dispatch(shReuse.uid, "safe", 60, T);
-assert(dOld.ok);
-T += 3600000;
-Charters.resolve(T);
-assert.ok(dOld.charter.deferred, "old charter deferred");
-assert.strictEqual(shReuse.status, "idle");
-const dNew = Charters.dispatch(shReuse.uid, "safe", 60, T);
-assert(dNew.ok, dNew.msg);
-assert.strictEqual(shReuse.status, "charter");
-assert.strictEqual(Charters.running().length, 1);
-assert.strictEqual(Charters.active().length, 2, "deferred + running both listed");
-const buyOld = Charters.cancel(dOld.charter.id, T);
-assert(buyOld.ok && buyOld.value > 0, "deferred Buy out still pays salvage");
-assert.strictEqual(shReuse.status, "charter", "Buy out must not free a re-dispatched hull");
-assert.ok(Charters.ofShip(shReuse.uid), "newer charter still locks the hull");
-assert.strictEqual(Charters.running().length, 1);
+assert.ok(migLegacy.charters[0].deferred, "deferred flag survives migrate");
+assert.strictEqual(migLegacy.ships.find(s => s.uid === shOld.uid).status, "idle",
+  "migrate must not re-lock a legacy deferred hull");
+const dNext = Charters.dispatch(shOld.uid, "safe", 60, T);
+assert(dNext.ok, dNext.msg);
+const beforeSettle = ctx.Game.state.credits;
+const rSettle = Charters.resolve(T);   // legacy row is due regardless of timer
+assert.strictEqual(rSettle.length, 1, "legacy deferred row settles immediately");
+assert.strictEqual(rSettle[0].credits, Economy.afterTax(dLegacy.charter.reward), "full locked reward paid");
+assert.strictEqual(ctx.Game.state.credits, beforeSettle + rSettle[0].credits);
+assert.strictEqual(shOld.status, "charter", "settlement must not free a re-dispatched hull");
 assert.strictEqual(Charters.active().length, 1, "only the newer charter remains");
-delete ctx.Cloud;
 
-// 16) Aborting a running charter costs faction standing; collecting on a
-// deferred (already-returned) one must not. Banded charter on purpose — "safe"
-// carries faction null, so it would pass either way.
+// 16) Aborting a running charter costs faction standing. Banded charter on
+// purpose — "safe" carries faction null, so it would pass either way.
 ctx.Game.state = fresh();
 ctx.Game.state.credits = 50_000;
 const shRep = mule(); ctx.Game.state.ships.push(shRep);
@@ -419,22 +394,6 @@ assert(abort.ok, abort.msg);
 assert(abort.repHit > 0, "running cancel still reports a rep hit");
 assert.strictEqual(ctx.Game.state.reputation[repFaction], repBeforeAbort - abort.repHit,
   "running cancel docks standing");
-
-const shRep2 = mule(); ctx.Game.state.ships.push(shRep2);
-const dDef = Charters.dispatch(shRep2.uid, "low", 60, T);
-assert(dDef.ok, dDef.msg);
-assert.strictEqual(dDef.charter.faction, repFaction);
-ctx.Cloud = { authoritative: () => true, pullReady: true, pullMissing: false };
-T += 3600000;
-Charters.resolve(T);
-assert.ok(dDef.charter.deferred, "matured under Phase 3 → deferred");
-const repBeforeBuy = ctx.Game.state.reputation[repFaction];
-const buyDef = Charters.cancel(dDef.charter.id, T);
-assert(buyDef.ok && buyDef.value > 0, "deferred Buy out pays salvage");
-assert.strictEqual(buyDef.repHit, 0, "deferred Buy out reports no rep hit");
-assert.strictEqual(ctx.Game.state.reputation[repFaction], repBeforeBuy,
-  "deferred Buy out leaves standing untouched");
-delete ctx.Cloud;
 
 console.log("check_charters: ok");
 })().catch(e => { console.error(e); process.exit(1); });

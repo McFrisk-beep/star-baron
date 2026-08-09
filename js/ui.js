@@ -360,9 +360,7 @@ const UI = {
     const label = names.length ? names.join(", ") : "Unknown hull";
     const danger = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
     const left = Math.max(0, c.startedAt + c.durationMs - Date.now());
-    const eta = c.deferred
-      ? this.t("comms.payoutPending", "payout pending")
-      : `returns ${Util.duration(left)}`;
+    const eta = `returns ${Util.duration(left)}`;
     const val = Charters.cancelValue(c);
     const btnLabel = val < 0
       ? `${this.t("comms.cancelCharter", "Cancel")} — ${Util.credits(-val)}c`
@@ -485,12 +483,12 @@ const UI = {
     const el = this.refs.dispatchBody; if (!window.Story || !el) return;
     el.onclick = e => this.onDispatchClick(e);
     if (this._dispatchArc && !Story.thread(this._dispatchArc).length) this._dispatchArc = null;
-    const listHtml = this._dispatchListHtml();
-    const paneHtml = this._dispatchArc
-      ? this._threadHtml(this._dispatchArc)
-      : `<div class="disp-empty"><p data-i18n="comms.clickOpen">${window.I18n ? I18n.t("comms.clickOpen") : "Click a message to open the conversation"}</p></div>`;
+    const listHtml = `<aside class="disp-sidebar">${this._activeMissionsStripHtml()}${this._dispatchListHtml()}</aside>`;
     el.classList.toggle("thread-open", !!this._dispatchArc);
-    el.innerHTML = `<aside class="disp-sidebar">${this._activeMissionsStripHtml()}${listHtml}</aside><div class="disp-pane">${paneHtml}</div>`;
+    // No thread open: the message list gets the whole box and scrolls on its own.
+    el.innerHTML = this._dispatchArc
+      ? `${listHtml}<div class="disp-pane">${this._threadHtml(this._dispatchArc)}</div>`
+      : listHtml;
     if (this._dispatchArc) {
       // Stick to latest; older messages stay reachable by scrolling up.
       const pin = () => {
@@ -739,6 +737,59 @@ const UI = {
   _tradeLine(log, text) {
     const div = document.createElement("div"); div.className = "tt-line"; div.textContent = text;
     log.appendChild(div); log.scrollTop = log.scrollHeight;
+  },
+  // Game-styled confirm — resolves true/false. Falls back to window.confirm
+  // if the modal markup is missing.
+  confirmDialog({ title = "Confirm", body = "", okLabel = "Confirm", cancelLabel = "Cancel" } = {}) {
+    const $ = id => document.getElementById(id);
+    const modal = $("confirm-modal");
+    if (!modal) return Promise.resolve(confirm(body.replace(/<[^>]*>/g, "")));
+    $("confirm-title").textContent = title;
+    $("confirm-body").innerHTML = body;
+    const ok = $("confirm-ok"), cancel = $("confirm-cancel");
+    ok.textContent = okLabel; cancel.textContent = cancelLabel;
+    modal.classList.remove("hidden");
+    return new Promise(res => {
+      const done = v => { modal.classList.add("hidden"); res(v); };
+      ok.onclick = () => done(true);
+      cancel.onclick = () => done(false);
+      modal.onclick = e => { if (e.target === modal) done(false); };
+    });
+  },
+  // Requisition terminal — the exchange trade-terminal pacing, for one-off
+  // Bazaar purchases. Assumes the buy already settled; shows name + cost.
+  playBuyAnim(name, cost) {
+    const $ = id => document.getElementById(id);
+    const modal = $("trade-modal"), log = $("trade-log"), barWrap = $("trade-bar-wrap"),
+      bar = $("trade-bar"), result = $("trade-result"), close = $("trade-close"), title = $("trade-title");
+    const refresh = () => { this.flashCredits(); this.updateHeader(); };
+    if (!modal || !log) { refresh(); return; }
+    (this._tradeTimers || []).forEach(clearTimeout); this._tradeTimers = [];
+    title.textContent = "Purchase Order";
+    log.innerHTML = ""; result.innerHTML = ""; result.classList.add("hidden");
+    barWrap.classList.add("hidden"); bar.style.width = "0%"; close.classList.add("hidden");
+    modal.classList.remove("hidden");
+    const reduced = !!(this.s().settings && this.s().settings.reduced), step = reduced ? 220 : 600;
+    const lines = [
+      `▸ Opening secure channel to the Bazaar quartermaster…`,
+      `▸ Requisitioning ${name}…`,
+      `▸ Transferring ${Util.credits(cost)}c…`,
+    ];
+    let t = 0;
+    for (const ln of lines) { const at = t; this._tradeTimers.push(setTimeout(() => this._tradeLine(log, ln), at)); t += step; }
+    this._tradeTimers.push(setTimeout(() => {
+      barWrap.classList.remove("hidden");
+      requestAnimationFrame(() => { bar.style.width = "100%"; });
+    }, t));
+    t += reduced ? 320 : 900;
+    this._tradeTimers.push(setTimeout(() => {
+      this._tradeLine(log, "✓ Purchase complete.");
+      result.innerHTML = `<b>${name}</b> = <b>${Util.credits(cost)}c</b>` +
+        `<br><span class="muted-note">New balance: ${Util.creditsFull(this.s().credits)}c</span>`;
+      result.classList.remove("hidden"); close.classList.remove("hidden");
+      refresh();
+    }, t));
+    close.onclick = () => modal.classList.add("hidden");
   },
   // Clean named list of senate / tier taxes affecting this fill (log lines).
   _tradeEdictLines(isBuy, r) {
@@ -1152,7 +1203,11 @@ const UI = {
     const sh = Fleet.ship(uid); if (!sh) return;
     const val = Bazaar.shipSaleValue(sh), n = (sh.accessories || []).length, name = sh.name;
     const extra = n ? ` and its ${n} equipped item${n > 1 ? "s" : ""}` : "";
-    if (!confirm(`Sell ${name}${extra} for ${Util.credits(val)}c? This can't be undone.`)) return;
+    if (!await this.confirmDialog({
+      title: "Confirm Sale",
+      body: `Sell <b>${name}</b>${extra} for <b>${Util.credits(val)}c</b>?<br><span class="muted-note">This can't be undone.</span>`,
+      okLabel: "Sell",
+    })) return;
     if (Economy.busy()) return;
     const r = await Bazaar.sellShip(uid);
     if (!r.ok) return this.toast(r.msg, "warn");
@@ -1659,6 +1714,13 @@ const UI = {
   },
   async _sellItemClick(uid) {
     if (Economy.busy()) return;
+    const it = this.s().items[uid];
+    const val = it ? Math.round((it.value || 0) * BAZAARCFG.itemResaleMult) : 0;
+    if (!await this.confirmDialog({
+      title: "Confirm Sale",
+      body: `Sell <b>${it ? it.name : "this item"}</b> for <b>${Util.credits(val)}c</b>?`,
+      okLabel: "Sell",
+    })) return;
     const r = await Bazaar.sellNow(uid);
     if (!r.ok) return this.toast(r.msg || "Can't sell.", "warn");
     this.toast(`Sold for ${Util.credits(r.credits)}c`, "good");
@@ -1715,11 +1777,7 @@ const UI = {
         return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
           <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
       }
-      if (r.deferred) {
-        // Hulls came home — only the Phase-3 ledger pay is outstanding, so this
-        // must not read FAILED next to "ships returned safely".
-        detail = `<span class="warn">RETURNED</span> · payout pending — Buy out to recover salvage`;
-      } else if (r.success) {
+      if (r.success) {
         detail = `<span class="up">SUCCESS</span> · +${Util.credits(r.credits)}c`;
         if (r.stock) detail += ` · +${r.stock.qty} ${r.stock.name}`;
         if (r.blueprint) detail += ` · blueprint: ${r.blueprint}`;
@@ -1732,7 +1790,7 @@ const UI = {
         if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
       }
       if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
-      return `<div class="report ${r.deferred ? "pending" : r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
+      return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
         <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
     }).join("");
     this.refs.fleetReports.onclick = e => {
@@ -1864,7 +1922,7 @@ const UI = {
       <div class="bc-variant">${d.name}${v && v.id !== "stock" ? ` · <b>${v.name}</b> ${v.tag}` : ` · ${v ? v.tag : "stock"}`}</div>
       <div class="statline bc-statline">${this.statChips(st, keys)}</div>
       <div class="muted-note">${Fleet.variantEffects(v)} · ${d.slots} slot${d.slots === 1 ? "" : "s"}</div>
-      <button class="btn btn-go" data-buyyard="${o.id}" data-cost="${cost}">${Util.credits(cost)}c</button></div>`;
+      <button class="btn btn-go" data-buyyard="${o.id}" data-cost="${cost}" data-name="${o.name}">${Util.credits(cost)}c</button></div>`;
     }).join("");
     const yard = starter + (yardOffers
       || `<p class="muted-note">The yard is between deliveries — check back shortly.</p>`);
@@ -1888,7 +1946,7 @@ const UI = {
         <div class="bc-name">${d.name} <span class="cls-tag">${d.rarity || o.rarity}</span></div>
         <div class="bc-stats">» Transfer ${d.travelSpeed} · ${effects}</div>
         <div class="muted-note">${(d.effects || []).length} effect${(d.effects || []).length === 1 ? "" : "s"} · compare with current ↑</div>
-        <button class="btn btn-go" data-buymain="${d.id}" data-offer="${o.id}" data-cost="${cost}">${Util.credits(cost)}c</button></div>`;
+        <button class="btn btn-go" data-buymain="${d.id}" data-offer="${o.id}" data-cost="${cost}" data-name="${d.name}">${Util.credits(cost)}c</button></div>`;
     }).join("") || `<p class="muted-note">No flagship offers right now — the yard rotates.</p>`;
     const mains = curCard + flagOffers;
 
@@ -1908,7 +1966,7 @@ const UI = {
         <div class="bc-stats">${def.name}</div>
         <div class="statline bc-statline">${this.statChips(m, ["firepower", "hull"])}</div>
         <div class="muted-note">serves ${Util.duration(m.serviceMs)} · offer ends ${Util.duration(m.availUntil - Date.now())}</div>
-        <button class="btn btn-go" data-hire="${m.id}" data-cost="${m.hireCost}">Hire ${Util.credits(m.hireCost)}c</button></div>`;
+        <button class="btn btn-go" data-hire="${m.id}" data-cost="${m.hireCost}" data-name="${m.name}">Hire ${Util.credits(m.hireCost)}c</button></div>`;
       }).join("") || `<p class="muted-note">No mercenaries on offer right now.</p>`;
 
     const idlePower = Fleet.power(Fleet.idle().map(s => s.uid));
@@ -2007,7 +2065,7 @@ const UI = {
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">${(Items.rarity(it.rarity) || {}).label}</span></div>
         <div class="item-stat">${Items.label(it)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(a.price)}c</span>
-        <button class="btn btn-mini" data-buyacc="${a.id}" data-cost="${Math.round(a.price * (1 - Rep.discount()))}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyacc="${a.id}" data-cost="${Math.round(a.price * (1 - Rep.discount()))}" data-name="${it.name}">Buy</button></div></div>`;
       }).join("") || `<p class="muted-note">${allAcc.length ? "No gear matches this filter." : "Restocking the accessory stalls…"}</p>`;
 
     const boxes = (b.blackboxes || []).map(a => {
@@ -2018,7 +2076,7 @@ const UI = {
         <div class="item-top"><b>${it.name}</b><span class="rar" style="color:${this.rarityColor(it.rarity)}">blackbox</span></div>
         <div class="item-stat">${e ? e.desc : Items.label(it)} · ${e ? Util.duration(e.durationMs) : ""}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buyblackbox="${a.id}" data-cost="${price}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyblackbox="${a.id}" data-cost="${price}" data-name="${it.name}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No blackboxes in stock — check back soon.</p>`;
 
     const bps = (b.blueprints || []).map(a => {
@@ -2028,7 +2086,7 @@ const UI = {
         <div class="item-top"><b>${a.name}</b><span class="rar" style="color:#5aa9ff">${a.outputType}</span></div>
         <div class="item-stat">Unlocks a Workshop recipe permanently</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buyblueprint="${a.id}" data-cost="${price}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyblueprint="${a.id}" data-cost="${price}" data-name="${a.name}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No blueprints in stock — check back soon.</p>`;
 
     const exo = (b.extractors || []).map(o => {
@@ -2038,7 +2096,7 @@ const UI = {
         <div class="item-top"><b>${o.ex.name}</b><span class="rar">${t.label} ×${t.yieldMult}</span></div>
         <div class="item-stat">${Extractors.describe(o.ex)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buyextractor="${o.id}" data-cost="${price}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buyextractor="${o.id}" data-cost="${price}" data-name="${o.ex.name}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No extractors in stock — check back soon.</p>`;
 
     const comp = (b.components || []).map(o => {
@@ -2049,7 +2107,7 @@ const UI = {
         <div class="item-top"><b>${o.comp.name}</b><span class="rar" style="color:${col}">${(Items.rarity(o.comp.rarity) || {}).label}</span></div>
         <div class="item-stat">${Components.describe(o.comp)}</div>
         <div class="item-acts"><span class="item-val">${Util.credits(price)}c</span>
-        <button class="btn btn-mini" data-buycomponent="${o.id}" data-cost="${price}">Buy</button></div></div>`;
+        <button class="btn btn-mini" data-buycomponent="${o.id}" data-cost="${price}" data-name="${o.comp.name}">Buy</button></div></div>`;
     }).join("") || `<p class="muted-note">No components in stock.</p>`;
 
     const dossiers = !window.Senate ? "" : ((b.dossiers || []).map(d => {
@@ -2057,7 +2115,7 @@ const UI = {
       return `<div class="contract tip"><div class="c-head"><b>${d.name}</b><span class="ctype">dossier</span></div>
         <div class="c-desc">${d.title} · <span style="color:${Senate.blocColor(d.bloc)}">◆ ${Senate.blocName(d.bloc)}</span> · ${d.systemName}</div>
         <div class="c-foot"><span class="muted-note">unlocks their stances &amp; voting record</span>
-        <button class="btn btn-go" data-buydossier="${d.id}" data-cost="${price}">Buy dossier ${Util.credits(price)}c</button></div></div>`;
+        <button class="btn btn-go" data-buydossier="${d.id}" data-cost="${price}" data-name="${d.name} dossier">Buy dossier ${Util.credits(price)}c</button></div></div>`;
     }).join("") || `<p class="muted-note">No dossiers for sale right now.</p>`);
 
     const invCost = Bazaar.upgradeInventoryCost();
@@ -2080,7 +2138,7 @@ const UI = {
       gear: `<div class="panel"><h2>Accessory Market <small>names & stats vary — grab the good ones fast</small></h2>${gearTools}<div class="item-grid">${acc}</div></div>
              <div class="panel"><h2>Blackboxes <small>consumable timed buffs — Use from Inventory</small></h2>${restockNote}<div class="item-grid">${boxes}</div></div>
              <div class="panel"><h2>Blueprints <small>unlock Workshop recipes</small></h2>${restockNote}<div class="item-grid">${bps}</div></div>
-             <div class="panel"><h2>Station Bay</h2><p>Bay capacity <b>${(this.s().inventory && this.s().inventory.capacity) || 50}</b> slots at every station. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
+             <div class="panel"><h2>Station Bay</h2><p>Bay space <b>${Bazaar.inventoryUsed()}/${Bazaar.capacity()}</b> slots used here. Every station has the same capacity. Expand by ${BAZAARCFG.inventoryUpgradeStep} slots.</p>
                <button class="btn btn-go" id="buy-inv" data-cost="${invCost}">Upgrade — ${Util.credits(invCost)}c</button></div>`,
       extractors: `<div class="panel"><h2>Extractors <small>install on a planet permit (Industries) to mine &amp; manufacture</small></h2><div class="item-grid">${exo}</div></div>
              <div class="panel"><h2>Components <small>fit into an extractor to boost yield / cut cycle time</small></h2><div class="item-grid">${comp}</div></div>`,
@@ -2159,7 +2217,6 @@ const UI = {
     const bandInfo = CHARTER_BANDS[pick.band] || {};
     const freeLeft = idle.filter(x => !pick.shipUids.includes(x.uid)).length;
     const stranded = freeLeft === 0 && this.s().credits <= 0;
-    // Cap matches Charters.dispatch — deferred (payout-pending) rows don't count.
     const atCap = Charters.running().length >= CHARTERCFG.maxActive;
     const shipRows = idle.map(s => {
       const sst = Fleet.stats(s);
@@ -2219,6 +2276,7 @@ const UI = {
     if (Economy.busy()) return;
     const mainBtn = t.closest("[data-buymain]");
     if (mainBtn) {
+      if (!await this._confirmBuy(mainBtn)) return;
       const r = await Bazaar.buyMain(mainBtn.dataset.buymain, mainBtn.dataset.offer);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast("Flagship acquired.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar(); this.renderFleet(); this.updateHeader();
@@ -2237,12 +2295,19 @@ const UI = {
       const el = t.closest(`[data-${attr}]`);
       if (el) {
         const id = el.getAttribute(`data-${attr}`);
+        // Every purchase confirms first; extractor/component buys then run the
+        // requisition terminal (same pacing as the exchange trade terminal).
+        const terminal = attr === "buyextractor" || attr === "buycomponent";
+        const cost = +el.dataset.cost || 0;
+        const name = el.dataset.name || "this item";
+        if (!await this._confirmBuy(el)) return;
         const r = await fn(id);
         if (!r.ok) return this.toast(r.msg, "warn");
         this.toast(msg, "good"); this.flashCredits(); window.Game.requestSave();
         // Blackbox buys are soft/local — flush so a quick refresh keeps the item.
         if (attr === "buyblackbox" && window.Store && Store.flush && window.Game) void Store.flush(Game.state);
         this.renderBazaar(); this.updateHeader();
+        if (terminal) this.playBuyAnim(name, cost);
         return;
       }
     }
@@ -2264,11 +2329,26 @@ const UI = {
       if (r.contract) this.openMission(r.contract);
       return;
     }
-    if (t.closest("#buy-inv")) {
+    const inv = t.closest("#buy-inv");
+    if (inv) {
+      if (!await this._confirmBuy(inv, `Station Bay upgrade (+${BAZAARCFG.inventoryUpgradeStep} slots)`)) return;
       const r = await Bazaar.buyInventoryUpgrade();
       if (!r.ok) return this.toast(r.msg, "warn");
       this.toast("Inventory expanded.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderBazaar();
     }
+  },
+
+  // Shared "Buy X for Yc?" gate for Bazaar buttons carrying data-cost/data-name.
+  // Free items (starter ship) skip the prompt.
+  _confirmBuy(btn, fallbackName) {
+    const cost = +btn.dataset.cost || 0;
+    if (cost <= 0) return Promise.resolve(true);
+    const name = btn.dataset.name || fallbackName || "this item";
+    return this.confirmDialog({
+      title: "Confirm Purchase",
+      body: `Buy <b>${name}</b> for <b>${Util.credits(cost)}c</b>?`,
+      okLabel: "Buy",
+    });
   },
 
   // ===== systems ===========================================================
@@ -3780,7 +3860,7 @@ const UI = {
       html += `<ul class="wywa-runs">` + reports.map(r => {
         const wear = (r.damaged || []).length ? ` · 🔧 ${r.damaged.length} damaged` : "";
         if (r.type === "survey") return `<li>🛰 <span class="${r.success ? "up" : "down"}">${r.summary}</span></li>`;
-        if (r.type === "charter") return `<li>📜 <span class="${r.deferred ? "warn" : r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
+        if (r.type === "charter") return `<li>📜 <span class="${r.success ? "up" : "down"}">${r.summary || r.title}</span></li>`;
         return r.success
           ? `<li>${r.title}: <span class="up">success</span> +${Util.credits(r.credits)}c${r.items.length ? ` · ${r.items.length} item(s)` : ""}${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : ""}${wear}</li>`
           : `<li>${r.title}: <span class="down">failed</span>${r.lost.length ? ` · lost ${r.lost.length} ship(s)` : r.impounded.length ? ` · ${r.impounded.length} impounded` : ""}${wear}</li>`;
@@ -4066,7 +4146,7 @@ const UI = {
     Bus.on("charterDone", r => {
       if (window.Game._booting) return;   // offline charters land in the "while you were away" recap
       // Deferred = hulls home, ledger pay outstanding — a heads-up, not a loss.
-      this.toast(r.summary || r.title, r.deferred ? "pending" : r.success ? "good" : "bad", 6000);
+      this.toast(r.summary || r.title, r.success ? "good" : "bad", 6000);
       this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "bazaar" && this.bazaarTab === "charters") this.renderBazaar();

@@ -3311,7 +3311,10 @@ const Stations = {
         return this.produceRemoteLeases(hourIndex);
       })
       .then(() => this.settleHall())
-      .then(() => this._retryPendingHaulSettles());
+      .then(() => this._retryPendingHaulSettles())
+      // A failed server hour must not surface as an uncaught rejection — the
+      // next stock hour retries (upkeep_paid_through wasn't stamped).
+      .catch(e => console.warn("[Stations] after-hour sync failed:", e));
   },
 
   _warnStages(st, sentiment) {

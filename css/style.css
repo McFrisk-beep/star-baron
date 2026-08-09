@@ -477,6 +477,10 @@ select:focus-visible, input[type="number"]:focus-visible, input[type="text"]:foc
 .tt-result { margin-top: 12px; font-size: 13px; background: #11192c; border-radius: 8px; padding: 10px 12px; }
 .tt-result .muted-note { margin: 6px 0 0; }
 .trade-edicts { margin-top: 8px; }
+/* purchase confirm (game-styled window.confirm) */
+.confirm-box { max-width: 360px; }
+.confirm-body { font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
+.confirm-box .settings-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .edict-tax-list { margin: 6px 0 0; padding-left: 1.1em; font-size: 12px; color: var(--ink-dim); line-height: 1.55; }
 .edict-tax-list li { margin: 2px 0; }
 .edict-tax-list.wywa-edicts { margin: 0 0 10px; }
@@ -793,12 +797,15 @@ body.reduced .tt-dot { animation: none; }
   .layout { padding: 10px 10px 84px; gap: 10px; }
   .tab { padding: 8px 12px; font-size: 12px; }
   /* market: two compact tiles per row. Each tile is self-contained (no x-scroll)
-     and 12 commodities become 6 rows of thumb-sized cards instead of 12 tall ones. */
-  .table-wrap { overflow-x: visible; }
-  .market, .market tbody { display: block; }
-  .market thead { display: none; }
-  .market tbody { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .market tr {
+     and 12 commodities become 6 rows of thumb-sized cards instead of 12 tall ones.
+     Scoped to the Exchange table only — other table.market instances (station
+     modules/bays, customs, contract office, exchange hall) lack the grid-area
+     cell classes and would auto-place into an overlapping mess. */
+  #market-wrap { overflow-x: visible; }
+  #market-table, #market-table tbody { display: block; }
+  #market-table thead { display: none; }
+  #market-table tbody { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  #market-table tr {
     display: grid; align-items: center; column-gap: 6px; row-gap: 3px;
     grid-template-columns: 24px minmax(0, 1fr) auto;
     grid-template-areas:
@@ -810,27 +817,40 @@ body.reduced .tt-dot { animation: none; }
     padding: 8px; background: rgba(12, 16, 32, .5);
     border: 1px solid var(--line); border-radius: 8px;
   }
-  .market td { display: block; padding: 0; border: none; min-width: 0; }
-  .market .cat { display: none; }
-  .market td.ico { grid-area: ico; }
-  .market .ico img, .market .ico .tintbox { width: 24px; height: 24px; }
-  .market td.name {
+  #market-table td { display: block; padding: 0; border: none; min-width: 0; }
+  #market-table .cat { display: none; }
+  #market-table td.ico { grid-area: ico; }
+  #market-table .ico img, #market-table .ico .tintbox { width: 24px; height: 24px; }
+  #market-table td.name {
     grid-area: name; font-size: 12px; line-height: 1.2;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .market td.price { grid-area: price; text-align: left; font-size: 14px; }
-  .market td.chg { grid-area: chg; font-size: 11px; }
-  .market td.trend { grid-area: trend; }
-  .market td.trend svg { width: 100%; height: 18px; }
-  .market td.stock { grid-area: stock; text-align: left; font-size: 11px; }
-  .market td.stock .stock-eat { display: inline; margin-left: 4px; }
-  .market td.held { grid-area: held; text-align: left; font-size: 11px; }
-  .market td.pnl { grid-area: pnl; font-size: 11px; }
-  .market td.stock, .market td.held, .market td.pnl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .market td.stock::before { content: "Stock "; color: var(--ink-faint); }
-  .market td.held::before { content: "Held "; color: var(--ink-faint); }
-  .market td.pnl::before { content: "P/L "; color: var(--ink-faint); }
-  .market td.actions { grid-area: act; margin-top: 3px; }
+  #market-table td.price { grid-area: price; text-align: left; font-size: 14px; }
+  #market-table td.chg { grid-area: chg; font-size: 11px; }
+  #market-table td.trend { grid-area: trend; }
+  #market-table td.trend svg { width: 100%; height: 18px; }
+  #market-table td.stock { grid-area: stock; text-align: left; font-size: 11px; }
+  #market-table td.stock .stock-eat { display: inline; margin-left: 4px; }
+  #market-table td.held { grid-area: held; text-align: left; font-size: 11px; }
+  #market-table td.pnl { grid-area: pnl; font-size: 11px; }
+  #market-table td.stock, #market-table td.held, #market-table td.pnl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #market-table td.stock::before { content: "Stock "; color: var(--ink-faint); }
+  #market-table td.held::before { content: "Held "; color: var(--ink-faint); }
+  #market-table td.pnl::before { content: "P/L "; color: var(--ink-faint); }
+  #market-table td.actions { grid-area: act; margin-top: 3px; }
+  /* station modules/bays: stack each row as a card — four table columns
+     overlap themselves at phone widths. */
+  .st-mods, .st-bays, .st-mods tbody, .st-bays tbody { display: block; }
+  .st-mods thead, .st-bays thead { display: none; }
+  .st-mods tr, .st-bays tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px;
+    padding: 8px 10px; margin-bottom: 8px;
+    background: rgba(12, 16, 32, .5); border: 1px solid var(--line); border-radius: 8px;
+  }
+  .st-mods td, .st-bays td { display: block; padding: 0; border: none; }
+  .st-mods td:first-child, .st-bays td:first-child { flex: 1 1 100%; min-width: 0; max-width: none; }
+  .st-mods td.num, .st-bays td.num { font-size: 12px; color: var(--ink-dim); }
+  .st-mods td.actions, .st-bays td.actions { margin-left: auto; white-space: normal; text-align: right; }
   /* qty · Buy · Sell on one line, Buy Max · Sell All under it. Two rows instead
      of three keeps the tile short while every tap target stays ~34px tall.
      A 6-column track is what lets row 1 split 2/2/2 and row 2 split 3/3. */
@@ -1212,6 +1232,12 @@ body.reduced .floatnav-indicator { transition: none; }
 .inv-acts { justify-content: center; }
 .inv-acts .item-val { margin-right: 0; width: 100%; text-align: center; }
 .contract > .item-art, .contract > .tintbox.item-art { float: right; margin: 0 0 6px 8px; width: 40px; height: 32px; }
+/* Bazaar shelf cards (Gear / Extractors): contracts-style layout — details on
+   the left, art on the right, Buy on the row below the art. */
+.item.buy { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-content: start; }
+.item.buy > .item-art, .item.buy > .tintbox.item-art { grid-column: 2; grid-row: 1 / span 2; margin: 0; width: 56px; height: 44px; }
+.item.buy .item-top, .item.buy .item-stat { grid-column: 1; }
+.item.buy .item-acts { grid-column: 1 / -1; margin-top: 4px; }
 
 /* ===== hauling transfer (Fleet → Inventory) + Assets tab ===== */
 .haul-transfer { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: start; }
@@ -1280,6 +1306,20 @@ body.reduced .floatnav-indicator { transition: none; }
 .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .buy-card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; }
 .buy-card img, .buy-card .tintbox { width: 52px; height: 40px; object-fit: contain; margin: 0 auto 4px; }
+/* Bazaar shelf cards (Shipyard / Flagships / Mercenaries): same contracts-style
+   layout as the item cards — details left, art right, button below the art.
+   Inventory (.inv-card) keeps the compact centered look. */
+.buy-card:not(.inv-card) {
+  text-align: left;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px; align-content: start;
+}
+.buy-card:not(.inv-card) > * { grid-column: 1; min-width: 0; }
+.buy-card:not(.inv-card) > img, .buy-card:not(.inv-card) > .tintbox {
+  grid-column: 2; grid-row: 1 / span 3; margin: 0; width: 56px; height: 44px;
+}
+.buy-card:not(.inv-card) > .btn { grid-column: 1 / -1; justify-self: end; margin-top: 6px; }
+.buy-card:not(.inv-card) .bc-statline { justify-content: flex-start; }
 .bc-name { font-weight: 700; font-size: 12.5px; }
 .bc-stats { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); margin: 4px 0 8px; }
 /* "Bulk Freighter · Wide-Belly hauler refit" — the hull + its yard refit, under
@@ -1738,15 +1778,13 @@ body.reduced .hub-prompt { animation: none; }
   min-height: 0; overflow-y: auto; border-right: 1px solid rgba(130, 170, 255, .18);
   background: rgba(12, 18, 36, .7);
 }
+/* No thread open: the list is the only child — let it take the full width. */
+.disp-layout:not(.thread-open) { grid-template-columns: 1fr; }
+.disp-layout:not(.thread-open) .disp-sidebar { border-right: 0; }
 .disp-pane {
   min-height: 0; display: flex; flex-direction: column; padding: 10px 12px;
   background: rgba(14, 22, 42, .45);
 }
-.disp-empty {
-  flex: 1; display: grid; place-items: center; text-align: center; padding: 24px;
-  color: var(--ink-faint); font-size: 13px;
-}
-.disp-empty p { margin: 0; max-width: 240px; line-height: 1.45; }
 .disp-list-empty { margin: 12px; font-size: 12px; }
 .disp-kind {
   font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #8fa6d8;
@@ -1813,15 +1851,15 @@ body.reduced .hub-prompt { animation: none; }
 .disp-text { font-size: 13px; color: #e6edff; line-height: 1.4; white-space: pre-wrap; }
 
 @media (max-width: 720px) {
-  .disp-layout { grid-template-columns: 1fr; grid-template-rows: minmax(140px, 38%) minmax(0, 1fr); }
-  .disp-sidebar { border-right: 0; border-bottom: 1px solid rgba(130, 170, 255, .18); max-height: none; }
-  /* Open thread: hide contacts; fit above the floating dock so actions stay on screen. */
-  .disp-layout.thread-open {
-    grid-template-rows: 1fr;
+  /* One column either way; a fixed window above the floating dock so the
+     list (or open thread) scrolls inside instead of stretching the page. */
+  .disp-layout {
+    grid-template-columns: 1fr; grid-template-rows: 1fr;
     height: calc(100dvh - 210px);
     max-height: calc(100dvh - 210px);
     min-height: 280px;
   }
+  .disp-sidebar { border-right: 0; max-height: none; }
   .disp-layout.thread-open .disp-sidebar { display: none; }
   .disp-layout.thread-open .disp-pane { min-height: 0; overflow: hidden; }
 }

@@ -118,11 +118,14 @@ ctx.Extractors = ctx.Extractors || {
   assert(d2.ok);
   T += 3600000;
   const rSkip = Charters.resolve(T);
-  // Free hulls on the timer (no app_charter_* yet) but never mint credits.
-  assert.strictEqual(rSkip.length, 1, "auth+pullReady still frees matured charter hulls");
-  assert.strictEqual(rSkip[0].credits, 0, "no local charter payout under Phase 3");
+  // Charters are client-local until app_charter_* — matured jobs pay out even
+  // under Phase 3 (same ledger path the old Buy out used).
+  assert.strictEqual(rSkip.length, 1, "auth+pullReady still resolves matured charters");
+  assert.ok(rSkip[0].credits > 0, "charter payout credited under Phase 3");
   assert.strictEqual(sh2.status, "idle", "chartered hull unlocked");
-  assert.strictEqual(ctx.Game.state.credits, before, "credits unchanged by local resolve");
+  const paid = rSkip[0].credits;
+  assert.strictEqual(ctx.Game.state.credits, before + paid, "payout landed");
+  assert.strictEqual(ctx.Game.state.charters.length, 0, "no payout-pending row left behind");
   assert.strictEqual(Industries.resolve(T).length, 0);
   assert.strictEqual(Expeditions.resolve(T).length, 0);
   assert.strictEqual(Bazaar.tick(T).length, 0);
@@ -130,7 +133,7 @@ ctx.Extractors = ctx.Extractors || {
   // 3) Economy.applyPull reconciles credits + away blob
   const away = Economy.applyPull(await ctx.Cloud.pull());
   assert(away && away.routed && away.routed.total === 1234);
-  assert.strictEqual(ctx.Game.state.credits, before + 1234);
+  assert.strictEqual(ctx.Game.state.credits, before + paid + 1234);
 
   // 4) Prestige goes through RPC when authoritative
   ctx.Game.state.stats.peakNetWorth = 2_000_000;
@@ -151,10 +154,10 @@ ctx.Extractors = ctx.Extractors || {
   Charters.dispatch(sh3.uid, "safe", 60, T);
   T += 3600000;
   const gated = Charters.resolve(T);
-  assert.strictEqual(gated.length, 1, "auth without pullReady still frees hulls");
-  assert.strictEqual(gated[0].credits, 0, "auth without pullReady skips local mint");
-  assert.strictEqual(ctx.Game.state.credits, fresh().credits, "credits unchanged while pull retries");
-  // Dispatch another under pullMissing (Phase 2 fallback allows mint)
+  assert.strictEqual(gated.length, 1, "auth without pullReady still resolves");
+  assert.ok(gated[0].credits > 0, "charter pays regardless of pull state");
+  assert.strictEqual(ctx.Game.state.credits, fresh().credits + gated[0].credits, "payout landed");
+  // Dispatch another under pullMissing (Phase 2 fallback)
   ctx.Cloud.pullMissing = true;
   const sh3b = Object.assign(Fleet.makeShip("drift"), { status: "idle" });
   ctx.Game.state.ships.push(sh3b);
