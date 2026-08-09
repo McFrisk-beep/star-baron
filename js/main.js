@@ -47,7 +47,7 @@ const Game = {
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
       story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
-      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en" },
+      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "" },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
@@ -82,6 +82,11 @@ const Game = {
     if (s.settings.volume == null || !Number.isFinite(+s.settings.volume)) s.settings.volume = 0.25;
     s.settings.volume = Util.clamp(+s.settings.volume, 0, 1);
     s.settings.muted = !!s.settings.muted;
+    // Music prefs are loaded save data — keep them to plain strings and a sane
+    // length. Urls that no longer ship are dropped later by Bgm.tracks().
+    s.settings.bgmOrder = Array.isArray(s.settings.bgmOrder)
+      ? s.settings.bgmOrder.filter(u => typeof u === "string" && u).slice(0, 200) : [];
+    if (typeof s.settings.bgmStart !== "string") s.settings.bgmStart = "";
     if (window.Senate) {
       const ls = loaded.senate || {};
       s.senate = Object.assign(Senate.defaultState(), ls);

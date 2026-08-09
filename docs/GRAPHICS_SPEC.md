@@ -179,6 +179,33 @@ Add a nebula: drop `assets/nebula/<name>.png` and reference it from a sector's
 - **Broadcast frames** `assets/broadcast/<name>.png` (384×216): `news`,
   `tv_drama`, `tv_ads`, `tv_weather`, `static` — the TV/news screen backgrounds.
 
+### Broadcast + music: the file name is the config
+
+Both folders are read by file name, so adding art or a song is drop-in:
+
+- `assets/broadcast/` — the **channel is the file name with any trailing number
+  stripped**, so `news.png`, `news1.png` and `news_2.png` all feed the `news`
+  channel and the screen picks one at random per rotation. Any image extension
+  works (`.png .gif .jpg .jpeg .webp`); GIFs animate.
+- `assets/bgm/` — every audio file (`.mp3 .ogg .wav .webm .m4a`) is a track and
+  the loop runs through all of them. Sort with an `01_`, `02_` … prefix; it's
+  stripped from the name players see. Each player can reorder the loop and pick
+  its start song in **Settings → Music**.
+
+A static site can't list a directory (it must work from `file://` too), so the
+file names are baked into `js/media-manifest.js`. **Re-run the generator after
+adding or removing files** — CI fails if the manifest is stale:
+
+```sh
+python3 tools/gen_media_manifest.py
+```
+
+A new channel needs one more step: the Broadcast screen only shows channels that
+some `TV_SHOWS` entry in `js/flavor.js` names, so add the show there too (`news`
+is the exception — it's driven by the newswire). Admins can still override any
+channel's pool from **Admin → Images** without a redeploy; a live override wins
+over the committed files.
+
 ---
 
 ## 11. Adding new content (art + data together)

@@ -197,12 +197,13 @@ stations, commodities, nebulae, broadcast screens. **Upload** (or **Replace**) a
 PNG/JPG; it's stored in your `sprites` bucket and the game points at it. **Reset**
 reverts a slot to the built-in art. Changes show on **reload**.
 
-### 🎵 Music
-Shared background playlist for **every player**. **+ Add song** uploads an
-MP3/OGG/WAV/WEBM into `sprites/bgm/` and appends it to content key `BGM_PLAYLIST`.
-Tracks play in order and loop when the list ends. Rename / reorder / remove from
-the same tab. Players control mute (top-bar icon next to Settings) and volume
-(Settings, default 25%).
+### 🎵 Music — moved to git
+There is no Music tab any more. The playlist is whatever is committed to
+`assets/bgm/`: drop in an MP3/OGG/WAV/WEBM, run `python3 tools/gen_media_manifest.py`,
+and commit. Every file becomes a track and the loop runs through all of them.
+Prefix names with `01_`, `02_` … to set the shipped order (the prefix is stripped
+from the display name). Each player then picks their own order and start song in
+**Settings → Music**, plus mute (top-bar icon) and volume (Settings, default 25%).
 
 **Single slots vs pools.** Most categories take one image. The ones marked
 *(pools)* take **as many as you like** per entry, and each individual thing in

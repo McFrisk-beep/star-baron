@@ -611,7 +611,6 @@
         <button class="admin-navbtn" data-view="missions">📨 Missions</button>
         <button class="admin-navbtn" data-view="craft">🔧 Crafting</button>
         <button class="admin-navbtn" data-view="images">🖼 Images</button>
-        <button class="admin-navbtn" data-view="music">🎵 Music</button>
         <button class="admin-navbtn" data-view="dev">🧪 Dev</button>
       </div>
 
@@ -659,16 +658,6 @@
         <div class="admin-imgtabs" id="admin-imgtabs"></div>
         <div class="admin-gallery-scroll" id="admin-gallery"></div>
         <div class="settings-actions"><button class="btn admin-close">Close</button></div>
-      </div>
-
-      <div id="admin-view-music" class="hidden">
-        <p class="muted-note">Upload background tracks (MP3 / OGG / WAV / WEBM). Every player hears the same playlist — it loops from the top when the last song ends. Stored in Supabase <code>sprites/bgm/</code> + content key <code>BGM_PLAYLIST</code>.</p>
-        <div id="admin-music-list" class="admin-music-list"></div>
-        <p class="admin-status" id="admin-music-status"></p>
-        <div class="settings-actions">
-          <button class="btn btn-go" id="admin-music-add">+ Add song</button>
-          <button class="btn admin-close">Close</button>
-        </div>
       </div>
 
       <div id="admin-view-dev" class="hidden">
@@ -730,21 +719,31 @@
 
   <div class="modal-backdrop hidden" id="settings-modal">
     <div class="modal"><h3 data-i18n="settings.title">Settings</h3>
-      <div class="set-row">
-        <span class="set-label" data-i18n="settings.language">Language</span>
-        <div class="lang-toggle" role="group" aria-label="Language">
-          <button type="button" class="lang-btn" data-lang="en">EN</button>
-          <button type="button" class="lang-btn" data-lang="jp">日本語</button>
-        </div>
+      <div class="set-tabs" id="set-tabs" role="tablist">
+        <button type="button" class="set-tab active" data-settab="general" data-i18n="settings.tabGeneral">General</button>
+        <button type="button" class="set-tab" data-settab="music" data-i18n="settings.tabMusic">Music</button>
       </div>
-      <div class="set-row">
-        <span class="set-label" data-i18n="settings.volume">Volume</span>
-        <div class="vol-row">
-          <input type="range" id="set-volume" min="0" max="100" step="1" value="25" aria-label="Volume" />
-          <span id="set-volume-val">25%</span>
+      <div id="set-panel-general">
+        <div class="set-row">
+          <span class="set-label" data-i18n="settings.language">Language</span>
+          <div class="lang-toggle" role="group" aria-label="Language">
+            <button type="button" class="lang-btn" data-lang="en">EN</button>
+            <button type="button" class="lang-btn" data-lang="jp">日本語</button>
+          </div>
         </div>
+        <div class="set-row">
+          <span class="set-label" data-i18n="settings.volume">Volume</span>
+          <div class="vol-row">
+            <input type="range" id="set-volume" min="0" max="100" step="1" value="25" aria-label="Volume" />
+            <span id="set-volume-val">25%</span>
+          </div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="set-reduced" /> <span data-i18n="settings.reduced">Reduce motion</span></label>
       </div>
-      <label class="toggle"><input type="checkbox" id="set-reduced" /> <span data-i18n="settings.reduced">Reduce motion</span></label>
+      <div id="set-panel-music" class="hidden">
+        <p class="muted-note" data-i18n="settings.musicNote">Your playlist loops from the top. Pick where it starts with ★ and reorder with the arrows — this is saved to your game only.</p>
+        <div class="bgm-list" id="set-bgm-list"></div>
+      </div>
       <div class="settings-actions">
         <button class="btn hidden" id="set-restore" data-i18n="settings.restore">Restore backup</button>
         <button class="btn btn-danger" id="set-reset" data-i18n="settings.reset">Reset Save</button>
@@ -758,6 +757,7 @@
   <!-- Supabase SDK (loads from CDN; if blocked/offline the game stays local). -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/assets-local.js"></script>
+  <script src="js/media-manifest.js"></script>
   <script src="js/data.js"></script>
   <script src="js/flavor.js"></script>
   <script src="js/cloud-config.js"></script>

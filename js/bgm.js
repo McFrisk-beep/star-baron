@@ -1,10 +1,8 @@
-/* bgm.js — shared background-music playlist. Admin uploads tracks (Supabase
-   content key BGM_PLAYLIST + sprites/bgm/*); every player hears the same loop.
-   Starts after the first user gesture (browser autoplay policy). Volume/mute
-   come from Game.state.settings.                                                 */
-
-// [{ url, name }] — starts from the git-committed default track, overlaid by Content at boot
-const BGM_PLAYLIST = (typeof BGM_PLAYLIST_LOCAL !== "undefined") ? BGM_PLAYLIST_LOCAL.slice() : [];
+/* bgm.js — background-music playlist. Git is the source of truth: every file in
+   assets/bgm/ is a track (baked into BGM_TRACKS by tools/gen_media_manifest.py)
+   and the loop runs through all of them. Each player then picks their own order
+   and start track in Settings → Music. Playback starts after the first user
+   gesture (browser autoplay policy). Volume/mute come from Game.state.settings. */
 
 const Bgm = {
   el: null,
@@ -12,15 +10,78 @@ const Bgm = {
   _armed: false,
   _failStreak: 0,
 
-  tracks() {
-    const list = window.BGM_PLAYLIST;
+  // The shipped playlist, in manifest (file-name) order.
+  all() {
+    const list = window.BGM_TRACKS;
     if (!Array.isArray(list)) return [];
     return list.filter(t => t && typeof t.url === "string" && t.url);
   },
 
+  settings() { return (window.Game && Game.state && Game.state.settings) || {}; },
+
+  // Saved order is player data — treat it as untrusted: keep only strings, and
+  // let the lookups below silently drop urls that no longer ship.
+  savedOrder() {
+    const o = this.settings().bgmOrder;
+    return Array.isArray(o) ? o.filter(u => typeof u === "string" && u) : [];
+  },
+
+  // Playlist = the player's saved order, then anything they've never seen (a
+  // song added by a later deploy) appended in manifest order.
+  tracks() {
+    const all = this.all();
+    const order = this.savedOrder();
+    if (!order.length) return all;
+    const byUrl = new Map(all.map(t => [t.url, t]));
+    const out = [];
+    for (const url of order) {
+      const t = byUrl.get(url);
+      if (t) { out.push(t); byUrl.delete(url); }   // delete = dupes in the save collapse
+    }
+    for (const t of all) if (byUrl.has(t.url)) out.push(t);
+    return out;
+  },
+
+  // The track playing right now (or the one queued up), for UI highlighting.
+  current() { const t = this.tracks()[this.idx]; return t ? t.url : ""; },
+
+  // Point idx back at `url` so a reorder doesn't restart what's playing.
+  reindex(url) {
+    const i = this.tracks().findIndex(t => t.url === url);
+    if (i >= 0) this.idx = i;
+  },
+
+  // Player reorder: swap two rows and persist the new order. Returns false when
+  // the move runs off either end so the caller can skip a re-render.
+  move(index, dir) {
+    const tracks = this.tracks();
+    const j = index + dir;
+    if (index < 0 || index >= tracks.length || j < 0 || j >= tracks.length) return false;
+    const playing = this.current();
+    const next = tracks.slice();
+    const tmp = next[index]; next[index] = next[j]; next[j] = tmp;
+    this.settings().bgmOrder = next.map(t => t.url);
+    this.reindex(playing);
+    return true;
+  },
+
+  // Player's start track — where the loop begins on load. Jumping to it now is
+  // the feedback that says "this one".
+  startUrl() {
+    const u = this.settings().bgmStart;
+    return typeof u === "string" ? u : "";
+  },
+  setStart(url) {
+    this.settings().bgmStart = String(url || "");
+    const i = this.tracks().findIndex(t => t.url === url);
+    if (i < 0) return;
+    this.idx = i;
+    this.play(true);
+  },
+
   volume() {
-    const s = window.Game && Game.state && Game.state.settings;
-    if (!s || s.muted) return 0;
+    const s = this.settings();
+    if (s.muted) return 0;
     const v = s.volume == null ? 0.25 : +s.volume;
     return Util.clamp(Number.isFinite(v) ? v : 0.25, 0, 1);
   },
@@ -43,7 +104,7 @@ const Bgm = {
     return a;
   },
 
-  // Call after Content.load (and whenever the admin edits the playlist).
+  // Call whenever the effective playlist changes (boot, or a settings edit).
   sync() {
     const tracks = this.tracks();
     if (!tracks.length) { this.stop(); return; }
@@ -107,9 +168,10 @@ const Bgm = {
     };
     document.addEventListener("pointerdown", unlock, true);
     document.addEventListener("keydown", unlock, true);
+    // Begin at the player's chosen start track (0 when unset or no longer shipped).
+    this.idx = Math.max(0, this.tracks().findIndex(t => t.url === this.startUrl()));
     this.sync();
   },
 };
 
-window.BGM_PLAYLIST = BGM_PLAYLIST;
 window.Bgm = Bgm;

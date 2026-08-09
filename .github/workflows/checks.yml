@@ -22,6 +22,15 @@ jobs:
       - name: Syntax-check every script
         run: for f in js/*.js tools/*.js; do node --check "$f" || exit 1; done
 
+      # assets/broadcast/ + assets/bgm/ file names ARE the config, but a static
+      # site can't list a directory — so they're baked into js/media-manifest.js.
+      # Catch the "added a file, forgot to regenerate" case.
+      - name: Media manifest is up to date
+        run: |
+          python3 tools/gen_media_manifest.py
+          git diff --exit-code js/media-manifest.js \
+            || { echo "::error::js/media-manifest.js is stale — run: python3 tools/gen_media_manifest.py"; exit 1; }
+
       - name: Run checks
         run: |
           # Quarantined: failing on main before this workflow existed. Each needs a

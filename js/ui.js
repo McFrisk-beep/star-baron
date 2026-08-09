@@ -98,6 +98,8 @@ const UI = {
       setReduced: $("set-reduced"),
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
       setRestore: $("set-restore"), setRestoreNote: $("set-restore-note"),
+      setTabs: $("set-tabs"), setPanelGeneral: $("set-panel-general"), setPanelMusic: $("set-panel-music"),
+      setBgmList: $("set-bgm-list"),
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
     if (window.I18n) I18n.init();
@@ -3967,6 +3969,54 @@ const UI = {
     if (window.Bgm) Bgm.applyVolume();
   },
 
+  // ===== settings → music ==================================================
+  // The playlist itself is whatever ships in assets/bgm/. Players only choose
+  // the order and which track the loop starts on; both save with their game.
+  setTab: "general",
+  showSettingsTab(tab) {
+    this.setTab = tab === "music" ? "music" : "general";
+    const r = this.refs;
+    if (r.setTabs) for (const b of r.setTabs.querySelectorAll(".set-tab"))
+      b.classList.toggle("active", b.dataset.settab === this.setTab);
+    if (r.setPanelGeneral) r.setPanelGeneral.classList.toggle("hidden", this.setTab !== "general");
+    if (r.setPanelMusic) r.setPanelMusic.classList.toggle("hidden", this.setTab !== "music");
+    if (this.setTab === "music") this.renderBgmList();
+  },
+  renderBgmList() {
+    const host = this.refs.setBgmList; if (!host || !window.Bgm) return;
+    const tracks = Bgm.tracks();
+    host.innerHTML = "";
+    if (!tracks.length) {
+      host.append(this.el("p", "muted-note", this.t("settings.musicEmpty", "No music in this build yet.")));
+      return;
+    }
+    const start = Bgm.startUrl() || tracks[0].url;
+    const playing = Bgm.current();
+    const startTip = this.t("settings.musicStart", "Start the loop on this song");
+    tracks.forEach((t, i) => {
+      const row = this.el("div", "bgm-row" + (t.url === playing ? " playing" : ""));
+      const name = this.el("span", "bgm-name");
+      name.textContent = t.name || t.url;
+      const star = this.el("button", "bgm-star" + (t.url === start ? " on" : ""), "★");
+      star.type = "button"; star.title = startTip; star.setAttribute("aria-label", startTip);
+      star.setAttribute("aria-pressed", t.url === start ? "true" : "false");
+      star.onclick = () => { Bgm.setStart(t.url); window.Game.requestSave(); this.renderBgmList(); };
+      const move = (dir, glyph, tip) => {
+        const b = this.el("button", "btn btn-mini", glyph);
+        b.type = "button"; b.title = tip; b.setAttribute("aria-label", `${tip}: ${t.name || t.url}`);
+        b.disabled = dir < 0 ? i === 0 : i === tracks.length - 1;
+        b.onclick = () => { if (Bgm.move(i, dir)) { window.Game.requestSave(); this.renderBgmList(); } };
+        return b;
+      };
+      row.append(
+        this.el("span", "bgm-idx", String(i + 1)), name, star,
+        move(-1, "↑", this.t("settings.musicUp", "Move up")),
+        move(1, "↓", this.t("settings.musicDown", "Move down")),
+      );
+      host.append(row);
+    });
+  },
+
   // Refresh JS-generated labels after a language switch (static HTML is handled
   // by I18n.apply via data-i18n). Called from I18n.apply once the UI is ready.
   onLangChange() {
@@ -4025,7 +4075,10 @@ const UI = {
       document.addEventListener("click", e => { if (!r.topbar.contains(e.target)) setMenu(false); });
       document.addEventListener("keydown", e => { if (e.key === "Escape") setMenu(false); });
     }
-    r.btnSettings.onclick = () => r.settings.classList.remove("hidden");
+    r.btnSettings.onclick = () => { r.settings.classList.remove("hidden"); this.showSettingsTab(this.setTab); };
+    if (r.setTabs) r.setTabs.onclick = e => {
+      const b = e.target.closest(".set-tab"); if (b) this.showSettingsTab(b.dataset.settab);
+    };
     r.setClose.onclick = () => r.settings.classList.add("hidden");
     if (r.btnMute) r.btnMute.onclick = () => {
       this.s().settings.muted = !this.s().settings.muted;
