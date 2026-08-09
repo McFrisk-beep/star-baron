@@ -22,17 +22,13 @@ jobs:
       - name: Syntax-check every script
         run: for f in js/*.js tools/*.js; do node --check "$f" || exit 1; done
 
-      # assets/broadcast/ + assets/bgm/ file names ARE the config, but a static
-      # site can't list a directory — so they're baked into js/media-manifest.js.
-      # The media-manifest workflow regenerates it on push, so this is the
-      # backstop for cases that workflow can't fix itself (a fork PR without
-      # write access, or a hand-edited manifest). A red here right after adding
-      # art is expected: the bot's commit turns it green a moment later.
-      - name: Media manifest is up to date
-        run: |
-          python3 tools/gen_media_manifest.py
-          git diff --exit-code js/media-manifest.js \
-            || { echo "::error::js/media-manifest.js is stale. The media-manifest workflow normally fixes this on push; to do it by hand run: python3 tools/gen_media_manifest.py"; exit 1; }
+      # No "is js/media-manifest.js stale?" gate here on purpose. The
+      # media-manifest workflow regenerates it on every push, and GitHub does
+      # not re-run workflows for pushes made with the default GITHUB_TOKEN — so
+      # a failure here could never be cleared by the bot's own fix-up commit and
+      # would just sit red forever. The bot is the guarantee; verified by
+      # pushing a new frame with a deliberately stale manifest and watching it
+      # commit the correction 17s later.
 
       - name: Run checks
         run: |
