@@ -1306,6 +1306,20 @@ body.reduced .floatnav-indicator { transition: none; }
 .buy-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; }
 .buy-card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; text-align: center; }
 .buy-card img, .buy-card .tintbox { width: 52px; height: 40px; object-fit: contain; margin: 0 auto 4px; }
+/* Bazaar shelf cards (Shipyard / Flagships / Mercenaries): same contracts-style
+   layout as the item cards — details left, art right, button below the art.
+   Inventory (.inv-card) keeps the compact centered look. */
+.buy-card:not(.inv-card) {
+  text-align: left;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px; align-content: start;
+}
+.buy-card:not(.inv-card) > * { grid-column: 1; min-width: 0; }
+.buy-card:not(.inv-card) > img, .buy-card:not(.inv-card) > .tintbox {
+  grid-column: 2; grid-row: 1 / span 3; margin: 0; width: 56px; height: 44px;
+}
+.buy-card:not(.inv-card) > .btn { grid-column: 1 / -1; justify-self: end; margin-top: 6px; }
+.buy-card:not(.inv-card) .bc-statline { justify-content: flex-start; }
 .bc-name { font-weight: 700; font-size: 12.5px; }
 .bc-stats { font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim); margin: 4px 0 8px; }
 /* "Bulk Freighter · Wide-Belly hauler refit" — the hull + its yard refit, under
