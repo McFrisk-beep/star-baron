@@ -66,6 +66,10 @@ $$;
 -- Commodity catalog (base/vol/cat). Keep in sync with COMMODITIES in data.js.
 -- Mirrors js/data.js COMMODITIES (id, cat, base, vol). Keep in sync when adding
 -- resources — signed-in trade / routes / industry look commodities up here.
+-- Adding craft_only changed this function's OUT row type — CREATE OR REPLACE
+-- can't do that (42P13), so drop the old 4-column version first. Plain $$-body
+-- SQL functions carry no dependency tracking, so the drop is safe.
+drop function if exists market.commodity(text);
 create or replace function market.commodity(p_id text)
 returns table(id text, cat text, base double precision, vol double precision, craft_only boolean)
 language sql immutable as $$
