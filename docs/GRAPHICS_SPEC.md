@@ -193,8 +193,10 @@ Both folders are read by file name, so adding art or a song is drop-in:
   its start song in **Settings → Music**.
 
 A static site can't list a directory (it must work from `file://` too), so the
-file names are baked into `js/media-manifest.js`. **Re-run the generator after
-adding or removing files** — CI fails if the manifest is stale:
+file names are baked into `js/media-manifest.js`. **You don't have to do this
+yourself** — the `media manifest` GitHub Action rebuilds and commits it whenever
+anything in `assets/broadcast/` or `assets/bgm/` changes, so dragging a file into
+GitHub is the whole job. Working locally and want it immediately:
 
 ```sh
 python3 tools/gen_media_manifest.py
