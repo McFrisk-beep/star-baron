@@ -199,8 +199,9 @@ reverts a slot to the built-in art. Changes show on **reload**.
 
 ### 🎵 Music — moved to git
 There is no Music tab any more. The playlist is whatever is committed to
-`assets/bgm/`: drop in an MP3/OGG/WAV/WEBM, run `python3 tools/gen_media_manifest.py`,
-and commit. Every file becomes a track and the loop runs through all of them.
+`assets/bgm/`: add an MP3/OGG/WAV/WEBM to that folder and you're done — a GitHub
+Action picks the file name up automatically. Every file becomes a track and the
+loop runs through all of them.
 Prefix names with `01_`, `02_` … to set the shipped order (the prefix is stripped
 from the display name). Each player then picks their own order and start song in
 **Settings → Music**, plus mute (top-bar icon) and volume (Settings, default 25%).
