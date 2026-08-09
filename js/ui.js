@@ -3797,6 +3797,19 @@ const UI = {
     // ponytail: chat is ambient chatter — no Comms badge. Dispatches + Broadcast still bump.
   },
 
+  // Small persistent pill while the game is idle-suspended (screen frozen on
+  // purpose — without this it reads as a hang). Any input hides it via resume().
+  showIdle(on) {
+    let el = document.getElementById("idle-pill");
+    if (!el && on) {
+      el = this.el("div", "idle-pill");
+      el.id = "idle-pill";
+      el.textContent = this.t("idle.pill", "⏸ Paused while idle — updates resume on input");
+      document.body.appendChild(el);
+    }
+    if (el) el.classList.toggle("hidden", !on);
+  },
+
   toast(text, kind = "info", ms = 3200) {
     const stack = this.refs.toast;
     // ponytail: cap at 3 — drop the oldest so bursts don't bury the screen

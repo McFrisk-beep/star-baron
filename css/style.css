@@ -499,6 +499,11 @@ body.reduced .tt-dot { animation: none; }
 #set-volume-val { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-dim); font-size: 12px; }
 .btn-icon { min-width: 36px; padding-left: 8px; padding-right: 8px; }
 .btn-icon.is-muted { opacity: 0.65; }
+/* Idle pause pill — the sim is deliberately frozen, say so. */
+.idle-pill { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 90;
+  background: #0c1020ee; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--ink-dim); font-size: 12px; padding: 6px 14px; pointer-events: none; }
+
 /* Settings tabs + the player's music playlist (Settings → Music). */
 .set-tabs { display: flex; gap: 4px; margin: 4px 0 10px; border-bottom: 1px solid var(--line); }
 .set-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-faint);

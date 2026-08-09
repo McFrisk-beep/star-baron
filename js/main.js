@@ -576,9 +576,40 @@ const Game = {
     // animation) so an open tab costs ~nothing over long idle periods; on return
     // we fast-forward the simulation to "now". Keeps the game light indefinitely.
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) this.suspend(); else this.resume();
+      // The extra pause covers idle→hidden: already suspended (audio kept), so
+      // suspend() alone would leave music playing in a background tab.
+      if (document.hidden) { this.suspend(); if (window.Bgm) Bgm.pause(); }
+      else this.resume();
     });
     window.addEventListener("beforeunload", () => this.save());
+
+    // Visible-but-idle uses the same suspend/resume: an AFK tab otherwise keeps
+    // polling Supabase and pushing an app_commit every ~10s forever. Music keeps
+    // playing (it's a cached static file — costs nothing while idle).
+    if (CONFIG.idleAfterMs > 0) {
+      const arm = () => {
+        clearTimeout(this._idleTimer);
+        this._idleTimer = setTimeout(() => {
+          if (document.hidden || this._suspended) return;
+          this._idleSuspended = true;
+          this.suspend({ pauseAudio: false });
+          UI.showIdle(true);
+        }, CONFIG.idleAfterMs);
+      };
+      const activity = () => {
+        if (this._idleSuspended && !document.hidden) {
+          this._idleSuspended = false;
+          UI.showIdle(false);
+          this.resume();
+        }
+        arm();
+      };
+      // mousemove/scroll count as activity but fire in bursts — passive + cheap
+      // (clearTimeout/setTimeout only), no per-event work beyond that.
+      for (const ev of ["pointerdown", "keydown", "wheel", "mousemove", "touchstart"])
+        document.addEventListener(ev, activity, { passive: true, capture: true });
+      arm();
+    }
 
     // first paint
     UI.tick();
@@ -687,8 +718,9 @@ const Game = {
     this._loopTimer = this._autosaveTimer = this._bazaarTimer = this._refreshTimer = null;
   },
 
-  // Tab hidden → freeze everything (zero CPU/animation) after a final save.
-  suspend() {
+  // Tab hidden (or visibly idle) → freeze everything after a final save.
+  // pauseAudio:false keeps music going for the visible-idle case.
+  suspend({ pauseAudio = true } = {}) {
     if (this._suspended) return;
     this._suspended = true;
     this.save();                            // local cache + queue cloud
@@ -698,12 +730,14 @@ const Game = {
     if (window.SenateWorld) SenateWorld.stop();
     if (window.StarMap) StarMap.suspend();
     if (window.Senate) Senate.suspend();
-    if (window.Bgm) Bgm.pause();
+    if (pauseAudio && window.Bgm) Bgm.pause();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
   resume() {
     if (!this._suspended) return;
     this._suspended = false;
+    this._idleSuspended = false;
+    if (window.UI && UI.showIdle) UI.showIdle(false);
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
     if (elapsed > CONFIG.marketTickMs) {
