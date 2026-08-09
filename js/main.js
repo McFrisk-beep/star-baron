@@ -47,7 +47,7 @@ const Game = {
       rivalsMeta: null,
       senate: window.Senate ? Senate.defaultState() : null,
       story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
-      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "" },
+      settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "", bgmBackground: false },
       lastSeenAt: Date.now(),
       market: null,
       galaxy: null,
@@ -87,6 +87,7 @@ const Game = {
     s.settings.bgmOrder = Array.isArray(s.settings.bgmOrder)
       ? s.settings.bgmOrder.filter(u => typeof u === "string" && u).slice(0, 200) : [];
     if (typeof s.settings.bgmStart !== "string") s.settings.bgmStart = "";
+    s.settings.bgmBackground = !!s.settings.bgmBackground;
     if (window.Senate) {
       const ls = loaded.senate || {};
       s.senate = Object.assign(Senate.defaultState(), ls);
@@ -576,9 +577,44 @@ const Game = {
     // animation) so an open tab costs ~nothing over long idle periods; on return
     // we fast-forward the simulation to "now". Keeps the game light indefinitely.
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) this.suspend(); else this.resume();
+      if (document.hidden) {
+        // Music in a background tab is opt-in (Settings → Music). The explicit
+        // pause also covers idle→hidden, where suspend() early-returns because
+        // the idle path already suspended with audio deliberately left running.
+        const keep = !!(this.state.settings && this.state.settings.bgmBackground);
+        this.suspend();
+        if (!keep && window.Bgm) Bgm.pause();
+      } else this.resume();
     });
     window.addEventListener("beforeunload", () => this.save());
+
+    // Visible-but-idle uses the same suspend/resume: an AFK tab otherwise keeps
+    // polling Supabase and pushing an app_commit every ~10s forever. Music keeps
+    // playing (it's a cached static file — costs nothing while idle).
+    if (CONFIG.idleAfterMs > 0) {
+      const arm = () => {
+        clearTimeout(this._idleTimer);
+        this._idleTimer = setTimeout(() => {
+          if (document.hidden || this._suspended) return;
+          this._idleSuspended = true;
+          this.suspend();                 // music keeps playing — it's a cached file
+          UI.showIdle(true);
+        }, CONFIG.idleAfterMs);
+      };
+      const activity = () => {
+        if (this._idleSuspended && !document.hidden) {
+          this._idleSuspended = false;
+          UI.showIdle(false);
+          this.resume();
+        }
+        arm();
+      };
+      // mousemove/scroll count as activity but fire in bursts — passive + cheap
+      // (clearTimeout/setTimeout only), no per-event work beyond that.
+      for (const ev of ["pointerdown", "keydown", "wheel", "mousemove", "touchstart"])
+        document.addEventListener(ev, activity, { passive: true, capture: true });
+      arm();
+    }
 
     // first paint
     UI.tick();
@@ -687,7 +723,10 @@ const Game = {
     this._loopTimer = this._autosaveTimer = this._bazaarTimer = this._refreshTimer = null;
   },
 
-  // Tab hidden → freeze everything (zero CPU/animation) after a final save.
+  // Tab hidden (or visibly idle) → freeze everything after a final save.
+  // Audio is the caller's call: idle keeps it, tab-hide honours the player's
+  // "keep playing when I switch tabs" setting. Keeping it out of here means one
+  // pause path instead of two firing on the same transition.
   suspend() {
     if (this._suspended) return;
     this._suspended = true;
@@ -698,12 +737,13 @@ const Game = {
     if (window.SenateWorld) SenateWorld.stop();
     if (window.StarMap) StarMap.suspend();
     if (window.Senate) Senate.suspend();
-    if (window.Bgm) Bgm.pause();
   },
   // Tab visible again → catch the simulation up to real time, then resume.
   resume() {
     if (!this._suspended) return;
     this._suspended = false;
+    this._idleSuspended = false;
+    if (window.UI && UI.showIdle) UI.showIdle(false);
     const now = Date.now();
     const elapsed = Util.clamp(now - (this.state.lastSeenAt || now), 0, CONFIG.maxOfflineMs);
     if (elapsed > CONFIG.marketTickMs) {

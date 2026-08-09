@@ -59,6 +59,11 @@ const CONFIG = {
   // Autosave cadence.
   autosaveMs: 10 * 1000,
 
+  // Visible-but-idle: no input for this long → suspend like a hidden tab
+  // (stops cloud polls + the app_commit-every-10s autosave). Any input resumes
+  // instantly with the same catch-up path a tab-switch uses. 0 disables.
+  idleAfterMs: 5 * 60 * 1000,
+
   // DEV: set true to make news fire every ~20s so you can watch it work.
   fastNews: false,
 };

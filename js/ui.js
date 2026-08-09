@@ -99,7 +99,7 @@ const UI = {
       setFastNews: $("set-fastnews"), setFast: $("set-fast"), setReset: $("set-reset"), setClose: $("set-close"),
       setRestore: $("set-restore"), setRestoreNote: $("set-restore-note"),
       setTabs: $("set-tabs"), setPanelGeneral: $("set-panel-general"), setPanelMusic: $("set-panel-music"),
-      setBgmList: $("set-bgm-list"),
+      setBgmList: $("set-bgm-list"), setBgmBg: $("set-bgm-bg"),
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
     if (window.I18n) I18n.init();
@@ -3797,6 +3797,19 @@ const UI = {
     // ponytail: chat is ambient chatter — no Comms badge. Dispatches + Broadcast still bump.
   },
 
+  // Small persistent pill while the game is idle-suspended (screen frozen on
+  // purpose — without this it reads as a hang). Any input hides it via resume().
+  showIdle(on) {
+    let el = document.getElementById("idle-pill");
+    if (!el && on) {
+      el = this.el("div", "idle-pill");
+      el.id = "idle-pill";
+      el.textContent = this.t("idle.pill", "⏸ Paused while idle — updates resume on input");
+      document.body.appendChild(el);
+    }
+    if (el) el.classList.toggle("hidden", !on);
+  },
+
   toast(text, kind = "info", ms = 3200) {
     const stack = this.refs.toast;
     // ponytail: cap at 3 — drop the oldest so bursts don't bury the screen
@@ -3943,6 +3956,7 @@ const UI = {
     document.body.classList.toggle("muted", !!set.muted);
     document.body.classList.toggle("reduced", !!set.reduced);
     if (this.refs.setReduced) this.refs.setReduced.checked = !!set.reduced;
+    if (this.refs.setBgmBg) this.refs.setBgmBg.checked = !!set.bgmBackground;
     if (this.refs.setVolume) this.refs.setVolume.value = String(this._volumePct());
     if (this.refs.setVolumeVal) this.refs.setVolumeVal.textContent = `${this._volumePct()}%`;
     if (this.refs.btnMute) {
@@ -4131,6 +4145,10 @@ const UI = {
       r.setVolume.onchange = applyVol;
     }
     r.setReduced.onchange = () => { this.s().settings.reduced = r.setReduced.checked; this.applySettings(); window.Game.requestSave(); };
+    if (r.setBgmBg) r.setBgmBg.onchange = () => {
+      this.s().settings.bgmBackground = r.setBgmBg.checked;
+      window.Game.requestSave();
+    };
     r.setFastNews.onchange = () => { CONFIG.fastNews = r.setFastNews.checked; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setFast.onchange = () => { window.Game.timeScale = r.setFast.checked ? 60 : 1; Broadcast.start(); window.Game.scheduleLocalEvent(); window.Game.scheduleLocalFlavor(); };
     r.setReset.onclick = () => { if (confirm("Wipe your Cosmocrat save and start over?")) window.Game.reset(); };
