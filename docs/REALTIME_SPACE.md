@@ -2,6 +2,10 @@
 
 **Status: SCOPING ONLY. Nothing here is built. No code has been written.**
 
+> **Looking for the roadmap? Jump to [§20 The phase plan](#20-the-phase-plan).**
+> §1–§19 are the design reasoning behind it; §21–§23 are effort, risks and where
+> to start.
+
 The question this answers: *could Cosmocrat stop being a game of timers and
 become a game of ships moving through space — with pirates, police, and other
 players visible in the same sky — and what would that cost?*
@@ -537,63 +541,354 @@ existing game gets visibly better before a single lane exists.
 
 ---
 
-## 16. Effort
+## 16. Space gets bigger — the points-of-interest layer
 
-Slices are ordered so each one is independently shippable and each one leaves
-the game better than it found it. Sizes are relative to known landmarks in this
-repo: **STATIONS.md was the largest change in the project's history — call that
-XL.** Session estimates assume the established working style (one agent, vanilla
-JS, no build step, SQL pasted by hand).
+Today a system view contains: a star, orbiting planets, one station, one gate,
+and ambient traffic. It's a screensaver. Making space *bigger* only helps if
+bigger space contains **reasons to go somewhere**, so the real deliverable isn't
+scale — it's a **POI layer**.
 
-| # | Slice | What ships | New files | Touches | Size | ~Sessions |
-|---|---|---|---|---|---|---|
-| **A** | **Lanes + flight plans** | Charters fly a visible route on the map; ETA and risk derive from geography; re-routing | `lanes.js`, `flights.js`, `sql/app_flight.sql` | `charters.js`, `starmap.js`, `data.js`, `ui.js`, `main.js` | **L** | 3–4 |
-| **B** | **NPC traffic** | Seeded convoys on every lane, driven by real scarcity; the map shows the economy | — (in `flights.js`) | `stock.js` (read-only), `starmap.js` | **S** | 1 |
-| **C** | **Encounters & piracy** | Intercept, board, steal a manifest; stolen goods are contraband; stock effects | `encounters.js`, `sql/app_encounter.sql` | `charters.js`, `stock.js`, `fleet.js`, `ui.js` | **M–L** | 2–3 |
-| **D** | **Security bands, police, bounties** | Derived security map; police response; bounty ledger; PvP consent rules | `security.js` | `stations.js`, `senate.js`, `reputation.js`, SQL from C | **M** | 2 |
-| **E** | **Other players visible** | Tier 0 polling → Tier 1 realtime; other barons' convoys on your map | — | `flights.js`, `cloud.js`, `sql` | **S–M** | 1–2 |
-| **F** | *(optional)* **Flyable system view** | Steer your own flagship in the system scene; manual intercepts | — | `starmap.js` | **M** | 2 |
-| **G** | **Combat with a spine + visuals** (§15) | Layered shield/armor/hull rounds, joust passes, tracers, wrecks, blackboxes as tactical items | `combat.js` | `starmap.js`, `charters.js`, `items.js`, `data.js` | **M** | 2 |
+Seeded per system from the existing galaxy seed (no storage, same as everything
+else), each system gets 4–12 points of interest scattered across a much larger
+logical extent:
 
-**G depends on nothing.** It can ship before, after, or entirely without A–F —
-it upgrades the dogfights already running in the system view today.
+| POI | What it's for |
+|---|---|
+| **Asteroid belt / field** | Cover in a chase; extractor sites; ambush terrain |
+| **Derelict hulk** | Survey target; salvage; occasionally occupied |
+| **Debris field** | Cover; scrap; the leftovers of an old fight |
+| **Gas cloud / nebula pocket** | Sensor shadow — hides ships from scans |
+| **Mining rig / refinery** | The visual home for `industries.js`, which currently has none |
+| **Jump buoy** | Lane anchor; the Lane Buoy station module gets a body |
+| **Pirate camp** | Makeshift station; clickable → "clear the hideout" job |
+| **Research relay / listening post** | Mission objective; intel |
 
-**Total for A–E: roughly 9–12 sessions.** That is comparable to STATIONS.md,
-and it is *the same order of magnitude as the work already in this repo* — not a
-rewrite.
+The camera already pans and zooms (`_initPanZoom`, pinch support), and
+`sys.asteroidBelt` already exists as a flag on mineral-sector systems. So the
+work is: widen the world extent, place POIs deterministically, render them with
+the existing image/fallback pattern, make them clickable, and add a minimap so a
+bigger space stays navigable.
 
-Two things are load-bearing on the estimate:
-
-1. **Slice A must land the `app_flight_*` RPCs.** Charters are client-local
-   today (their own header admits it). Piracy on top of client-authoritative
-   charters is exploitable on day one, so the server work isn't optional — but
-   it also *closes an existing hole*, so it's not wasted budget either.
-2. **No slice requires an engine, a bundler, or a framework.** Everything above
-   is plain functions over the existing globals, one new canvas render path in a
-   file that already has one, and SQL in the style of the seven `phase*` files
-   we've already got. `CLAUDE.md`'s premise survives intact.
-
-### What I'd cut if the budget is half this
-
-**A + B alone (≈4–5 sessions)** delivers the headline: chartered ships physically
-move through a real galaxy, past real NPC traffic that reflects the real
-economy, and you can re-route them. No combat, no piracy, no multiplayer. It is
-by far the best value in the document and it makes everything after it optional.
-
-Add **C** for piracy, **D** to make piracy safe to ship, **E** for other players
-— strictly in that order. C without D is a design hazard: piracy with no police
-and no consent rules will produce exactly one round of complaints.
+**Why this comes early:** every later feature needs a *destination inside a
+system*. A survey flies to a derelict. An assassination happens at a relay. A
+smuggler hides in a gas cloud. A pirate camp is a place you attack. Without POIs,
+all of that has nowhere to happen and stays abstract.
 
 ---
 
-## 17. Risks and open questions
+## 17. Instanced sites — seeded site, stored state
+
+The tension in "I want instanced content, but everyone should see it if they're
+there" dissolves once you split the two halves:
+
+```
+site  = f(systemId, poiId, epoch, seed)     ← generated, never stored, identical for everyone
+state = { clearedBy, clearedAt, claimedBy } ← stored, tiny, the only row that exists
+```
+
+The broken station at Korrin-7 is the *same* broken station for every player who
+flies out to look at it, because they all compute it from the same inputs. Nobody
+stored it. What gets stored is one small row saying it was picked clean at 14:02
+by someone, after which it renders as a stripped hulk until the epoch rolls.
+
+This is exactly the pattern already proven by the seeded bazaar board
+(`app.gen_*` / `app_bazaar_board` in `phase2_missions_bazaar.sql`), so it needs
+no new architecture and it is trivially server-validatable: the server recomputes
+the site from the same seed and checks the claim is legal.
+
+**Epochs** control freshness — a POI's site regenerates on a cadence (say 6–24h),
+which is what makes the galaxy re-explorable without unbounded storage. The
+existing `state.surveyed` per-system cooldown already does a cruder version of
+this and can be folded in.
+
+**Two kinds of instance, and they behave differently:**
+
+| | **Sites** (POI-anchored) | **Encounters** (mission-anchored) |
+|---|---|---|
+| Example | Derelict, pirate camp, seam | Your escort's ambush, an assassination target |
+| Generated from | System + POI + epoch | The mission's own seed, at a point on a route |
+| Who sees it | Everyone who goes there | Everyone in range during its window |
+| Stored as | A claim row | A short-lived published contact |
+| Can others interfere? | Yes — first come, first served | Phase-gated policy (§20, Phase 7) |
+
+A mission encounter is published like a flight: a location, a time window, a
+faction. Another player flying past sees a **contact** on their map — a real
+fight happening to someone else, in a place they can reach. That's the "everyone
+can see it if they happen to be there" you asked for, and it costs one row.
+
+---
+
+## 18. Missions become journeys
+
+Today a mission is a progress bar with phases (`buildPhases`: outbound → work →
+work → return) and a success roll at the end (`successChance`). The phases are
+already labelled per mission type — the structure is right, it just has no body.
+
+**Keep the skeleton. Give each phase a place and a beat.** A mission becomes a
+flight (§3) with **scheduled encounter beats** along it. Every beat auto-resolves
+if you're away, and can be played if you're watching (§12).
+
+### Survey → fly to the derelict, scan it
+The dispatch flies to a **POI**, not a system id. On arrival: the scan animation
+(expanding sensor ring over the hulk, returns resolving one by one), then the
+existing **SurveyStory** mini-story opens as it does today. The beloved
+choice-driven thread survives untouched — it finally has a body to happen to.
+`EXPEDCFG.weights` already biases which event pool fires; the POI type just
+becomes another input (derelict → derelict/ruin pools, belt → seam pools).
+
+### Smuggling → checkpoints
+Patrol pickets sit at seeded points along the route. Each is an **inspection
+roll** — and the entire customs system already exists (`CUSTOMS`, seizure odds,
+`Boosts.mag("customsSeize")`, the Smuggler's Veil blackbox, station scrutiny).
+On being pinged: **run** (speed vs their scan), **bribe** (credits + standing),
+**dump cargo** (lose the goods, keep the ship), or **fight** (crime, §19). Gas
+clouds and belts from §16 are what make "run" a real option — cover is a place.
+
+### Escort → an NPC ship you have to keep alive
+You fly alongside a generated NPC hull with its own stats. Ambush beats spawn
+attackers en route; the objective is *its* survival, not yours, which makes it
+the only mission type where positioning matters more than firepower. Payout
+scales with the cargo that arrives — the exact `payoutFrac` pro-rating
+`charters.js` already implements.
+
+### Assassination → a target with escorts, at a place
+The target is a generated ship + escort screen sitting at a POI, or moving on a
+known plan you have to intercept (§13's reachable cone). The fight is Phase 1
+combat. Getting *out* afterwards is the second half of the mission — you just
+committed a killing, so §19 applies.
+
+### Pirate camp → clear the hideout
+A POI-anchored **site**, clickable straight off the map. Multi-wave defenders,
+a station to destroy or capture, real loot, and clearing it suppresses that
+sector's pirate spawns for an epoch. First player there gets it. This is the
+single most legible "there is a thing in space, go kill it" content type in the
+whole design, and it falls out of §16 + §17 almost for free.
+
+---
+
+## 19. Crime, bounty, and getting locked out
+
+One rating, two faces:
+
+- **`crime` (0–100)** — what the law thinks of you. Rises with piracy, smuggling
+  convictions, and kills in policed space. Decays slowly with time.
+- **`bounty` (credits)** — derived from crime; what *other players and NPC
+  hunters* can collect off you.
+
+| Band | Crime | What changes |
+|---|---|---|
+| 🟢 Clean | 0–20 | Nothing |
+| 🟡 Watched | 21–45 | Customs scrutiny up, small tariff surcharge |
+| 🟠 Wanted | 46–75 | Best contracts hidden, patrols shadow you, some stations refuse docking |
+| 🔴 Outlaw | 76–100 | Locked out of policed stations, hunters spawn, capitals closed |
+
+### Docking while locked out — the approach run
+
+This is the good part, and §16 is what makes it possible. Docking at a station
+that's refused you becomes a **run**: patrol pickets hold positions between the
+gate and the station, each with a detection radius scaled by their scan and your
+**signature** (hull size + cargo load — big fat haulers are easy to spot).
+
+- **Async:** one roll — speed vs patrol density vs signature vs crime band,
+  modified by blackboxes. `Smuggler's Veil` and `Ghost Manifest` already exist and
+  already do exactly this job for customs; they extend to this with no new items.
+- **Sync:** you fly it. Belts, debris fields and gas clouds are cover. Vision
+  cones, timing, route choice. It is the most "game" thing in this document and it
+  costs almost nothing extra because every ingredient is already being built.
+- **Caught:** fine, cargo seized (existing customs path), ship impounded
+  (existing status), crime goes up. You lose the run, not the account.
+
+### Getting clean again — non-negotiable
+
+A crime stat with no way down is a trap that teaches players to never take risks.
+Four exits, all reusing existing systems:
+
+1. **Fines / bribes** — credits, scaled by band. The boring reliable one.
+2. **Free Port amnesty** — launder standing at an outlaw station. Gives Free Ports
+   a second reason to exist.
+3. **Senate pardon** — a bill on the shared agenda. The Senate is already built,
+   already shared, already votes. A pardon bill is content, not code.
+4. **Serving time** — a cooldown where your ships sit impounded. Free, slow, and
+   the flavour writes itself.
+
+---
+
+## 20. The phase plan
+
+Eight phases. Each is independently shippable, each leaves the game better than
+it found it, and each has a clean stop point. Sizes are relative to
+`STATIONS.md` (the largest change in the project so far). Session counts assume
+the established working style — one agent, vanilla JS, no build step, SQL pasted
+by hand.
+
+---
+
+### **Phase 1 — Combat gets a spine and a face**
+*≈2 sessions · depends on nothing · `js/combat.js`, `starmap.js`, `items.js`, `data.js`*
+
+Layered `shields → armor → hull` rounds (the stats already exist and are unused
+as layers), joust passes instead of circle-strafing, tracers with travel time,
+shield-break shockwaves, venting hulls that visibly slow, salvageable wrecks,
+per-side HUD bars, blackboxes as tactical items via the existing `Boosts.mag`.
+
+**You get:** the dogfights already running in every system view become real
+fights. Charter and mission resolution can play out as an animated engagement
+instead of a die roll. Nothing else in this document is required.
+
+---
+
+### **Phase 2 — Space gets big**
+*≈2–3 sessions · depends on nothing · `js/poi.js`, `starmap.js`, `data.js`*
+
+Widen the system world extent; seed 4–12 POIs per system (belts, derelicts,
+debris, gas clouds, rigs, buoys, camps); make them clickable and labelled; add a
+minimap. Camera pan/zoom already exists.
+
+**You get:** systems become places instead of screensavers. Industries and
+asteroid belts get a visual home. No new gameplay yet — this is the substrate
+everything after it stands on.
+
+---
+
+### **Phase 3 — Instanced sites: surveys and hideouts**
+*≈2–3 sessions · needs Phase 2 · `js/sites.js`, `expeditions.js`, `survey-story.js`, `sql/app_site.sql`*
+
+Seeded-site / stored-state model (§17) with epochs. Surveys fly to a **POI**,
+play a scan animation, then open the existing SurveyStory. Pirate camps become
+clickable "clear the hideout" jobs with waves and loot. First player to a site
+claims it; everyone sees the same site and its aftermath.
+
+**You get:** the first genuinely *instanced content everyone shares*, the survey
+loop gets a body, and the map has things on it worth flying to. Combat from
+Phase 1 gets its first real use.
+
+---
+
+### **Phase 4 — Lanes and flight plans**
+*≈3–4 sessions · needs nothing, but pairs with 2–3 · `js/lanes.js`, `js/flights.js`, `sql/app_flight.sql`, `charters.js`, `starmap.js`*
+
+The `pos(plan, t)` model. Lane graph over the 84 systems. Charters fly a visible
+route with derived ETA and derived risk; mid-flight re-routing. **Lands
+`app_flight_*`, which closes the existing client-authoritative charter hole.**
+
+**You get:** the answer to "it's just a timer." Ships physically move. This is
+the structural centrepiece — everything after it assumes flights exist.
+
+---
+
+### **Phase 5 — Missions become journeys**
+*≈2–3 sessions · needs Phases 1, 2, 4 · `missions.js`, `js/encounters.js`, `sql/app_encounter.sql`*
+
+Missions become flights with scheduled encounter beats (§18): smuggling
+checkpoints with inspection rolls, escort ambushes with an NPC you keep alive,
+assassination targets with escort screens. Every beat auto-resolves when you're
+away and can be played when you're watching. Encounters publish as contacts, so
+other players see them happening.
+
+**You get:** every mission type stops being a progress bar. This is where the
+game you described actually arrives.
+
+---
+
+### **Phase 6 — A galaxy with other people in it**
+*≈2–3 sessions · needs Phase 4 · `flights.js`, `cloud.js`, `stock.js` (read-only), SQL*
+
+Seeded NPC convoys routed by real `Stock` scarcity — traffic that *shows you the
+economy*. Publish player flight plans; poll them per sector (Tier 0), then
+upgrade to Supabase Realtime on plan changes (Tier 1).
+
+**You get:** the map is populated and other barons are visibly in it. Still zero
+hostile interaction, so it's safe to ship without any PvP policy.
+
+---
+
+### **Phase 7 — Piracy, crime and the law**
+*≈3–4 sessions · needs Phases 1, 4, 6 · `js/piracy.js`, `js/security.js`, `js/crime.js`, SQL*
+
+Piracy dispatch ("send hulls to raid system X"), committed intercepts with the
+reachable cone, boarding and manifest theft with real stock effects. Crime rating
+and bounty (§19), derived security bands, patrol response, station lockouts and
+the approach run. **All anti-grief rules (§9, §14) ship in this phase, not
+after** — C without D is the one ordering mistake that would hurt.
+
+**You get:** the full loop. Piracy is a career, the law is a real opponent, and
+other players are in the same sky under rules that keep it fair.
+
+---
+
+### **Phase 8 — Fly it yourself** *(optional)*
+*≈2 sessions · needs Phases 1, 2 · `starmap.js`*
+
+Direct control of your flagship in the tactical layer: steer, fire, run the
+approach, join your own intercepts. Always optional, always with auto-resolve
+parity (§12).
+
+**You get:** the twitch layer, for the players who want it, without ever
+requiring it.
+
+---
+
+### Totals and stop points
+
+| Through | Sessions | What you have |
+|---|---|---|
+| Phase 1 | ~2 | Fights that look and read like fights |
+| Phase 3 | ~7–8 | Real places with real content in them |
+| Phase 4 | ~10–12 | Ships that actually fly |
+| Phase 5 | ~13–15 | Every mission type is a journey |
+| Phase 7 | ~18–22 | The whole design |
+
+**Phases 1, 3, 4 and 5 are all clean stopping points.** Each leaves a coherent,
+better game rather than a half-built system — which matters, because this is
+roughly 3–4× the size of `STATIONS.md` and it should be possible to get off at
+any floor.
+
+---
+
+## 21. Effort notes
+
+Three things are load-bearing on the estimates in §20:
+
+1. **Phase 4 must land the `app_flight_*` RPCs.** Charters are client-local today
+   (their own header comment admits it). Piracy on top of client-authoritative
+   charters is exploitable on day one, so the server work isn't optional — but it
+   also *closes a hole that's already open*, so it isn't wasted budget either.
+2. **Phase 7 must ship its own police.** Piracy without crime, bands and
+   anti-grief rules is the one ordering mistake in this plan that would actually
+   hurt. They are one phase for a reason.
+3. **Nothing here needs an engine, a bundler, or a framework.** Every phase is
+   plain functions over the existing globals, canvas render work in a file that
+   already has a render loop, and SQL in the style of the seven `phase*` files
+   already in `docs/sql/`. `CLAUDE.md`'s premise survives intact.
+
+**What got cheaper by adding scope.** POIs (Phase 2) look like an extra, but they
+make Phases 3, 5 and 7 *smaller*: instanced sites need somewhere to be, smuggler
+cover needs to be a place, and the approach run needs terrain. Building them
+early converts three vague features into three concrete ones.
+
+**What genuinely got more expensive.** The original scope was ~9–12 sessions;
+this is ~18–22. The additions are POIs, instanced sites, per-mission-type
+encounters and the crime system. That's real growth, not estimate drift — it is
+roughly 3–4× `STATIONS.md`, and it should be treated as a multi-month direction
+rather than a feature.
+
+---
+
+## 22. Risks and open questions
 
 - **Idle premise vs. spectacle.** The flight-plan model protects it. Any drift
-  toward Tier 2 realtime or Slice F-as-mandatory breaks it. Guard this.
+  toward Tier 2 realtime, or toward Phase 8 becoming *mandatory*, breaks it.
+  Guard this — every sync verb needs an async equivalent, every time.
 - **Balance surface explodes.** We already have an unplaytested Industries
   balance pass outstanding (`HANDOFF.md` §9). This adds lanes, traffic volume,
-  intercept odds, bounties and insurance on top. Budget a tuning pass, and keep
-  every new number in `data.js` like everything else.
+  intercept odds, bounties, crime decay and insurance on top. Budget a tuning
+  pass per phase, and keep every new number in `data.js` like everything else.
+- **Crime must have exits.** A one-way crime stat teaches players never to take
+  risks, which kills the exact loop Phase 7 exists to create. The four exits in
+  §19 ship *with* crime, not later.
+- **POI density is a trap in both directions.** Too sparse and bigger space is
+  just emptier space; too dense and it's noise. Expect to tune count-per-system
+  after the first playtest — keep it a single `POICFG` knob.
 - **`starmap.js` is 1,410 lines and would grow.** The scene renderer is the one
   place a split might genuinely be warranted (scene vs. galaxy vs. flights).
   Worth watching, not worth pre-empting.
@@ -609,19 +904,25 @@ and no consent rules will produce exactly one round of complaints.
 
 ---
 
-## 18. Recommendation
+## 23. Recommendation
 
-**Build G first** (≈2 sessions). Combat gets a real spine and real visuals, it
-depends on nothing, and it makes the game visibly better *this week* — the
-dogfights are already happening, they're just empty. It also de-risks everything
-after it: if piracy ever ships, the fight at the end of it already exists.
+**Start with Phase 1, then Phase 2.** Roughly 4–5 sessions for both. Combat gets
+a spine and a face, and space gets big enough to hold things. Neither depends on
+anything, both are visible immediately, and together they're the foundation
+every other phase stands on — Phase 3 needs places, Phase 5 needs fights, Phase 7
+needs terrain.
 
-**Then A and B** (≈4–5 sessions). Lanes, flight plans, seeded NPC traffic. This
-is the answer to "it's just a timer," and it makes the star map load-bearing
-instead of decorative.
+**Phase 3 next**, because it's the first phase that produces *content* (instanced
+sites everyone shares) and it proves the seeded-site model end to end on
+something small before Phase 5 depends on it.
 
-**Then decide about piracy** — with flying and fighting already in your hands
-rather than on paper. If the answer is yes, C and D ship together, never C alone.
+**Then Phase 4**, the structural centrepiece, and reassess. By that point ships
+fly, fights are real, space has places in it, and you'll be deciding about
+missions-as-journeys and piracy from inside the game rather than from a document.
+
+**Do not start with Phase 7.** It's the most exciting one on paper and the one
+most likely to go wrong first: it needs flights, combat, terrain and other
+players to already exist, and it carries all the social risk in the design.
 
 Sources for the Unending Galaxy reference:
 [Anarkis Gaming](https://www.anarkisgaming.com/unending-galaxy-info/) ·
