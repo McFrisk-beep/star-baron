@@ -43,9 +43,9 @@ and a bounty system push back.
 - **Thousands of live entities.** UG is a desktop game with a real tick loop and
   a save file. We're a static site with an idle-play premise and a free-tier
   Postgres. Copying the entity model is the single decision that would sink this.
-- **Twitch piloting.** Cosmocrat's stated design target is "alt-tab for 90
-  seconds, come back later" (README). A flight model you have to *sit at* is a
-  different game. See §11.
+- **Mandatory** twitch piloting. Cosmocrat's stated design target is "alt-tab for
+  90 seconds, come back later" (README). A flight model you *have to* sit at is a
+  different game. You can still fly — §12 covers how, without making it required.
 - **Faction-scale RTS.** UG lets you command an empire's fleets. We have the
   Senate, stations and wars for that fantasy already, and they're asynchronous.
 
@@ -365,7 +365,179 @@ it needs an async equivalent, or it doesn't ship.
 
 ---
 
-## 12. Effort
+## 12. What "control" actually means — two layers
+
+The flight-plan model governs **persistence and multiplayer sync. It says nothing
+about what the player's hands do.** That distinction got lost in §3, so, plainly:
+
+| Layer | Where | Input | Persisted as |
+|---|---|---|---|
+| **Strategic** | Galaxy map | Orders: route, escort, intercept, re-route | The plan (`pos(plan, t)`) |
+| **Tactical** | System view | **Direct control** — steer, fire, disengage | Only the *outcome* |
+
+A tactical engagement is short (15–30s) and local. The client can run it at 60fps
+with real steering and real input, because the server never needs the frames —
+it needs the result, validated once, the same way it validates a trade today.
+
+**The rule that keeps this honest:** every tactical engagement must have an
+**auto-resolve** that produces a comparable outcome. Watching earns a modest edge
+(call it 10–20% better odds, plus the option to spend consumables — §15), never a
+requirement. The moment flying is *mandatory* to compete, the idle premise is
+dead and so is the game's stated audience.
+
+So: **yes, you can fly.** You can't fly everywhere, forever, persistently — and
+you never have to.
+
+---
+
+## 13. Player-initiated piracy
+
+Three ways in, escalating commitment. All three use the same encounter resolver.
+
+**1. Standing interdiction order (async policy).** "Raid anything over 50k moving
+through Sable-4." Assign hulls, set a threshold, walk away. Resolves like a
+charter does today. Piracy as a *business*, playable by someone who never opens
+the map.
+
+**2. Committed intercept (the interesting one).** You can see a convoy's plan.
+Since both your position and theirs are functions of `t`, **the intercept is an
+analytic solution** — solve for where your reachable set touches their path.
+
+The UI for this is the mechanic: show a **reachable cone** along their route —
+the stretch you can actually reach before they exit. A faster hull's cone is
+visibly longer, so speed stops being a number in a tooltip and becomes *how many
+targets exist for you*. Escorted convoys, tighter lanes and short legs shrink it.
+That is a real decision made of numbers we already have.
+
+**3. Fly it yourself.** Join the engagement you set up (§12 tactical layer).
+
+### The verbs at the encounter — and the anti-grief lever
+
+| Action | Payoff | Cost |
+|---|---|---|
+| **Hail / demand tribute** | They pay to pass, no shots fired | Small standing hit; escorted convoys refuse |
+| **Disable & board** | A slice of the manifest — **the profitable path** | Bounty, standing, contraband flag on the goods |
+| **Destroy** | Wreck salvage only — scraps | Maximum bounty, maximum standing loss |
+
+Making destruction **economically the worst option** is the cheapest anti-grief
+design in this document. It costs nothing to implement and it removes most of the
+incentive to kill for the sake of killing.
+
+Piracy also has to be a *build*, not a whim: a bounty follows you, the lane's
+controlling faction turns on you, policed stations lock you out, and you need a
+**Free Port** to fence flagged goods — all of which already exist.
+
+---
+
+## 14. The flagship — can it fly, can it get ganked
+
+**It can fly. It can be attacked. It can never be destroyed.** That last one is a
+hard rule, not a tuning knob.
+
+The flagship is the player's character: it sets travel speed, buffs the whole
+fleet, and carries the hold. Losing it to something you didn't watch happen is
+not a setback, it's a reason to stop playing.
+
+**Failure state is `crippled`, not destroyed:** engines down, cargo looted or
+jettisoned, limps home, repair bill. Both halves of that already exist —
+`impounded` status and the `dmg` model with `DMGCFG.statPenalty` (which already
+makes a battered hull fly and fight worse, and caps at `maxDmg: 0.95` precisely
+so that "only a destroy roll removes a ship").
+
+**Exposure is opt-in by geography.** The flagship is only a valid target in a red
+band, and only when *you* took it there. It is never exposed by an auto-charter.
+
+### The anti-gank rules (these matter more than the combat maths)
+
+1. **Dock immunity + arrival grace** — untouchable while docked and for ~60s
+   after warp-in. No spawn camping.
+2. **No hostile action in green/yellow without a mutual Letter of Marque.**
+   Consent is geographic *and* explicit.
+3. **Bully scaling** — rewards fall off hard as the attacker outclasses the
+   defender. Farming weaker players pays approximately nothing.
+4. **Repeat-target cooldown** — the same attacker can't hit the same victim again
+   for N hours. Pound for pound the single most effective anti-grief rule that
+   exists; it converts "being hunted" into "being unlucky once."
+5. **Offline players never lose a hull** (§9), and insurance covers the manifest.
+
+Net: **you can lose a run. You cannot lose your account.** Every one of these is
+a cheap server-side check inside the encounter RPC.
+
+---
+
+## 15. Making fights actually visual
+
+### What's wrong today
+
+`_stepShip`'s combat state: two ships orbit a fixed midpoint at a constant radius,
+emit random sparks, a 3–6s timer runs down, a **coin flip** picks a loser, one
+explodes. It's a light show with no information in it. Nothing reads off a stat,
+nothing escalates, and the outcome was decided before it started.
+
+Fix it in two halves. Neither needs an engine.
+
+### Half 1 — give combat a spine (`js/combat.js`, small)
+
+Discrete **rounds of ~1.2–1.5s**, resolved from real stats, *rendered
+continuously*. Each round: fire → **shields** absorb → **armor** mitigates →
+**hull** takes the remainder.
+
+The free win here: **`shields` / `armor` / `hull` already exist on every ship in
+`Fleet.stats()` and nothing currently treats them as layers.** We don't invent a
+combat model — we *expose the one already sitting in the data*. Damage output
+comes from `firepower`, already reduced by battle damage. `DMGCFG` already has
+per-profile damage ranges and danger multipliers.
+
+### Half 2 — render the spine
+
+Every beat is driven by real state, which is what makes it readable instead of
+decorative:
+
+| Beat | Visual | Reuses |
+|---|---|---|
+| Firing | **Tracers with travel time**, class-varied: rapid tracers, heavy slugs, sweeping beams, arcing missiles. Rate and colour from `firepower`. | particle system |
+| Shield hit | Hex-ripple bubble flashing at the impact point, dimmer as shields drop | ~30 new lines |
+| **Shield break** | White flash, shockwave ring, "SHIELDS DOWN" callout | speech bubbles |
+| Armor hit | Orange sparks + debris chips | existing `spark()` |
+| Hull damage | Venting smoke trail, scorch overlay, ship **visibly slows** | `DMGCFG.statPenalty` |
+| Critical | Fire trail, erratic steering, engine flicker | — |
+| Death | Existing explosion + a **persistent salvageable wreck** | existing `explode()` |
+| Surrender | Engines cut, ship drifts, cargo pods eject | small |
+
+**Maneuvering — the biggest single upgrade.** Replace circle-strafing with
+**joust passes**: approach, fire through the pass, overshoot, break turn,
+re-engage. Three steering behaviours (pursue / lead-pursuit / evade), ~40 lines,
+and it instantly reads as a dogfight instead of a carousel.
+
+**Feel.** Camera eases toward the engagement and zooms slightly; 2–3 frame
+hit-stop on a shield break or a kill; screen shake scaled to damage; chromatic
+flash on criticals. All gated behind `prefers-reduced-motion`, which the project
+already respects.
+
+**Readability.** Shield/armor/hull bars for each side pinned to the canvas edge,
+floating damage numbers, and — cheapest of all — tie the **existing** `combat`
+speech pool to real events instead of random timing. "Shields are gone!" landing
+exactly when they are is worth more than any particle effect.
+
+### Interactivity without a flight model
+
+Stretch a fight to 15–30s and let the player spend **blackboxes** during it.
+`Boosts` already exists, already tracks `activeBoosts` with expiry, and already
+exposes `Boosts.mag(stat)`. Add three combat stats — `combatDamage`,
+`combatShield`, `evade` — and the existing consumable economy becomes a tactical
+one. **Zero new systems**, and watching a fight becomes a decision rather than a
+spectator seat.
+
+### Why this should probably ship first
+
+It needs **none** of the flight work. The decorative dogfights already firing in
+every system view get the full treatment immediately, and charter resolution can
+play out as a real animated fight instead of a die roll — which means the
+existing game gets visibly better before a single lane exists.
+
+---
+
+## 16. Effort
 
 Slices are ordered so each one is independently shippable and each one leaves
 the game better than it found it. Sizes are relative to known landmarks in this
@@ -381,6 +553,10 @@ JS, no build step, SQL pasted by hand).
 | **D** | **Security bands, police, bounties** | Derived security map; police response; bounty ledger; PvP consent rules | `security.js` | `stations.js`, `senate.js`, `reputation.js`, SQL from C | **M** | 2 |
 | **E** | **Other players visible** | Tier 0 polling → Tier 1 realtime; other barons' convoys on your map | — | `flights.js`, `cloud.js`, `sql` | **S–M** | 1–2 |
 | **F** | *(optional)* **Flyable system view** | Steer your own flagship in the system scene; manual intercepts | — | `starmap.js` | **M** | 2 |
+| **G** | **Combat with a spine + visuals** (§15) | Layered shield/armor/hull rounds, joust passes, tracers, wrecks, blackboxes as tactical items | `combat.js` | `starmap.js`, `charters.js`, `items.js`, `data.js` | **M** | 2 |
+
+**G depends on nothing.** It can ship before, after, or entirely without A–F —
+it upgrades the dogfights already running in the system view today.
 
 **Total for A–E: roughly 9–12 sessions.** That is comparable to STATIONS.md,
 and it is *the same order of magnitude as the work already in this repo* — not a
@@ -410,7 +586,7 @@ and no consent rules will produce exactly one round of complaints.
 
 ---
 
-## 13. Risks and open questions
+## 17. Risks and open questions
 
 - **Idle premise vs. spectacle.** The flight-plan model protects it. Any drift
   toward Tier 2 realtime or Slice F-as-mandatory breaks it. Guard this.
@@ -433,12 +609,19 @@ and no consent rules will produce exactly one round of complaints.
 
 ---
 
-## 14. Recommendation
+## 18. Recommendation
 
-Build **A and B**. They are self-contained, they're the answer to "it's just a
-timer," they make the star map load-bearing instead of decorative, and they cost
-about a third of the total. Then decide whether piracy is the game you want,
-with the flying already in your hands rather than on paper.
+**Build G first** (≈2 sessions). Combat gets a real spine and real visuals, it
+depends on nothing, and it makes the game visibly better *this week* — the
+dogfights are already happening, they're just empty. It also de-risks everything
+after it: if piracy ever ships, the fight at the end of it already exists.
+
+**Then A and B** (≈4–5 sessions). Lanes, flight plans, seeded NPC traffic. This
+is the answer to "it's just a timer," and it makes the star map load-bearing
+instead of decorative.
+
+**Then decide about piracy** — with flying and fighting already in your hands
+rather than on paper. If the answer is yes, C and D ship together, never C alone.
 
 Sources for the Unending Galaxy reference:
 [Anarkis Gaming](https://www.anarkisgaming.com/unending-galaxy-info/) ·
