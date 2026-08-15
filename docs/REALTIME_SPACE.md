@@ -819,12 +819,15 @@ other players are in the same sky under rules that keep it fair.
 ### **Phase 8 — Fly it yourself** *(optional)*
 *≈2 sessions · needs Phases 1, 2 · `starmap.js`*
 
-Direct control of your flagship in the tactical layer: steer, fire, run the
-approach, join your own intercepts. Always optional, always with auto-resolve
-parity (§12).
+Direct control of your flagship in the tactical layer: steer, pick targets,
+manage range, use cover, run the approach, join your own intercepts. Always
+optional, always with auto-resolve parity (§12).
 
-**You get:** the twitch layer, for the players who want it, without ever
+**You get:** hands-on flying, for the players who want it, without ever
 requiring it.
+
+**→ Full mechanics, and the honest answer on what "realtime" can and can't mean
+here, in [§24](#24-appendix--how-phase-8-actually-works).**
 
 ---
 
@@ -923,6 +926,94 @@ missions-as-journeys and piracy from inside the game rather than from a document
 **Do not start with Phase 7.** It's the most exciting one on paper and the one
 most likely to go wrong first: it needs flights, combat, terrain and other
 players to already exist, and it carries all the social risk in the design.
+
+---
+
+## 24. Appendix — how Phase 8 actually works
+
+§10 says free-flight multiplayer isn't recommended. §20 then offers a phase
+called "fly it yourself." Those aren't in conflict, but only because
+**"realtime" is four different questions**, and they have four different answers.
+
+| Question | Answer | Why |
+|---|---|---|
+| Can **I** fly my ship in realtime, 60fps, direct control? | **Yes, fully** | It's a local canvas game. No network involved at all. |
+| Can I fight **NPCs, patrols and sites** that way? | **Yes, fully** | They're seeded/simulated. Nothing to synchronise. |
+| Can I **see other players' ships** moving while I fly? | **Yes, genuinely** | `pos(plan, t)` — their positions are actually correct, not interpolated guesses. |
+| Can I **trade individual shots with another human** in realtime? | **No** | This is the Tier 2 problem: tick authority, lag compensation, who-shot-first, disconnect abuse. Different genre, different budget. |
+
+So Phase 8 is **realtime play, not realtime PvP.** You fly; everything you fly
+*against* is simulated; other players are visibly present but not twitch-fightable.
+
+### The key move: flying is the approach, the encounter is the resolution
+
+When you're flying and you find another baron's convoy, you don't exchange
+individual hits with them. You close, you commit, and the **engagement resolves
+through the same encounter RPC that an async interception uses** (§13). Both
+sides get an outcome they can trust, and neither needed to be online at the same
+millisecond.
+
+This isn't a compromise bolted on — it's the shape the whole design already has.
+A flight is a plan, and encounters happen at points along it. Phase 8 simply lets
+you **hand-fly the approach** instead of letting the auto-router do it.
+
+### Why Phase 1 is what makes this cheap
+
+Phase 1's combat is **round-based** — 1.2–1.5s rounds resolved from
+`shields`/`armor`/`hull`/`firepower`. That single decision is what makes Phase 8
+affordable, and it's worth being explicit about why:
+
+Because rounds are resolved from stats, **flying doesn't supply aim — it supplies
+modifiers.** Positioning, range band, cover, target focus and ability timing feed
+into the same roll the auto-resolver performs. So the flown fight and the
+auto-resolved fight compute *through the same function*, which is exactly the
+§12 parity requirement.
+
+Had combat been projectile-accuracy based, parity would be impossible: there'd be
+no honest way to auto-resolve "how well would this player have aimed," and Phase 8
+would fork into a second combat system. It doesn't.
+
+### What the player actually does
+
+No aiming. Auto-fire at a selected target; the player controls *everything else*:
+
+- **Target selection** — focus the escort or the hauler first?
+- **Range management** — sit in your weapons' optimal band, kite a brawler, close on a sniper
+- **Cover** — break sensor locks behind asteroid belts, debris and gas clouds (Phase 2)
+- **Ability timing** — spend blackboxes at the right moment (`Boosts`, already built)
+- **Disengage** — run for the gate before it turns bad
+
+That's a real tactical layer with zero twitch requirement, which matters because
+this game is responsive down to phone width and has a history of mobile fixes.
+**Recommended input: click-to-move plus ability buttons**, with keyboard thrust as
+an alternative — both feed the same steering the scene renderer already has
+(`moveTo` in `_stepShip`). Mouse-aim twitch controls would be a much bigger
+commitment and would break the parity above.
+
+### The two problems everyone hits, and the answers
+
+**"What if I close the tab mid-fight?"** The encounter falls back to auto-resolve
+from its current state. No rage-quit escape hatch, no punishment for a dropped
+connection, no special-casing. It's the same function either way.
+
+**"The client runs the fight — can't it cheat?"** Yes, if unbounded. So bound it:
+the server recomputes what auto-resolve *could plausibly have produced* and
+rejects anything outside that envelope. Since flying is worth at most the stated
+edge (10–20%), a modified client can claim at most 10–20% — not worth building.
+And **PvP outcomes never come from a flown client at all**: those always go
+through the encounter RPC, where both sides' stats are server-side.
+
+### What this means for scope
+
+The ≈2 session estimate holds **only** for the model above — click-to-move,
+auto-fire, round-based resolution, reusing Phase 1 and Phase 2 wholesale. If the
+goal is genuine twitch flight — manual aim, projectile leading, per-shot
+collision — that is a different feature: it forks combat into two systems, breaks
+auto-resolve parity, and pulls Tier 2 realtime back onto the table for anything
+involving other players. Worth wanting, but it should be scoped as its own
+project rather than as a phase of this one.
+
+---
 
 Sources for the Unending Galaxy reference:
 [Anarkis Gaming](https://www.anarkisgaming.com/unending-galaxy-info/) ·
