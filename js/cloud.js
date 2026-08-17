@@ -543,6 +543,9 @@ const Cloud = {
   },
   shipRpcReady(name) { return this.authoritative() && !this._rpcMissing[name]; },
   async repairShip(uid) { return this._optional("app_repair_ship", { p_uid: uid }); },
+  // Impound retrieval — server-authoritative (docs/sql/impound_retrieve.sql).
+  // Latches a missing RPC like repair/equip so older projects keep the local path.
+  async retrieveShip(uid) { return this._optional("app_retrieve_ship", { p_uid: uid }); },
   async equipItem(shipUid, itemUid) {
     return this._optional("app_equip_item", { p_ship_uid: shipUid, p_item_uid: itemUid });
   },

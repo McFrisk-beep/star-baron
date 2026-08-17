@@ -25,6 +25,11 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
    Adds `app_repair_ship` / `app_equip_item` / `app_unequip_item`; without it
    repairs are silently undone by the next autosave — see
    [Repair & equip are RPCs](#repair--equip-are-rpcs).
+8. **`docs/sql/impound_retrieve.sql`** ← required (usage-sim review **C3**). Adds
+   `app_retrieve_ship`, the same trap as repair: without it a signed-in retrieve
+   is undone by the next `app_commit` — the hull re-shows impounded every slice
+   while the fine spend sticks (a money black hole). Mirrors `app_repair_ship`;
+   the client keeps a local fallback until it's applied.
 
 ## Trust model
 
