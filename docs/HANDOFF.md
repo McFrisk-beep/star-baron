@@ -334,6 +334,26 @@ table been created?" toast means `saves` is missing.
   server name with the optimistic client flavor — only overlay when the RPC
   returned a stub. Otherwise a bought ship keeps "Onyx Wake" this session and
   flips on the next reload/pull.
+- **Server-authoritative custody fixes (usage-sim review, 3 Criticals)** — each
+  is a SQL file that must be applied; the client already does the matching local
+  mutation, so the file only decides whether it's authoritative:
+  - **C1 — won stations released by the publish sweep** (`docs/sql/publish_keep_won_stations.sql`).
+    `app_station_publish` used to release any station owned server-side but absent
+    from the client's `publishOwned()` list — silently snapping a just-won auction
+    (winner offline at close) back to NPC after their bid credits were already
+    sunk. Fix drops the release sweep; every intentional give-up already clears
+    ownership where it happens (relinquish / revolt / auction close).
+  - **C2 — Exchange Hall let a seller keep the item AND the money**
+    (`docs/sql/hall_item_custody.sql`). `app_station_list_item` never removed the
+    listed item from the seller (nor validated ownership), so `app_commit` restored
+    it on the next autosave — repeatable dup + theft. Fix moves goods for real:
+    list removes + escrows the server's copy, buy delivers it, cancel/settle/refund
+    restore it. Apply **last**, after the other `station_*` files.
+  - **C3 — impound retrieval was a money black hole** (`docs/sql/impound_retrieve.sql`
+    + `Fleet.retrieve`/`Cloud.retrieveShip`). Retrieve was purely local, so
+    `app_commit` re-impounded the hull each slice while the fine spend stuck. New
+    `app_retrieve_ship` RPC mirrors `app_repair_ship`; `Fleet.retrieve` latches a
+    missing RPC and keeps the optimistic local path, exactly like repair/equip.
 
 ---
 

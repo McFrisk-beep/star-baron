@@ -290,7 +290,12 @@ const Fleet = {
   },
 
   // ---- impound retrieval --------------------------------------------------
-  retrieve(uid) {
+  // Retrieving must go through app_retrieve_ship when the server owns the fleet.
+  // A purely local retrieve is undone on the next autosave: app_commit rebuilds
+  // ships from the server row, so the hull re-shows as impounded while the credit
+  // spend sticks — pay the fine forever, hull stranded (Critical C3). Same trap
+  // that broke repair; retrieve just never got its RPC.
+  _retrieveLocal(uid) {
     const sh = this.ship(uid);
     if (!sh || sh.status !== "impounded") return { ok: false, msg: "Nothing to retrieve." };
     if ((sh.retrieveCost || 0) > this.s().credits) return { ok: false, msg: "Not enough credits." };
@@ -298,6 +303,16 @@ const Fleet = {
     sh.status = "idle"; sh.retrieveCost = 0;
     Economy.refreshNetWorth();
     return { ok: true };
+  },
+  retrieve(uid) {
+    if (!(window.Cloud && Cloud.shipRpcReady("app_retrieve_ship"))) return this._retrieveLocal(uid);
+    return Economy._withRpc(
+      () => this._retrieveLocal(uid),
+      // null = the RPC isn't installed on this project; keep the optimistic local
+      // retrieve rather than rolling it back into a scary error toast.
+      async () => (await Cloud.retrieveShip(uid)) || { ok: true },
+      "Couldn't reach the impound lot — try again."
+    );
   },
 
   // Prune expired mercenaries (called by the game loop).

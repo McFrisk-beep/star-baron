@@ -46,6 +46,19 @@ equilibrium from the client sim will not run on the server.
 6. `docs/sql/station_hall.sql` — phase B (shared Exchange Hall)  
 7. `docs/sql/station_bays.sql` — phase C (shared Production Hub bays)
 
+Then, **after all other `station_*` files** (these redefine those functions and
+must win — see each file's header for the exact predecessors), paste the two
+server-authoritative custody fixes from the usage-sim review:
+
+8. `docs/sql/publish_keep_won_stations.sql` — **C1**: stop `app_station_publish`
+   from releasing a station owned server-side but missing from a client's publish
+   list (e.g. an auction won while offline). Without it a just-won station snaps
+   back to NPC after the bid credits are already spent.
+9. `docs/sql/hall_item_custody.sql` — **C2**: make the Exchange Hall actually move
+   goods (list removes + escrows the server's copy, buy delivers, cancel/settle/
+   refund restore). Without it a seller keeps the listed item *and* collects the
+   buyer's credits, repeatably.
+
 After pasting `station_bays.sql`, call each RPC once as a signed-in user (the
 functions *create* fine even when a local variable shadows a column — that only
 surfaces at call time):

@@ -1196,7 +1196,7 @@ const UI = {
     }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
     else if (rp) { const r = await Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader(); }
-    else if (rt) { const r = Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+    else if (rt) { const r = await Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
     else if (sl) {
       void this._sellShipClick(sl.dataset.sellship);
     }
