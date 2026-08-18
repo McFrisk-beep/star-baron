@@ -324,11 +324,18 @@ const AuthUI = {
     }
 
     this.clearMsg(); this.setBusy(true);
+    // Freeze local writes BEFORE the network round-trip, not after it. Hiding
+    // the tab during signIn/syncOnLogin fired Store.flush with signedIn already
+    // true and _cloudReady still set from the guest session — uploading the
+    // 1,500c guest blob over the account's real row, which syncOnLogin then read
+    // back as "cloud". The guard always existed; it just ran too late.
+    if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
     try {
       if (this.mode === "register") {
         const res = await Cloud.signUp(email, pass);
         if (!res.session) {   // email-confirmation is on: no session yet
           this.setBusy(false);
+          this._thawLocalSaves();   // no reload coming — hand the guest session back
           this.setMode("login");
           this.showOk(this.t(
             "auth.confirmSent",
@@ -340,9 +347,6 @@ const AuthUI = {
         await Cloud.signIn(email, pass);
       }
       const how = await this.syncOnLogin();
-      // freeze local writes so the reload loads the synced/cloud save cleanly
-      // instead of beforeunload overwriting it with the pre-login state.
-      if (window.Game) { Game._noSave = true; if (Game.stopSchedulers) Game.stopSchedulers(); }
       const msg = how === "cloud" ? "Signed in — loading your saved progress…"
         : how === "uploaded" ? "Signed in — your current progress is now saved to this account…"
         : how === "error" ? "Signed in, but cloud is unreachable — check docs/CLOUD_SETUP.md / PHASE1_SETUP.md."
@@ -351,8 +355,16 @@ const AuthUI = {
       setTimeout(() => location.reload(), how === "error" ? 1300 : 350);
     } catch (e) {
       this.setBusy(false);
+      this._thawLocalSaves();   // sign-in failed, no reload — resume the guest session
       this.showErr(this.friendly(e));
     }
+  },
+
+  // Undo the pre-signIn freeze on the paths that stay on this page.
+  _thawLocalSaves() {
+    if (!window.Game) return;
+    Game._noSave = false;
+    if (!Game._suspended && Game.startSchedulers) Game.startSchedulers();
   },
 
   async doChangePassword() {

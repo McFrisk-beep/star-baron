@@ -111,6 +111,12 @@ const UI = {
     this.renderAchievements();
     this.applySettings();
     this.showPage("hub");
+    // Anything that toasted before refs existed (cloud-load failure, corrupt
+    // save) queued instead of throwing — surface it now.
+    const held = this._pendingToasts; this._pendingToasts = null;
+    if (held) for (const [text, kind, ms] of held) this.toast(text, kind, ms);
+    // …same for a storage event that landed before wireBus() subscribed.
+    if (window.Store && Store._stale) this.showStale();
   },
 
   // ===== tabs ==============================================================
@@ -3359,7 +3365,7 @@ const UI = {
     const next = upcoming[0] || null, p = Senate.pending(), tier = Senate.tier();
     const senate = Senate.sen();
     const me = (window.Cloud && Cloud.signedIn() && Cloud.user()) ? Cloud.user().id : null;
-    const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const esc = Util.esc;   // was a local copy — now the shared sink helper
     // Public handle for ballot badges — same rules as the Barons leaderboard
     // (username → Baron #N → "Baron"). Never show an email local-part.
     const ballotWho = b => {
@@ -3761,10 +3767,13 @@ const UI = {
       return;
     }
     this.refs.lbList.innerHTML = page.rows.map(r => {
-      const title = r.title ? `<span class="lb-title">${r.title}</span>` : "";
+      // Cross-player strings: escape at the sink. The board's sanitising SQL is
+      // optional and may be stale, and every other cross-player surface
+      // (Stations._txt, Senate) already escapes client-side.
+      const name = Util.esc(r.name), title = r.title ? `<span class="lb-title">${Util.esc(r.title)}</span>` : "";
       const who = r.you
-        ? `<b class="lb-name">${r.name || "You"}</b> ${title}<span class="lb-fac you">◆ you</span>`
-        : `<b class="lb-name">${r.name}</b> ${title}`;
+        ? `<b class="lb-name">${name || "You"}</b> ${title}<span class="lb-fac you">◆ you</span>`
+        : `<b class="lb-name">${name}</b> ${title}`;
       return `<li class="lb-row ${r.you ? "lb-you" : ""}">
         <span class="lb-rank">#${r.rank}</span>
         <span class="lb-who">${who}</span>
@@ -3865,18 +3874,23 @@ const UI = {
     this.renderNewswire(); window.Game.audio("news"); this.bumpComms();
   },
   renderNewswire() {
+    // headline/body can come from world_news (shared, cross-player) and are
+    // persisted into state.newswire, so an unescaped one replays from
+    // localStorage on every boot — escape at the sink. `dir`/`faction` only
+    // index trusted config.
     this.refs.newswireList.innerHTML = this.s().newswire.map(n => { const f = FACTIONS[n.faction];
-      return `<li class="wire ${n.dir}"><span class="wire-time">${Util.ago(n.ts)}</span>
+      return `<li class="wire ${n.dir === "up" ? "up" : "down"}"><span class="wire-time">${Util.ago(n.ts)}</span>
         <span class="wire-faction" style="color:${f ? f.color : "#9aa"}">${f ? f.name : "GBN"}</span>
-        <b>${n.headline}</b><span class="wire-body">${n.body}</span></li>`; }).join("") || "<li class='muted-note'>No bulletins yet.</li>";
+        <b>${Util.esc(n.headline)}</b><span class="wire-body">${Util.esc(n.body)}</span></li>`; }).join("") || "<li class='muted-note'>No bulletins yet.</li>";
   },
   addChat({ portrait, handle, text, kind }) {
     const ul = this.refs.feedList; const li = this.el("li", "msg msg-" + kind);
     const img = new Image(); img.src = ASSET.portrait(portrait); img.alt = ""; img.className = "pfp";
-    img.onerror = () => { const b = this.el("div", "pfp tintbox", handle.slice(0, 1).toUpperCase()); img.replaceWith(b); };
+    const who = Util.esc(handle);   // untrusted: a world_feed handle from another player
+    img.onerror = () => { const b = this.el("div", "pfp tintbox", who.slice(0, 1).toUpperCase()); img.replaceWith(b); };
     const body = this.el("div", "msg-body");
     const tag = kind === "omen" ? `<span class="tag tag-omen">tip</span>` : kind === "scam" ? `<span class="tag tag-scam">tip</span>` : kind === "reaction" ? `<span class="tag tag-react">live</span>` : kind === "rival" ? `<span class="tag tag-rival">rival</span>` : "";
-    body.innerHTML = `<div class="msg-head"><span class="msg-handle">${handle}</span>${tag}</div><div class="msg-text"></div>`;
+    body.innerHTML = `<div class="msg-head"><span class="msg-handle">${who}</span>${tag}</div><div class="msg-text"></div>`;
     body.querySelector(".msg-text").textContent = text;
     li.append(img, body); ul.appendChild(li);
     while (ul.children.length > CONFIG.chatMaxMessages) ul.removeChild(ul.firstChild);
@@ -3897,8 +3911,24 @@ const UI = {
     if (el) el.classList.toggle("hidden", !on);
   },
 
+  // Another tab took over the save (Store._goStale). This tab has stopped
+  // writing, so anything done here from now on is lost — say so permanently
+  // rather than with a toast that fades while the player keeps trading.
+  showStale() {
+    if (document.getElementById("stale-pill")) return;
+    const el = this.el("div", "idle-pill stale-pill");
+    el.id = "stale-pill";
+    el.textContent = this.t("stale.pill", "⚠ This game is open in another tab — saving is paused here. Reload to continue in this one.");
+    document.body.appendChild(el);
+  },
+
   toast(text, kind = "info", ms = 3200) {
     const stack = this.refs.toast;
+    // Boot-order guard: Store._cloudFail and the boot-failure handler both toast
+    // BEFORE init() populates refs. Throwing here escaped Store.load's catch and
+    // left a blank page on every reload — the one path that must never brick.
+    // Hold the message and flush it once the stack exists.
+    if (!stack) { (this._pendingToasts ||= []).push([text, kind, ms]); return; }
     // ponytail: cap at 3 — drop the oldest so bursts don't bury the screen
     while (stack.children.length >= 3) stack.firstChild.remove();
     const t = this.el("div", "toast toast-" + kind, text);
@@ -4269,6 +4299,7 @@ const UI = {
   },
 
   wireBus() {
+    Bus.on("save-stale", () => this.showStale());
     Bus.on("chat", m => this.addChat(m));
     Bus.on("tv", m => { if (!Broadcast.newsLive()) this.setBroadcast(m); });
     Bus.on("news", n => this.showNews(n));

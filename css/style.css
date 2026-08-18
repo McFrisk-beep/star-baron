@@ -503,6 +503,8 @@ body.reduced .tt-dot { animation: none; }
 .idle-pill { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 90;
   background: #0c1020ee; border: 1px solid var(--line); border-radius: 999px;
   color: var(--ink-dim); font-size: 12px; padding: 6px 14px; pointer-events: none; }
+/* Same pill, louder: this tab's saves are off because another tab owns them. */
+.stale-pill { border-color: var(--down); color: var(--ink); max-width: min(92vw, 520px); text-align: center; }
 
 /* Settings tabs + the player's music playlist (Settings → Music). */
 .set-tabs { display: flex; gap: 4px; margin: 4px 0 10px; border-bottom: 1px solid var(--line); }

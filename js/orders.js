@@ -30,11 +30,28 @@ const Orders = {
   // Check every order against current prices. Fills/fires the ones that crossed
   // and returns events for the UI to surface. No trading happens in transit.
   // Buy/sell orders only fill at the system they were placed in.
+  // ponytail: a plain in-flight latch, same shape as Barons._publishing.
+  // process() awaits buy/sell RPCs (easily longer than the 2s market tick) and
+  // only writes s.orders back at the end, so the next tick used to iterate the
+  // un-decremented list and queue the same order again — double fills, doubled
+  // one-shot alerts, and last-writer-wins resurrecting removed orders.
+  // Game.resume() kicks a process() right before restarting the loop, which
+  // made the overlap a certainty rather than a race.
+  _processing: false,
   async process() {
     const s = this.s();
+    if (this._processing) return [];
     if (s.travel || !s.orders || !s.orders.length) return [];
-    const events = [], keep = [];
-    for (const o of s.orders) {
+    this._processing = true;
+    try {
+      return await this._run(s);
+    } finally { this._processing = false; }
+  },
+  async _run(s) {
+    // Snapshot: an Orders.add() during the awaits below pushes onto the very
+    // array we're iterating. Take a copy so this pass has a fixed work list.
+    const events = [], keep = [], started = s.orders.slice();
+    for (const o of started) {
       const comm = COMMODITIES.find(c => c.id === o.commId);
       if (!comm) continue;                                   // commodity left config — drop
       const bound = o.systemId || s.currentSystem;
@@ -60,7 +77,11 @@ const Orders = {
         if (o.qty > 0) keep.push(o);                         // nothing (more) to sell yet — keep it
       } else keep.push(o);
     }
-    s.orders = keep;
+    // The player can add or cancel orders during the awaits above, and this is
+    // the one place that rewrites the whole list — so honour the live list:
+    // drop anything cancelled meanwhile, keep anything newly placed.
+    const live = s.orders;
+    s.orders = keep.filter(o => live.includes(o)).concat(live.filter(o => !started.includes(o)));
     return events;
   },
 };

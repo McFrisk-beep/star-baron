@@ -14,12 +14,38 @@ const Store = {
   // cloud save during an offline / paused-project boot.
   _cloudReady: true,
 
+  // ---- multi-tab safety --------------------------------------------------
+  // Two tabs on the same save were last-writer-wins: play an hour in tab B,
+  // click back to tab A, and A's stale in-memory state overwrote it — wholesale
+  // for guests, and every client-owned slice (story, workshop, hold, settings,
+  // senate) even under the authoritative path. A `storage` event only fires in
+  // the OTHER documents, so hearing one means somebody else owns the save now.
+  // This tab stops writing (local and cloud) and says so; the newer tab is
+  // untouched. Cheaper and less racy than a lock, and it fails safe.
+  _stale: false,
+  watchTabs() {
+    if (this._watching || typeof addEventListener !== "function") return;
+    this._watching = true;
+    addEventListener("storage", e => {
+      if (e.key !== null && e.key !== SAVE_KEY) return;   // key null = storage.clear()
+      this._goStale();
+    });
+  },
+  _goStale() {
+    if (this._stale) return;
+    this._stale = true;
+    clearTimeout(this._cloudTimer);
+    console.warn("[Store] another tab took over this save — writes disabled here.");
+    if (window.Bus) Bus.emit("save-stale");
+  },
+
   // ---- local (always available) -----------------------------------------
   localLoad() {
     try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; }
     catch (e) { console.warn("[Store] local load failed:", e); return null; }
   },
   localSave(state) {
+    if (this._stale) return false;
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); return true; }
     catch (e) { console.warn("[Store] local save failed:", e); return false; }
   },
@@ -54,12 +80,21 @@ const Store = {
 
   // ---- public API (unchanged signatures) --------------------------------
   async load() {
+    this.watchTabs();
     const local = this.localLoad();
     // Guests never touch the cloud. Signed-in players stay gated until we know
     // what the remote row looks like (or that it truly doesn't exist yet).
     this._cloudReady = !this.signedIn();
     if (this.signedIn()) {
-      try {
+      // One retry before the latch goes down. A single transient blip (5xx,
+      // a cold-started project, a flaky link) used to set _cloudReady=false for
+      // the WHOLE session: every push and pullCatchUp silently no-ops, and the
+      // next good boot adopts the stale server row — the hours played in
+      // between are gone with only one warning toast.
+      // ponytail: retry at boot only. Lifting the latch mid-session would let a
+      // blob we never reconciled against the server overwrite the row, which is
+      // the exact loss the latch exists to prevent.
+      for (let attempt = 0; attempt < 2; attempt++) try {
         // Phase 1: authoritative players row via app_bootstrap.
         const boot = await Cloud.bootstrap();
         if (boot) {
@@ -94,7 +129,13 @@ const Store = {
           return remote;
         }
         console.log("[Store] signed in, no cloud save yet — using local");
+        break;
       } catch (e) {
+        if (attempt === 0) {
+          console.warn("[Store] cloud load failed — retrying once:", e && e.message || e);
+          await new Promise(r => setTimeout(r, 1200));
+          continue;
+        }
         this._cloudFail("load", e);
         this._cloudReady = false;   // do NOT push a default/guest blob over unknown remote
       }
@@ -111,7 +152,7 @@ const Store = {
 
   // Coalesce frequent autosaves into one cloud write every _cloudMs.
   _queueCloud(state) {
-    if (!this._cloudReady) return;
+    if (!this._cloudReady || this._stale) return;
     clearTimeout(this._cloudTimer);
     this._cloudTimer = setTimeout(() => {
       if (!this._cloudReady || !this.signedIn()) return;
@@ -126,7 +167,7 @@ const Store = {
   // Push the latest state to the cloud right now (on logout / tab hide / unload).
   async flush(state) {
     clearTimeout(this._cloudTimer);
-    if (!this.signedIn() || !this._cloudReady) return;
+    if (!this.signedIn() || !this._cloudReady || this._stale) return;
     // Same guard as _queueCloud, and this is the one that actually bit: tab hide
     // (Game.suspend) and sign-out flush immediately, so backgrounding the game
     // mid-buy committed the optimistic credits while app_commit forced the
@@ -198,6 +239,13 @@ const Util = {
     while (v === 0) v = Math.random();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) * sd;
   },
+  // Escape a string for interpolation into innerHTML. Mandatory for anything
+  // another player authored (baron names, feed handles, world news) — the
+  // server-side sanitising SQL is optional and can be stale, and this app's
+  // localStorage holds the Supabase auth token, so one stored <script> is an
+  // account takeover for everyone who views the board.
+  esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); },
+
   // Compact credit formatting: 1.2K, 3.4M, 1.1B.
   credits(n) {
     const neg = n < 0;

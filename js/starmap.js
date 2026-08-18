@@ -1380,16 +1380,32 @@ const StarMap = {
   suspend() {
     if (this.raf && this.current) { this._resumeScene = true; this.stopScene(); }
     if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); }
+    // The two intervals used to run straight through suspend. With a system
+    // open, the 9–14s feed tick kept calling flavorPost + requestSave in a
+    // hidden/idle tab — a localStorage write plus a debounced app_commit every
+    // ~10s — and each save stamped lastSeenAt=now, so resume() saw ~10s elapsed
+    // and skipped market/stock catch-up for the whole away period.
+    if (this.feedTimer) { this._resumeFeed = true; clearInterval(this.feedTimer); this.feedTimer = null; }
+    if (this.galaxyTimer) { this._resumeGalaxy = true; clearInterval(this.galaxyTimer); this.galaxyTimer = null; }
   },
   resume() {
     if (this._resumeStars) {
       this._resumeStars = false;
       if (this.open && !this.refs.galaxyView.classList.contains("hidden")) this.startStars();
     }
+    if (this._resumeGalaxy) {
+      this._resumeGalaxy = false;
+      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) {
+        clearInterval(this.galaxyTimer);
+        this.galaxyTimer = setInterval(() => this.updateGalaxyNodes(), CONFIG.marketTickMs);
+      }
+    }
+    const sys = this.current && Galaxy.get(this.current);
+    const sysOpen = this.open && sys && !this.refs.systemView.classList.contains("hidden");
+    if (this._resumeFeed) { this._resumeFeed = false; if (sysOpen) this.startLocalFeed(sys); }
     if (!this._resumeScene) return;
     this._resumeScene = false;
-    const sys = this.current && Galaxy.get(this.current);
-    if (this.open && sys && !this.refs.systemView.classList.contains("hidden")) this.startScene(sys);
+    if (sysOpen) this.startScene(sys);
   },
   stopSystem() {
     this.stopScene();

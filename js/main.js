@@ -68,9 +68,11 @@ const Game = {
     // field (e.g. ships:null) used to throw here and brick boot forever, since
     // every reload re-loaded the same bad save. Wrong-typed collections fall back
     // to the default; credits is coerced to a finite, non-negative number.
-    if (!Array.isArray(s.ships)) s.ships = def.ships;
-    if (!Array.isArray(s.unlockedSystems)) s.unlockedSystems = def.unlockedSystems;
-    if (!Array.isArray(s.achievements)) s.achievements = def.achievements;
+    // Every top-level collection that defaults to an array, not a hand-picked
+    // few: `newswire: {}` used to slip through here and throw on the spread in
+    // Broadcast.backfill — outside this try/catch and before UI.init, so even
+    // the boot-failure toast couldn't render. One loop, no more misses.
+    for (const k in def) if (Array.isArray(def[k]) && !Array.isArray(s[k])) s[k] = def[k];
     if (!s.positions || typeof s.positions !== "object") s.positions = {};
     if (!s.avgCost || typeof s.avgCost !== "object") s.avgCost = {};
     if (typeof s.currentSystem !== "string") s.currentSystem = def.currentSystem;
