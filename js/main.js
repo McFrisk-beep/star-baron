@@ -678,6 +678,8 @@ const Game = {
       Fleet.pruneMercs(now);
       Rivals.tick(now);
       Bazaar.tick(now);
+      // Re-file survey debriefs whose RPC dropped mid-flight (throttled inside).
+      if (window.SurveyStory && SurveyStory.retryPending) void SurveyStory.retryPending(now);
       void Orders.process().then(orderEv => {
         for (const ev of orderEv) Bus.emit("order", ev);
         if (orderEv.length) this.requestSave();
@@ -846,6 +848,12 @@ const Game = {
     // Don't soft-commit mid-trade: optimistic credits are lower than positions
     // the server still has, and app_commit would lock that gap in.
     if (Economy.busy()) return null;
+    // Mark busy for the whole commit→pull round trip: a soft/local spend
+    // (blackbox, blueprint, dossier) landing between the commit request and the
+    // pull response would be refunded by applyPull's stale credits while the
+    // item survives the soft-merge — a repeatable mint (usage-sim H5). The
+    // busy() gate blocks those purchases for the in-flight window.
+    Economy._pending++;
     try {
       // Soft-sync setup (new industries/expeditions) before pull so the
       // server sees them; credits only decrease (spends), never mint via commit.
@@ -869,6 +877,8 @@ const Game = {
       }
       console.warn("[Game] app_pull failed:", e);
       return null;
+    } finally {
+      Economy._pending = Math.max(0, Economy._pending - 1);
     }
   },
 

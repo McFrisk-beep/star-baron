@@ -47,6 +47,14 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
     payouts/buyouts evaporate on the next commit and destroyed hulls resurrect
     — only abort fees stuck. The server clamps the client quote against its own
     catalog, so a forged reward is bounded.
+11. **`docs/sql/survey_custody.sql`** ← required (usage-sim review **H6**), and
+    must come **after** step 10 (it replaces `app_commit` once more, extending
+    the charter layer). Survey ship status becomes server-owned: a dispatched
+    hull is stamped `'surveying'` (then `'debrief'`) inside `app_commit`, so it
+    can't be sold or double-booked onto a mission mid-survey, and a hull whose
+    expedition disappeared is released back to `'idle'` — which also un-bricks
+    ships stranded at `'debrief'` by the old dropped-packet debrief bug (H7).
+    Checked by `tools/check_survey_custody.js`.
 
 ## Trust model
 
