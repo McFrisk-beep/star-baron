@@ -77,6 +77,12 @@ grant execute on function public.app_bootstrap() to authenticated;
 -- ===========================================================================
 -- MEDIUM — authoritative, bounded senate influence
 -- ===========================================================================
+-- SUPERSEDED by docs/sql/crime_coefficient.sql (usage-sim review H10). This
+-- copy validates shape and clamps strength but enforces none of the gameplay
+-- rules — influence is still FREE and uncapped by tier, which is how one
+-- account could coerce a whole bill. Always paste crime_coefficient.sql AFTER
+-- this file (and re-paste it if you ever re-run this one).
+-- ===========================================================================
 -- Every client submission now goes through this RPC, which:
 --   • requires a signed-in user (user_id is server-stamped, never client-set),
 --   • whitelists kind ∈ {lobby_fac, bribe, coerce} and clamps dir ∈ {-1,0,1},

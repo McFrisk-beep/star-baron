@@ -86,6 +86,7 @@ declare
   c text; cm jsonb; f text; ttl text; blb text;
   next_vote timestamptz; ends timestamptz;
   new_id bigint; sig text; taken boolean;
+  crime numeric := 0;
   lean_v numeric; sev_mult numeric;
   host_sev numeric; host_dur numeric; host_hard numeric;
   join_num bigint;
@@ -97,6 +98,11 @@ begin
     return jsonb_build_object('ok', false, 'error', 'invalid edict');
   end if;
 
+  -- One tabling at a time, galaxy-wide. Without this the weekly quota and the
+  -- shared docket cap below are both check-then-act: two concurrent calls each
+  -- counted the pre-insert world_senate rows and both passed (H11).
+  perform pg_advisory_xact_lock(hashtext('cosmocrat:senate_ballot'));
+
   begin
     select coalesce((role = 'admin'), false) into is_admin
       from public.profiles where user_id = uid;
@@ -107,17 +113,25 @@ begin
 
   -- floor() so float credits like 50032320.9097972 don't blow up ::bigint
   begin
+    -- FOR UPDATE: the debit below writes back this read, so two concurrent
+    -- ballots would otherwise both table a bill for a single charge (H11).
     select coalesce((state->'prestige'->>'tier')::int, 0),
-           floor(coalesce((state->>'credits')::numeric, 0))
-      into tier, credits
-      from public.players where user_id = uid;
+           floor(coalesce((state->>'credits')::numeric, 0)),
+           least(1000, greatest(0, coalesce((state->>'crime')::numeric, 50)))
+      into tier, credits, crime
+      from public.players where user_id = uid for update;
   exception when undefined_table then
-    tier := ballot_min; credits := null;
+    tier := ballot_min; credits := null; crime := 0;
   when others then
     -- malformed credits JSON — treat as unreadable; client will charge
-    tier := ballot_min; credits := null;
+    tier := ballot_min; credits := null; crime := 0;
   end;
   if tier is null then tier := ballot_min; end if;
+  -- Barred barons (crime coefficient ≥ 200, docs/sql/crime_coefficient.sql) may
+  -- read the edicts in force and nothing else — no tabling, no influence.
+  if coalesce(crime, 0) >= 200 then
+    return jsonb_build_object('ok', false, 'error', 'senate_locked', 'crime', crime, 'lockout', 200);
+  end if;
   if tier < ballot_min and not is_admin then
     return jsonb_build_object('ok', false, 'error', 'Baron Tier ' || ballot_min || ' required');
   end if;
@@ -316,6 +330,7 @@ declare
   prev_at timestamptz;
   prev_ends timestamptz;
   my_ends timestamptz;
+  crime numeric := 0;
 begin
   if uid is null then raise exception 'not authenticated'; end if;
   begin
@@ -366,10 +381,18 @@ begin
     return jsonb_build_object('ok', false, 'error', 'docket changed — try again');
   end if;
 
+  -- FOR UPDATE for the same reason as app_senate_ballot: the debit writes back
+  -- this read, so concurrent bumps used to swap twice for one charge (H11).
   begin
-    select floor(coalesce((state->>'credits')::numeric, 0)) into credits
-      from public.players where user_id = uid;
-  exception when others then credits := null; end;
+    select floor(coalesce((state->>'credits')::numeric, 0)),
+           least(1000, greatest(0, coalesce((state->>'crime')::numeric, 50)))
+      into credits, crime
+      from public.players where user_id = uid for update;
+  exception when others then credits := null; crime := 0; end;
+
+  if coalesce(crime, 0) >= 200 then
+    return jsonb_build_object('ok', false, 'error', 'senate_locked', 'crime', crime, 'lockout', 200);
+  end if;
 
   if credits is not null then
     if credits < bump_cost then

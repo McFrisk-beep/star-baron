@@ -202,6 +202,14 @@ begin
     return jsonb_build_object('ok', false, 'error', 'No station.');
   end if;
 
+  -- Serialize openers for THIS station. The check below and the upsert at the
+  -- end were check-then-act: two barons opening the same station both passed
+  -- the check, both escrowed, and the second upsert overwrote the first as high
+  -- bidder — the first player's credits vanished with no auction to show (H11).
+  -- Taken before app._lock_state so the lock order (station → player) is the
+  -- same on every path.
+  perform pg_advisory_xact_lock(hashtext('cosmocrat:station_auction:' || p_system));
+
   perform public.app_station_close_due();
 
   if exists (select 1 from public.station_auctions where system_id = p_system and status = 'open') then
@@ -248,7 +256,15 @@ begin
   values (p_system, 'open', now(), closes, amt, uid)
   on conflict (system_id) do update set
     status = 'open', opens_at = now(), closes_at = excluded.closes_at,
-    high_bid = excluded.high_bid, high_bidder = excluded.high_bidder;
+    high_bid = excluded.high_bid, high_bidder = excluded.high_bidder
+  where public.station_auctions.status <> 'open';
+  -- Guard rail: if a live auction slipped in anyway, undo the escrow rather
+  -- than silently eating the opener's credits.
+  if not found then
+    pstate := jsonb_set(pstate, '{credits}', to_jsonb(credits + amt));
+    perform app._write_state(pstate, now_ms);
+    return jsonb_build_object('ok', false, 'error', 'Auction already open.');
+  end if;
 
   return jsonb_build_object(
     'ok', true, 'system_id', p_system, 'high_bid', amt, 'closes_at', closes,
@@ -284,6 +300,12 @@ begin
   if p_system is null or length(p_system) > 40 then
     return jsonb_build_object('ok', false, 'error', 'No station.');
   end if;
+
+  -- Same station lock as app_station_auction_open, and taken first for the same
+  -- reason: open holds the player row while it writes the auction, bid holds the
+  -- auction row while it writes the player row. Without a common first lock the
+  -- two can deadlock; with it every auction path is advisory → auction → player.
+  perform pg_advisory_xact_lock(hashtext('cosmocrat:station_auction:' || p_system));
 
   perform public.app_station_close_due();
 
