@@ -1914,3 +1914,9 @@ body.reduced .hub-prompt { animation: none; }
 .st-mod-detail { margin-top: 6px; font-size: .88em; line-height: 1.35; color: var(--text, #d8e0f0); }
 .st-mod-detail p { margin: 0 0 6px; }
 .st-mod-next { margin-top: 4px; }
+
+/* ---- crime coefficient / senate lockout (js/crime.js) ---- */
+.crime-chip { font-weight: 600; white-space: nowrap; }
+.senate-barred { border-left: 3px solid var(--down); }
+.senate-barred h2 { margin-bottom: 8px; }
+.senate-barred .locked-note { max-width: 68ch; }

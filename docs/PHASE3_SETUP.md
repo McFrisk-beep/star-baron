@@ -55,6 +55,29 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
     expedition disappeared is released back to `'idle'` — which also un-bricks
     ships stranded at `'debrief'` by the old dropped-packet debrief bug (H7).
     Checked by `tools/check_survey_custody.js`.
+12. **`docs/sql/merc_expiry.sql`** ← required (usage-sim review **H9**), and must
+    come **after** step 11 (it replaces `app_commit` again). Expired mercenaries
+    are pruned from the server roster the way `Fleet.pruneMercs` prunes them
+    locally; without it a released merc resurrects on every slice and its ghost
+    still counts against `app.fleet_cap`, so purchases fail with "Too many
+    ships." against a fleet you can't see.
+13. **`docs/sql/crime_coefficient.sql`** ← required (usage-sim review **H10**),
+    and must come **after** step 12 (it replaces `app_commit` and
+    `app.result_slice` once more). Senate influence gets a server-side price, a
+    per-tier cap and a record: `app_senate_influence` now debits credits,
+    enforces the tier gates and the "1 + tier senators per bill" rule, computes
+    the pushed strength itself, and books bribery/coercion against the caller's
+    **crime coefficient**. See [Crime coefficient](SENATE_SETUP.md#crime-coefficient).
+    Without it, influence is free and uncapped — one account can coerce any bill.
+14. **`docs/sql/senate_ballot.sql`** and **`docs/sql/station_auctions.sql`** ←
+    re-paste both (usage-sim review **H11**). The ballot RPCs now lock the
+    player row before debiting and serialize on the shared docket (two
+    concurrent ballots used to table two bills for one charge); opening a
+    station auction now serializes per station and refunds rather than
+    overwriting a live auction's high bidder (a lost race used to swallow the
+    opener's escrow). `senate_ballot.sql` also refuses a barred baron.
+    Checked by `tools/check_crime_coefficient.js` +
+    `tools/sql/build_h9_h11_check.js`.
 
 ## Trust model
 

@@ -286,6 +286,46 @@ old 2-arg overload, installs the 4-arg function + bump RPC, and applies the
 > bill) waiting on a result row that was never written. Re-run this file, then
 > re-resolve or re-table the bill.
 
+## 1e. Crime coefficient — the chamber can throw you out
+
+Run `docs/sql/crime_coefficient.sql` (paste order: step 13 in
+[PHASE3_SETUP.md](PHASE3_SETUP.md)). It closes the last free lunch in the shared
+senate and adds the number the crime expansion will hang off.
+
+Before it, `app_senate_influence` validated the *shape* of a push but enforced
+none of the rules the client honours: any signed-in account could POST 24 rows
+per bill — including 24 `coerce` rows, which force a senator's vote outright —
+for **free**, at any Baron Tier. That's enough to carry or kill any bill, and
+edicts hit every player's economy.
+
+**Every baron now carries a crime coefficient.**
+
+| Coefficient | What it means |
+|---|---|
+| opens at **50** | on record, clean, no penalties |
+| **100+** | *Watchlisted* — customs search you harder, and a coerced senator may refuse and report the approach |
+| **200+** | *Barred* — the chamber is closed: no lobbying, bribing, coercion, ballots or bumps. Only **Active Edicts** stays readable |
+| **300+** | *Criminal* — the label is public |
+| caps at **1000** | |
+
+Lobbying a bloc is legal and adds nothing. **Bribery is +6, coercion is +20.**
+The file cools by **1 a day**, so a coercion spree takes weeks to live down —
+which is the point: it stops one account from steering every edict.
+
+The coefficient is a **server-owned** slice. `app_commit` forces `crime` and
+`crimeSeenAt` from the server row and applies the daily cooling on the server
+clock, so editing the save can't clear a record. Guests keep their own copy
+locally (js/crime.js).
+
+Influence is also **priced and capped** server-side now: the RPC debits credits
+(the cheapest legitimate price — the client pays the relationship- and seat-
+scaled remainder locally), enforces the tier gates (lobby 1 / bribe 2 /
+coerce 3) and the "1 + tier senators per bill" rule, and **computes the pushed
+strength itself** instead of trusting the request.
+
+Tuning lives in `CRIMECFG` (js/data.js) and the `app._crime_*` constants in the
+SQL — `tools/check_crime_coefficient.js` fails if the two drift apart.
+
 ## 2. That's it
 
 The client activates automatically once rows exist: on load you'll see

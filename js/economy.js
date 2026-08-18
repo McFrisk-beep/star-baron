@@ -194,6 +194,10 @@ const Economy = {
     if (r.knownRecipes) s.knownRecipes = r.knownRecipes;
     if (r.craftedOnce) s.craftedOnce = r.craftedOnce;
     if (r.lastSeenAt != null) s.lastSeenAt = r.lastSeenAt;
+    // Crime coefficient is server-owned once docs/sql/crime_coefficient.sql is
+    // applied (older SQL omits the key and the client keeps its own record).
+    if (r.crime != null && window.Crime) Crime.applyServer(r.crime);
+    if (r.crimeSeenAt != null) s.crimeSeenAt = r.crimeSeenAt;
     if (r.stats && r.stats.peakNetWorth != null) s.stats.peakNetWorth = r.stats.peakNetWorth;
     // Phase 4: resync shelf from trade response (authoritative units).
     if (window.Stock && r.sectorId && r.commodity != null && r.stockUnits != null)
@@ -315,6 +319,8 @@ const Economy = {
       if (window.Workshop) Workshop.scrubQueue(s.workshop);
     }
     if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
+    if (st.crime != null && window.Crime) Crime.applyServer(st.crime);
+    if (st.crimeSeenAt != null) s.crimeSeenAt = st.crimeSeenAt;
     if (st.stats) {
       if (st.stats.peakNetWorth != null) s.stats.peakNetWorth = st.stats.peakNetWorth;
       if (st.stats.trades != null) s.stats.trades = st.stats.trades;
@@ -879,6 +885,10 @@ const Economy = {
       ? Util.clamp(stOverride + border * 0.5 - shield, 0, CUSTOMS.cap)
       : Util.clamp((CUSTOMS.base + border) * baseline - shield, 0, CUSTOMS.cap);
     if (window.Boosts) chance = Util.clamp(chance * (1 + Boosts.mag("customsSeize")), 0, CUSTOMS.cap);
+    // A known face gets searched harder: no effect under CRIMECFG.watch, then
+    // the odds scale with the crime coefficient (still under CUSTOMS.cap, so a
+    // scan is never a certainty).
+    if (window.Crime) chance = Util.clamp(chance * Crime.customsMult(), 0, CUSTOMS.cap);
     return chance;
   },
 

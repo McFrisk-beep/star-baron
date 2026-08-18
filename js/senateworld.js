@@ -175,10 +175,16 @@ const SenateWorld = {
   // rate-limits per bill (see docs/sql/security_hardening.sql) so no client can
   // forge an outsized push. Falls back to the legacy direct insert only on
   // projects where that hardening RPC isn't installed yet.
+  // Returns the RPC's own verdict so the caller can roll back a refused push:
+  //   { ok: true, refused, cost, credits, crime } — the server priced it,
+  //     capped it, computed the strength and booked it against your record
+  //   { ok: false, error }                        — refused (barred, capped, broke)
+  //   { missing: true }                           — hardened RPC not installed;
+  //     the legacy direct insert ran and the client's own rules stand
   async submit(billId, kind, target, dir, strength) {
-    if (!this.enabled() || !Cloud.signedIn()) return;
+    if (!this.enabled() || !Cloud.signedIn()) return { missing: true };
     try {
-      const { error } = await Cloud.client.rpc("app_senate_influence", {
+      const { data, error } = await Cloud.client.rpc("app_senate_influence", {
         p_bill_id: billId, p_kind: kind, p_target: target || null,
         p_dir: dir || 0, p_strength: strength || 0,
       });
@@ -187,9 +193,15 @@ const SenateWorld = {
           const { error: e2 } = await Cloud.client.from("world_senate_influence")
             .insert({ bill_id: billId, kind, target: target || null, dir: dir || 0, strength: strength || 0 });
           if (e2) throw e2;
-        } else throw error;
+          return { missing: true };
+        }
+        throw error;
       }
-    } catch (e) { console.warn("[SenateWorld] influence submit failed:", e.message || e); }
+      return data || { missing: true };
+    } catch (e) {
+      console.warn("[SenateWorld] influence submit failed:", e.message || e);
+      return { ok: false, error: "Couldn't reach the chamber — try again." };
+    }
   },
   // fetch + aggregate every player's influence for a bill into one signed-push pool
   async _loadPool(bill) {

@@ -472,6 +472,42 @@ const CUSTOMS = {
   seize: [0.30, 0.70], // fraction of the held contraband taken on a hit
 };
 
+/* ---- CRIME COEFFICIENT ----------------------------------------------------
+   Every baron carries a lawfulness score. It opens at 50 — on record, but
+   clean — and climbs when you do something the Senate can prosecute. Lobbying
+   is legal and costs nothing; bribery and coercion are crimes and are priced
+   accordingly. The file cools by 1 a day, so a spree takes weeks to live down.
+
+   Thresholds (see js/crime.js):
+     < 100  clean — no penalties
+     ≥ 100  watched — customs scrutiny rises, coercion can be refused
+     ≥ 200  barred — the Senate locks you out of everything but active edicts
+     ≥ 300  Criminal — the label is public
+   Server-owned once docs/sql/crime_coefficient.sql is applied: app_commit forces
+   `crime` from the server row, so a tampered save can't wipe the record.        */
+const CRIMECFG = {
+  start: 50, min: 0, max: 1000,
+  decayPerDay: 1,                 // the file cools this much every real day
+  watch: 100, lockout: 200, criminal: 300,
+  // what each senate action adds. Lobbying a bloc is legal — that's politics.
+  gain: { lobby: 0, bribe: 6, coerce: 20 },
+  // coercion refusal: per 100 points above `watch`, capped. A refused coercion
+  // still costs the credits and still adds the crime — you were caught trying.
+  coerceFailPer100: 0.35, coerceFailCap: 0.9,
+  // customs: relative bump to seizure odds per 100 points above `watch`
+  customsPer100: 0.25, customsMultCap: 2.5,
+  // ponytail: only the Senate reads these today; smuggling/piracy sources land
+  // with the crime expansion (docs/SENATE_SETUP.md § Crime coefficient).
+  tiers: [
+    { at: 0,    id: "clean",    label: "Clean record",  color: "#3ad6a0" },
+    { at: 100,  id: "watched",  label: "Watchlisted",   color: "#e8cf54" },
+    { at: 200,  id: "barred",   label: "Barred",        color: "#ff9a4b" },
+    { at: 300,  id: "criminal", label: "Criminal",      color: "#ff5d73" },
+  ],
+  // shown when a barred baron opens any Senate tab but Active Edicts
+  lockAuthority: "the Senate Ethics Tribunal",
+};
+
 /* ---- EXPEDITIONS ----------------------------------------------------------
    Anomaly surveys: dispatch an idle ship to a non-tradeable backdrop system
    and, after a distance-scaled trip, it resolves (live OR offline) into a
@@ -1535,6 +1571,7 @@ window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
 window.CUSTOMS = CUSTOMS;
+window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.WORKSHOPCFG = WORKSHOPCFG;

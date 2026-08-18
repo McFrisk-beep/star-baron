@@ -634,8 +634,55 @@ const Senate = {
     if (Date.now() >= b.votesAt) return { ok: false, msg: "Voting has closed on this bill." };
     return null;
   },
+  // Shared mode: the RPC prices, caps and books the push and returns its
+  // verdict (a Promise). Guest / solo play resolves locally — null.
   _submitPool(billId, kind, target, dir, strength) {
-    if (this.shared && window.SenateWorld) SenateWorld.submit(billId, kind, target, dir, strength);
+    if (this.shared && window.SenateWorld) return SenateWorld.submit(billId, kind, target, dir, strength);
+    return null;
+  },
+
+  // ---- crime coefficient (js/crime.js) ------------------------------------
+  // Barred barons (≥ CRIMECFG.lockout) may read the edicts in force and nothing
+  // else. The server enforces the same line in app_senate_influence /
+  // app_senate_ballot — this is the local half so the UI never offers the act.
+  _crimeGate() {
+    if (!(window.Crime && Crime.locked())) return null;
+    return { ok: false, msg: `Barred from the chamber — crime coefficient ${Math.round(Crime.value())}. `
+      + `Only the edicts in force are open to you.` };
+  },
+  // Bribery and coercion go on the record; lobbying a bloc is legal politics.
+  // Online this is provisional: the RPC returns the authoritative number.
+  _bookCrime(kind) { if (window.Crime) Crime.add(Crime.gain(kind)); },
+
+  // Reconcile an optimistic push with the server's verdict.
+  //   null / missing → no shared ledger (guest) or the hardened RPC isn't
+  //                    installed; the local rules already stand
+  //   ok:false       → roll the push back and say why
+  //   ok:true        → the server's crime value wins. NOTE the credits: the RPC
+  //                    charges the cheapest legitimate price server-side while
+  //                    the client debited its own (relationship- and seat-
+  //                    scaled) quote, which is lower — and app_commit accepts a
+  //                    decrease, so the local number is the one that sticks.
+  //                    `refused` = the senator reported the approach instead of
+  //                    folding; the money and the record still count.
+  _settle(res, ok, revert, onRefused) {
+    if (!res || res.missing) return ok;
+    if (res.ok === false) {
+      revert();
+      this._bumpRev();
+      return { ok: false, msg: this._rpcMsg(res) };
+    }
+    if (res.crime != null && window.Crime) Crime.applyServer(res.crime);
+    if (res.refused && onRefused) return onRefused(ok);
+    return ok;
+  },
+  _rpcMsg(res) {
+    const e = String((res && res.error) || "");
+    if (e === "senate_locked") {
+      const v = Math.round((res && res.crime) != null ? res.crime : (window.Crime ? Crime.value() : 0));
+      return `Barred from the chamber — crime coefficient ${v}. Only the edicts in force are open to you.`;
+    }
+    return e || "The chamber refused that.";
   },
   can(kind) {
     const t = this.tier();
@@ -658,25 +705,40 @@ const Senate = {
     if (!FACTIONS[faction]) return { ok: false, msg: "Lobby a faction bloc." };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
     const gate = this._gate(b); if (gate) return gate;
+    const barred = this._crimeGate(); if (barred) return barred;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first, then lobby." };
     const cost = this._lobbyCost(faction);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
+    const rival = FACTIONS[faction].rival;
+    const snap = { credits: s.credits, fac: p.pushFac[faction], n: p.lobCount[faction],
+      riv: rival ? p.pushFac[rival] : undefined,
+      rep: window.Rep ? Rep.get(faction) : 0, rivRep: (window.Rep && rival) ? Rep.get(rival) : 0 };
+    const revert = () => {
+      s.credits = snap.credits;
+      if (snap.fac === undefined) delete p.pushFac[faction]; else p.pushFac[faction] = snap.fac;
+      if (snap.n === undefined) delete p.lobCount[faction]; else p.lobCount[faction] = snap.n;
+      if (rival) { if (snap.riv === undefined) delete p.pushFac[rival]; else p.pushFac[rival] = snap.riv; }
+      if (window.Rep && s.reputation) { s.reputation[faction] = snap.rep; if (rival) s.reputation[rival] = snap.rivRep; }
+      Economy.refreshNetWorth();
+    };
     s.credits -= cost;
     const dir = p.want === "pass" ? 1 : -1;
     const n = (p.lobCount[faction] = (p.lobCount[faction] || 0) + 1);           // 1st, 2nd, 3rd lobby…
     const strength = SENATECFG.lobbyFacStrength * this.power() * Math.pow(SENATECFG.lobbyDecay, n - 1);   // …each worth less
     p.pushFac[faction] = (p.pushFac[faction] || 0) + dir * strength;
-    const rival = FACTIONS[faction].rival;
     if (rival) p.pushFac[rival] = (p.pushFac[rival] || 0) - dir * strength * SENATECFG.lobbyRivalFactor;   // rival digs in against you
     if (window.Rep) { Rep.change(faction, SENATECFG.lobbyRepGain); if (rival) Rep.change(rival, -SENATECFG.lobbyRivalRepLoss); }
-    this._submitPool(b.id, "lobby_fac", faction, dir, strength);
-    Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
+    Economy.refreshNetWorth(); this._bumpRev();
+    const sub = this._submitPool(b.id, "lobby_fac", faction, dir, strength);
+    if (!sub) return { ok: true, cost };
+    return Promise.resolve(sub).then(r => this._settle(r, { ok: true, cost }, revert));
   },
   bribe(senatorId) {
     if (!this.can("bribe")) return { ok: false, msg: `Bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
     const gate = this._gate(b); if (gate) return gate;
+    const barred = this._crimeGate(); if (barred) return barred;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first." };
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
@@ -684,12 +746,23 @@ const Senate = {
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
     const cost = this._bribeCost(sn);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
+    const rep = this._rep(senatorId);
+    const snap = { credits: s.credits, rel: rep.rel || 0, crime: window.Crime ? Crime.value() : 0 };
+    const revert = () => {
+      s.credits = snap.credits; rep.rel = snap.rel;
+      delete p.pushSen[senatorId];
+      if (window.Crime) Crime.set(snap.crime);
+      Economy.refreshNetWorth();
+    };
     s.credits -= cost;
     const dir = p.want === "pass" ? 1 : -1;
     p.pushSen[senatorId] = dir * SENATECFG.bribeStrength;
-    const rep = this._rep(senatorId); rep.rel = Util.clamp((rep.rel || 0) + SENATECFG.relGainOnBribe, -100, 100);
-    this._submitPool(b.id, "bribe", senatorId, dir, SENATECFG.bribeStrength);
-    Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
+    rep.rel = Util.clamp((rep.rel || 0) + SENATECFG.relGainOnBribe, -100, 100);
+    this._bookCrime("bribe");
+    Economy.refreshNetWorth(); this._bumpRev();
+    const sub = this._submitPool(b.id, "bribe", senatorId, dir, SENATECFG.bribeStrength);
+    if (!sub) return { ok: true, cost };
+    return Promise.resolve(sub).then(r => this._settle(r, { ok: true, cost }, revert));
   },
   // scandal = coercion: blackmail a senator into voting your declared position no
   // matter their stance. Guaranteed, but it burns your relationship with them.
@@ -697,6 +770,7 @@ const Senate = {
     if (!this.can("scandal")) return { ok: false, msg: `Coercion unlocks at Baron Tier ${SENATECFG.scandalMinTier}.` };
     const b = this.nextBill(); if (!b) return { ok: false, msg: "No bill on the floor." };
     const gate = this._gate(b); if (gate) return gate;
+    const barred = this._crimeGate(); if (barred) return barred;
     const p = this._pendingFor(b);
     if (!p.want) return { ok: false, msg: "Back or block the bill first — coercion forces that vote." };
     const sn = this.byId(senatorId); if (!sn) return { ok: false, msg: "Unknown senator." };
@@ -704,14 +778,38 @@ const Senate = {
     if (this.targetsUsed(p) >= this.maxTargets()) return { ok: false, msg: `Only ${this.maxTargets()} senator(s) per session at your tier.` };
     const cost = this._scandalCost(sn);
     const s = this.s(); if (s.credits < cost) return { ok: false, msg: "Not enough credits." };
+    const rep = this._rep(senatorId);
+    const snap = { credits: s.credits, rel: rep.rel || 0, scandal: rep.scandal || 0,
+      crime: window.Crime ? Crime.value() : 0 };
+    const revert = () => {
+      s.credits = snap.credits; rep.rel = snap.rel; rep.scandal = snap.scandal;
+      delete p.coerce[senatorId];
+      if (window.Crime) Crime.set(snap.crime);
+      Economy.refreshNetWorth();
+    };
     s.credits -= cost;
     const dir = p.want === "pass" ? 1 : -1;
     p.coerce[senatorId] = dir;                                   // forces their vote to your position
-    const rep = this._rep(senatorId);
     rep.rel = Util.clamp((rep.rel || 0) - SENATECFG.scandalRelLoss, -100, 100);   // …and torches the relationship
     rep.scandal = (rep.scandal || 0) + 1;
-    this._submitPool(b.id, "coerce", senatorId, dir, 0);
-    Economy.refreshNetWorth(); this._bumpRev(); return { ok: true, cost };
+    this._bookCrime("coerce");
+    // A senator you lean on can refuse and report it instead — the odds climb
+    // with your record. The attempt still costs, still burns the target slot
+    // (coerce[id] = 0 → no forced vote) and still goes on the record.
+    const refuse = ok => {
+      p.coerce[senatorId] = 0;
+      this._bumpRev();
+      return Object.assign({}, ok, { refused: true,
+        msg: `${sn.name} refused to be leaned on and reported the approach. The money's gone.` });
+    };
+    Economy.refreshNetWorth(); this._bumpRev();
+    const sub = this._submitPool(b.id, "coerce", senatorId, dir, 0);
+    if (!sub) {
+      // Guest / solo: roll it here, same odds the server uses.
+      if (window.Crime && Math.random() < Crime.coerceFailChance()) return refuse({ ok: true, cost });
+      return { ok: true, cost };
+    }
+    return Promise.resolve(sub).then(r => this._settle(r, { ok: true, cost }, revert, refuse));
   },
 
   // ===== ballot initiative (table your own bill) ==========================
@@ -863,6 +961,7 @@ const Senate = {
     return { ok: true, cost, bill, tpl, target: target || null, up, factor: f, days: d, binary };
   },
   proposeBill(value, factor, days) {
+    const barred = this._crimeGate(); if (barred) return barred;
     const draft = this._ballotDraft(value, factor, days);
     if (!draft.ok) return draft;
     if (this.shared) return this._proposeShared(draft);
@@ -916,6 +1015,7 @@ const Senate = {
   },
   // Pay to swap this upcoming ballot one slot earlier on the docket.
   bumpBill(billId) {
+    const barred = this._crimeGate(); if (barred) return barred;
     const up = this.upcomingBills();
     const i = up.findIndex(b => b.id === billId);
     if (i < 0) return { ok: false, msg: "Bill not on the docket." };

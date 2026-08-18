@@ -3397,7 +3397,10 @@ const UI = {
       const queued = [];
       if (Object.keys(p.pushFac).length) queued.push(`lobbied ${Object.keys(p.pushFac).length} bloc(s)`);
       if (Object.keys(p.pushSen).length) queued.push(`bribed ${Object.keys(p.pushSen).length}`);
-      if (Object.keys(p.coerce).length) queued.push(`coerced ${Object.keys(p.coerce).length}`);
+      const coercedOk = Object.keys(p.coerce).filter(k => p.coerce[k]).length;
+      const coercedNo = Object.keys(p.coerce).length - coercedOk;
+      if (coercedOk) queued.push(`coerced ${coercedOk}`);
+      if (coercedNo) queued.push(`<span class="down">${coercedNo} refused</span>`);
       floor += `<div class="bill on-floor">
         <div class="bill-head"><b>${next.title}</b>${propBadge(next)}<span class="bill-eta">votes in ${Util.duration(Math.max(0, next.votesAt - now))}</span></div>
         <div class="bill-blurb">${next.blurb}</div>
@@ -3413,8 +3416,21 @@ const UI = {
           ${queued.length ? `<div class="pending-row muted-note">Queued: ${queued.join(" · ")} (${tu}/${mt} senators worked) — ${Senate.shared ? "pooled with every baron's, applied galaxy-wide when the vote lands." : "applied when the vote lands."}</div>` : ""}
         </div></div>`;
     }
+    // Crime coefficient — the number that decides whether the chamber is open.
+    const barred = !!(window.Crime && Crime.locked());
+    const crimeChip = window.Crime ? (() => {
+      const v = Math.round(Crime.value()), t = Crime.tier();
+      return ` · <span class="crime-chip" style="color:${t.color}" title="crime coefficient — bribery and coercion raise it; it cools by ${CRIMECFG.decayPerDay}/day. ${CRIMECFG.lockout}+ bars you from the chamber.">crime ${v} · ${t.label}</span>`;
+    })() : "";
     const headPanel = `<div class="panel senate-head">
-      <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}</small></h2></div>`;
+      <h2>The Senate <small>session ${senate.cycle || 0} · ${roster.length} senators · ${next ? `next vote ${Util.duration(Math.max(0, next.votesAt - now))}` : "in recess"}${crimeChip}</small></h2></div>`;
+    // Barred: every tab but Active Edicts is closed. The notice names the
+    // authority and the number, so the way back is obvious.
+    const barredPanel = `<div class="panel senate-barred">
+      <h2>⛔ The chamber is closed to you</h2>
+      <p class="locked-note">${window.Crime ? Crime.lockNotice() : ""}</p>
+      <p class="muted-note">The coefficient cools by ${CRIMECFG.decayPerDay} a day. Trade clean and it will fall.</p>
+      <button class="btn btn-mini" data-sntab="edicts">Read the edicts in force</button></div>`;
     const floorPanel = `<div class="panel senate-floor">
       <p class="muted-note">Edicts reshape the markets ~daily. Tier <b>${tier}</b> unlocks lobbying, bribes, and coercion — up to <b>${Senate.maxTargets()}</b> senator(s) per vote.</p>
       ${floor}</div>`;
@@ -3568,8 +3584,9 @@ const UI = {
     const tabs = [["overview", "Overview"], ["ballot", "Ballot"], ["edicts", "Active Edicts"], ["reps", "Representatives"], ["history", "Voting History"]];
     const nav = `<nav class="subtabs senate-subtabs">${tabs.map(([k, l]) =>
       `<button class="subtab${this.senateTab === k ? " active" : ""}" data-sntab="${k}">${l}</button>`).join("")}</nav>`;
-    const body = this.senateTab === "ballot" ? ballotPanel
-      : this.senateTab === "edicts" ? edictPanel
+    const body = this.senateTab === "edicts" ? edictPanel
+      : barred ? barredPanel
+      : this.senateTab === "ballot" ? ballotPanel
       : this.senateTab === "reps" ? rosterPanel
       : this.senateTab === "history" ? historyPanel
       : floorPanel + upPanel;
@@ -3620,9 +3637,18 @@ const UI = {
       return;
     }
     if (act === "lobby") {
+      // Shared play prices and books the push server-side, so this can be a
+      // Promise — a refusal rolls the local push back and says why.
+      const btn = b; btn.disabled = true;
+      const finish = r => {
+        btn.disabled = false;
+        if (!r || !r.ok) return this.toast((r && r.msg) || "The chamber refused that.", "warn");
+        this.toast("Lobbying campaign funded.", "good");
+        this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      };
       const r = Senate.lobby(b.dataset.v);
-      if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast("Lobbying campaign funded.", "good"); this.flashCredits(); window.Game.requestSave(); this.updateHeader(); this.renderSenate();
+      if (r && typeof r.then === "function") { r.then(finish).catch(e => finish({ ok: false, msg: e.message })); return; }
+      finish(r);
     }
   },
   onSenateFilter(e) {
@@ -3651,13 +3677,18 @@ const UI = {
     const stances = SENATE_ISSUES.map(iss => `<li><span>${iss.label}</span><b>${revealed ? Senate.stanceLabel(Senate.stanceNow(sn, iss.key)) : SENATECFG.stanceUnknown}</b></li>`).join("");
     const hist = Senate.senatorHistory(id, 12);
     const histHTML = hist.length ? hist.map(h => `<div class="sh-row"><i class="vh vh-${h.vote}"></i> <span>${h.bill.title}</span> <span class="muted-note">${h.vote === "a" ? "aye" : h.vote === "n" ? "nay" : "abstained"}</span></div>`).join("") : `<p class="muted-note">No votes on record yet.</p>`;
-    const canB = Senate.can("bribe"), canS = Senate.can("scandal");
-    const bribed = !!p.pushSen[id], coerced = !!p.coerce[id], worked = bribed || coerced;
+    const barredCard = !!(window.Crime && Crime.locked());
+    const canB = Senate.can("bribe") && !barredCard, canS = Senate.can("scandal") && !barredCard;
+    // `in` not truthiness: a refused coercion books coerce[id] = 0 — the slot is
+    // spent (no forced vote), so the senator can't be leaned on twice.
+    const bribed = !!p.pushSen[id], coerced = id in p.coerce, refusedC = coerced && !p.coerce[id];
+    const worked = bribed || coerced;
     const lockNote = canB && canS ? "" : `<span class="muted-note">${canB ? "" : `bribery unlocks at Baron Tier ${SENATECFG.bribeMinTier}. `}${canS ? "" : `coercion at Baron Tier ${SENATECFG.scandalMinTier}.`}</span>`;
     const actions = next ? `<div class="sen-actions">
         <button class="btn btn-mini" data-sncard="bribe" data-id="${id}" ${(!canB || worked) ? "disabled" : ""}>${bribed ? "Bribed ✓" : `Bribe · ${Util.credits(Senate._bribeCost(sn))}c`}</button>
-        <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || worked) ? "disabled" : ""}>${coerced ? "Coerced ✓" : `Coerce · ${Util.credits(Senate._scandalCost(sn))}c`}</button>
+        <button class="btn btn-mini btn-sell" data-sncard="scandal" data-id="${id}" ${(!canS || worked) ? "disabled" : ""}>${refusedC ? "Refused ✕" : coerced ? "Coerced ✓" : `Coerce · ${Util.credits(Senate._scandalCost(sn))}c`}</button>
         ${lockNote}</div>
+        ${barredCard ? `<p class="locked-note">⛔ ${window.Crime ? Crime.lockNotice() : ""}</p>` : ""}
         <p class="muted-note"><b>Bribe</b> nudges them toward your position and warms relations (cheaper with allies). <b>Coerce</b> forces their vote to your position regardless of stance but burns relations (cheaper on senators who dislike you). Declare a position first.</p>` : `<p class="muted-note">No bill on the floor to influence.</p>`;
     this.refs.senatorCard.innerHTML = `
       <div class="sen-card-head">
@@ -3671,11 +3702,20 @@ const UI = {
       ${actions}`;
     this.refs.senatorCard.onclick = e => {
       const btn = e.target.closest("[data-sncard]"); if (!btn) return;
-      const r = btn.dataset.sncard === "bribe" ? Senate.bribe(btn.dataset.id) : Senate.scandal(btn.dataset.id);
-      if (!r.ok) return this.toast(r.msg, "warn");
-      this.toast(btn.dataset.sncard === "bribe" ? "Senator bribed — they'll lean your way." : "Senator coerced — they'll vote your position.", "good");
-      this.flashCredits(); window.Game.requestSave(); this.updateHeader();
-      this.openSenatorCard(id); if (this.page === "senate") this.renderSenate();
+      const kind = btn.dataset.sncard;
+      btn.disabled = true;
+      const finish = r => {
+        btn.disabled = false;
+        if (!r || !r.ok) return this.toast((r && r.msg) || "The chamber refused that.", "warn");
+        // A coercion the senator refused still cost the money — say so plainly.
+        if (r.refused) this.toast(r.msg || "The senator refused to be leaned on.", "warn");
+        else this.toast(kind === "bribe" ? "Senator bribed — they'll lean your way." : "Senator coerced — they'll vote your position.", "good");
+        this.flashCredits(); window.Game.requestSave(); this.updateHeader();
+        this.openSenatorCard(id); if (this.page === "senate") this.renderSenate();
+      };
+      const r = kind === "bribe" ? Senate.bribe(btn.dataset.id) : Senate.scandal(btn.dataset.id);
+      if (r && typeof r.then === "function") { r.then(finish).catch(e2 => finish({ ok: false, msg: e2.message })); return; }
+      finish(r);
     };
     this.refs.senatorClose.onclick = () => this.refs.senatorModal.classList.add("hidden");
     this.refs.senatorModal.onclick = e => { if (e.target === this.refs.senatorModal) this.refs.senatorModal.classList.add("hidden"); };

@@ -41,6 +41,9 @@ const Game = {
       reputation: Object.fromEntries(Object.keys(FACTIONS).map(f => [f, 0])),
       achievements: [],
       prestige: { tier: 0, multiplier: 1.0 },
+      // Crime coefficient (js/crime.js) — server-owned once crime_coefficient.sql is applied.
+      crime: (typeof CRIMECFG !== "undefined" ? CRIMECFG.start : 50),
+      crimeSeenAt: Date.now(),
       stats: { trades: 0, contractsDone: 0, peakNetWorth: CONFIG.startingCredits, biggestTrade: 0 },
       newswire: [],
       rivals: null,          // seeded lazily by Rivals.ensure()
@@ -72,6 +75,11 @@ const Game = {
     if (!s.avgCost || typeof s.avgCost !== "object") s.avgCost = {};
     if (typeof s.currentSystem !== "string") s.currentSystem = def.currentSystem;
     s.credits = Number.isFinite(+s.credits) ? Math.max(0, +s.credits) : def.credits;
+    // Crime coefficient is a trust boundary too: a tampered save must not be
+    // able to hand itself a clean record with a string, NaN, or -1. (Online the
+    // server value overwrites this on the first commit anyway.)
+    s.crime = window.Crime ? Crime.clamp(s.crime) : (Number.isFinite(+s.crime) ? +s.crime : def.crime);
+    s.crimeSeenAt = Number.isFinite(+s.crimeSeenAt) && +s.crimeSeenAt > 0 ? +s.crimeSeenAt : Date.now();
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);
@@ -630,6 +638,7 @@ const Game = {
     this.detectMoves();
     if (window.Story) Story.check(now);   // drip storyline messages / pay out finished objectives
     Wars.tick(now);
+    if (window.Crime) Crime.decay(now);   // the record cools by 1 a day
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
     if (window.Economy && Economy.authoritative()) {
