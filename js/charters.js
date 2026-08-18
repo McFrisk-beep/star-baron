@@ -6,9 +6,10 @@
    Cancelling early costs credits; after bailoutAt the sponsor buys the ship out.
    Replaces automated trade routes (routes.js retired).
 
-   ponytail: Phase 3 has no charter RPCs yet — resolution (payout, attrition,
-   damage) is client-local for everyone, the same ledger path Buy out always
-   used. Add app_charter_* to move it server-side.                             */
+   Server-authoritative when docs/sql/charter_rpcs.sql is applied: dispatch/
+   cancel/resolve route through app_charter_* (payouts, buyouts, hull loss and
+   impounds land on the ledger instead of evaporating on the next commit).
+   Guests and older projects keep the client-local loop below.                 */
 
 const Charters = {
   s() { return window.Game.state; },
@@ -158,7 +159,29 @@ const Charters = {
     return Util.clamp(alive / total, 0, 1);
   },
 
+  // Dispatch/cancel/resolve go through app_charter_* when the server owns the
+  // ledger (docs/sql/charter_rpcs.sql): the payout was a local credit increase
+  // (rejected by app_commit), lost hulls resurrected from the server row, and
+  // buyouts evaporated — only abort fees stuck. The local path stays for guests
+  // and for projects that haven't applied the SQL yet.
   dispatch(shipUids, band, durationMin, now = Date.now()) {
+    if (!(window.Cloud && Cloud.shipRpcReady && Cloud.shipRpcReady("app_charter_dispatch")))
+      return this._dispatchLocal(shipUids, band, durationMin, now);
+    let row = null;
+    return Economy._withRpc(
+      () => {
+        const r = this._dispatchLocal(shipUids, band, durationMin, now);
+        if (r.ok) row = r.charter;
+        return r;
+      },
+      // Server restamps startedAt, clamps the quote, and locks the hulls; its
+      // slice replaces the optimistic row. null = RPC missing → keep local.
+      async () => (await Cloud.charterDispatch(row)) || { ok: true },
+      "Couldn't reach the charter sponsor — try again."
+    );
+  },
+
+  _dispatchLocal(shipUids, band, durationMin, now = Date.now()) {
     const s = this.s();
     const uids = [...new Set((Array.isArray(shipUids) ? shipUids : [shipUids]).filter(Boolean))];
     if (!uids.length) return { ok: false, msg: "Pick at least one ship." };
@@ -218,6 +241,16 @@ const Charters = {
   },
 
   cancel(id, now = Date.now()) {
+    if (!(window.Cloud && Cloud.shipRpcReady && Cloud.shipRpcReady("app_charter_cancel")))
+      return this._cancelLocal(id, now);
+    return Economy._withRpc(
+      () => this._cancelLocal(id, now),
+      async () => (await Cloud.charterCancel(id)) || { ok: true },
+      "Couldn't reach the charter sponsor — try again."
+    );
+  },
+
+  _cancelLocal(id, now = Date.now()) {
     const s = this.s();
     const c = this.list().find(x => x.id === id);
     if (!c || c.resolved) return { ok: false, msg: "Charter not found." };
@@ -238,7 +271,33 @@ const Charters = {
   },
 
   // Resolve matured charters. Returns reports (also pushed to state.reports).
+  // Authoritative path awaits app_charter_resolve (server clock + seeded RNG);
+  // guests stay sync. Callers handle either via Promise.resolve(...).
   resolve(now = Date.now()) {
+    if (window.Cloud && Cloud.shipRpcReady && Cloud.shipRpcReady("app_charter_resolve")) return this._resolveAuth(now);
+    return this._resolveLocal(now);
+  },
+
+  async _resolveAuth(now) {
+    const due = this.list().some(c => !c.resolved && (c.deferred || now >= c.startedAt + c.durationMs));
+    if (!due || this._authBusy) return [];
+    this._authBusy = true;
+    try {
+      const r = await Economy._rpcOnly(() => Cloud.charterResolve(), "Couldn't settle charters — try again.");
+      if (r && r.missing) return this._resolveLocal(now);
+      if (!r || !r.ok) return [];
+      const out = Array.isArray(r.resolved) ? r.resolved : [];
+      if (out.length) { Economy.refreshNetWorth(); Economy.checkAchievements(); }
+      for (const report of out) {
+        // Same after-action inbox as Fleet contracts (Dispatches → Fleet Ops).
+        if (window.MissionStory) MissionStory.begin(report);
+        Bus.emit("charterDone", report);
+      }
+      return out;
+    } finally { this._authBusy = false; }
+  },
+
+  _resolveLocal(now = Date.now()) {
     const s = this.s();
     const out = [];
     for (const c of this.list()) {
@@ -275,7 +334,7 @@ const Charters = {
             s.ships = s.ships.filter(x => x.uid !== sh.uid);
           } else if (c.impound && Math.random() < (c.impoundChance || 0)) {
             sh.status = "impounded";
-            sh.retrieveCost = Math.round((Fleet.shipDef(sh.type).price || 2000) * 0.5) || 1500;
+            sh.retrieveCost = Fleet.impoundFine(sh);   // stamp = the half-value fee (display-legacy)
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else {
             survivors.push(sh);
@@ -334,8 +393,9 @@ const Charters = {
     return out;
   },
 
-  // After a server ship slice, re-lock hulls still on open charters.
-  // ponytail: drop once app_charter_* owns ship status on the ledger.
+  // After a server ship slice, re-lock hulls still on open charters. With
+  // charter_rpcs.sql applied the server already stamps 'charter' and this is a
+  // no-op; it stays for the guest / older-SQL fallback path.
   reconcileShips() {
     const locked = new Set();
     for (const c of this.running()) for (const uid of this.shipUids(c)) locked.add(uid);

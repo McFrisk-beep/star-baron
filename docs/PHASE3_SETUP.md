@@ -26,10 +26,27 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
    repairs are silently undone by the next autosave — see
    [Repair & equip are RPCs](#repair--equip-are-rpcs).
 8. **`docs/sql/impound_retrieve.sql`** ← required (usage-sim review **C3**). Adds
-   `app_retrieve_ship`, the same trap as repair: without it a signed-in retrieve
-   is undone by the next `app_commit` — the hull re-shows impounded every slice
-   while the fine spend sticks (a money black hole). Mirrors `app_repair_ship`;
-   the client keeps a local fallback until it's applied.
+   `app_retrieve_ship` + `app_abandon_ship`, the same trap as repair: without it
+   a signed-in retrieve is undone by the next `app_commit` — the hull re-shows
+   impounded every slice while the fine spend sticks (a money black hole). The
+   release fee is half the vessel's value (hull + fitted gear, floor 600c),
+   computed server-side; abandoning forfeits the hull and its gear forever. Also
+   re-declares `app_unequip_item` so an impounded hull can't be stripped to
+   dodge the gear-inclusive fee. The client keeps a local fallback until it's
+   applied. Checked by `tools/check_impound.js`.
+9. **`docs/sql/customs_seize.sql`** ← required (usage-sim review **H4**). Adds
+   `app_customs_seize` so customs/piracy seizures actually decrement the
+   server's `positions`; without it a seizure quietly reverts on the next
+   commit (the risk mechanic was a no-op online, and a Customs House impound
+   duplicated the goods). Decrease-only — fails open.
+10. **`docs/sql/charter_rpcs.sql`** ← required (usage-sim review **H1**), and
+    must come **after** steps 5–8. Adds `app_charter_dispatch` /
+    `app_charter_cancel` / `app_charter_resolve` and replaces `app_commit` +
+    `app.result_slice` once more (carrying the fitment + workshop layers
+    forward) so `charters` becomes a server-owned slice. Without it charter
+    payouts/buyouts evaporate on the next commit and destroyed hulls resurrect
+    — only abort fees stuck. The server clamps the client quote against its own
+    catalog, so a forged reward is bounded.
 
 ## Trust model
 

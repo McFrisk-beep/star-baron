@@ -416,7 +416,7 @@ const UI = {
     const chCancel = e.target.closest("[data-charter-cancel]");
     if (chCancel) this.cancelCharter(chCancel.dataset.charterCancel);
   },
-  cancelCharter(id) {
+  async cancelCharter(id) {
     if (Economy.busy()) return;
     const c = Charters.active().find(x => x.id === id);
     if (!c) return this.toast("Charter not found.", "warn");
@@ -427,7 +427,8 @@ const UI = {
       ? `Abort charter for ${who}?\nAbort fee: ${Util.credits(-val)}c`
       : `Buy out charter for ${who}?\nYou receive ${Util.credits(val)}c`;
     if (!confirm(msg)) return;
-    const r = Charters.cancel(c.id);
+    // Awaited — cancel is an RPC when charter_rpcs.sql is live.
+    const r = await Charters.cancel(c.id);
     if (!r.ok) return this.toast(r.msg, "warn");
     const toast = r.value < 0
       ? `Charter aborted (−${Util.credits(-r.value)}c)`
@@ -1145,13 +1146,17 @@ const UI = {
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
+    const impounded = sh.status === "impounded";
     const acc = (sh.accessories || []).map(uid => {
       const it = this.s().items[uid]; if (!it) return "";
-      return `<span class="acc-chip" style="border-color:${this.rarityColor(it.rarity)}">${it.name} <button class="x" data-unequip="${sh.uid}:${uid}">✕</button></span>`;
+      // No ✕ while impounded — the lot holds the whole vessel, gear included
+      // (stripping it would dodge the half-value release fee).
+      const x = impounded ? "" : ` <button class="x" data-unequip="${sh.uid}:${uid}">✕</button>`;
+      return `<span class="acc-chip" style="border-color:${this.rarityColor(it.rarity)}">${it.name}${x}</span>`;
     }).join("");
     let status;
     if (sh.status === "mission") status = `<span class="badge">on mission</span>`;
-    else if (sh.status === "impounded") status = `<span class="badge bad">impounded ${Util.credits(sh.retrieveCost)}c <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay</button></span>`;
+    else if (impounded) status = `<span class="badge bad">⛔ impounded</span>`;
     else if (sh.status === "charter") status = `<span class="badge trade">on charter</span>`;
     else if (sh.status === "surveying") status = `<span class="badge">surveying</span>`;
     else if (sh.status === "debrief") status = `<span class="badge">debrief</span>`;
@@ -1170,13 +1175,23 @@ const UI = {
       ? `<button class="btn btn-mini btn-sellship" data-sellship="${sh.uid}" title="sells with its equipped gear">Sell ${Util.credits(Bazaar.shipSaleValue(sh))}c</button>` : "";
     const repairBtn = sh.status === "idle" && dmg
       ? `<button class="btn btn-mini" data-repair="${sh.uid}" title="restores hull, firepower and speed">🔧 Repair ${Util.credits(Fleet.repairCost(sh))}c</button>` : "";
-    return `<div class="ship cls-${def.cls}">
+    const impoundBlock = impounded
+      ? `<div class="impound-block">
+          <div class="impound-flavor">${Fleet.impoundNotice(sh)}</div>
+          <div class="acc-row">
+            <button class="btn btn-mini" data-retrieve="${sh.uid}">Pay release fee — ${Util.credits(Fleet.impoundFine(sh))}c</button>
+            <button class="btn btn-mini btn-abandon" data-abandon="${sh.uid}">Abandon ship</button>
+          </div>
+          <div class="muted-note">The fee is half the vessel's assessed value, fittings included. Abandoning forfeits the hull and everything bolted to it — forever.</div>
+        </div>` : "";
+    return `<div class="ship cls-${def.cls}${impounded ? " impounded" : ""}">
       <img src="${sprite}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'tintbox',textContent:'${def.name[0]}'}))"/>
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}${refit}</div>
         <div class="statline">${this.statChips(st, def.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo", "firepower"] : undefined)}</div>
         <div class="acc-row">${acc}${equipBtn}${repairBtn}${sellBtn}</div>
+        ${impoundBlock}
       </div></div>`;
   },
 
@@ -1186,8 +1201,8 @@ const UI = {
   async onFleetClick(e) {
     const un = e.target.closest("[data-unequip]"); const eq = e.target.closest("[data-equip-ship]");
     const rt = e.target.closest("[data-retrieve]"); const sl = e.target.closest("[data-sellship]");
-    const rp = e.target.closest("[data-repair]");
-    if ((un || rp) && Economy.busy()) return;
+    const rp = e.target.closest("[data-repair]"); const ab = e.target.closest("[data-abandon]");
+    if ((un || rp || rt || ab) && Economy.busy()) return;
     if (un) {
       const [shipU, itemU] = un.dataset.unequip.split(":");
       const r = await Fleet.unequip(shipU, itemU);
@@ -1196,7 +1211,20 @@ const UI = {
     }
     else if (eq) { this.openEquipForShip(eq.dataset.equipShip); }
     else if (rp) { const r = await Fleet.repair(rp.dataset.repair); if (!r.ok) return this.toast(r.msg, "warn"); this.toast(`Hull patched for ${Util.credits(r.cost)}c.`, "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader(); }
-    else if (rt) { const r = await Fleet.retrieve(rt.dataset.retrieve); if (!r.ok) return this.toast(r.msg, "warn"); this.toast("Ship retrieved.", "good"); this.flashCredits(); window.Game.requestSave(); this.renderFleet(); }
+    else if (rt) {
+      const r = await Fleet.retrieve(rt.dataset.retrieve);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`Ship released${r.cost != null ? ` for ${Util.credits(r.cost)}c` : ""}.`, "good");
+      this.flashCredits(); window.Game.requestSave(); this.renderFleet(); this.updateHeader();
+    }
+    else if (ab) {
+      const sh = Fleet.ship(ab.dataset.abandon); if (!sh) return;
+      if (!confirm(`Abandon ${sh.name} to the impound lot?\n\nThe hull and all fitted gear are forfeit — permanently.`)) return;
+      const r = await Fleet.abandon(ab.dataset.abandon);
+      if (!r.ok) return this.toast(r.msg, "warn");
+      this.toast(`${sh.name} left to the impound lot — the hull is gone for good.`, "warn");
+      window.Game.requestSave(); this.renderFleet(); this.updateHeader();
+    }
     else if (sl) {
       void this._sellShipClick(sl.dataset.sellship);
     }
@@ -2266,10 +2294,11 @@ const UI = {
     if (chBand) { this.charterPick.band = chBand.dataset.chBand; this.renderBazaar(); return; }
     if (t.id === "ch-dispatch" || t.closest("#ch-dispatch")) {
       if (Economy.busy()) return;
-      const r = Charters.dispatch(this.charterPick.shipUids, this.charterPick.band, this.charterPick.durationMin);
+      // Awaited — dispatch is an RPC when charter_rpcs.sql is live.
+      const r = await Charters.dispatch(this.charterPick.shipUids, this.charterPick.band, this.charterPick.durationMin);
       if (!r.ok) return this.toast(r.msg, "warn");
       this.charterPick.shipUids = [];
-      this.toast(`Charter dispatched — ${Util.credits(r.charter.reward)}c locked in.`, "good");
+      this.toast(`Charter dispatched — ${Util.credits((r.charter && r.charter.reward) || 0)}c locked in.`, "good");
       window.Game.requestSave(); this.renderBazaar(); this.renderFleet();
       if (this.commsTab === "pending") this.renderPendingContracts();
       this.updateHeader();

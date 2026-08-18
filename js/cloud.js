@@ -546,12 +546,29 @@ const Cloud = {
   // Impound retrieval — server-authoritative (docs/sql/impound_retrieve.sql).
   // Latches a missing RPC like repair/equip so older projects keep the local path.
   async retrieveShip(uid) { return this._optional("app_retrieve_ship", { p_uid: uid }); },
+  // Abandon an impounded hull forever (docs/sql/impound_retrieve.sql).
+  async abandonShip(uid) { return this._optional("app_abandon_ship", { p_uid: uid }); },
+  // Mirror a customs/piracy seizure onto the server ledger (docs/sql/customs_seize.sql).
+  async customsSeize(commId, qty) {
+    return this._optional("app_customs_seize", { p_comm: commId, p_qty: qty | 0 });
+  },
   async equipItem(shipUid, itemUid) {
     return this._optional("app_equip_item", { p_ship_uid: shipUid, p_item_uid: itemUid });
   },
   async unequipItem(shipUid, itemUid) {
     return this._optional("app_unequip_item", { p_ship_uid: shipUid, p_item_uid: itemUid });
   },
+
+  // Charters — server-authoritative dispatch/cancel/resolve
+  // (docs/sql/charter_rpcs.sql). Latch a missing RPC like repair/equip so a
+  // project running older SQL keeps the client-local charter loop.
+  async charterDispatch(charter) {
+    return this._optional("app_charter_dispatch", { p_charter: charter });
+  },
+  async charterCancel(charterId) {
+    return this._optional("app_charter_cancel", { p_charter_id: charterId });
+  },
+  async charterResolve() { return this._optional("app_charter_resolve", {}); },
 
   // Phase 2 — missions & bazaar
   async missionLaunch(contractId, shipUids) {

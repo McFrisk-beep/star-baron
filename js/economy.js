@@ -181,6 +181,8 @@ const Economy = {
     if (r.listings) s.listings = r.listings;
     if (r.extractors) s.extractors = r.extractors;
     if (r.components) s.components = r.components;
+    // Server-owned once docs/sql/charter_rpcs.sql is applied (older SQL omits the key).
+    if (r.charters) s.charters = r.charters;
     // Workshop queue/upgrades are server-owned once docs/sql/workshop_craft.sql
     // is applied; knownRecipes/craftedOnce still come back so a burned unique
     // blueprint sticks after a claim. Scrub ids already claimed this session so
@@ -300,6 +302,9 @@ const Economy = {
     if (st.listings) s.listings = st.listings;
     if (st.extractors) s.extractors = st.extractors;
     if (st.components) s.components = st.components;
+    // Server-owned once docs/sql/charter_rpcs.sql is applied (older SQL echoes
+    // the client's own rows back, so this is a no-op there).
+    if (st.charters) s.charters = st.charters;
     // app_commit forces the workshop slice from the server row, so the queue the
     // client just sent is echoed back authoritative (a forged job is gone here).
     // Scrub session-claimed ids — a commit that locked before app_craft_claim
@@ -475,6 +480,8 @@ const Economy = {
         if (r.repHit != null) local.repHit = r.repHit;
         if (r.cat != null) local.cat = r.cat;
         if (r.resolved != null) local.resolved = r.resolved;
+        if (r.charter != null) local.charter = r.charter;
+        if (r.value != null) local.value = r.value;
         return local;
       } catch (e) {
         if (local && typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
@@ -899,6 +906,17 @@ const Economy = {
     if (st && (st.modules.customs_house | 0) && st.status === "owned" && window.Stations) {
       const r = Stations.impoundCargo(sysId, comm.id, qty, value, Stations.playerId());
       if (r && r.ok) { impoundedTo = sysId; claimId = r.claimId; }
+    }
+    // Positions are server-owned: without this mirror the local decrement above
+    // is restored by the next app_commit slice (seizure was a no-op online, and
+    // a Customs House impound duplicated the goods). Decrease-only + fire-and-
+    // forget — a failed call fails open, the goods simply come back.
+    if (this.authoritative() && window.Cloud && Cloud.shipRpcReady("app_customs_seize")) {
+      this._pending++;   // hold pulls/commits so the race window stays shut
+      Cloud.customsSeize(comm.id, qty)
+        .then(r => { if (r && r.ok) this._applyServerSlice(r); })
+        .catch(e => console.warn("[Economy] customs seize sync failed:", e))
+        .finally(() => { this._pending = Math.max(0, this._pending - 1); });
     }
     this.refreshNetWorth();
     const ev = { commId: comm.id, name: comm.name, qty, value, sysId, chance, impoundedTo, claimId };

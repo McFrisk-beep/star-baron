@@ -82,7 +82,7 @@ const Incidents = {
     if (eff.shipImpound) {
       const cand = Fleet.idle().filter(sh => !sh.mercenary);
       const sh = cand.length ? Util.pick(cand) : null;
-      if (sh) { sh.status = "impounded"; sh.retrieveCost = Math.max(600, Math.round((Fleet.shipDef(sh.type).price || 2000) * 0.3)); parts.push(`${sh.name} impounded`); }
+      if (sh) { sh.status = "impounded"; sh.retrieveCost = Fleet.impoundFine(sh); parts.push(`${sh.name} impounded`); }
       else parts.push("no ship to seize — you slip away");
     }
     Economy.refreshNetWorth();
