@@ -765,6 +765,9 @@ const Bazaar = {
   // Soft/local like dossiers — blackboxes aren't on the server ledger yet.
   // Client merge on commit/bootstrap keeps them across cloud sync (see Store.mergeSoftItems).
   buyBlackbox(offerId) {
+    // Soft spends have no RPC: refuse while a commit/pull is in flight, or the
+    // stale pull response refunds the credits while the item sticks (H5 mint).
+    if (this.authoritative() && Economy.busy()) return { ok: false, msg: "Syncing with the exchange — try again in a moment." };
     const b = this.bz(); const s = this.s();
     const offer = (b.blackboxes || []).find(a => a.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
@@ -781,6 +784,8 @@ const Bazaar = {
   },
 
   buyBlueprint(offerId) {
+    // Soft spend — same in-flight guard as buyBlackbox (H5).
+    if (this.authoritative() && Economy.busy()) return { ok: false, msg: "Syncing with the exchange — try again in a moment." };
     const b = this.bz(); const s = this.s();
     const offer = (b.blueprints || []).find(a => a.id === offerId);
     if (!offer) return { ok: false, msg: "Sold to another buyer." };
@@ -840,6 +845,8 @@ const Bazaar = {
   },
 
   buyDossier(offerId) {
+    // Soft spend — same in-flight guard as buyBlackbox (H5).
+    if (this.authoritative() && Economy.busy()) return { ok: false, msg: "Syncing with the exchange — try again in a moment." };
     const b = this.bz(), s = this.s();
     const offer = (b.dossiers || []).find(d => d.id === offerId);
     if (!offer || !window.Senate) return { ok: false, msg: "Dossier withdrawn." };

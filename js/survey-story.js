@@ -200,14 +200,20 @@ const SurveyStory = {
     return { id, sl };
   },
 
+  // Ship gone (sold / lost) before the debrief could open. Close the expedition
+  // for good — leaving it unresolved made openPendingDebriefs re-fire this every
+  // loop tick: a duplicate report per tick and the system blocked forever.
   _lostContact(exp, sysName, now) {
+    const s = this.s();
+    exp.resolved = true;
+    s.expeditions = (s.expeditions || []).filter(e => e.id !== exp.id);
+    Expeditions.surveyed()[exp.sysId] = now;
+    if ((s.reports || []).some(r => r.uid === exp.id)) return null;   // already filed
     const report = { uid: exp.id, type: "survey", title: `Survey — ${sysName}`, sysName,
       success: false, ts: now, credits: 0, items: [], lost: [], damaged: [],
       summary: `Lost contact with the survey ship near ${sysName}.` };
-    const s = this.s();
     s.reports.unshift(report);
     if (s.reports.length > 20) s.reports.length = 20;
-    Expeditions.surveyed()[exp.sysId] = now;
     Bus.emit("surveyDone", report);
     return null;
   },
@@ -223,37 +229,102 @@ const SurveyStory = {
   },
 
   async _applyAuth(payload) {
-    const st = this.s();
     try {
       const r = await Cloud.surveyDebrief(payload.expId, payload.outcome);
       if (!r || r.ok === false) {
-        // RPC missing / failed — release the ship locally so it isn't stuck,
-        // but don't mint credits (app_commit would reject the bump anyway).
-        this._releaseOnly(payload.expId);
-        return (r && (r.error || r.msg)) || "Survey filed (server busy).";
+        if (this._deadDebrief(r)) {
+          // Server already settled (or never had) this survey — nothing to retry.
+          this._releaseOnly(payload.expId);
+          return (r && (r.error || r.msg)) || "Survey filed.";
+        }
+        return this._queueRetry(payload);
       }
-      if (window.Economy && Economy._applyServerSlice) Economy._applyServerSlice(r);
-      else {
-        if (r.credits != null) st.credits = r.credits;
-        if (r.ships) st.ships = r.ships;
-        if (r.expeditions) st.expeditions = r.expeditions;
-        if (r.surveyed) st.surveyed = r.surveyed;
-        if (r.reports) st.reports = r.reports;
-        if (r.reputation) st.reputation = r.reputation;
-      }
-      // Drop the ephemeral thread's expedition if the slice lagged.
-      st.expeditions = (st.expeditions || []).filter(e => e.id !== payload.expId);
-      const report = r.report || { uid: payload.expId, type: "survey", success: true,
-        summary: r.summary || "Survey filed.", ts: Date.now(), credits: 0, items: [], lost: [], damaged: [] };
-      if (window.Economy) {
-        Economy.refreshNetWorth();
-        try { Economy.checkAchievements(); } catch (e) { /* tests */ }
-      }
-      Bus.emit("surveyDone", report);
-      return r.summary || report.summary || "Survey filed.";
+      return this._applyDebriefResult(r, payload.expId);
     } catch (e) {
-      this._releaseOnly(payload.expId);
-      return "Survey filed (offline).";
+      if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) {
+        // Phase 3 SQL not installed — no server ledger to retry against.
+        this._releaseOnly(payload.expId);
+        return "Survey filed (offline).";
+      }
+      return this._queueRetry(payload);
+    }
+  },
+
+  // A failure that can never succeed on retry (survey gone / bad outcome), as
+  // opposed to a dropped packet or a busy server.
+  _deadDebrief(r) {
+    return r && /not found|missing expedition|bad survey outcome/i
+      .test(String(r.error || r.msg || ""));
+  },
+
+  _applyDebriefResult(r, expId) {
+    const st = this.s();
+    if (window.Economy && Economy._applyServerSlice) Economy._applyServerSlice(r);
+    else {
+      if (r.credits != null) st.credits = r.credits;
+      if (r.ships) st.ships = r.ships;
+      if (r.expeditions) st.expeditions = r.expeditions;
+      if (r.surveyed) st.surveyed = r.surveyed;
+      if (r.reports) st.reports = r.reports;
+      if (r.reputation) st.reputation = r.reputation;
+    }
+    // Drop the ephemeral thread's expedition if the slice lagged.
+    st.expeditions = (st.expeditions || []).filter(e => e.id !== expId);
+    st.surveyRetry = (st.surveyRetry || []).filter(q => q.expId !== expId);
+    const report = r.report || { uid: expId, type: "survey", success: true,
+      summary: r.summary || "Survey filed.", ts: Date.now(), credits: 0, items: [], lost: [], damaged: [] };
+    if (window.Economy) {
+      Economy.refreshNetWorth();
+      try { Economy.checkAchievements(); } catch (e) { /* tests */ }
+    }
+    Bus.emit("surveyDone", report);
+    return r.summary || report.summary || "Survey filed.";
+  },
+
+  // A dropped packet here used to brick the ship: the thread closed, the
+  // expedition was deleted client-side, and the next commit dropped it
+  // server-side — with the hull stamped "debrief" forever and the debrief that
+  // could release it gone. Instead: park the chosen outcome on a client-owned
+  // key and re-file until the server answers. The expedition (and the hull's
+  // debrief status) stay put meanwhile, so nothing desyncs.
+  _queueRetry(payload) {
+    const st = this.s();
+    st.surveyRetry = st.surveyRetry || [];
+    if (!st.surveyRetry.some(q => q.expId === payload.expId))
+      st.surveyRetry.push({ expId: payload.expId, outcome: payload.outcome, tplId: payload.tplId });
+    return "Link dropped mid-debrief — Survey Ops will re-file automatically.";
+  },
+
+  _retryAt: 0,
+  _retryBusy: false,
+  // Re-file queued debriefs (called from the main loop when authoritative).
+  async retryPending(now = Date.now()) {
+    const st = this.s(); if (!st || !(st.surveyRetry || []).length) return;
+    if (this._retryBusy || now - this._retryAt < 30000) return;
+    if (window.Economy && (Economy.busy() || Economy.softIncomeLocal())) return;
+    if (!(window.Cloud && Cloud.surveyDebrief)) return;
+    this._retryAt = now;
+    this._retryBusy = true;
+    const q = st.surveyRetry[0];
+    try {
+      if (!(st.expeditions || []).some(e => e.id === q.expId)) {
+        // Expedition gone (a slice already settled it) — nothing left to file.
+        st.surveyRetry = st.surveyRetry.filter(x => x.expId !== q.expId);
+        return;
+      }
+      const r = await Cloud.surveyDebrief(q.expId, q.outcome);
+      if (r && r.ok !== false) {
+        const summary = this._applyDebriefResult(r, q.expId);
+        if (window.UI && UI.toast) UI.toast(summary, "good");
+        if (window.Game) Game.requestSave();
+      } else if (this._deadDebrief(r)) {
+        this._releaseOnly(q.expId);
+      }
+      // Any other failure: stay queued for the next window.
+    } catch (e) {
+      if (typeof Cloud._isMissingRpc === "function" && Cloud._isMissingRpc(e)) this._releaseOnly(q.expId);
+    } finally {
+      this._retryBusy = false;
     }
   },
 
@@ -266,6 +337,7 @@ const SurveyStory = {
       Expeditions.surveyed()[exp.sysId] = Date.now();
       st.expeditions = (st.expeditions || []).filter(e => e.id !== expId);
     }
+    st.surveyRetry = (st.surveyRetry || []).filter(q => q.expId !== expId);
   },
 
   _applyLocal(payload) {

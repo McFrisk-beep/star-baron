@@ -210,6 +210,7 @@ const Economy = {
     // into the bay, then _restoreEquip re-fits it — same uid equipped AND loose.
     if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
+    if (window.Expeditions && Expeditions.reconcileShips) Expeditions.reconcileShips();
   },
 
   // Phase-2/3 SQL used to stamp stub names ("Battleship", "Shield uncommon").
@@ -325,6 +326,7 @@ const Economy = {
     // Park after _restoreEquip — see _applyServerSlice for why.
     if (window.Assets) Assets.parkOrphanGear(s);
     if (window.Charters) Charters.reconcileShips();
+    if (window.Expeditions && Expeditions.reconcileShips) Expeditions.reconcileShips();
   },
 
   // Snapshot non-stub cosmetic names before a server slice clobbers them.

@@ -1050,7 +1050,18 @@ const UI = {
          <div class="ship-route">transfer speed ${md.travelSpeed} · <b>${pas}</b></div>
          <div class="muted-note">your private ship — sets sector travel time + empire bonuses. Upgrade in the Bazaar.</div></div>
        </div>`;
-    // ships
+    this.renderFleetShips();
+    // inventory
+    this.renderInventory();
+    // charters + missions + reports
+    this.renderCharters();
+    this._missionSig = ""; this.renderMissions();
+    this.renderReports();
+  },
+
+  // Ship cards alone — also ticked while a survey is out so its countdown moves.
+  renderFleetShips() {
+    const s = this.s();
     this.refs.fleetCount.textContent = `${s.ships.length}`;
     if (!s.ships.length) this.refs.fleetShips.innerHTML = `<p class="muted-note">No ships yet. Buy transports & escorts in the Bazaar.</p>`;
     else {
@@ -1061,12 +1072,6 @@ const UI = {
     }
     this.refs.fleetShips.onclick = e => this.onFleetClick(e);
     this.refs.fleetShips.onchange = e => this.onFleetSort(e);
-    // inventory
-    this.renderInventory();
-    // charters + missions + reports
-    this.renderCharters();
-    this._missionSig = ""; this.renderMissions();
-    this.renderReports();
   },
 
   // ---- fleet sorting ------------------------------------------------------
@@ -1143,6 +1148,19 @@ const UI = {
   },
   selectedSurveyShip() { const el = this.refs.svBody.querySelector("input[data-svship]:checked"); return el ? el.dataset.svship : null; },
 
+  // "surveying Kepler Verge · returns in ~4m" — so the fleet shows where the
+  // hull went and when the debrief lands (re-rendered on the fleet tick).
+  _surveyBadge(sh) {
+    const exp = window.Expeditions
+      ? Expeditions.list().find(e => e.shipUid === sh.uid && !e.resolved) : null;
+    if (!exp) return `<span class="badge">surveying</span>`;
+    const sys = window.Galaxy ? Galaxy.get(exp.sysId) : null;
+    const where = sys ? ` ${sys.name}` : "";
+    const left = Expeditions.remaining(exp);
+    const when = exp.debrief || left <= 0 ? "back — debrief opening" : `returns in ~${Util.duration(left)}`;
+    return `<span class="badge" title="dispatched on an anomaly survey — the ship is locked until the debrief closes">surveying${where} · ${when}</span>`;
+  },
+
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
@@ -1158,8 +1176,8 @@ const UI = {
     if (sh.status === "mission") status = `<span class="badge">on mission</span>`;
     else if (impounded) status = `<span class="badge bad">⛔ impounded</span>`;
     else if (sh.status === "charter") status = `<span class="badge trade">on charter</span>`;
-    else if (sh.status === "surveying") status = `<span class="badge">surveying</span>`;
-    else if (sh.status === "debrief") status = `<span class="badge">debrief</span>`;
+    else if (sh.status === "surveying") status = this._surveyBadge(sh);
+    else if (sh.status === "debrief") status = `<span class="badge trade" title="the survey is back — finish the debrief in Comms → Dispatches">survey debrief waiting</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
     const hullPct = Math.round((1 - dmg) * 100);
@@ -4373,7 +4391,16 @@ const UI = {
       const holding = a && body && body.contains(a) && /^(SELECT|INPUT|TEXTAREA)$/.test(a.tagName);
       if (!holding) this.renderStations();
     }
-    if (this.page === "fleet") { this.renderMissions(); this.renderCharters(); }
+    if (this.page === "fleet") {
+      this.renderMissions(); this.renderCharters();
+      // Live survey countdown on the ship cards — skip while the sort <select>
+      // is open so the dropdown isn't nuked mid-choice.
+      if ((this.s().expeditions || []).some(e => !e.resolved)) {
+        const a = document.activeElement;
+        const holding = a && this.refs.fleetShips && this.refs.fleetShips.contains(a) && a.tagName === "SELECT";
+        if (!holding) this.renderFleetShips();
+      }
+    }
     if (this.commsTab === "pending" && this.page === "comms") this.renderPendingContracts();
     if (this.page === "exchange" && Orders.list().length) this.renderOrders();
     if (this.page === "industries") this.renderIndustries();

@@ -124,14 +124,34 @@ const Expeditions = {
   openPendingDebriefs(now = Date.now()) {
     if (!window.SurveyStory || !window.Story) return 0;
     let n = 0;
+    const retry = this.s().surveyRetry || [];
     for (const exp of this.list()) {
       if (!exp.debrief || exp.resolved) continue;
+      // Outcome already chosen, RPC re-filing in the background — don't reopen.
+      if (retry.some(q => q.expId === exp.id)) continue;
       const id = "survey_" + exp.id;
       const prog = Story.s() && Story.s().prog[id];
       if (prog) continue;
       if (SurveyStory.begin(exp, now)) n++;
     }
     return n;
+  },
+
+  // After a server ship slice, re-stamp hulls still on an open survey. Server
+  // ships come back "idle" on projects without docs/sql/survey_custody.sql, so
+  // without this the player could sell or re-launch a hull mid-survey and orphan
+  // the expedition. With the SQL applied the server already stamps and this is a
+  // no-op (same shape as Charters.reconcileShips).
+  reconcileShips() {
+    const s = window.Game && window.Game.state; if (!s) return;
+    const want = {};
+    for (const e of s.expeditions || []) {
+      if (!e.resolved && e.shipUid && !want[e.shipUid]) want[e.shipUid] = e.debrief ? "debrief" : "surveying";
+    }
+    for (const sh of s.ships || []) {
+      const w = want[sh.uid];
+      if (w && (sh.status === "idle" || sh.status === "surveying" || sh.status === "debrief")) sh.status = w;
+    }
   },
 };
 
