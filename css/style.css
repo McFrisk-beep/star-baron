@@ -1153,6 +1153,19 @@ body.reduced .floatnav-indicator { transition: none; }
 .badge.bad { background: #3d1d27; color: var(--down); }
 .badge.merc { background: #2c2616; color: var(--gold); }
 
+/* impounded ships — the lot's blocked-off treatment (release fee / abandon) */
+.ship.impounded { border-left: 3px solid var(--down); background:
+  repeating-linear-gradient(-45deg, rgba(255, 126, 142, .05) 0 10px, transparent 10px 20px), var(--panel2); }
+.ship.impounded img, .ship.impounded .tintbox { filter: grayscale(.85) brightness(.7); }
+.ship.impounded .statline, .ship.impounded .acc-chip { opacity: .55; }
+.impound-block { margin-top: 7px; border: 1px dashed var(--down); border-radius: 6px;
+  padding: 7px 9px; background: rgba(61, 29, 39, .35); }
+.impound-block .statline, .impound-block .acc-row { opacity: 1; }
+.impound-flavor { font-size: 11px; color: var(--down); font-style: italic; }
+.impound-block .muted-note { font-size: 10px; margin-top: 5px; }
+.btn-abandon { color: var(--down); border-color: #5a2430; }
+.btn-abandon:hover { background: #3d1d27; border-color: var(--down); }
+
 /* missions */
 .mission { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
 .m-cancel { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

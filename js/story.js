@@ -219,8 +219,17 @@ const Story = {
     const step = sl.steps[p.step]; const list = step && (step.choices || step.options); if (!list) return { ok: false };
     const ch = list[idx]; if (!ch) return { ok: false };
     if (!this._reqOk(ch, st)) return { ok: false, msg: ch.requireMsg || "You can't do that yet." };
-    if (ch.cost && (st.credits || 0) < ch.cost) return { ok: false, msg: "Not enough credits." };
-    if (ch.cost) st.credits -= ch.cost;
+    // Paid branches: when the cloud ledger owns credits, the debit would stick
+    // (app_commit accepts decreases) while the promised credit/item/rep reward
+    // is reverted by the next server slice — a guaranteed net loss. Until an
+    // app_story_grant RPC delivers rewards server-side, don't charge either:
+    // the bribe/donation happens narratively, the wallet stays untouched.
+    // ponytail: charge cost inside the story RPC once rewards persist online.
+    const ledgerLocal = this._ledgerLocal();
+    if (ch.cost && ledgerLocal) {
+      if ((st.credits || 0) < ch.cost) return { ok: false, msg: "Not enough credits." };
+      st.credits -= ch.cost;
+    }
     this._postOut(sl, ch.reply || ch.label);
 
     const afterGrant = (sum, advanceTo) => {
@@ -274,20 +283,41 @@ const Story = {
   // ---- rewards ------------------------------------------------------------
   // NOTE: rewards mutate LOCAL state (credits, fleet, storage, tax break). This
   // works fully for guest / offline play; for signed-in players the economic
-  // fields are server-authoritative, so persistent server-side payout would need
-  // a dedicated RPC — a deliberate follow-up, flagged rather than faked here.
+  // fields are server-authoritative — a local grant of credits/ships/items/rep
+  // is silently reverted by the next app_commit slice. Rather than fake a
+  // payout that evaporates seconds later, skip those grants and say so; flags,
+  // blueprints and tax breaks live on client-owned keys and still stick.
+  // ponytail: an app_story_grant RPC (server-side reward catalog) re-enables
+  // the volatile grants for signed-in players.
+  _ledgerLocal() { return !(window.Economy && Economy.softIncomeLocal && !Economy.softIncomeLocal()); },
   grant(reward, s) {
     if (!reward) return "";
     const bits = [];
-    if (reward.credits) { s.credits += reward.credits; bits.push("+" + (window.Util ? Util.credits(reward.credits) : reward.credits)); }
-    if (reward.ship && window.Fleet) {
-      s.ships.push(Fleet.makeShip(reward.ship));
-      const sc = SHIP_CATALOG.transport.concat(SHIP_CATALOG.escort, SHIP_CATALOG.main).find(x => x.id === reward.ship);
-      bits.push("ship — " + (sc ? sc.name : reward.ship));
+    const ledgerLocal = this._ledgerLocal();
+    let withheld = false;
+    if (reward.credits) {
+      if (ledgerLocal) { s.credits += reward.credits; bits.push("+" + (window.Util ? Util.credits(reward.credits) : reward.credits)); }
+      else withheld = true;
     }
-    if (reward.component && window.Components) { const c = Components.acquire(Components.gen()); bits.push("component — " + c.name); }
-    if (reward.extractor && window.Extractors) { const e = Extractors.acquire(Extractors.gen()); bits.push("extractor — " + e.name); }
-    if (reward.item && window.Items) { const it = Items.gen(reward.item === true ? {} : { rarity: reward.item }); s.items[it.uid] = it; bits.push("gear — " + it.name); }
+    if (reward.ship && window.Fleet) {
+      if (ledgerLocal) {
+        s.ships.push(Fleet.makeShip(reward.ship));
+        const sc = SHIP_CATALOG.transport.concat(SHIP_CATALOG.escort, SHIP_CATALOG.main).find(x => x.id === reward.ship);
+        bits.push("ship — " + (sc ? sc.name : reward.ship));
+      } else withheld = true;
+    }
+    if (reward.component && window.Components) {
+      if (ledgerLocal) { const c = Components.acquire(Components.gen()); bits.push("component — " + c.name); }
+      else withheld = true;
+    }
+    if (reward.extractor && window.Extractors) {
+      if (ledgerLocal) { const e = Extractors.acquire(Extractors.gen()); bits.push("extractor — " + e.name); }
+      else withheld = true;
+    }
+    if (reward.item && window.Items) {
+      if (ledgerLocal) { const it = Items.gen(reward.item === true ? {} : { rarity: reward.item }); s.items[it.uid] = it; bits.push("gear — " + it.name); }
+      else withheld = true;
+    }
     if (reward.blueprint && window.Workshop) {
       const gr = Workshop.grantBlueprint(reward.blueprint);
       if (gr.ok) bits.push("blueprint — " + ((gr.blueprint && gr.blueprint.name) || reward.blueprint));
@@ -299,14 +329,18 @@ const Story = {
       bits.push(`industry tax −${Math.round(reward.taxBreak.pct * 100)}%` + (reward.taxBreak.ms ? ` for ${Util.duration(reward.taxBreak.ms)}` : ""));
     }
     // Faction standing nudge (can be negative — smuggle now, League later).
+    // Rep is server-owned too (app_commit forces it), so it joins the withheld set.
     if (reward.rep && window.Rep && typeof reward.rep === "object" && !Array.isArray(reward.rep)) {
-      for (const f of Object.keys(reward.rep)) {
-        const d = +reward.rep[f] || 0; if (!d) continue;
-        Rep.change(f, d);
-        const name = (window.FACTIONS && FACTIONS[f] && FACTIONS[f].name) || f;
-        bits.push(`${name} ${d > 0 ? "+" : ""}${d}`);
-      }
+      if (ledgerLocal) {
+        for (const f of Object.keys(reward.rep)) {
+          const d = +reward.rep[f] || 0; if (!d) continue;
+          Rep.change(f, d);
+          const name = (window.FACTIONS && FACTIONS[f] && FACTIONS[f].name) || f;
+          bits.push(`${name} ${d > 0 ? "+" : ""}${d}`);
+        }
+      } else withheld = true;
     }
+    if (withheld) bits.push("(material spoils lost in transit — story payouts reach the cloud ledger in a later phase)");
     if (reward.set) this.setFlags(reward.set);
     // Survey debrief payout (Dispatches mini-story) — summary is the whole line.
     // May return a Promise when Phase 3 app_survey_debrief is live.

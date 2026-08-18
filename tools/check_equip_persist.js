@@ -43,7 +43,7 @@ assert.match(sql, /app\._merge_ships\(\s*coalesce\(server->'ships'[^)]*\),\s*coa
 const APPLY_ORDER = [
   "phase1_players.sql", "phase2_missions_bazaar.sql", "phase2b_cancel.sql",
   "phase2c_launch_claim.sql", "phase3_pull_prestige.sql", "equip_persist.sql",
-  "workshop_craft.sql", "repair_equip.sql",
+  "workshop_craft.sql", "repair_equip.sql", "charter_rpcs.sql",
 ];
 const COMMIT_RE = /create or replace function public\.app_commit\b[\s\S]*?\n\$\$;/g;
 const declaresCommit = f => COMMIT_RE.test(fs.readFileSync(path.join(root, "docs/sql", f), "utf8"));

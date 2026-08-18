@@ -275,6 +275,9 @@ const Fleet = {
   },
   _unequipLocal(shipUid, itemUid) {
     const sh = this.ship(shipUid); if (!sh) return { ok: false };
+    // The release fee is half of hull + fitted gear, so stripping a hull in the
+    // lot would dodge most of the fine. Server enforces the same gate.
+    if (sh.status === "impounded") return { ok: false, msg: "The impound lot holds the whole vessel — gear included." };
     sh.accessories = (sh.accessories || []).filter(u => u !== itemUid);
     // Park back into the docked bay (or hold if traveling).
     if (window.Assets) Assets.parkGear(itemUid, this.s().currentSystem);
@@ -295,14 +298,44 @@ const Fleet = {
   // ships from the server row, so the hull re-shows as impounded while the credit
   // spend sticks — pay the fine forever, hull stranded (Critical C3). Same trap
   // that broke repair; retrieve just never got its RPC.
+  //
+  // Release fee: half the vessel's value — hull price plus everything bolted to
+  // it — floored at 600c. Mirrors app._impound_fine (docs/sql/impound_retrieve.sql);
+  // the server recomputes it, this is the card display + guest fallback. Any
+  // retrieveCost stamped on the row by older impound paths is display-legacy.
+  impoundFine(sh) {
+    const price = (this.shipDef(sh.type) || {}).price || 0;
+    let gear = 0;
+    for (const uid of sh.accessories || []) gear += (this.s().items[uid] || {}).value || 0;
+    return Math.max(600, Math.round(0.5 * (price + gear)));
+  },
+  // "Impounded by … for …" — deterministic per hull so the notice doesn't
+  // reshuffle every render. Pure flavor; the fine is impoundFine().
+  impoundNotice(sh) {
+    const agencies = [
+      "the Navos Customs Directorate", "the Harbormaster-General's Office",
+      "the Free-Trade League's Lane Authority", "Mining Combine Tariff Enforcement",
+      "the Agri-Collective Quarantine Bureau", "the Capital Transit Tribunal",
+    ];
+    const violations = [
+      "unlicensed contraband transit", "falsified cargo manifests",
+      "smuggling through a sanctioned lane", "unpaid docking levies",
+      "operating without a transit charter", "violations of the Senate trade edicts",
+    ];
+    let h = 2166136261; const s = String(sh.uid || sh.type || "ship");
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h >>>= 0;
+    return `This vessel has been impounded by ${agencies[h % agencies.length]} for ${violations[(h >>> 7) % violations.length]}.`;
+  },
   _retrieveLocal(uid) {
     const sh = this.ship(uid);
     if (!sh || sh.status !== "impounded") return { ok: false, msg: "Nothing to retrieve." };
-    if ((sh.retrieveCost || 0) > this.s().credits) return { ok: false, msg: "Not enough credits." };
-    this.s().credits -= sh.retrieveCost;
+    const cost = this.impoundFine(sh);
+    if (cost > this.s().credits) return { ok: false, msg: "Not enough credits." };
+    this.s().credits -= cost;
     sh.status = "idle"; sh.retrieveCost = 0;
     Economy.refreshNetWorth();
-    return { ok: true };
+    return { ok: true, cost };
   },
   retrieve(uid) {
     if (!(window.Cloud && Cloud.shipRpcReady("app_retrieve_ship"))) return this._retrieveLocal(uid);
@@ -311,6 +344,27 @@ const Fleet = {
       // null = the RPC isn't installed on this project; keep the optimistic local
       // retrieve rather than rolling it back into a scary error toast.
       async () => (await Cloud.retrieveShip(uid)) || { ok: true },
+      "Couldn't reach the impound lot — try again."
+    );
+  },
+
+  // Walk away instead of paying: the hull — and its fitted gear, the lot holds
+  // the whole vessel — is forfeit, forever. Server path: app_abandon_ship.
+  _abandonLocal(uid) {
+    const s = this.s();
+    const sh = this.ship(uid);
+    if (!sh || sh.status !== "impounded") return { ok: false, msg: "Only an impounded ship can be abandoned." };
+    for (const u of sh.accessories || []) delete s.items[u];
+    s.ships = s.ships.filter(x => x.uid !== uid);
+    this.pruneVariants();
+    Economy.refreshNetWorth();
+    return { ok: true, name: sh.name };
+  },
+  abandon(uid) {
+    if (!(window.Cloud && Cloud.shipRpcReady("app_abandon_ship"))) return this._abandonLocal(uid);
+    return Economy._withRpc(
+      () => this._abandonLocal(uid),
+      async () => (await Cloud.abandonShip(uid)) || { ok: true },
       "Couldn't reach the impound lot — try again."
     );
   },

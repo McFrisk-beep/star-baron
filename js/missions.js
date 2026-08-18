@@ -328,7 +328,7 @@ const Missions = {
         for (const sh of survivors) {
           if (m.impound) {
             sh.status = "impounded";
-            sh.retrieveCost = Math.round(((Fleet.shipDef(sh.type).price || 2000) * 0.5) * riskMult) || 1500;
+            sh.retrieveCost = Fleet.impoundFine(sh);   // stamp = the half-value fee (display-legacy)
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
           } else sh.status = "idle";
         }

@@ -424,9 +424,10 @@ const Game = {
         usedPull = true;
         offlineReports = (pulled.resolved || []).concat(pulled.surveys || []);
         offlineSold = pulled.sold || [];
-        // Charters stay client-local until app_charter_* — still resolve so
-        // matured jobs leave "returns now" and open a Dispatches report.
-        offlineCharters = window.Charters ? Charters.resolve(now) : [];
+        // Charters settle via app_charter_resolve when the SQL is live (async),
+        // client-locally otherwise — either way matured jobs leave "returns
+        // now" and open a Dispatches report.
+        offlineCharters = window.Charters ? await Promise.resolve(Charters.resolve(now)) : [];
         offlineReports = offlineReports.concat(offlineCharters);
         offlineIndustry = pulled.industry || [];
         offlineMercs = Fleet.pruneMercs(now);
@@ -443,7 +444,7 @@ const Game = {
       offlineReports = (await Promise.resolve(Missions.resolveMatured(now))).concat(Expeditions.resolve(now));
       offlineMercs = Fleet.pruneMercs(now);
       offlineSold = Bazaar.tick(now);
-      offlineCharters = Charters.resolve(now);
+      offlineCharters = await Promise.resolve(Charters.resolve(now));
       offlineReports = offlineReports.concat(offlineCharters);
       offlineOrders = await Orders.process();
       offlineIndustry = Industries.resolve(now);
@@ -657,19 +658,22 @@ const Game = {
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
       }).catch(e => console.warn("[Missions] resolve failed:", e));
-      // Charters are client-local until app_charter_* — always resolve; matured
-      // jobs pay out (or report losses) and post a Dispatches report.
-      const chartered = window.Charters ? Charters.resolve(now) : [];
+      // Charters resolve via app_charter_resolve when the SQL is live (server
+      // clock + RNG, payout on the ledger); async like missions. Guests and
+      // older projects keep the sync client-local settle.
+      void Promise.resolve(window.Charters ? Charters.resolve(now) : []).then(done => {
+        if (done && done.length) this.requestSave();
+      }).catch(e => console.warn("[Charters] resolve failed:", e));
       if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
         const made = Industries.resolve(now);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
-        if (surveyed.length || chartered.length || made.length || crafted.length || shipped.length) this.requestSave();
+        if (surveyed.length || made.length || crafted.length || shipped.length) this.requestSave();
       } else {
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
-        if (shipped.length || chartered.length || crafted.length) this.requestSave();
+        if (shipped.length || crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
       Rivals.tick(now);
@@ -686,7 +690,7 @@ const Game = {
       const surveyed = Expeditions.resolve(now);
       Fleet.pruneMercs(now);
       Rivals.tick(now);
-      const chartered = Charters.resolve(now);
+      const chartered = Charters.resolve(now);   // guests: sync local settle
       void Orders.process().then(orderEv => {
         for (const ev of orderEv) Bus.emit("order", ev);
         if (orderEv.length) this.requestSave();
@@ -781,8 +785,8 @@ const Game = {
             void Orders.process();
             Industries.resolve(now);
           }
-          // Always bank matured charters (client-local until app_charter_*).
-          if (window.Charters) Charters.resolve(now);
+          // Bank matured charters (async server settle when charter_rpcs.sql is live).
+          if (window.Charters) void Promise.resolve(Charters.resolve(now));
           if (window.Workshop) Workshop.resolve(now);
           finish();
         });
@@ -924,6 +928,14 @@ const Game = {
   },
   fireIncident() {
     if (this._booting || !window.Incidents) return;
+    // Incident winnings (credits / items / rep) are LOCAL mutations of
+    // server-owned slices: app_commit accepts the losses (credit decreases)
+    // but reverts every gain on the next autosave, so signed-in play made
+    // every incident negative expected-value — and a failed "fight through"
+    // set a phantom impound the server never knew about. Until an
+    // app_incident_resolve RPC exists, incidents are guest/local-only spice.
+    // ponytail: mirror INCIDENTS into SQL + roll server-side to re-enable.
+    if (window.Economy && Economy.softIncomeLocal && !Economy.softIncomeLocal()) return;
     if (document.querySelector(".modal-backdrop:not(.hidden)")) return;   // don't interrupt another modal
     UI.showIncident(Util.pick(INCIDENTS));
   },

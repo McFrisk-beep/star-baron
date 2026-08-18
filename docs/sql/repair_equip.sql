@@ -33,6 +33,7 @@
 --   4. docs/sql/equip_persist.sql      ← defines app._ship_slots / _merge_ships
 --   5. docs/sql/workshop_craft.sql
 --   6. docs/sql/repair_equip.sql       ← THIS FILE (needs 4 and 5)
+--   7. docs/sql/charter_rpcs.sql       (re-declares app_commit; keeps the merge)
 --
 -- Safe to re-run (all create-or-replace). Paste the whole file into the
 -- Supabase SQL editor.
@@ -167,8 +168,10 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- app_unequip_item(ship_uid, item_uid) → result_slice
--- Always succeeds for a ship the server knows: removing gear can only ever
--- weaken you, so there is nothing to gate. An unknown uid is a no-op write,
+-- Succeeds for any ship the server knows EXCEPT an impounded one: the release
+-- fee is half of hull + fitted gear (docs/sql/impound_retrieve.sql), so
+-- stripping a hull in the lot would dodge most of the fine. Otherwise ungated —
+-- removing gear can only ever weaken you. An unknown uid is a no-op write,
 -- which is what makes a double-click harmless.
 -- ---------------------------------------------------------------------------
 create or replace function public.app_unequip_item(p_ship_uid text, p_item_uid text)
@@ -178,11 +181,17 @@ declare
   now_ms bigint := app._now_ms();
   st jsonb;
   ships jsonb;
+  sh jsonb;
 begin
   st := app._lock_state(now_ms);
   ships := coalesce(st->'ships', '[]'::jsonb);
-  if not exists (select 1 from jsonb_array_elements(ships) x(value) where x.value->>'uid' = p_ship_uid) then
+  select value into sh from jsonb_array_elements(ships) x(value)
+    where x.value->>'uid' = p_ship_uid limit 1;
+  if sh is null then
     return jsonb_build_object('ok', false, 'error', 'Not found.');
+  end if;
+  if sh->>'status' = 'impounded' then
+    return jsonb_build_object('ok', false, 'error', 'The impound lot holds the whole vessel — gear included.');
   end if;
   ships := (
     select coalesce(jsonb_agg(
