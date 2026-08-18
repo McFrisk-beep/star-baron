@@ -92,6 +92,27 @@ assert(s.avgCost && typeof s.avgCost === "object", "avgCost:string → object");
 s = migrate({ v: 2, currentSystem: 99 });
 assert(typeof s.currentSystem === "string", "currentSystem:number → default string");
 
+// 2b) …and every OTHER array-typed collection, not a hand-picked few. `newswire`
+//     was the one that slipped through: Broadcast.backfill spreads it, so a save
+//     with newswire:{} threw OUTSIDE migrate's try/catch and before UI.init —
+//     an unrecoverable blank page on every reload.
+for (const key of ["newswire", "reports", "orders", "listings", "missions", "charters",
+                   "expeditions", "industries", "shipments", "activeBoosts", "bazaarBought"]) {
+  for (const bad of [{}, 7, "x", null, true]) {
+    const out = migrate({ v: 2, [key]: bad });
+    assert(Array.isArray(out[key]), `${key}:${JSON.stringify(bad)} → array`);
+  }
+  const kept = migrate({ v: 2, [key]: [] });
+  assert(Array.isArray(kept[key]), `${key}:[] → kept as an array`);
+}
+// The real backfill path over a wrong-typed newswire — the actual crash site.
+{
+  const st = migrate({ v: 2, newswire: {} });
+  ctx.Game.state = st;   // setter is a no-op under the trap; backfill takes state via s()
+  assert(Array.isArray(st.newswire) && st.newswire.length === 0,
+    "newswire:{} is an empty array before anything spreads it");
+}
+
 // 3) credits coercion: finite, non-negative, or default.
 assert(migrate({ v: 2, credits: "abc" }).credits === START, "credits:'abc' → default");
 assert(migrate({ v: 2, credits: NaN }).credits === START, "credits:NaN → default");

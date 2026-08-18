@@ -5,6 +5,10 @@
 const Broadcast = {
   tvTimer: null,
   newsTimer: null,
+  // One-shot timeouts fired by announce()/scheduleNews(). They used to be
+  // untracked, so stop() couldn't cancel them: a hidden tab still got a market
+  // effect up to 15 min after the omen that scheduled it.
+  _shots: [],
   newsUntil: 0,
   shared: false,   // true once a shared (cron) news source takes over
 
@@ -20,6 +24,17 @@ const Broadcast = {
     if (this.tvTimer) clearTimeout(this.tvTimer);
     if (this.newsTimer) clearTimeout(this.newsTimer);
     this.tvTimer = this.newsTimer = null;
+    for (const id of this._shots) clearTimeout(id);
+    this._shots.length = 0;
+  },
+  // Track a one-shot so stop() can actually cancel it.
+  _shot(fn, ms) {
+    const id = setTimeout(() => {
+      const i = this._shots.indexOf(id); if (i >= 0) this._shots.splice(i, 1);
+      fn();
+    }, ms);
+    this._shots.push(id);
+    return id;
   },
 
   // Hand news over to the shared world source: stop the local generator.
@@ -47,6 +62,10 @@ const Broadcast = {
         caption: (img.caption && String(img.caption).trim()) || Util.pick(show.captions),
       });
     }
+    // announce() calls rotateTV directly, so without this clear every news or
+    // war event spawned a second parallel rotation chain that stop() could only
+    // cancel the newest link of.
+    clearTimeout(this.tvTimer);
     this.tvTimer = setTimeout(() => this.rotateTV(), CONFIG.tvRotateMs);
   },
 
@@ -65,7 +84,7 @@ const Broadcast = {
     if (this.shared) return;   // shared world drives news; omens become flavor-only hints
     const candidates = NEWS_EVENTS.filter(e => e.cat === cat);
     const event = candidates.length ? Util.pick(candidates) : Util.pick(NEWS_EVENTS);
-    setTimeout(() => this.fire(event), Math.max(0, delayMs));
+    this._shot(() => this.fire(event), Math.max(0, delayMs));
   },
 
   fire(event, now = Date.now()) {
@@ -87,7 +106,7 @@ const Broadcast = {
     if (s.newswire.length > CONFIG.newswireMax) s.newswire.length = CONFIG.newswireMax;
     Bus.emit("news", entry);
     // Resume TV once the news frame times out.
-    setTimeout(() => { if (!this.newsLive()) this.rotateTV(); }, CONFIG.newsScreenMs / this.ts() + 50);
+    this._shot(() => { if (!this.newsLive()) this.rotateTV(); }, CONFIG.newsScreenMs / this.ts() + 50);
   },
 
   // Backfill the newswire so the world looks like it kept running while the

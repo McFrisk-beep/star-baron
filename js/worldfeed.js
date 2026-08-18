@@ -12,6 +12,7 @@ const WorldFeed = {
   timer: null,
   pollMs: 45000,
   newsActive: false,
+  _newsTries: 0,    // failed loadNews attempts (see poll)
 
   enabled() { return !!(window.Cloud && Cloud.enabled && Cloud.client && window.Feed); },
 
@@ -24,7 +25,16 @@ const WorldFeed = {
 
   start() { if (this.enabled()) { clearInterval(this.timer); this.timer = setInterval(() => this.poll(), this.pollMs); } },
   stop() { clearInterval(this.timer); this.timer = null; },
-  async poll() { if (!this.enabled()) return; await this.pollChat(); await this.pollNews(); },
+  // A transient world_news failure at boot used to leave newsActive=false for
+  // the whole session, so this client fell back to its own invented news and
+  // market effects — diverging from every other player. Re-attempt loadNews on
+  // the ordinary 45s poll until it takes.
+  async poll() {
+    if (!this.enabled()) return;
+    await this.pollChat();
+    if (this.newsActive) await this.pollNews();
+    else if (this._newsTries < 5) await this.loadNews();   // bounded: a missing table shouldn't retry all session
+  },
 
   // ---- shared chat --------------------------------------------------------
   async loadChat() {
@@ -52,6 +62,7 @@ const WorldFeed = {
 
   // ---- shared news --------------------------------------------------------
   async loadNews() {
+    this._newsTries++;
     try {
       const { data, error } = await Cloud.client.from("world_news")
         .select("id,event_id,target,mult,duration_ms,headline,body,faction,cat,dir,created_at")
