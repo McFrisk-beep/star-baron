@@ -179,7 +179,10 @@ const Fleet = {
   addDamage(ship, frac) { ship.dmg = Util.clamp((ship.dmg || 0) + frac, 0, DMGCFG.maxDmg); },
   repairCost(ship) {
     const dmg = ship.dmg || 0;
-    return dmg ? Math.max(50, Math.round((this.shipDef(ship.type).price || 2000) * DMGCFG.costRate * dmg)) : 0;
+    // `|| {}` — an admin SHIP_CATALOG override can drop a hull id out from under
+    // a save; a throw here takes the whole Fleet render with it (Fleet.stats does
+    // the same).
+    return dmg ? Math.max(50, Math.round(((this.shipDef(ship.type) || {}).price || 2000) * DMGCFG.costRate * dmg)) : 0;
   },
   // Repairing must go through app_repair_ship when the server owns the fleet.
   // A purely local repair is undone on the next autosave: app_commit rebuilds
@@ -250,7 +253,7 @@ const Fleet = {
     if (!sh || !it) return { ok: false, msg: "Not found." };
     if (window.Items && Items.isBlackbox(it)) return { ok: false, msg: "Blackboxes are used from Inventory, not equipped." };
     if (sh.status !== "idle") return { ok: false, msg: "Ship is busy." };
-    const slots = this.shipDef(sh.type).slots || 2;
+    const slots = (this.shipDef(sh.type) || {}).slots || 2;
     if ((sh.accessories || []).length >= slots) return { ok: false, msg: "No free slots." };
     // Pull gear out of the hold/bay so slots free up (HAULING.md).
     if (window.Assets) {

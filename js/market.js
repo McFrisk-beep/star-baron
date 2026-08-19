@@ -304,8 +304,22 @@ const Market = {
   price(id) { return this.prices[id]; },
 
   // Live exchange price: spot × sector-stock scarcity.
+  //
+  // When the server fills the trade, app_trade prices from the SQL contract and
+  // nothing else — market.price_system × market.scarcity_mult, i.e. exactly
+  // formulaSystem × the same scarcity. The rare-stock premium, the Senate price
+  // band, the windfall overlay and the client news effects all live only here,
+  // so quoting them to a signed-in player puts the ticker, maxBuy, the P&L
+  // preview and standing-order triggers up to ~35% away from the actual fill —
+  // a "sell at ≥900" order executes well under its limit and the trade log
+  // contradicts the board. Quote what will fill. Guests keep the full model.
+  // ponytail: this recomputes formulaGlobal per call instead of reading the
+  // ticked this.prices cache (~1ms extra for a 45-commodity render pass);
+  // cache per (id, tick) if the catalog grows an order of magnitude.
   systemPrice(id, systemId, now = Date.now()) {
     const scar = window.Stock ? Stock.scarcityMultForSystem(systemId, id) : 1;
+    if (window.Economy && Economy.authoritative && Economy.authoritative())
+      return this.formulaSystem(id, systemId, now) * scar;
     return this.spot(id, systemId, now) * scar;
   },
 

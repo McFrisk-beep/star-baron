@@ -1859,7 +1859,9 @@ const UI = {
     this._pending = contract;
     this.refs.mmTitle.textContent = contract.title;
     const idle = Fleet.idle();
-    const danger = DANGER.find(d => d.id === contract.danger);
+    // A DANGER override can retire a band a live contract still names — fall
+    // back to the first band rather than throwing the modal away.
+    const danger = DANGER.find(d => d.id === contract.danger) || DANGER[0];
     let head = `<div class="mm-req"><span>Danger: <b class="dgr-${contract.danger}">${danger.label}</b></span>`;
     if (contract.minFirepower) head += `<span>Min firepower: <b>${contract.minFirepower}</b></span>`;
     if (contract.cargoRequired) head += `<span>Cargo needed: <b>${contract.cargoRequired}</b></span>`;
@@ -2053,7 +2055,7 @@ const UI = {
         <div class="c-foot"><span class="muted-note">expires ${Util.duration(c.expiresAt - Date.now())}</span>
         <button class="btn btn-go" data-take="${c.id}" data-cost="${c.cost}">Buy tip ${Util.credits(c.cost)}c</button></div></div>`;
     const jobCard = c => {
-      const danger = DANGER.find(d => d.id === c.danger);
+      const danger = DANGER.find(d => d.id === c.danger) || DANGER[0];
       const ok = idlePower >= (c.minFirepower || 0);
       const bonus = c.faction ? (Rep.rewardMult(c.faction) - 1) : 0;
       const stationTag = c.source === "station"

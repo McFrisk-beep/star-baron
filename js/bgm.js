@@ -9,6 +9,7 @@ const Bgm = {
   idx: 0,
   _armed: false,
   _failStreak: 0,
+  _srcUrl: null,          // manifest url currently loaded into el (see play())
 
   // The shipped playlist, in manifest (file-name) order.
   all() {
@@ -126,8 +127,12 @@ const Bgm = {
     if (!tracks.length) return;
     const a = this.ensure();
     const t = tracks[this.idx % tracks.length];
-    if (restart || !a.src || !a.src.includes(t.url.split("?")[0])) {
+    // a.src reads back resolved AND percent-encoded ("1.%20Abandoned%20Outpost.mp3"),
+    // so comparing it to the manifest url misses on any name with a space and
+    // every resume restarts the song. Remember what we loaded instead.
+    if (restart || !a.src || this._srcUrl !== t.url) {
       a.src = t.url;
+      this._srcUrl = t.url;
       try { a.load(); } catch (e) { /* ignore */ }
     }
     a.volume = this.volume();
@@ -148,6 +153,7 @@ const Bgm = {
     if (!this.el) return;
     try { this.el.pause(); } catch (e) { /* ignore */ }
     this.el.removeAttribute("src");
+    this._srcUrl = null;
     try { this.el.load(); } catch (e) { /* ignore */ }
   },
 

@@ -200,6 +200,14 @@ const Game = {
     // story flags / ephemeral survey threads — old saves lack the keys
     s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
     s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {}; s.story.ephemeral ||= {};
+    // Save bloat: a finished thread kept its whole METRICS baseline forever, and
+    // it rides in every 10s commit. Nothing reads `base` off a non-active thread
+    // (Story.card / _goalDone both gate on status), so shed it on load too —
+    // Story._advance now drops it as threads finish.
+    for (const id in s.story.prog) {
+      const p = s.story.prog[id];
+      if (p && p.status !== "active") delete p.base;
+    }
     // legacy per-ship trade routes (sh.route) were replaced by state.routes — free those ships
     for (const sh of s.ships) if (sh.route) { sh.status = "idle"; delete sh.route; }
     // surveying/debrief ship whose expedition vanished → free it

@@ -1567,6 +1567,9 @@ const Stations = {
       const l = st.hall[i];
       const s = Market._seed([st.systemId, "hall", l.id, String(hourIndex)]);
       if (Market._u01(s, 0) >= chance) { keep.push(l); continue; }
+      // Our own stall: the proceeds are a credit mint app_commit erases, but
+      // the listing removal sticks — item and money both gone. Don't sell.
+      if (l.sellerId === this.playerId() && !this._softMintLocal()) { keep.push(l); continue; }
       const tariff = Math.floor(l.price * Util.clamp(st.saleTariffBps | 0, 0, 1500) / 10000);
       const sellerGets = l.price - tariff;
       if (l.sellerId === this.playerId()) Game.state.credits += sellerGets;
@@ -3431,6 +3434,11 @@ const Stations = {
     }
     qty = Math.min(Math.floor(+qty || 0), st.impoundHold[commId] | 0);
     if (qty <= 0) return { ok: false, msg: "Nothing in impound." };
+    // No impound-sale RPC: the proceeds land in a treasury the next
+    // _applyTreasurySync overwrites with the server's value, while the hold
+    // decrement and the Stock.put stick. Refuse rather than burn the goods.
+    if (this.treasuryShared(systemId))
+      return { ok: false, msg: "Fencing impound needs the station treasury RPC (docs/sql/station_treasury.sql)." };
     const price = Economy.sellPrice(commId);
     const proceeds = Math.round(price * qty);
     st.impoundHold[commId] -= qty;
@@ -3470,10 +3478,17 @@ const Stations = {
     if (s.credits < c.ransom) return { ok: false, msg: "Not enough credits." };
     const have = st.impoundHold[c.commId] | 0;
     if (have < c.qty) return { ok: false, msg: "Goods already sold." };
+    // The fine is a decrease (app_commit keeps it) but the returned cargo is a
+    // positions mint (app_commit erases it) — paying would buy nothing. Refuse
+    // and leave the claim standing, the way claimPendingCargo does.
+    // ponytail: an app_customs_ransom RPC (debit + credit positions server-side,
+    // mirroring app_customs_seize) would let signed-in players buy cargo back.
+    if (!this._softMintLocal())
+      return { ok: false, msg: "Ransom can't be settled on the server ledger yet — the claim stays open." };
     s.credits -= c.ransom;
     st.treasury += c.ransom;
     st.impoundHold[c.commId] = have - c.qty;
-    s.positions[c.commId] = (s.positions[c.commId] | 0) + c.qty;
+    this._mintPositions(c.commId, c.qty);
     if (window.Assets) Assets.parkBlocks(systemId, c.commId, c.qty);
     st.impoundClaims.splice(idx, 1);
     this._ledger(st, c.ransom, "ransom", `${c.qty}× ${c.commId}`);

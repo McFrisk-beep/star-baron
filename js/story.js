@@ -182,7 +182,11 @@ const Story = {
     const active = Object.keys(prog).filter(id => {
       if (prog[id].status !== "active") return false;
       const sl = this.storyline(id);
-      return !(sl && (sl._survey || sl._missionReport));
+      // Unresolvable (admin deleted the mission, ephemeral row lost): step 1
+      // above skips it, so it can never complete. Counting it wedges the slot
+      // forever and new dispatches silently stop.
+      if (!sl) return false;
+      return !(sl._survey || sl._missionReport);
     }).length;
     if (active < this.MAX_ACTIVE && now - (story.lastArrivalAt || 0) >= this.ARRIVAL_GAP_MS) {
       for (const sl of this.all()) {
@@ -274,6 +278,7 @@ const Story = {
     if (next >= 0 && next < sl.steps.length) { p.step = next; p.base = this.snap(st); p.accepted = false; p.replied = false; this._postIn(sl, sl.steps[next]); }
     else {
       p.status = "done";
+      delete p.base;          // the delta baseline is dead once nothing tracks it
       if (sl.outro) this._postReward(sl, sl.outro);
       // Drop ephemeral survey / mission-report threads once finished (save bloat).
       if ((sl._survey || sl._missionReport) && this.s().ephemeral) delete this.s().ephemeral[sl.id];
