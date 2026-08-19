@@ -78,6 +78,18 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
     opener's escrow). `senate_ballot.sql` also refuses a barred baron.
     Checked by `tools/check_crime_coefficient.js` +
     `tools/sql/build_h9_h11_check.js`.
+15. **`docs/sql/save_hygiene.sql`** ← recommended (usage-sim review **L2**,
+    **L4**, **L9**), and must come **after** step 13 (it replaces `app_commit`
+    once more, extending the crime layer). Three things: `inventory.capacity` is
+    normalized to the same floor the client's hauling model uses
+    (`STATION_BAY_BASE` + 10/upgrade) and the two capacity gates count
+    *unequipped* items, so a signed-in player no longer hits "Inventory full."
+    at six items while the bay reads 8/50; an industry row adopted from the
+    client can no longer carry a backdated `nextAt` (a forged `nextAt=0` banked
+    the full eight cycles on the next pull); and dead `bazaarBought` marks are
+    pruned instead of riding in every 10s commit forever. Also re-declares
+    `app_buy_accessory` and `app_craft_start`. Checked by
+    `tools/check_low_priority.js`.
 
 ## Trust model
 

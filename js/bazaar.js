@@ -108,6 +108,7 @@ const Bazaar = {
   // local (guest) boards — both are soft/local content, so there's one code path
   // and one clock. Anything already bought this epoch stays off the shelf.
   fillSlowStock(now = Date.now()) {
+    this.pruneBought(now);
     const b = this.bz(), bought = this._boughtSet(), epoch = this.slowEpoch(now);
     b.blackboxes = [];
     for (let i = 0; i < (BAZAARCFG.blackboxSlots || 0); i++) {
@@ -309,6 +310,7 @@ const Bazaar = {
   fillSeededBoard(now = Date.now()) {
     const b = this.bz();
     const epoch = this.boardEpoch(now);
+    this.pruneBought(now);
     const bought = this._boughtSet();
     const tier = window.Economy ? Economy.tier() : 0;
     b.mercs = [];
@@ -713,6 +715,31 @@ const Bazaar = {
     if (id && !s.bazaarBought.includes(id)) s.bazaarBought.push(id);
   },
 
+  // ---- purchase-mark hygiene ---------------------------------------------
+  // A mark only has to survive as long as its shelf can regenerate the offer:
+  // every seeded id is `{kind}-{epoch}-{slot}` and each kind rides one clock.
+  // Left unpruned the list grows by one string per lifetime purchase, on the
+  // client AND the server, and rides in every 10s app_commit forever.
+  // Unrecognized ids (legacy / non-seeded) are kept — this only sheds what it
+  // can positively date. Mirrored by app._bought_live in docs/sql/save_hygiene.sql.
+  boughtLive(id, now = Date.now()) {
+    const m = /^([a-z]{2})-(\d+)-\d+$/.exec(String(id || ""));
+    if (!m) return true;
+    const epoch = +m[2];
+    if (m[1] === "bb" || m[1] === "bp") return epoch >= this.slowEpoch(now);
+    if (m[1] === "sy") return epoch >= this.yardEpoch(now);
+    // Board shelf: offers live two epochs (genSeededMerc availUntil).
+    if (["mc", "ac", "ct", "ex", "cp", "fg"].includes(m[1])) return epoch >= this.boardEpoch(now) - 2;
+    return true;
+  },
+  pruneBought(now = Date.now()) {
+    const s = this.s();
+    if (!Array.isArray(s.bazaarBought) || !s.bazaarBought.length) return 0;
+    const before = s.bazaarBought.length;
+    s.bazaarBought = s.bazaarBought.filter(id => this.boughtLive(id, now));
+    return before - s.bazaarBought.length;
+  },
+
   _hireMercLocal(offerId, now = Date.now()) {
     const b = this.bz(); const s = this.s();
     const offer = b.mercs.find(m => m.id === offerId);
@@ -810,7 +837,7 @@ const Bazaar = {
     s.credits -= price;
     Extractors.acquire(JSON.parse(JSON.stringify(offer.ex)));
     b.extractors = b.extractors.filter(o => o.id !== offerId);
-    if (this.authoritative()) (s.bazaarBought ||= []).push(offerId);
+    if (this.authoritative()) this._markBought(offerId);
     Economy.refreshNetWorth();
     return { ok: true, ex: offer.ex };
   },
@@ -831,7 +858,7 @@ const Bazaar = {
     s.credits -= price;
     Components.acquire(JSON.parse(JSON.stringify(offer.comp)));
     b.components = b.components.filter(o => o.id !== offerId);
-    if (this.authoritative()) (s.bazaarBought ||= []).push(offerId);
+    if (this.authoritative()) this._markBought(offerId);
     Economy.refreshNetWorth();
     return { ok: true, comp: offer.comp };
   },

@@ -30,7 +30,9 @@ const ACHIEVEMENTS = [
 const Economy = {
   s() { return window.Game.state; },
   // Phase 1: signed-in + players RPCs live → server fills. Guests / pre-setup stay local.
-  authoritative() { return !!(window.Cloud && window.Cloud.authoritative()); },
+  authoritative() {
+    return !!(window.Cloud && typeof Cloud.authoritative === "function" && Cloud.authoritative());
+  },
   _pending: 0,
   _rpcQueue: Promise.resolve(),
   busy() { return this._pending > 0; },
@@ -543,13 +545,20 @@ const Economy = {
   // effective half-spread for a category: base spread tightened by reputation, but
   // never to zero — so buy price stays above sell price and round-trips can't profit.
   _spread(cat) { return Math.max(REP.minSpread, REP.spread - Rep.edgeForCategory(cat)); },
+  // Senate trade tariffs are a client-only overlay — app_trade fills at
+  // mid × (1 ± spread) with no tax term. Charging one on the quote while the
+  // server ignores it is the same lie Market.systemPrice just stopped telling.
+  _tradeTax(cat, side) {
+    if (this.authoritative()) return 0;
+    return window.Senate ? Senate.tradeTax(cat, side) : 0;
+  },
   buyPrice(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    return this.priceHere(commId) * (1 + this._spread(cat)) * (1 + (window.Senate ? Senate.tradeTax(cat, "buy") : 0));
+    return this.priceHere(commId) * (1 + this._spread(cat)) * (1 + this._tradeTax(cat, "buy"));
   },
   sellPrice(commId) {
     const cat = (COMMODITIES.find(c => c.id === commId) || {}).cat;
-    return this.priceHere(commId) * (1 - this._spread(cat)) * (1 - (window.Senate ? Senate.tradeTax(cat, "sell") : 0));
+    return this.priceHere(commId) * (1 - this._spread(cat)) * (1 - this._tradeTax(cat, "sell"));
   },
 
   // ---- market depth (per Baron Tier) -------------------------------------
@@ -736,9 +745,13 @@ const Economy = {
   async sell(commId, qty) {
     if (!this.authoritative()) return this._sellLocal(commId, qty);
     const want = Math.floor(qty);
+    // Local fill clamps to the docked bay + tier depth; send THAT amount, not
+    // the ask (mirrors buy). The server only clamps to total positions, so a
+    // raw `want` sells cargo parked in some other system's bay.
+    let filled = want;
     const r = await this._withRpc(
-      () => this._sellLocal(commId, want),
-      () => Cloud.trade("sell", commId, want),
+      () => { const rr = this._sellLocal(commId, want); if (rr && rr.ok) filled = rr.qty; return rr; },
+      () => Cloud.trade("sell", commId, filled),
       "Couldn't reach the exchange — try again."
     );
     // Ghost stock: client shows industry/mission units that never landed on the
@@ -749,9 +762,10 @@ const Economy = {
         try { await Game.pullCatchUp(); } catch (e) { /* keep going */ }
         const held = this.s().positions[commId] || 0;
         if (held > 0) {
+          let refill = Math.min(want, held);
           return this._withRpc(
-            () => this._sellLocal(commId, Math.min(want, held)),
-            () => Cloud.trade("sell", commId, Math.min(want, held)),
+            () => { const rr = this._sellLocal(commId, Math.min(want, held)); if (rr && rr.ok) refill = rr.qty; return rr; },
+            () => Cloud.trade("sell", commId, refill),
             "Couldn't reach the exchange — try again."
           );
         }

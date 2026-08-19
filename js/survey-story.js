@@ -395,7 +395,7 @@ const SurveyStory = {
       if (room) {
         this.s().items[it.uid] = it; report.items.push(it);
         // Survey loot lands at the surveyed system — go get it (HAULING.md §5).
-        if (window.Assets) Assets.parkGear(it.uid, (exp && exp.systemId) || this.s().currentSystem);
+        if (window.Assets) Assets.parkGear(it.uid, (exp && exp.sysId) || this.s().currentSystem);
       }
     }
     if (spec.materials && payLocal) {
@@ -406,7 +406,7 @@ const SurveyStory = {
       const rareish = COMMODITIES.filter(c => !c.craftOnly && (c.rarity === "rare" || c.rarity === "uncommon"));
       const pool = (Math.random() < exoticP && exotic.length ? exotic : rareish.length ? rareish : COMMODITIES);
       const c = Util.pick(pool);
-      const landAt = (exp && exp.systemId) || this.s().currentSystem;
+      const landAt = (exp && exp.sysId) || this.s().currentSystem;
       if (c) {
         const qty = Util.randInt(qtyRange[0], qtyRange[1]);
         const st = this.s();
