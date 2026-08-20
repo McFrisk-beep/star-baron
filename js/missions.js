@@ -195,11 +195,27 @@ const Missions = {
     return this._resolveLocal(now, { stationOnly: true });
   },
 
+  // Replay roster: {uid, name, type} per participant, capped (~200 bytes).
+  _roster(m) {
+    return (m.shipUids || []).map(u => {
+      const sh = Fleet.ship(u);
+      return sh ? { uid: sh.uid, name: sh.name, type: sh.type } : null;
+    }).filter(Boolean).slice(0, 12);
+  },
+
   async _resolveAuth(now) {
+    // Snapshot rosters BEFORE the RPC — the server slice replaces ships and
+    // missions, and lost hulls are gone by the time the reports come back.
+    const rosters = {};
+    for (const m of this.s().missions) if (!m.resolved) rosters[m.uid] = this._roster(m);
     const r = await Economy._rpcOnly(() => Cloud.missionResolve(), "Couldn't resolve missions — try again.");
     if (r && r.missing) return this._resolveLocal(now, { skipStation: true });
     if (!r || !r.ok) return [];
     const out = Array.isArray(r.resolved) ? r.resolved : [];
+    for (const rep of out) if (!rep.roster && rosters[rep.uid]) rep.roster = rosters[rep.uid];
+    // ponytail: the next server slice may drop rosters again (server doesn't
+    // store them yet — §4.4 upgrade path); the Replay button just disappears.
+    for (const sr of this.s().reports || []) if (!sr.roster && rosters[sr.uid]) sr.roster = rosters[sr.uid];
     Economy.refreshNetWorth();
     Economy.checkAchievements();
     for (const rep of out) {
@@ -246,7 +262,10 @@ const Missions = {
 
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
         sysName: m.sysName || null, danger: m.danger || null, faction: m.faction || null,
-        credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [] };
+        credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [],
+        // LIVING_GALAXY.md §5.7: replays need the roster — lost ships leave
+        // s.ships. Capped small; reports are already capped at 20.
+        roster: this._roster(m) };
 
       // ---- battle damage & attrition: every ship rolls wear against the
       // mission type's profile (a courier grazes an asteroid; a battle line

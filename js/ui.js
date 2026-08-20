@@ -1844,10 +1844,18 @@ const UI = {
         if (!r.lost.length && !r.impounded.length) detail += ` · ships returned safely`;
       }
       if ((r.damaged || []).length) detail += ` · 🔧 ${r.damaged.map(x => `${x.name} −${x.pct}%`).join(", ")}`;
+      const replay = (window.Combat && Combat.replayable(r))
+        ? `<button class="btn btn-mini" data-replay="${r.uid}">▶ Replay</button>` : "";
       return `<div class="report ${r.success ? "ok" : "bad"}"><div><b>${r.title}</b><div class="rep-detail">${detail}</div></div>
-        <button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
+        ${replay}<button class="btn btn-mini" data-dismiss="${r.uid}">Dismiss</button></div>`;
     }).join("");
     this.refs.fleetReports.onclick = e => {
+      const p = e.target.closest("[data-replay]");
+      if (p) {   // seeded by mission uid — the same fight plays every time
+        const r = this.s().reports.find(x => x.uid === p.dataset.replay);
+        if (r && window.BattleView) BattleView.open(r);
+        return;
+      }
       const d = e.target.closest("[data-dismiss]"); if (!d) return;
       this.s().reports = this.s().reports.filter(r => r.uid !== d.dataset.dismiss);
       window.Game.requestSave(); this.renderReports(); this.updateHeader();
@@ -3924,7 +3932,7 @@ const UI = {
     document.body.appendChild(el);
   },
 
-  toast(text, kind = "info", ms = 3200) {
+  toast(text, kind = "info", ms = 3200, onClick = null) {
     const stack = this.refs.toast;
     // Boot-order guard: Store._cloudFail and the boot-failure handler both toast
     // BEFORE init() populates refs. Throwing here escaped Store.load's catch and
@@ -3934,6 +3942,7 @@ const UI = {
     // ponytail: cap at 3 — drop the oldest so bursts don't bury the screen
     while (stack.children.length >= 3) stack.firstChild.remove();
     const t = this.el("div", "toast toast-" + kind, text);
+    if (onClick) { t.style.cursor = "pointer"; t.addEventListener("click", () => { onClick(); t.remove(); }); }
     stack.appendChild(t);
     requestAnimationFrame(() => t.classList.add("show"));
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
@@ -4308,7 +4317,18 @@ const UI = {
     Bus.on("achievement", a => { this.toast(`★ ${a.name} — ${a.desc}`, "good", 4500); if (this.page === "ach") this.renderAchievements(); window.Game.audio("good"); });
     Bus.on("missionDone", r => {
       if (window.Game._booting) return;
-      this.toast(`${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"} — report in Dispatches ▸`, r.success ? "good" : "bad", 5000);
+      // Offer inline playback only for a lone resolve with the tab visible —
+      // resolveMatured batches after time away, and five queued cutscenes is
+      // hostile (§5.7). Never auto-play; the toast is a clickable offer.
+      const lone = Date.now() - (this._lastMissionDoneAt || 0) > 1500;
+      this._lastMissionDoneAt = Date.now();
+      const offer = lone && document.visibilityState === "visible"
+        && window.Combat && Combat.replayable(r)
+        && !(this.s().settings && this.s().settings.battleSkip);
+      const base = `${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`;
+      if (offer) this.toast(`${base} — ▶ watch the engagement`, r.success ? "good" : "bad", 6500,
+        () => BattleView.open(r, { offered: true }));
+      else this.toast(`${base} — report in Dispatches ▸`, r.success ? "good" : "bad", 5000);
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "comms" && this.commsTab === "dispatches") this.renderDispatches();
       this.updateHeader(); this.audioSafe(r.success ? "good" : "news");
