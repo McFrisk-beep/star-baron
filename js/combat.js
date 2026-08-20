@@ -238,9 +238,14 @@ const Combat = {
           if (rng() < 0.7 && t + 0.3 < cap) events.push({ t: +(t + 0.3).toFixed(2), kind: "beam", from: s.id, to: to.id });
         }
       }
-      if (s.role === "carrier" && !s.deathT)
-        for (let i = 0, n = ri(2, 3); i < n; i++)
-          events.push({ t: +(rf(t1, t2)).toFixed(2), kind: "launch", from: s.id, to: s.id });
+      // carriers put waves up across the engagement, not one burst at the top
+      if (s.role === "carrier") {
+        const last = Math.min(t3, s.deathT || t3, s.jumpT || t3);
+        for (let i = 0, n = ri(3, 4); i < n; i++) {
+          const at = +(rf(t1, Math.max(t1 + 0.5, last - 1))).toFixed(2);
+          if (at < last) events.push({ t: at, kind: "launch", from: s.id, to: s.id });
+        }
+      }
     }
 
     // ---- radio: opening call + the outcome line -------------------------

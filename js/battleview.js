@@ -217,7 +217,12 @@ const BattleView = {
         continue;
       }
       if (e.kind === "launch") {
-        for (let i = 0; i < 2; i++) this._fighters.push({ carrier: from.id, t0: e.t, phase: Math.random() * 6.28, r: 16 + Math.random() * 14, spd: 2 + Math.random() * 1.5 });
+        for (let i = 0, n = 3; i < n; i++) {   // a flight rolls off the deck
+          const an = Math.random() * 6.28;
+          this._fighters.push({ carrier: from.id, side: from.side, t0: e.t,
+            x: a.x + Math.cos(an) * 12, y: a.y + Math.sin(an) * 12,
+            hdg: an, cool: Math.random() * 0.6, target: null });
+        }
         continue;
       }
       if (!to) continue;
@@ -367,16 +372,53 @@ const BattleView = {
       ctx.beginPath(); ctx.arc(j.x, j.y, j.size * (0.85 - k * 0.6), 0, Math.PI * 2); ctx.fill();
     }
 
-    // fighters: cosmetic darts orbiting their carrier
+    // Carrier fighters: they swarm out and actually fight. Each dart hunts a
+    // live hostile, fires on its approach, blows through the pass and swings
+    // back around for another run; with no target left it returns to the deck.
+    // Purely cosmetic — fighter fire never carries report damage, so the swarm
+    // can't contradict the wallet.
+    const gone = s2 => !s2 || (s2.deathT && t >= s2.deathT) || (s2.jumpT && t >= s2.jumpT);
+    const FSPD = 120, FTURN = 4.2;
     for (const f of this._fighters) {
-      const c = byId[f.carrier]; if (!c || (c.deathT && t >= c.deathT)) continue;
-      const p = this._px(this._pos(c, t));
-      const a = f.phase + (t - f.t0) * f.spd;
-      const x = p.x + Math.cos(a) * f.r, y = p.y + Math.sin(a) * f.r;
-      ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2);
-      ctx.fillStyle = "rgba(160,190,255,.9)"; ctx.fillRect(-3, -1.5, 6, 3);
+      const c = byId[f.carrier];
+      if (gone(c)) { f.done = true; continue; }          // deck's gone, so are they
+      let tgt = f.target && byId[f.target];
+      if (gone(tgt)) {                                    // acquire a new one
+        const foes = sc.ships.filter(x => x.side !== f.side && !gone(x));
+        tgt = foes.length ? foes[Math.floor(Math.random() * foes.length)] : null;
+        f.target = tgt ? tgt.id : null;
+      }
+      let want = f.hdg;
+      if (tgt) {
+        const tp = this._px(this._pos(tgt, t));
+        const d = Math.hypot(tp.x - f.x, tp.y - f.y);
+        f.cool -= dt;
+        if (d < 95 && f.cool <= 0) {                      // cannon burst on the run in
+          this._flak.push({ a: { x: f.x, y: f.y }, b: { x: tp.x, y: tp.y }, t0: t, side: f.side, impact: true, light: true });
+          f.cool = 0.75 + Math.random() * 0.7;
+        }
+        // inside knife range, hold heading and blow through instead of ramming
+        if (d > 30) want = Math.atan2(tp.y - f.y, tp.x - f.x);
+      } else {                                            // nothing left — return to the deck
+        const cp = this._px(this._pos(c, t));
+        want = Math.atan2(cp.y - f.y, cp.x - f.x);
+      }
+      let dd = want - f.hdg;
+      while (dd > Math.PI) dd -= Math.PI * 2;
+      while (dd < -Math.PI) dd += Math.PI * 2;
+      f.hdg += Math.max(-FTURN * dt, Math.min(FTURN * dt, dd));
+      f.x += Math.cos(f.hdg) * FSPD * dt; f.y += Math.sin(f.hdg) * FSPD * dt;
+      ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.hdg);
+      ctx.fillStyle = f.side === "player" ? "rgba(175,205,255,.95)" : "rgba(255,155,145,.95)";
+      ctx.fillRect(-4, -1.6, 8, 3.2);
+      ctx.fillStyle = f.side === "player" ? "rgba(120,170,255,.5)" : "rgba(255,110,100,.5)";
+      ctx.fillRect(-6.5, -1, 2.5, 2);                     // exhaust nub
       ctx.restore();
+      if (Math.random() < dt * 16)
+        this._parts.push({ kind: "trail", x: f.x - Math.cos(f.hdg) * 5, y: f.y - Math.sin(f.hdg) * 5,
+          vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8, t0: t, life: 0.22, s: 1 });
     }
+    this._fighters = this._fighters.filter(f => !f.done);
 
     // ---- effects (each cleans itself up as it expires) ----
     this._beams = this._beams.filter(b => t - b.t0 < 0.3);
@@ -410,8 +452,8 @@ const BattleView = {
     this._flak = this._flak.filter(f => t - f.t0 < 0.35);
     for (const f of this._flak) {
       const k = (t - f.t0) / 0.35;
-      ctx.strokeStyle = `rgba(255,220,140,${(1 - k).toFixed(2)})`; ctx.lineWidth = 1.6;
-      for (let i = 0; i < 5; i++) {
+      ctx.strokeStyle = `rgba(255,220,140,${(1 - k).toFixed(2)})`; ctx.lineWidth = f.light ? 1 : 1.6;
+      for (let i = 0, n = f.light ? 2 : 5; i < n; i++) {
         const kk = Math.min(1, k * 1.4 + i * 0.1);
         const x = f.a.x + (f.b.x - f.a.x) * kk, y = f.a.y + (f.b.y - f.a.y) * kk;
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - (f.b.x - f.a.x) * 0.045, y - (f.b.y - f.a.y) * 0.045); ctx.stroke();
