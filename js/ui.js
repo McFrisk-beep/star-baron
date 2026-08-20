@@ -3932,6 +3932,18 @@ const UI = {
     document.body.appendChild(el);
   },
 
+  // Offer inline battle playback only for a LONE resolve with the tab visible
+  // — resolveMatured/charter settle both batch after time away, and five
+  // queued cutscenes is hostile (LIVING_GALAXY.md §5.7). Never auto-plays; the
+  // toast is a clickable offer. Shared clock, so a mixed batch stays quiet too.
+  offerWatch(r) {
+    const lone = Date.now() - (this._lastDoneAt || 0) > 1500;
+    this._lastDoneAt = Date.now();
+    return lone && document.visibilityState === "visible"
+      && window.Combat && Combat.replayable(r)
+      && !(this.s().settings && this.s().settings.battleSkip);
+  },
+
   toast(text, kind = "info", ms = 3200, onClick = null) {
     const stack = this.refs.toast;
     // Boot-order guard: Store._cloudFail and the boot-failure handler both toast
@@ -4317,16 +4329,8 @@ const UI = {
     Bus.on("achievement", a => { this.toast(`★ ${a.name} — ${a.desc}`, "good", 4500); if (this.page === "ach") this.renderAchievements(); window.Game.audio("good"); });
     Bus.on("missionDone", r => {
       if (window.Game._booting) return;
-      // Offer inline playback only for a lone resolve with the tab visible —
-      // resolveMatured batches after time away, and five queued cutscenes is
-      // hostile (§5.7). Never auto-play; the toast is a clickable offer.
-      const lone = Date.now() - (this._lastMissionDoneAt || 0) > 1500;
-      this._lastMissionDoneAt = Date.now();
-      const offer = lone && document.visibilityState === "visible"
-        && window.Combat && Combat.replayable(r)
-        && !(this.s().settings && this.s().settings.battleSkip);
       const base = `${r.title}: ${r.success ? "SUCCESS +" + Util.credits(r.credits) + "c" : "FAILED"}`;
-      if (offer) this.toast(`${base} — ▶ watch the engagement`, r.success ? "good" : "bad", 6500,
+      if (this.offerWatch(r)) this.toast(`${base} — ▶ watch the engagement`, r.success ? "good" : "bad", 6500,
         () => BattleView.open(r, { offered: true }));
       else this.toast(`${base} — report in Dispatches ▸`, r.success ? "good" : "bad", 5000);
       if (this.page === "fleet") this.renderFleet();
@@ -4357,7 +4361,10 @@ const UI = {
     Bus.on("charterDone", r => {
       if (window.Game._booting) return;   // offline charters land in the "while you were away" recap
       // Deferred = hulls home, ledger pay outstanding — a heads-up, not a loss.
-      this.toast(r.summary || r.title, r.success ? "good" : "bad", 6000);
+      const txt = r.summary || r.title;
+      if (this.offerWatch(r)) this.toast(`${txt} — ▶ watch the engagement`, r.success ? "good" : "bad", 6500,
+        () => BattleView.open(r, { offered: true }));
+      else this.toast(txt, r.success ? "good" : "bad", 6000);
       this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
       if (this.page === "bazaar" && this.bazaarTab === "charters") this.renderBazaar();
