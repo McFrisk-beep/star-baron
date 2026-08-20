@@ -33,9 +33,20 @@ const Lanes = {
       this.list.push({ a: aId, b: bId, len, trunk });
     };
 
-    // Trunk ring: capitals loop in RING order — two connectors per sector.
-    const caps = this.RING.map(id => SECTORS.find(s => s.id === id).capital);
-    for (let i = 0; i < caps.length; i++) add(caps[i], caps[(i + 1) % caps.length], true);
+    // Trunk ring: sectors loop in RING order — two connectors per sector,
+    // each anchored on the sectors' edge systems (the closest cross-border
+    // pair), not capital-to-capital: highways enter a sector at its rim and
+    // reach the capital over local lanes.
+    for (let i = 0; i < this.RING.length; i++) {
+      const A = Galaxy.sectors.find(s => s.id === this.RING[i]);
+      const B = Galaxy.sectors.find(s => s.id === this.RING[(i + 1) % this.RING.length]);
+      let best = null;
+      for (const a of A.systems) for (const b of B.systems) {
+        const d = dist(a, b);
+        if (!best || d < best.d) best = { d, a, b };
+      }
+      add(best.a, best.b, true);
+    }
 
     for (const sec of Galaxy.sectors) {
       const ids = sec.systems;

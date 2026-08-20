@@ -35,16 +35,32 @@ assert.strictEqual(Object.keys(Lanes.adj).length, Galaxy.list.length, "every sys
   assert.strictEqual(seen.size, Galaxy.list.length, "lane graph is connected");
 }
 
-// capital ring: exactly two trunk connectors each, to the RING-order neighbours
+// sector ring: each RING-adjacent pair of sectors is joined by exactly one
+// trunk lane, anchored on their edge systems — the closest cross-border pair
 assert.strictEqual([...Lanes.RING].sort().join(), SECTORS.map(s => s.id).sort().join(), "RING covers every sector once");
-const caps = Lanes.RING.map(id => SECTORS.find(s => s.id === id).capital);
-caps.forEach((cap, i) => {
-  const trunks = Lanes.adj[cap].filter(l => l.trunk).map(l => l.to).sort();
-  const want = [caps[(i + 1) % caps.length], caps[(i + caps.length - 1) % caps.length]].sort();
+const hypot = (a, b) => Math.hypot(Galaxy.get(a).pos.x - Galaxy.get(b).pos.x, Galaxy.get(a).pos.y - Galaxy.get(b).pos.y);
+const secOf = id => Galaxy.get(id).sectorId;
+Lanes.RING.forEach((secId, i) => {
+  const nextId = Lanes.RING[(i + 1) % Lanes.RING.length];
+  const t = Lanes.list.filter(l => l.trunk &&
+    ((secOf(l.a) === secId && secOf(l.b) === nextId) || (secOf(l.a) === nextId && secOf(l.b) === secId)));
+  assert.strictEqual(t.length, 1, `${secId}↔${nextId}: exactly one trunk lane`);
+  let best = null;
+  const A = Galaxy.sectors.find(s => s.id === secId), B = Galaxy.sectors.find(s => s.id === nextId);
+  for (const a of A.systems) for (const b of B.systems) {
+    const d = hypot(a, b);
+    if (!best || d < best.d) best = { d, a, b };
+  }
   // join(): vm-realm arrays fail deepStrictEqual's prototype check
-  assert.strictEqual(trunks.join(), want.join(), `${cap} trunk lanes = its two ring neighbours`);
+  assert.strictEqual([t[0].a, t[0].b].sort().join(), [best.a, best.b].sort().join(),
+    `${secId}↔${nextId} trunk joins the closest edge systems`);
 });
-assert.strictEqual(Lanes.list.filter(l => l.trunk).length, caps.length, "trunk ring has one lane per sector pair");
+assert.strictEqual(Lanes.list.filter(l => l.trunk).length, Lanes.RING.length, "trunk ring has one lane per sector pair");
+for (const sec of SECTORS) {
+  const n = Lanes.list.filter(l => l.trunk && (secOf(l.a) === sec.id || secOf(l.b) === sec.id)).length;
+  assert.strictEqual(n, 2, `${sec.id} has exactly two trunk connections`);
+}
+const caps = SECTORS.map(s => s.capital);
 
 // lanes stay inside their sector (trunk ring aside)
 for (const l of Lanes.list) {
@@ -63,7 +79,6 @@ for (const sys of Galaxy.list) {
 }
 
 // ---- routes ---------------------------------------------------------------
-const hypot = (a, b) => Math.hypot(Galaxy.get(a).pos.x - Galaxy.get(b).pos.x, Galaxy.get(a).pos.y - Galaxy.get(b).pos.y);
 for (const a of caps) for (const b of Galaxy.list.map(s => s.id)) {
   const r = Lanes.route(a, b);
   assert.ok(r && r.path[0] === a && r.path[r.path.length - 1] === b, `route ${a}→${b} exists with correct endpoints`);
