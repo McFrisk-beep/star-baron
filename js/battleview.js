@@ -87,6 +87,7 @@ const BattleView = {
     this._arcs = []; this._parts = []; this._fighters = []; this._wrecks = [];
     this._bubbles = []; this._collapses = [];
     this._evIdx = 0; this._done = false; this._byId = null; this._lastT = 0;
+    this._hdg = {}; this._jumps = [];
 
     const reduced = !!(this.s().settings && this.s().settings.reduced);
     this._t0 = performance.now();
@@ -290,20 +291,80 @@ const BattleView = {
     // ---- ships ----
     for (const s of sc.ships) {
       if (s.deathT && t >= s.deathT) continue;
+      if (s.jumpT && t >= s.jumpT) {                       // gone to hyperspace
+        if (!this._hdg["_j" + s.id]) {                     // fire the jump effect once
+          this._hdg["_j" + s.id] = 1;
+          const jp = this._px(this._pos(s, s.jumpT));
+          this._jumps.push({ x: jp.x, y: jp.y, t0: s.jumpT, ang: this._hdg[s.id] || 0, size: s.size });
+        }
+        continue;
+      }
       const p = this._px(this._pos(s, t));
       const q = this._px(this._pos(s, t + 0.2));
-      const ang = (q.x !== p.x || q.y !== p.y) ? Math.atan2(q.y - p.y, q.x - p.x)
-        : (s.side === "player" ? 0 : Math.PI);
+      const moving = (q.x !== p.x || q.y !== p.y);
+      const want = moving ? Math.atan2(q.y - p.y, q.x - p.x) : (s.side === "player" ? 0 : Math.PI);
+      // Mass has consequences: a hull swings onto a new heading at a limited
+      // rate instead of snapping to it, so strafing runs bank and capitals
+      // wallow. Facing therefore lags the velocity vector — as it should.
+      const rate = { screen: 3.4, line: 1.9, carrier: 1.0, capital: 0.85, convoy: 1.3 }[s.role] || 1.8;
+      let cur = this._hdg[s.id];
+      if (cur == null) cur = want;
+      else {
+        let d = want - cur;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        cur += Math.max(-rate * dt, Math.min(rate * dt, d));
+      }
+      this._hdg[s.id] = cur;
+
+      // throttle from real speed; the drive spools up before a jump
+      const spd = Math.hypot(q.x - p.x, q.y - p.y) / 0.2;
+      const charge = s.jumpT ? Math.max(0, 1 - (s.jumpT - t) / 1.4) : 0;
+      const thr = Math.min(1.5, Math.min(1, spd / 55) * 0.85 + charge * 0.8);
       const im = this._sprite(s.sprite);
-      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(ang);
       const sz = s.size;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(cur);
+      if (thr > 0.05) {                                     // thruster flare off the stern
+        const len = sz * (0.6 + thr * 1.1), rad = sz * 0.3;
+        const g = ctx.createLinearGradient(-sz * 0.85, 0, -sz * 0.85 - len, 0);
+        const hot = charge > 0 ? "170,220,255" : "255,190,110";
+        g.addColorStop(0, `rgba(${hot},${Math.min(0.95, 0.5 + thr * 0.5).toFixed(2)})`);
+        g.addColorStop(1, `rgba(${hot},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(-sz * 0.85, -rad); ctx.lineTo(-sz * 0.85 - len, 0); ctx.lineTo(-sz * 0.85, rad);
+        ctx.closePath(); ctx.fill();
+      }
       if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
       else { ctx.fillStyle = s.side === "player" ? "#7b8cff" : "#ff5d73"; ctx.fillRect(-sz * 0.6, -sz * 0.3, sz * 1.2, sz * 0.6); }
       ctx.restore();
+      // exhaust trail: embers shed from the stern, denser under power
+      if (thr > 0.25 && Math.random() < dt * (10 + thr * 26)) {
+        const bx = p.x - Math.cos(cur) * sz, by = p.y - Math.sin(cur) * sz;
+        this._parts.push({ kind: "trail", x: bx, y: by, hot: charge > 0,
+          vx: -Math.cos(cur) * 14 + (Math.random() - 0.5) * 10,
+          vy: -Math.sin(cur) * 14 + (Math.random() - 0.5) * 10,
+          t0: t, life: 0.35 + Math.random() * 0.35, s: 1 + Math.random() * 1.5 });
+      }
       if (s.side === "player") {   // faint friend-marker so sides read at a glance
         ctx.strokeStyle = "rgba(123,140,255,.35)"; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.arc(p.x, p.y, sz + 3, 0, Math.PI * 2); ctx.stroke();
       }
+    }
+
+    // ---- hyperdrive jumps: the streak and the flash it leaves behind ----
+    this._jumps = this._jumps.filter(j => t - j.t0 < 0.55);
+    for (const j of this._jumps) {
+      const k = (t - j.t0) / 0.55, al = 1 - k;
+      const len = j.size * (6 + k * 46);
+      const g = ctx.createLinearGradient(j.x, j.y, j.x + Math.cos(j.ang) * len, j.y + Math.sin(j.ang) * len);
+      g.addColorStop(0, `rgba(200,235,255,${(0.95 * al).toFixed(2)})`);
+      g.addColorStop(1, "rgba(140,200,255,0)");
+      ctx.strokeStyle = g; ctx.lineWidth = Math.max(1, j.size * 0.5 * al);
+      ctx.beginPath(); ctx.moveTo(j.x, j.y);
+      ctx.lineTo(j.x + Math.cos(j.ang) * len, j.y + Math.sin(j.ang) * len); ctx.stroke();
+      ctx.fillStyle = `rgba(225,245,255,${(0.55 * al * al).toFixed(2)})`;   // collapse flash
+      ctx.beginPath(); ctx.arc(j.x, j.y, j.size * (0.85 - k * 0.6), 0, Math.PI * 2); ctx.fill();
     }
 
     // fighters: cosmetic darts orbiting their carrier
@@ -388,6 +449,11 @@ const BattleView = {
         ctx.fillStyle = `rgba(70,76,92,${(1 - k).toFixed(2)})`; ctx.fillRect(-p.s, -p.s * 0.6, p.s * 2, p.s * 1.2);
         ctx.fillStyle = `rgba(255,160,80,${(0.6 * (1 - k) * (1 - k)).toFixed(2)})`; ctx.fillRect(-p.s, -p.s * 0.6, p.s * 0.7, p.s * 1.2);
         ctx.restore();
+      } else if (p.kind === "trail") {
+        const c = p.hot ? "160,215,255" : "255,170,90";
+        ctx.fillStyle = `rgba(${c},${(0.55 * (1 - k)).toFixed(2)})`;
+        const sz = p.s * (1 - k * 0.5);
+        ctx.fillRect(p.x + p.vx * age - sz / 2, p.y + p.vy * age - sz / 2, sz, sz);
       } else {
         ctx.fillStyle = `rgba(255,200,130,${(1 - k).toFixed(2)})`;
         ctx.fillRect(p.x + p.vx * age - 1.2, p.y + p.vy * age - 1.2, 2.4, 2.4);

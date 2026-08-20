@@ -169,7 +169,7 @@ const Combat = {
       if (!s.shields || !(s.pct || s.dead)) continue;
       const end = Math.min(t2 + 2, s.deathT || t3);
       const hitT = +(rf(t1, Math.max(t1 + 0.5, end - 1))).toFixed(2);
-      const foes = (s.side === "player" ? enemies : players).filter(f => !f.deathT || f.deathT > hitT);
+      const foes = (s.side === "player" ? enemies : players).filter(f => this._live(f, hitT));
       if (foes.length) events.push({ t: hitT, kind: "shieldhit", from: pick(foes).id, to: s.id });
       const downT = +(Math.min(end, rf(t2, t2 + 2))).toFixed(2);
       events.push({ t: downT, kind: "shielddown", from: s.id, to: s.id });
@@ -192,7 +192,7 @@ const Combat = {
       // shooter must be alive at t — if every enemy is gone by then, pull the
       // hit back to just before the last one dies (sum stays exact either way)
       const shooter = t => {
-        const a = enemies.filter(e => !e.deathT || e.deathT > t);
+        const a = enemies.filter(e => this._live(e, t));
         if (a.length) return { from: pick(a), t };
         const last = enemies.reduce((x, y) => ((x.deathT || 0) >= (y.deathT || 0) ? x : y));
         return { from: last, t: Math.max(0.4, +(last.deathT - 0.1).toFixed(2)) };
@@ -207,7 +207,7 @@ const Combat = {
     // the wallet accounting lives only on `damaged` ships)
     for (const s of dying) {
       const side = s.side === "player" ? enemies : players;
-      const foes = side.filter(f => !f.deathT || f.deathT > s.deathT);
+      const foes = side.filter(f => this._live(f, s.deathT));
       for (let i = ri(2, 3); i > 0 && foes.length; i--) {   // no live foe → the ring alone tells it
         const from = pick(foes);
         events.push({ t: +(Math.max(0.5, s.deathT - rf(0.15, 1.2))).toFixed(2), kind: this._weapon(from, rng), from: from.id, to: s.id });
@@ -224,12 +224,13 @@ const Combat = {
       const foes = s.side === "player" ? enemies : players;
       if (!foes.length) continue;
       const cadence = s.role === "screen" ? 0.9 : s.role === "capital" ? 2.2 : 1.4;
-      for (let t = t1 + rf(0, cadence); t < Math.min(t3, s.deathT || t3); t += cadence * rf(0.8, 1.3)) {
-        const to = pick(foes.filter(f => !f.deathT || f.deathT > t));
+      const mine = Math.min(t3, s.deathT || t3, s.jumpT || t3);   // stop when it dies or jumps
+      for (let t = t1 + rf(0, cadence); t < mine; t += cadence * rf(0.8, 1.3)) {
+        const to = pick(foes.filter(f => this._live(f, t)));
         if (!to) break;
         const kind = this._weapon(s, rng);
         events.push({ t: +t.toFixed(2), kind, from: s.id, to: to.id });
-        const cap = Math.min(t3, s.deathT || t3);
+        const cap = mine;
         if (kind === "missile" && rng() < 0.4 && t + 0.25 < cap)       // paired salvo
           events.push({ t: +(t + 0.25).toFixed(2), kind: "missile", from: s.id, to: to.id });
         if (s.role === "capital") {                                    // broadside walk
@@ -263,10 +264,13 @@ const Combat = {
       outcome,
       ships: ships.map(s => ({ id: s.id, side: s.side, name: s.name, type: s.type,
         sprite: s.sprite, size: s.size, role: s.role, shields: s.shields,
-        path: s.path, deathT: s.deathT })),
+        path: s.path, deathT: s.deathT, jumpT: s.jumpT })),
       events,
     };
   },
+
+  // still on the field at t: not dead, not jumped out
+  _live(s, t) { return (!s.deathT || s.deathT > t) && (!s.jumpT || s.jumpT > t); },
 
   _weapon(s, rng) {
     if (!s) return "beam";
@@ -397,23 +401,34 @@ const Combat = {
   },
 
   // ---- resolution act: survivors leave the field --------------------------
-  // Loss: your survivors burn for the map edge (the "falling back!" read),
-  // pursuers hold the field. Success: routed enemy survivors flee outward.
+  // Nobody "flies off the edge": a ship that breaks contact turns onto its
+  // escape vector, burns, and JUMPS — `jumpT` is when it lights the drive and
+  // vanishes (the renderer plays the charge, the streak and the flash).
+  // Loss: your survivors run and jump, pursuers hold the field. Success:
+  // routed enemies jump out. Boarded smugglers don't get to leave at all.
   _exits(tmpl, report, players, enemies, D, t3, rng) {
     const rf = (a, b) => a + rng() * (b - a);
-    const cut = (s, t, x, y) => {
+    const cl = v => Math.min(0.95, Math.max(0.05, v));
+    const cut = (s, t, x, y, endT) => {
       const here = this._at(s, t);
       s.path = s.path.filter(w => w.t < t || w.t === 0);
       s.path.push({ t: +t.toFixed(2), x: here.x, y: here.y });
-      s.path.push({ t: D, x, y });
+      s.path.push({ t: +(endT || D).toFixed(2), x, y });
+    };
+    // break off at t, run along the escape vector, light the drive at jumpT
+    const jump = (s, t, dx, dy) => {
+      const h = this._at(s, t);
+      const jt = +Math.min(D - 0.2, t + rf(2.4, 3.4)).toFixed(2);
+      cut(s, t, cl(h.x + dx), cl(h.y + dy), jt);
+      s.jumpT = jt;
     };
     if (!report.success && !report.wipe) {
       const caught = tmpl === "smuggle" && (report.impounded || []).length;
       for (const s of players) {
         if (s.dead) continue;                            // death truncation handles them
         const t = t3 - rf(0, 1);
-        if (caught) { const h = this._at(s, t); cut(s, t, h.x + rf(-0.02, 0.02), h.y + rf(-0.02, 0.02)); }  // boarded, dead in space
-        else cut(s, t, -0.12, this._at(s, t).y + rf(-0.06, 0.06));                                          // burn for the edge
+        if (caught) { const h = this._at(s, t); cut(s, t, h.x + rf(-0.02, 0.02), h.y + rf(-0.02, 0.02)); }  // boarded: held, no jump
+        else jump(s, t, -rf(0.16, 0.26), rf(-0.06, 0.06));                                                  // break off and jump
       }
       for (const s of enemies) {
         if (s.dead) continue;
@@ -424,7 +439,14 @@ const Combat = {
       for (const s of enemies) {
         if (s.dead) continue;
         const t = t3 - rf(0, 0.8), h = this._at(s, t);
-        cut(s, t, h.x > 0.5 ? 1.12 : -0.12, h.y + rf(-0.08, 0.08));   // rout
+        jump(s, t, (h.x > 0.5 ? 1 : -1) * rf(0.16, 0.26), rf(-0.08, 0.08));   // rout, then jump out
+      }
+      // a clean smuggling run makes the gate and jumps through it
+      if (tmpl === "smuggle") for (const s of players) {
+        if (s.dead) continue;
+        s.jumpT = +(D - rf(0.3, 0.8)).toFixed(2);
+        s.path = s.path.filter(w => w.t < s.jumpT || w.t === 0);
+        s.path.push({ t: s.jumpT, x: 0.94, y: 0.34 + rf(-0.04, 0.04) });
       }
     }
   },

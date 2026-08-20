@@ -77,11 +77,21 @@ function verify(report, tag) {
     assert.ok(ids.has(e.from) && ids.has(e.to), label("events reference real ships"));
     if (e.kind === "say") assert.ok(typeof e.text === "string" && e.text.length, label("say events carry text"));
     if (e.kind === "death") deathEvents.add(e.from);
-    const from = sc.ships.find(s => s.id === e.from);
-    if (e.kind !== "death") assert.ok(!from.deathT || e.t <= from.deathT + 1e-9, label("the dead don't fire"));
+    const from = sc.ships.find(s => s.id === e.from), to2 = sc.ships.find(s => s.id === e.to);
+    if (e.kind !== "death") {
+      assert.ok(!from.deathT || e.t <= from.deathT + 1e-9, label("the dead don't fire"));
+      assert.ok(!from.jumpT || e.t <= from.jumpT + 1e-9, label("ships that jumped out don't fire"));
+      assert.ok(!to2.jumpT || e.t <= to2.jumpT + 1e-9, label("nothing shoots at a ship that already jumped"));
+    }
   }
   for (const s of sc.ships) {
     assert.strictEqual(!!s.deathT, deathEvents.has(s.id), label(`deathT ⇔ death event for ${s.id}`));
+    // a hull either dies or jumps out, never both, and always inside the runtime
+    assert.ok(!(s.deathT && s.jumpT), label(`${s.id} doesn't both die and jump`));
+    if (s.jumpT) {
+      assert.ok(s.jumpT > 0 && s.jumpT <= sc.duration + 1e-9, label(`${s.id} jumps inside the runtime`));
+      assert.ok(s.path[s.path.length - 1].t <= s.jumpT + 1e-9, label(`${s.id}'s path ends at its jump`));
+    }
     assert.ok(s.path.length >= 2 || s.deathT, label("every ship moves"));
     for (const w of s.path) assert.ok(isFinite(w.t) && isFinite(w.x) && isFinite(w.y), label("finite waypoints"));
   }
@@ -89,7 +99,7 @@ function verify(report, tag) {
 }
 
 // ---- many seeded end-to-end reports through the REAL resolver --------------
-let engagements = 0, wipes = 0, flawless = 0, checked = 0;
+let engagements = 0, wipes = 0, flawless = 0, checked = 0, jumped = 0;
 vm.runInContext(`Math.random = () => window.__r()`, ctx);   // sandbox-only, reseeded per run
 for (let seed = 1; seed <= 120; seed++) {
   const rng = mk(seed * 2654435761);
@@ -124,9 +134,11 @@ for (let seed = 1; seed <= 120; seed++) {
   engagements++;
   if (sc.outcome === "wipe") wipes++;
   if (sc.outcome === "flawless") flawless++;
+  if (sc.ships.some(x => x.jumpT)) jumped++;
 }
 assert.ok(checked >= 60, `coverage: ${checked} engagements scripted (want ≥60)`);
 assert.ok(wipes >= 1 && flawless >= 1, `coverage: saw wipes (${wipes}) and flawless (${flawless})`);
+assert.ok(jumped >= 5, `coverage: saw hyperdrive escapes (${jumped} scripts had a ship jump out)`);
 
 // ---- edges -----------------------------------------------------------------
 // roster cap: a 14-ship report stages at most 12
