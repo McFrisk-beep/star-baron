@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 /* check_lanes.js — the hyperspace lane graph (docs/LIVING_GALAXY.md §2, §9).
    Graph connected; gate count = degree with true bearings; identical graph
-   across two independent builds; ring property on capitals; Dijkstra sanity.
+   across two independent builds; sector ring anchored on edge systems;
+   Dijkstra sanity; travel distance actually follows the lanes; a RING/SECTORS
+   desync degrades instead of taking boot down.
    Run: node tools/check_lanes.js */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 
-const boot = () => {
+const DEFAULT_FILES = ["store.js", "data.js", "flavor.js", "galaxy.js", "lanes.js"];
+// load() stops before build() so a test can mutate SECTORS first; boot() builds.
+const load = (files = DEFAULT_FILES) => {
   const ctx = vm.createContext({ console, Math });
   ctx.window = ctx;
-  for (const f of ["store.js", "data.js", "flavor.js", "galaxy.js", "lanes.js"]) {
+  for (const f of files) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), ctx, { filename: f });
   }
+  return ctx;
+};
+const boot = (files) => {
+  const ctx = load(files);
   ctx.Galaxy.build();
-  ctx.Lanes.build();
+  if (ctx.Lanes) ctx.Lanes.build();
   return ctx;
 };
 
@@ -89,5 +97,43 @@ for (const a of caps) for (const b of Galaxy.list.map(s => s.id)) {
 }
 assert.strictEqual(Lanes.route(caps[0], caps[0]).len, 0, "route to self is zero-length");
 assert.strictEqual(Lanes.route("nope", caps[0]), null, "unknown system routes to null");
+
+// ---- travel distance follows the lanes (LIVING_GALAXY.md §2.5) -------------
+{
+  const c = boot(["store.js", "data.js", "flavor.js", "galaxy.js", "lanes.js", "assets.js"]);
+  const gen = c.Galaxy.list.filter(s => !s.capital).map(s => s.id);
+  const [a, b] = [gen[0], gen[gen.length - 1]];
+  assert.strictEqual(c.Shipments.distance(a, b), c.Lanes.routeLength(a, b),
+    "generated-system distance = lane route length, not straight line");
+  assert.ok(c.Shipments.distance(a, b) > Math.hypot(
+    c.Galaxy.get(a).pos.x - c.Galaxy.get(b).pos.x, c.Galaxy.get(a).pos.y - c.Galaxy.get(b).pos.y),
+    "routing through lanes is longer than flying straight");
+  // curated capital-to-capital keeps SYSTEMS.distance, so trade-loop balance holds
+  assert.strictEqual(c.Shipments.distance("navos", "sable"),
+    Math.abs(c.SYSTEMS.find(s => s.id === "navos").distance - c.SYSTEMS.find(s => s.id === "sable").distance),
+    "capital pairs still use curated SYSTEMS.distance");
+  // no lane graph (module absent) → the straight-line fallback still works
+  const nl = boot(["store.js", "data.js", "flavor.js", "galaxy.js", "assets.js"]);
+  assert.ok(nl.Shipments.distance(a, b) > 0, "distance falls back cleanly when Lanes is absent");
+}
+
+// ---- RING/SECTORS desync degrades, never kills boot ------------------------
+{
+  // a sector RING names but SECTORS no longer has
+  const gone = load();
+  gone.SECTORS.splice(gone.SECTORS.findIndex(s => s.id === "forge"), 1);
+  gone.Galaxy.build();
+  assert.doesNotThrow(() => gone.Lanes.build(), "a sector missing from SECTORS doesn't throw in build()");
+  // a sector SECTORS has but RING forgot — must still be reachable
+  const added = load();
+  added.SECTORS.push({ id: "rim", name: "Rim", capital: "navos", specialty: null,
+    race: "voidkin", nebula: "void", star: "white", pos: { x: 0.12, y: 0.14 } });
+  added.Galaxy.build(); added.Lanes.build();
+  const seen = new Set([added.Galaxy.list[0].id]), q = [added.Galaxy.list[0].id];
+  while (q.length) for (const l of added.Lanes.adj[q.pop()] || []) if (!seen.has(l.to)) { seen.add(l.to); q.push(l.to); }
+  // unique ids, not list.length: this fixture's extra sector reuses a curated capital
+  assert.strictEqual(seen.size, Object.keys(added.Galaxy.systems).length,
+    "a sector RING forgot is still connected to the graph");
+}
 
 console.log("check_lanes: all good ✓");

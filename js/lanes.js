@@ -1,9 +1,10 @@
 /* lanes.js — the deterministic hyperspace lane graph (docs/LIVING_GALAXY.md §2).
    Derived from GALAXY.seed after Galaxy.build(), exactly like the galaxy
    itself: every client computes the identical graph, nothing is persisted.
-   Sector capitals form a trunk ring (two connectors per sector); within a
-   sector each system links to its 1–3 nearest neighbours plus a spanning pass
-   so no system is stranded. Lane length = pos distance, the same metric
+   Sectors form a trunk ring (two connectors each), anchored on the closest
+   cross-border pair of systems rather than on the capitals; within a sector
+   each system links to its 1–3 nearest neighbours plus a spanning pass so no
+   system is stranded. Lane length = pos distance, the same metric
    charters/surveys already scale by.                                           */
 
 const Lanes = {
@@ -12,9 +13,20 @@ const Lanes = {
   _routes: {},    // "a>b" -> { path: [ids], len } (Dijkstra cache)
 
   // Trunk-ring loop order (LIVING_GALAXY.md §2.1): Core ↔ Korrin Belt,
-  // Core ↔ Helm Tide, and on around — the perimeter loop, not SECTORS array
-  // order, so no trunk lane crosses the map.
+  // Core ↔ Helm Tide, and on around — a hand-picked loop, not SECTORS array
+  // order, so no trunk lane crosses the map. Editing SECTORS means editing
+  // this too; ringOrder() keeps a desync from taking the game down with it.
   RING: ["core", "belt", "green", "sprawl", "forge", "tide"],
+
+  // RING filtered to sectors that exist, with any sector RING forgot appended
+  // so it still gets its two connectors instead of being stranded off-graph.
+  ringOrder() {
+    const live = Galaxy.sectors.map(s => s.id);
+    const order = this.RING.filter(id => live.includes(id));
+    const missed = live.filter(id => !order.includes(id));
+    if (missed.length) console.warn("Lanes: sectors missing from RING, appended:", missed.join(","));
+    return order.concat(missed);
+  },
 
   build() {
     this.adj = {}; this.list = []; this._routes = {};
@@ -37,15 +49,17 @@ const Lanes = {
     // each anchored on the sectors' edge systems (the closest cross-border
     // pair), not capital-to-capital: highways enter a sector at its rim and
     // reach the capital over local lanes.
-    for (let i = 0; i < this.RING.length; i++) {
-      const A = Galaxy.sectors.find(s => s.id === this.RING[i]);
-      const B = Galaxy.sectors.find(s => s.id === this.RING[(i + 1) % this.RING.length]);
+    const ring = this.ringOrder();
+    for (let i = 0; i < ring.length; i++) {
+      const A = Galaxy.sectors.find(s => s.id === ring[i]);
+      const B = Galaxy.sectors.find(s => s.id === ring[(i + 1) % ring.length]);
+      if (!A || !B || A === B) continue;
       let best = null;
       for (const a of A.systems) for (const b of B.systems) {
         const d = dist(a, b);
         if (!best || d < best.d) best = { d, a, b };
       }
-      add(best.a, best.b, true);
+      if (best) add(best.a, best.b, true);
     }
 
     for (const sec of Galaxy.sectors) {

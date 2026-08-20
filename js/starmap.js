@@ -928,12 +928,14 @@ const StarMap = {
 
     // One hyperspace gate per lane, at the system's edge on the true bearing
     // toward the connected system (LIVING_GALAXY.md §2.4) — the gate to Navos
-    // points at Navos. Recomputed per use so it tracks canvas resizes.
+    // points at Navos. Positions only depend on canvas size, so cache on it:
+    // the draw loop and every gate-bound ship call this each frame.
+    let gateCache = null;
     const gates = () => {
       const w = W(), h = H(), m = 64;
+      if (gateCache && gateCache.w === w && gateCache.h === h) return gateCache.at;
       const gl = window.Lanes ? Lanes.gates(sys.id) : [];
-      if (!gl.length) return [{ to: null, name: "", x: w - m, y: h * 0.3 }];
-      return gl.map(g => {
+      const at = !gl.length ? [{ to: null, name: "", x: w - m, y: h * 0.3 }] : gl.map(g => {
         const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
         // project the bearing from the center onto the inset canvas edge
         const k = Math.min((w / 2 - m) / Math.max(Math.abs(dx), 1e-9),
@@ -941,6 +943,8 @@ const StarMap = {
         const dest = Galaxy.get(g.to);
         return { to: g.to, name: dest ? dest.name : "", x: w / 2 + dx * k, y: h / 2 + dy * k };
       });
+      gateCache = { w, h, at };
+      return at;
     };
 
     // ---- ambient ship traffic (with behaviour) ----
