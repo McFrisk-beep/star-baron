@@ -45,7 +45,7 @@ function verify(report, tag) {
   // determinism — seeded by mission uid, the same fight plays every time
   assert.strictEqual(JSON.stringify(sc), JSON.stringify(Combat.script(report, report.roster)), label("deterministic"));
 
-  assert.ok(sc.duration >= 6 && sc.duration <= 26, label(`duration ${sc.duration} within 6..26`));
+  assert.ok(sc.duration >= 6 && sc.duration <= 62, label(`duration ${sc.duration} within 6..62`));
   const ids = new Set(sc.ships.map(s => s.id));
   const players = sc.ships.filter(s => s.side === "player");
   const enemies = sc.ships.filter(s => s.side === "enemy");
@@ -73,8 +73,9 @@ function verify(report, tag) {
     assert.ok(e.t >= prev, label("events sorted"));
     prev = e.t;
     assert.ok(e.t >= 0 && e.t <= sc.duration + 1e-9, label("event inside the runtime"));
-    assert.ok(["beam", "missile", "flak", "shieldhit", "death", "launch"].includes(e.kind), label(`known kind ${e.kind}`));
+    assert.ok(["beam", "missile", "flak", "shieldhit", "shielddown", "death", "launch", "say"].includes(e.kind), label(`known kind ${e.kind}`));
     assert.ok(ids.has(e.from) && ids.has(e.to), label("events reference real ships"));
+    if (e.kind === "say") assert.ok(typeof e.text === "string" && e.text.length, label("say events carry text"));
     if (e.kind === "death") deathEvents.add(e.from);
     const from = sc.ships.find(s => s.id === e.from);
     if (e.kind !== "death") assert.ok(!from.deathT || e.t <= from.deathT + 1e-9, label("the dead don't fire"));
@@ -110,6 +111,13 @@ for (let seed = 1; seed <= 120; seed++) {
   });
   const rep = Missions.resolveMatured(Date.now())[0];
   assert.ok(Array.isArray(rep.roster) && rep.roster.length === n, `seed ${seed}: report carries the roster`);
+  // a lost fight always costs: every surviving hull comes home damaged
+  if (!rep.success) {
+    const lostIds = new Set((rep.lost || []).map(x => x.uid));
+    const dmgIds = new Set((rep.damaged || []).map(x => x.uid));
+    for (const p of rep.roster) if (!lostIds.has(p.uid))
+      assert.ok(dmgIds.has(p.uid), `seed ${seed}: failed mission → survivor ${p.uid} is damaged`);
+  }
   if (!Combat.replayable(rep)) continue;     // clean runs have no scene — by design
   const sc = verify(rep, "seed " + seed);
   checked++;
@@ -143,5 +151,17 @@ assert.ok(!Combat.replayable({ uid: "r2", type: "transport", success: true, lost
   roster: [{ uid: "a", name: "A", type: "mule" }] }), "clean haul → nothing to watch");
 assert.ok(Combat.replayable({ uid: "r3", type: "combat", success: true, lost: [], damaged: [], impounded: [],
   roster: [{ uid: "a", name: "A", type: "gunboat" }] }), "combat mission is always an engagement");
+
+// charter reports replay with the freight templates (LIVING_GALAXY.md §5)
+{
+  const rep = { uid: "ch1", type: "charter", success: true, danger: "high", faction: null,
+    lost: [{ uid: "c1", name: "Hauler A" }], damaged: [{ uid: "c2", name: "Hauler B", pct: 14 }], impounded: [],
+    roster: [{ uid: "c1", name: "Hauler A", type: "drift" }, { uid: "c2", name: "Hauler B", type: "bulk" }] };
+  assert.ok(Combat.replayable(rep), "charter with an incident is replayable");
+  verify(rep, "charter");
+  assert.ok(!Combat.replayable({ uid: "ch2", type: "charter", success: true, danger: "low",
+    lost: [], damaged: [], impounded: [], roster: [{ uid: "c3", name: "C", type: "drift" }] }),
+    "clean charter → nothing to watch");
+}
 
 console.log(`check_combat_script: all good ✓ (${checked} engagements, ${wipes} wipes, ${flawless} flawless)`);

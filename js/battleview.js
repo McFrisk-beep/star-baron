@@ -1,9 +1,10 @@
 /* battleview.js — canvas playback for Combat scripts (LIVING_GALAXY.md §5).
    Dumb renderer: reads the script, draws frames. All effects are canvas
-   primitives — gradient beams, tracer flak, missiles with particle trails,
-   expanding-ring deaths, arc shield hits. No sprite sheets, no new art:
-   ships draw with the same top-down assets/ships + assets/raceships sprites
-   the system view already rotates.                                            */
+   primitives — layered gradient beams, tracer flak, missiles with particle
+   trails, expanding-ring deaths, arc shield hits and shield collapses, armor
+   chunks knocked off on impacts, and wreck hulks that keep drifting after a
+   kill. The scene plays over the system's own nebula backdrop with a seeded
+   asteroid/dust field so space reads lived-in. No sprite sheets, no new art. */
 
 const BattleView = {
   _imgs: {}, raf: null, script: null, report: null,
@@ -32,12 +33,24 @@ const BattleView = {
     return this._el;
   },
 
+  // The engagement happened SOMEWHERE — use that system's own space backdrop
+  // (admin spacebg override, else its sector nebula), falling back to a
+  // seeded nebula so even unmapped fights get sky.
+  _backdrop(report, seed) {
+    const sys = (window.Galaxy && report.sysName)
+      ? Galaxy.list.find(s => s.name === report.sysName) : null;
+    if (sys) return { img: this.img(ASSET.spacebg(sys.id) || ASSET.nebula(sys.nebula)), belt: !!sys.asteroidBelt };
+    const nebs = ["void", "blue", "green", "gold", "red", "purple"];
+    return { img: this.img(ASSET.nebula(nebs[seed % nebs.length])), belt: (seed >> 3) % 2 === 0 };
+  },
+
   // opts.offered: playback the game offered (not an explicit ▶ Replay click) —
   // skipping one of those early remembers the preference (§5.7).
   open(report, opts = {}) {
     if (!window.Combat || !Combat.replayable(report)) return;
     const el = this._els();
     this.report = report; this._offered = !!opts.offered;
+    const seed = Combat.seedFrom(report.uid);
     this.script = Combat.script(report, report.roster);
     el.title.textContent = `⚔ ${report.title}`;
     el.skip.textContent = "Skip ▸";
@@ -51,10 +64,23 @@ const BattleView = {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._w = el.canvas.width / dpr; this._h = el.canvas.height / dpr;
 
-    this._stars = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random(), b: Math.random() }));
+    // seeded scenery: stars, dust, asteroid field (denser on belt systems)
+    const srng = Combat._mk(seed ^ 0x5ce7e);
+    this._bg = this._backdrop(report, seed);
+    this._asterImg = this.img(ASSET.asteroids());
+    this._stars = Array.from({ length: 80 }, () => ({ x: srng(), y: srng(), b: srng() }));
+    this._dust = Array.from({ length: 26 }, () => ({ x: srng(), y: srng(), vx: (srng() - 0.5) * 3, vy: (srng() - 0.5) * 3, a: 0.08 + srng() * 0.2, s: 1 + srng() * 1.6 }));
+    const nRocks = (this._bg.belt ? 16 : 8) + Math.floor(srng() * 5);
+    this._rocks = Array.from({ length: nRocks }, () => ({
+      x: srng() * this._w, y: srng() * this._h,
+      vx: (srng() - 0.5) * 6, vy: (srng() - 0.5) * 6,
+      rot: srng() * 6.28, vr: (srng() - 0.5) * 0.4, s: 10 + srng() * 22, a: 0.35 + srng() * 0.4,
+    }));
+
     this._beams = []; this._missiles = []; this._flak = []; this._rings = [];
-    this._arcs = []; this._parts = []; this._fighters = [];
-    this._evIdx = 0; this._done = false; this._byId = null;
+    this._arcs = []; this._parts = []; this._fighters = []; this._wrecks = [];
+    this._bubbles = []; this._collapses = [];
+    this._evIdx = 0; this._done = false; this._byId = null; this._lastT = 0;
 
     const reduced = !!(this.s().settings && this.s().settings.reduced);
     this._t0 = performance.now();
@@ -70,8 +96,7 @@ const BattleView = {
 
   _finish() {
     this._done = true;
-    const el = this._els();
-    el.skip.textContent = "Close";
+    this._els().skip.textContent = "Close";
   },
 
   skip() {
@@ -92,9 +117,19 @@ const BattleView = {
   _pos(s, t) { return Combat._at(s, Math.min(t, s.deathT || Infinity)); },
   _px(p) { const m = 26; return { x: m + p.x * (this._w - 2 * m), y: m + p.y * (this._h - 2 * m) }; },
 
+  _chunks(x, y, n) {   // armor knocked loose — slow, spinning, long-lived
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 6.28, sp = 15 + Math.random() * 55;
+      this._parts.push({ kind: "chunk", x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 6,
+        t0: this._nowT, life: 1.4 + Math.random() * 1.2, s: 2 + Math.random() * 3 });
+    }
+  },
+
   _drawFrame(ctx, t) {
     const sc = this.script; if (!sc) return;
     const w = this._w, h = this._h;
+    const dt = Math.min(0.06, Math.max(0, t - this._lastT)); this._lastT = t; this._nowT = t;
     const byId = this._byId || (this._byId = Object.fromEntries(sc.ships.map(s => [s.id, s])));
 
     // consume events due by t → transient effects
@@ -103,12 +138,25 @@ const BattleView = {
       const from = byId[e.from], to = byId[e.to];
       if (!from) continue;
       const a = this._px(this._pos(from, e.t));
+      if (e.kind === "say") {
+        this._bubbles.push({ ship: from.id, text: e.text || "…", t0: e.t, life: 3, last: a });
+        continue;
+      }
+      if (e.kind === "shielddown") {
+        this._collapses.push({ ship: from.id, t0: e.t, size: (from.size || 10) + 8 });
+        continue;
+      }
       if (e.kind === "death") {
         this._rings.push({ x: a.x, y: a.y, t0: e.t, size: (from.size || 10) * 1.6 });
-        for (let i = 0; i < 22; i++) {
-          const an = Math.random() * 6.28, sp = 25 + Math.random() * 110;
-          this._parts.push({ x: a.x, y: a.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, t0: e.t, life: 0.5 + Math.random() * 0.5 });
+        for (let i = 0; i < 26; i++) {
+          const an = Math.random() * 6.28, sp = 25 + Math.random() * 120;
+          this._parts.push({ x: a.x, y: a.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, t0: e.t, life: 0.5 + Math.random() * 0.6 });
         }
+        this._chunks(a.x, a.y, 6);
+        // the hulk stays: a dark, slowly tumbling wreck drifting off the fight
+        this._wrecks.push({ sprite: from.sprite, size: from.size, x: a.x, y: a.y,
+          vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+          rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.5 });
         this._fighters = this._fighters.filter(f => f.carrier !== from.id);
         continue;
       }
@@ -122,20 +170,51 @@ const BattleView = {
       const impact = e.dmg > 0 || to.side === "enemy" || !!to.deathT || e.kind === "shieldhit";
       const b = impact ? bp : { x: bp.x + (Math.random() < 0.5 ? -1 : 1) * (to.size + 14), y: bp.y + (Math.random() < 0.5 ? -1 : 1) * (to.size + 8) };
       if (e.kind === "shieldhit") { this._arcs.push({ x: bp.x, y: bp.y, t0: e.t, size: to.size + 6, a0: Math.atan2(a.y - bp.y, a.x - bp.x) }); continue; }
+      if (impact && (e.dmg > 0 || to.deathT)) this._chunks(bp.x, bp.y, e.dmg > 0 ? 4 : 2);
       if (e.kind === "beam") this._beams.push({ a, b, t0: e.t, side: from.side, impact });
-      else if (e.kind === "missile") this._missiles.push({ a, b, t0: e.t, dur: 0.55, side: from.side, impact });
+      else if (e.kind === "missile") this._missiles.push({ a, b, t0: e.t, dur: 0.7, side: from.side, impact });
       else this._flak.push({ a, b, t0: e.t, side: from.side, impact });
     }
 
-    // ---- backdrop ----
-    ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h);
+    // ---- backdrop: system nebula, stars, drifting dust + asteroid field ----
+    if (this._bg.img.ok) {
+      const im = this._bg.img, k = Math.max(w / im.width, h / im.height);
+      ctx.drawImage(im, (w - im.width * k) / 2, (h - im.height * k) / 2, im.width * k, im.height * k);
+      ctx.fillStyle = "rgba(4,6,12,.52)"; ctx.fillRect(0, 0, w, h);   // veil: keep the fight readable
+    } else { ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h); }
     ctx.fillStyle = "#fff";
-    for (const st of this._stars) { ctx.globalAlpha = 0.25 + st.b * 0.45; ctx.fillRect(st.x * w, st.y * h, 1.2, 1.2); }
+    for (const st of this._stars) { ctx.globalAlpha = 0.2 + st.b * 0.4; ctx.fillRect(st.x * w, st.y * h, 1.2, 1.2); }
+    for (const d of this._dust) {
+      d.x = (d.x + d.vx * dt / w + 1) % 1; d.y = (d.y + d.vy * dt / h + 1) % 1;
+      ctx.globalAlpha = d.a; ctx.fillRect(d.x * w, d.y * h, d.s, d.s);
+    }
+    ctx.globalAlpha = 1;
+    for (const r of this._rocks) {
+      r.x = (r.x + r.vx * dt + w + r.s) % (w + r.s * 2) - r.s; r.y = (r.y + r.vy * dt + h + r.s) % (h + r.s * 2) - r.s;
+      r.rot += r.vr * dt;
+      ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot); ctx.globalAlpha = r.a;
+      if (this._asterImg.ok) ctx.drawImage(this._asterImg, -r.s / 2, -r.s / 2, r.s, r.s);
+      else { ctx.fillStyle = "#3a3f4d"; ctx.beginPath(); ctx.arc(0, 0, r.s / 3, 0, 6.28); ctx.fill(); }
+      ctx.restore();
+    }
     ctx.globalAlpha = 1;
     if (this.report && this.report.type === "smuggle") {   // the gate they're running for
       const g = this._px({ x: 0.95, y: 0.34 });
       ctx.strokeStyle = "rgba(150,210,255,.7)"; ctx.lineWidth = 2;
       for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.ellipse(g.x, g.y, 8 + k * 5, (8 + k * 5) * 0.42, t * (1.1 + k * 0.4), 0, Math.PI * 2); ctx.stroke(); }
+    }
+
+    // ---- wrecks drift under the living ----
+    for (const wr of this._wrecks) {
+      wr.x += wr.vx * dt; wr.y += wr.vy * dt; wr.rot += wr.vr * dt;
+      const im = this._sprite(wr.sprite);
+      ctx.save(); ctx.translate(wr.x, wr.y); ctx.rotate(wr.rot); ctx.globalAlpha = 0.42;
+      if (im.ok) ctx.drawImage(im, -wr.size, -wr.size * 0.6, wr.size * 2, wr.size * 1.2);
+      else { ctx.fillStyle = "#444"; ctx.fillRect(-wr.size * 0.6, -wr.size * 0.3, wr.size * 1.2, wr.size * 0.6); }
+      ctx.restore(); ctx.globalAlpha = 1;
+      if (Math.random() < dt * 2.5)   // embers off the hulk
+        this._parts.push({ x: wr.x + (Math.random() - 0.5) * wr.size, y: wr.y + (Math.random() - 0.5) * wr.size,
+          vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10, t0: t, life: 0.5 + Math.random() * 0.4 });
     }
 
     // ---- ships ----
@@ -169,16 +248,20 @@ const BattleView = {
     }
 
     // ---- effects (each cleans itself up as it expires) ----
-    this._beams = this._beams.filter(b => t - b.t0 < 0.25);
+    this._beams = this._beams.filter(b => t - b.t0 < 0.3);
     for (const b of this._beams) {
-      const al = 1 - (t - b.t0) / 0.25;
-      const grad = ctx.createLinearGradient(b.a.x, b.a.y, b.b.x, b.b.y);
+      const al = 1 - (t - b.t0) / 0.3;
       const col = b.side === "player" ? "123,190,255" : "255,120,110";
-      grad.addColorStop(0, `rgba(${col},${(0.15 * al).toFixed(2)})`);
-      grad.addColorStop(1, `rgba(${col},${(0.9 * al).toFixed(2)})`);
-      ctx.strokeStyle = grad; ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(${col},${(0.18 * al).toFixed(2)})`; ctx.lineWidth = 7;   // outer glow
       ctx.beginPath(); ctx.moveTo(b.a.x, b.a.y); ctx.lineTo(b.b.x, b.b.y); ctx.stroke();
-      if (b.impact) { ctx.fillStyle = `rgba(255,235,180,${(0.8 * al).toFixed(2)})`; ctx.beginPath(); ctx.arc(b.b.x, b.b.y, 3.5, 0, Math.PI * 2); ctx.fill(); }
+      const grad = ctx.createLinearGradient(b.a.x, b.a.y, b.b.x, b.b.y);
+      grad.addColorStop(0, `rgba(${col},${(0.3 * al).toFixed(2)})`);
+      grad.addColorStop(1, `rgba(255,255,255,${(0.95 * al).toFixed(2)})`);
+      ctx.strokeStyle = grad; ctx.lineWidth = 2.2;                                      // hot core
+      ctx.beginPath(); ctx.moveTo(b.a.x, b.a.y); ctx.lineTo(b.b.x, b.b.y); ctx.stroke();
+      ctx.fillStyle = `rgba(${col},${(0.9 * al).toFixed(2)})`;                          // muzzle flash
+      ctx.beginPath(); ctx.arc(b.a.x, b.a.y, 3, 0, Math.PI * 2); ctx.fill();
+      if (b.impact) { ctx.fillStyle = `rgba(255,235,180,${(0.85 * al).toFixed(2)})`; ctx.beginPath(); ctx.arc(b.b.x, b.b.y, 4, 0, Math.PI * 2); ctx.fill(); }
     }
     this._missiles = this._missiles.filter(m => t - m.t0 < m.dur + 0.1);
     for (const m of this._missiles) {
@@ -187,20 +270,20 @@ const BattleView = {
       if (k < 1) {
         ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(m.b.y - m.a.y, m.b.x - m.a.x));
         ctx.fillStyle = "#ffd9a0"; ctx.fillRect(-4, -1.5, 8, 3); ctx.restore();
-        this._parts.push({ x, y, vx: (Math.random() - 0.5) * 12, vy: (Math.random() - 0.5) * 12, t0: t, life: 0.35 });
+        this._parts.push({ x, y, vx: (Math.random() - 0.5) * 14, vy: (Math.random() - 0.5) * 14, t0: t, life: 0.4 });
       } else if (m.impact && !m._boomed) {
         m._boomed = true;
-        for (let i = 0; i < 10; i++) { const an = Math.random() * 6.28, sp = 20 + Math.random() * 70; this._parts.push({ x: m.b.x, y: m.b.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, t0: t, life: 0.45 }); }
+        for (let i = 0; i < 12; i++) { const an = Math.random() * 6.28, sp = 20 + Math.random() * 80; this._parts.push({ x: m.b.x, y: m.b.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, t0: t, life: 0.5 }); }
       }
     }
-    this._flak = this._flak.filter(f => t - f.t0 < 0.3);
+    this._flak = this._flak.filter(f => t - f.t0 < 0.35);
     for (const f of this._flak) {
-      const k = (t - f.t0) / 0.3;
-      ctx.strokeStyle = `rgba(255,220,140,${(1 - k).toFixed(2)})`; ctx.lineWidth = 1.4;
-      for (let i = 0; i < 3; i++) {
-        const kk = Math.min(1, k * 1.4 + i * 0.12);
+      const k = (t - f.t0) / 0.35;
+      ctx.strokeStyle = `rgba(255,220,140,${(1 - k).toFixed(2)})`; ctx.lineWidth = 1.6;
+      for (let i = 0; i < 5; i++) {
+        const kk = Math.min(1, k * 1.4 + i * 0.1);
         const x = f.a.x + (f.b.x - f.a.x) * kk, y = f.a.y + (f.b.y - f.a.y) * kk;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - (f.b.x - f.a.x) * 0.04, y - (f.b.y - f.a.y) * 0.04); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - (f.b.x - f.a.x) * 0.045, y - (f.b.y - f.a.y) * 0.045); ctx.stroke();
       }
     }
     this._arcs = this._arcs.filter(a => t - a.t0 < 0.4);
@@ -208,6 +291,18 @@ const BattleView = {
       const al = 1 - (t - a.t0) / 0.4;
       ctx.strokeStyle = `rgba(120,220,255,${(0.85 * al).toFixed(2)})`; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.arc(a.x, a.y, a.size, a.a0 - 0.7, a.a0 + 0.7); ctx.stroke();
+    }
+    // shield collapse: the whole envelope flares, shatters and dies
+    this._collapses = this._collapses.filter(c => t - c.t0 < 0.7);
+    for (const c of this._collapses) {
+      const s = byId[c.ship]; if (!s) continue;
+      const p = this._px(this._pos(s, t));
+      const k = (t - c.t0) / 0.7;
+      ctx.strokeStyle = `rgba(120,220,255,${(0.9 * (1 - k)).toFixed(2)})`;
+      ctx.lineWidth = 2.5 * (1 - k) + 0.5;
+      ctx.setLineDash(k > 0.3 ? [6, 5] : []);            // envelope breaks into fragments
+      ctx.beginPath(); ctx.arc(p.x, p.y, c.size * (1 + k * 0.8), 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
     }
     this._rings = this._rings.filter(r => t - r.t0 < 0.9);
     for (const r of this._rings) {
@@ -217,9 +312,44 @@ const BattleView = {
     }
     this._parts = this._parts.filter(p => t - p.t0 < p.life);
     for (const p of this._parts) {
-      const k = (t - p.t0) / p.life;
-      ctx.fillStyle = `rgba(255,200,130,${(1 - k).toFixed(2)})`;
-      ctx.fillRect(p.x + p.vx * (t - p.t0) - 1.2, p.y + p.vy * (t - p.t0) - 1.2, 2.4, 2.4);
+      const k = (t - p.t0) / p.life, age = t - p.t0;
+      if (p.kind === "chunk") {   // armor plate: dark shard with a cooling edge
+        ctx.save(); ctx.translate(p.x + p.vx * age, p.y + p.vy * age); ctx.rotate(p.rot + p.vr * age);
+        ctx.fillStyle = `rgba(70,76,92,${(1 - k).toFixed(2)})`; ctx.fillRect(-p.s, -p.s * 0.6, p.s * 2, p.s * 1.2);
+        ctx.fillStyle = `rgba(255,160,80,${(0.6 * (1 - k) * (1 - k)).toFixed(2)})`; ctx.fillRect(-p.s, -p.s * 0.6, p.s * 0.7, p.s * 1.2);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = `rgba(255,200,130,${(1 - k).toFixed(2)})`;
+        ctx.fillRect(p.x + p.vx * age - 1.2, p.y + p.vy * age - 1.2, 2.4, 2.4);
+      }
+    }
+
+    // ---- radio bubbles ride above everything ----
+    this._bubbles = this._bubbles.filter(b => t - b.t0 < b.life);
+    for (const b of this._bubbles) {
+      const s = byId[b.ship];
+      if (s && !(s.deathT && t >= s.deathT)) b.last = this._px(this._pos(s, t));
+      const al = Math.min(1, (b.life - (t - b.t0)) / 0.4);
+      ctx.save();
+      ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+      const tw = ctx.measureText(b.text).width, padX = 6, bh = 18, bw = tw + padX * 2;
+      let bx = b.last.x - bw / 2, by = b.last.y - 18 - bh;
+      bx = Math.max(3, Math.min(w - bw - 3, bx)); by = Math.max(3, by);
+      ctx.globalAlpha = 0.92 * al; ctx.fillStyle = "rgba(10,14,24,.92)";
+      ctx.beginPath(); ctx.moveTo(b.last.x - 4, by + bh); ctx.lineTo(b.last.x + 4, by + bh);
+      ctx.lineTo(b.last.x, Math.min(b.last.y - 12, by + bh + 7)); ctx.closePath(); ctx.fill();
+      ctx.beginPath();   // manual round-rect: ctx.roundRect is too new for older Safari
+      ctx.moveTo(bx + 5, by);
+      ctx.arcTo(bx + bw, by, bx + bw, by + bh, 5);
+      ctx.arcTo(bx + bw, by + bh, bx, by + bh, 5);
+      ctx.arcTo(bx, by + bh, bx, by, 5);
+      ctx.arcTo(bx, by, bx + bw, by, 5);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "#7b8cff"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.globalAlpha = al; ctx.fillStyle = "#e6ecff";
+      ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      ctx.fillText(b.text, bx + padX, by + bh / 2 + 0.5);
+      ctx.restore();
     }
 
     // ---- end card ----

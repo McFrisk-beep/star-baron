@@ -283,10 +283,16 @@ const Charters = {
     if (!due || this._authBusy) return [];
     this._authBusy = true;
     try {
+      // Roster snapshot before the RPC — lost hulls leave s.ships (§5.7).
+      const rosters = {};
+      for (const c of this.list()) if (!c.resolved)
+        rosters[c.id] = this.shipUids(c).map(u => { const sh = Fleet.ship(u); return sh ? { uid: sh.uid, name: sh.name, type: sh.type } : null; }).filter(Boolean).slice(0, 12);
       const r = await Economy._rpcOnly(() => Cloud.charterResolve(), "Couldn't settle charters — try again.");
       if (r && r.missing) return this._resolveLocal(now);
       if (!r || !r.ok) return [];
       const out = Array.isArray(r.resolved) ? r.resolved : [];
+      for (const rep of out) if (!rep.roster && rosters[rep.uid]) rep.roster = rosters[rep.uid];
+      for (const sr of this.s().reports || []) if (!sr.roster && rosters[sr.uid]) sr.roster = rosters[sr.uid];
       if (out.length) { Economy.refreshNetWorth(); Economy.checkAchievements(); }
       for (const report of out) {
         // Same after-action inbox as Fleet contracts (Dispatches → Fleet Ops).
@@ -312,6 +318,8 @@ const Charters = {
         success: true, ts: now, danger: c.band, faction: c.faction || null,
         credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [],
         shipName: names.length ? names.join(", ") : null,
+        // replay roster (LIVING_GALAXY.md §5.7) — captured before losses
+        roster: ships.map(sh => ({ uid: sh.uid, name: sh.name, type: sh.type })).slice(0, 12),
       };
 
       c.resolved = true;
@@ -351,8 +359,11 @@ const Charters = {
           const smuggle = c.band === "high" || c.band === "extreme";
           const prof = DMGCFG.types[smuggle ? "smuggle" : "transport"] || DMGCFG.types.transport;
           const dangerMult = DMGCFG.dangerMult[c.band] || 1;
+          // A run that lost or surrendered hulls was a real incident — the
+          // survivors don't come home untouched.
+          const incident = report.lost.length || report.impounded.length;
           for (const sh of survivors) {
-            if (Math.random() < prof.chance) {
+            if (Math.random() < (incident ? 1 : prof.chance)) {
               const before = sh.dmg || 0;
               Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult);
               report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
