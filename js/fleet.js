@@ -229,7 +229,10 @@ const Fleet = {
     } else if (window.Galaxy) {
       const ga = Galaxy.get(fromId), gb = Galaxy.get(toId);
       if (ga && gb && ga.pos && gb.pos) {
-        dist = Math.max(0.08, Math.hypot(ga.pos.x - gb.pos.x, ga.pos.y - gb.pos.y));
+        // Route length through the lane graph (LIVING_GALAXY.md §2.5); straight
+        // hypot stays as the fallback if lanes are unavailable.
+        const lane = window.Lanes && Lanes.routeLength(fromId, toId);
+        dist = Math.max(0.08, lane || Math.hypot(ga.pos.x - gb.pos.x, ga.pos.y - gb.pos.y));
         k = (window.STATIONCFG && STATIONCFG.dockMapK) || 22;
       } else {
         dist = 1; k = window.MARKETCFG ? MARKETCFG.dockK : 12;

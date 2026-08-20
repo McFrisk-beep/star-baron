@@ -443,8 +443,10 @@ const Shipments = {
     if (a && b) return Math.max(1, Math.abs((a.distance ?? 0) - (b.distance ?? 0)));
     if (window.Galaxy) {
       const ga = Galaxy.get(fromId), gb = Galaxy.get(toId);
-      if (ga && gb && ga.pos && gb.pos)
-        return Math.max(0.08, Math.hypot(ga.pos.x - gb.pos.x, ga.pos.y - gb.pos.y));
+      if (ga && gb && ga.pos && gb.pos) {
+        const lane = window.Lanes && Lanes.routeLength(fromId, toId);   // LIVING_GALAXY.md §2.5
+        return Math.max(0.08, lane || Math.hypot(ga.pos.x - gb.pos.x, ga.pos.y - gb.pos.y));
+      }
     }
     return 1;
   },

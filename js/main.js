@@ -400,6 +400,7 @@ const Game = {
 
     // Build the (deterministic) galaxy, then restore its local-news history.
     Galaxy.build();
+    if (window.Lanes) Lanes.build();    // hyperspace lane graph rides on Galaxy.list
     Galaxy.hydrate(this.state.galaxy);
     // Sector stock + claimable stations (docs/STATIONS.md). Order: Stock needs
     // Galaxy sectors; Stations.ensure needs Galaxy.list; hydrate after ensure.

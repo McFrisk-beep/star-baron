@@ -1,6 +1,8 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: DESIGN. Nothing here is built. No code has been written.**
+**Status: Step 1 of §8 is built** — lane graph (`js/lanes.js`), galaxy-view
+lane render, per-bearing gates, lane-routed travel ETAs, `tools/check_lanes.js`.
+**Steps 2–4 (combat view, voyages, system-view vignettes) remain design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.
