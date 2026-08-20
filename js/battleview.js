@@ -71,11 +71,17 @@ const BattleView = {
     this._stars = Array.from({ length: 80 }, () => ({ x: srng(), y: srng(), b: srng() }));
     this._dust = Array.from({ length: 26 }, () => ({ x: srng(), y: srng(), vx: (srng() - 0.5) * 3, vy: (srng() - 0.5) * 3, a: 0.08 + srng() * 0.2, s: 1 + srng() * 1.6 }));
     const nRocks = (this._bg.belt ? 16 : 8) + Math.floor(srng() * 5);
-    this._rocks = Array.from({ length: nRocks }, () => ({
-      x: srng() * this._w, y: srng() * this._h,
-      vx: (srng() - 0.5) * 6, vy: (srng() - 0.5) * 6,
-      rot: srng() * 6.28, vr: (srng() - 0.5) * 0.4, s: 10 + srng() * 22, a: 0.35 + srng() * 0.4,
-    }));
+    // Rocks hold station: they bob around a fixed home and tumble slowly
+    // rather than translating off the field (drifting + wrapping read as
+    // "flying away and popping back"). Weapons chip and shatter them below.
+    this._rocks = Array.from({ length: nRocks }, () => {
+      const s = 10 + srng() * 22;
+      return { hx: srng() * this._w, hy: srng() * this._h, x: 0, y: 0,
+        phase: srng() * 6.28, bob: 3 + srng() * 7,
+        wx: 0.13 + srng() * 0.22, wy: 0.11 + srng() * 0.2,
+        rot: srng() * 6.28, vr: (srng() - 0.5) * 0.22, s, a: 0.35 + srng() * 0.4,
+        hp: Math.max(1, Math.round(s / 9)), flash: -9 };
+    });
 
     this._beams = []; this._missiles = []; this._flak = []; this._rings = [];
     this._arcs = []; this._parts = []; this._fighters = []; this._wrecks = [];
@@ -116,6 +122,55 @@ const BattleView = {
 
   _pos(s, t) { return Combat._at(s, Math.min(t, s.deathT || Infinity)); },
   _px(p) { const m = 26; return { x: m + p.x * (this._w - 2 * m), y: m + p.y * (this._h - 2 * m) }; },
+
+  // First rock a shot's path runs into, if any: segment/circle test, nearest
+  // to the muzzle. Only NEAR-MISS fire is tested (see the caller) so a shot
+  // that carries damage can never be eaten by scenery — the movie stays
+  // honest about the report.
+  _rockHit(a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+    if (!len2) return null;
+    let best = null;
+    for (const r of this._rocks) {
+      const rad = r.s * 0.42;
+      let k = ((r.x - a.x) * dx + (r.y - a.y) * dy) / len2;
+      if (k <= 0.04 || k >= 1) continue;                    // behind the muzzle / past the target
+      const px = a.x + dx * k, py = a.y + dy * k;
+      if (Math.hypot(r.x - px, r.y - py) > rad) continue;
+      if (!best || k < best.k) best = { r, k, x: px, y: py };
+    }
+    return best;
+  },
+
+  // Chip a rock: sparks + dark shards at the impact, and if it's taken
+  // enough it breaks into smaller fragments that keep floating.
+  _hitRock(hit, t) {
+    const r = hit.r;
+    r.flash = t;
+    for (let i = 0; i < 5; i++) {
+      const an = Math.random() * 6.28, sp = 20 + Math.random() * 70;
+      this._parts.push({ kind: "chunk", x: hit.x, y: hit.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp,
+        rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 7,
+        t0: t, life: 1 + Math.random(), s: 1.5 + Math.random() * 2 });
+    }
+    if (--r.hp > 0) return;
+    // shatter: replace it with 2–3 smaller rocks holding station nearby
+    const i = this._rocks.indexOf(r);
+    if (i >= 0) this._rocks.splice(i, 1);
+    for (let k = 0, n = 2 + (r.s > 22 ? 1 : 0); k < n && r.s > 11; k++) {
+      const an = Math.random() * 6.28, off = r.s * 0.4;
+      const s = r.s * (0.36 + Math.random() * 0.2);
+      this._rocks.push({ hx: r.x + Math.cos(an) * off, hy: r.y + Math.sin(an) * off, x: 0, y: 0,
+        phase: Math.random() * 6.28, bob: 3 + Math.random() * 6,
+        wx: 0.15 + Math.random() * 0.25, wy: 0.13 + Math.random() * 0.22,
+        rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.5, s, a: r.a,
+        hp: Math.max(1, Math.round(s / 9)), flash: t });
+    }
+    for (let i2 = 0; i2 < 10; i2++) {   // dust puff off the break
+      const an = Math.random() * 6.28, sp = 15 + Math.random() * 55;
+      this._parts.push({ x: r.x, y: r.y, vx: Math.cos(an) * sp, vy: Math.sin(an) * sp, t0: t, life: 0.5 + Math.random() * 0.5 });
+    }
+  },
 
   _chunks(x, y, n) {   // armor knocked loose — slow, spinning, long-lived
     for (let i = 0; i < n; i++) {
@@ -168,12 +223,19 @@ const BattleView = {
       const bp = this._px(this._pos(to, e.t));
       // impact vs near-miss: the movie never shows an untouched ship hit
       const impact = e.dmg > 0 || to.side === "enemy" || !!to.deathT || e.kind === "shieldhit";
-      const b = impact ? bp : { x: bp.x + (Math.random() < 0.5 ? -1 : 1) * (to.size + 14), y: bp.y + (Math.random() < 0.5 ? -1 : 1) * (to.size + 8) };
+      let b = impact ? bp : { x: bp.x + (Math.random() < 0.5 ? -1 : 1) * (to.size + 14), y: bp.y + (Math.random() < 0.5 ? -1 : 1) * (to.size + 8) };
       if (e.kind === "shieldhit") { this._arcs.push({ x: bp.x, y: bp.y, t0: e.t, size: to.size + 6, a0: Math.atan2(a.y - bp.y, a.x - bp.x) }); continue; }
       if (impact && (e.dmg > 0 || to.deathT)) this._chunks(bp.x, bp.y, e.dmg > 0 ? 4 : 2);
-      if (e.kind === "beam") this._beams.push({ a, b, t0: e.t, side: from.side, impact });
-      else if (e.kind === "missile") this._missiles.push({ a, b, t0: e.t, dur: 0.7, side: from.side, impact });
-      else this._flak.push({ a, b, t0: e.t, side: from.side, impact });
+      // stray fire hits the scenery: the shot stops at the rock and chips it.
+      // Damage-carrying fire is never blocked, so the wallet still rules.
+      let rockStop = false;
+      if (!impact) {
+        const hit = this._rockHit(a, b);
+        if (hit) { b = { x: hit.x, y: hit.y }; this._hitRock(hit, e.t); rockStop = true; }
+      }
+      if (e.kind === "beam") this._beams.push({ a, b, t0: e.t, side: from.side, impact: rockStop });
+      else if (e.kind === "missile") this._missiles.push({ a, b, t0: e.t, dur: 0.7, side: from.side, impact: rockStop });
+      else this._flak.push({ a, b, t0: e.t, side: from.side, impact: rockStop });
     }
 
     // ---- backdrop: system nebula, stars, drifting dust + asteroid field ----
@@ -184,17 +246,25 @@ const BattleView = {
     } else { ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h); }
     ctx.fillStyle = "#fff";
     for (const st of this._stars) { ctx.globalAlpha = 0.2 + st.b * 0.4; ctx.fillRect(st.x * w, st.y * h, 1.2, 1.2); }
-    for (const d of this._dust) {
-      d.x = (d.x + d.vx * dt / w + 1) % 1; d.y = (d.y + d.vy * dt / h + 1) % 1;
-      ctx.globalAlpha = d.a; ctx.fillRect(d.x * w, d.y * h, d.s, d.s);
+    for (const d of this._dust) {   // motes drift in place too — no edge wrap
+      ctx.globalAlpha = d.a;
+      ctx.fillRect((d.x + Math.cos(t * 0.09 + d.vx) * 0.012) * w,
+                   (d.y + Math.sin(t * 0.08 + d.vy) * 0.012) * h, d.s, d.s);
     }
     ctx.globalAlpha = 1;
     for (const r of this._rocks) {
-      r.x = (r.x + r.vx * dt + w + r.s) % (w + r.s * 2) - r.s; r.y = (r.y + r.vy * dt + h + r.s) % (h + r.s * 2) - r.s;
+      r.x = r.hx + Math.cos(t * r.wx + r.phase) * r.bob;      // hold station, bobbing
+      r.y = r.hy + Math.sin(t * r.wy + r.phase) * r.bob;
       r.rot += r.vr * dt;
-      ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot); ctx.globalAlpha = r.a;
+      const hot = Math.max(0, 1 - (t - r.flash) / 0.3);       // struck a moment ago
+      ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot);
+      ctx.globalAlpha = Math.min(1, r.a + hot * 0.5);
       if (this._asterImg.ok) ctx.drawImage(this._asterImg, -r.s / 2, -r.s / 2, r.s, r.s);
       else { ctx.fillStyle = "#3a3f4d"; ctx.beginPath(); ctx.arc(0, 0, r.s / 3, 0, 6.28); ctx.fill(); }
+      if (hot > 0) {   // glowing scar where the shot bit
+        ctx.globalAlpha = hot * 0.7; ctx.fillStyle = "#ffb266";
+        ctx.beginPath(); ctx.arc(0, 0, r.s * 0.32, 0, 6.28); ctx.fill();
+      }
       ctx.restore();
     }
     ctx.globalAlpha = 1;
