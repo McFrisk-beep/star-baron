@@ -1,8 +1,9 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: Step 1 of §8 is built** — lane graph (`js/lanes.js`), galaxy-view
-lane render, per-bearing gates, lane-routed travel ETAs, `tools/check_lanes.js`.
-**Steps 2–4 (combat view, voyages, system-view vignettes) remain design.**
+**Status: Steps 1–2 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
+galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
+combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
+rosters + replays. **Steps 3–4 (voyages, system-view vignettes) remain design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.
