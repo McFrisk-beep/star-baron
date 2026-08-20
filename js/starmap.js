@@ -118,16 +118,18 @@ const StarMap = {
       lbl.setAttribute("x", cx); lbl.setAttribute("y", cy - 96);
       lbl.setAttribute("class", "sector-label"); lbl.textContent = sec.name.toUpperCase();
       svg.appendChild(lbl);
-      const cap = Galaxy.get(sec.capital);
-      for (const id of sec.systems) {
-        if (id === sec.capital) continue;
-        const s = Galaxy.get(id);
-        const ln = document.createElementNS(ns, "line");
-        ln.setAttribute("x1", X(cap.pos.x)); ln.setAttribute("y1", Y(cap.pos.y));
-        ln.setAttribute("x2", X(s.pos.x)); ln.setAttribute("y2", Y(s.pos.y));
-        ln.setAttribute("class", "sector-link");
-        svg.appendChild(ln);
-      }
+    }
+
+    // hyperspace lanes (Lanes.build from the same seed): bright trunk highways
+    // on the capital ring, faint intra-sector lanes — replaces the old
+    // capital-spoke decoration with the graph travel actually follows
+    for (const lane of (window.Lanes ? Lanes.list : [])) {
+      const a = Galaxy.get(lane.a), b = Galaxy.get(lane.b);
+      const ln = document.createElementNS(ns, "line");
+      ln.setAttribute("x1", X(a.pos.x)); ln.setAttribute("y1", Y(a.pos.y));
+      ln.setAttribute("x2", X(b.pos.x)); ln.setAttribute("y2", Y(b.pos.y));
+      ln.setAttribute("class", lane.trunk ? "lane-trunk" : "lane");
+      svg.appendChild(ln);
     }
 
     // system nodes
@@ -924,9 +926,26 @@ const StarMap = {
     const neb = this.img(bgUrl);
     const aster = sys.asteroidBelt ? this.img(ASSET.asteroids()) : null;
 
-    // The hyperspace gate sits at the system's edge: ships warp in here from
-    // other systems, and ships heading "out" jump away through it.
-    const gatePos = () => ({ x: W() - 64, y: H() * 0.3 });
+    // One hyperspace gate per lane, at the system's edge on the true bearing
+    // toward the connected system (LIVING_GALAXY.md §2.4) — the gate to Navos
+    // points at Navos. Positions only depend on canvas size, so cache on it:
+    // the draw loop and every gate-bound ship call this each frame.
+    let gateCache = null;
+    const gates = () => {
+      const w = W(), h = H(), m = 64;
+      if (gateCache && gateCache.w === w && gateCache.h === h) return gateCache.at;
+      const gl = window.Lanes ? Lanes.gates(sys.id) : [];
+      const at = !gl.length ? [{ to: null, name: "", x: w - m, y: h * 0.3 }] : gl.map(g => {
+        const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
+        // project the bearing from the center onto the inset canvas edge
+        const k = Math.min((w / 2 - m) / Math.max(Math.abs(dx), 1e-9),
+                           (h / 2 - m) / Math.max(Math.abs(dy), 1e-9));
+        const dest = Galaxy.get(g.to);
+        return { to: g.to, name: dest ? dest.name : "", x: w / 2 + dx * k, y: h / 2 + dy * k };
+      });
+      gateCache = { w, h, at };
+      return at;
+    };
 
     // ---- ambient ship traffic (with behaviour) ----
     const raceKeys = Object.keys(RACES);
@@ -959,12 +978,13 @@ const StarMap = {
       if (!t) return { x: W() / 2, y: H() / 2 };
       if (t.kind === "planet") { const pl = planets[t.idx]; return { x: pl?._x ?? W() / 2, y: pl?._y ?? H() / 2 }; }
       if (t.kind === "station") return { x: station._x ?? W() / 2, y: station._y ?? H() / 2 };
-      if (t.kind === "gate") return gatePos();
+      if (t.kind === "gate") { const gl = gates(); return gl[(t.idx ?? 0) % gl.length]; }
       return { x: t.x, y: t.y };
     };
     // Ships mostly shuttle between docks, but sometimes choose the gate (leave).
     const pickTarget = (avoid, noGate) => {
-      if (!noGate && Math.random() < SYSTEMVIEW.gateLeaveChance) return { kind: "gate" };
+      if (!noGate && Math.random() < SYSTEMVIEW.gateLeaveChance)
+        return { kind: "gate", idx: Math.floor(Math.random() * gates().length) };
       const docks = dockPoints();
       let t = Util.pick(docks);
       if (avoid && t.kind === avoid.kind && t.idx === avoid.idx && docks.length > 1) t = Util.pick(docks);
@@ -973,7 +993,7 @@ const StarMap = {
     const warpFlash = (x, y) => this._gateBurst(particles, x, y);
     // New ships arrive through the gate (warp-in), then go about their errands.
     const spawnShip = () => {
-      const g = gatePos();
+      const g = Util.pick(gates());   // ambient traffic warps in through any gate
       const r = Util.pick(raceKeys);
       ships.push({ x: g.x, y: g.y, race: r, img: raceImg(r), alpha: 0, scale: 0.3, state: "warpIn",
         spd: shipSpeed(), ang: Math.atan2(H() / 2 - g.y, W() / 2 - g.x), target: null, dwell: 0 });
@@ -1051,9 +1071,8 @@ const StarMap = {
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
 
-      // hyperspace gate at the system edge — ships warp in/out through it
-      const gp = gatePos();
-      this._drawGate(ctx, gp.x, gp.y, now * 0.001);
+      // hyperspace gates at the system edge — one per lane, ships warp in/out
+      for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name);
 
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
@@ -1097,7 +1116,7 @@ const StarMap = {
           convo.splice(i, 1);
         }
       }
-      const env = { targetPos, pickTarget, explode, spark, say, warpFlash, gatePos, sx, sy };
+      const env = { targetPos, pickTarget, explode, spark, say, warpFlash, sx, sy };
       for (const sh of ships) {
         if (!reduced) this._stepShip(sh, dt, env);
         const a = Util.clamp(sh.alpha, 0, 1);
@@ -1135,7 +1154,7 @@ const StarMap = {
   // jump out through the gate, or get caught in a dogfight. Speech bubbles and
   // delayed replies tick down here too.
   _stepShip(sh, dt, env) {
-    const { targetPos, pickTarget, explode, spark, say, warpFlash, gatePos, sx, sy } = env;
+    const { targetPos, pickTarget, explode, spark, say, warpFlash, sx, sy } = env;
     const moveTo = (tx, ty, slow) => {
       const dx = tx - sh.x, dy = ty - sh.y, d = Math.hypot(dx, dy) || 1;
       const v = sh.spd * (slow ? 0.5 : 1) * dt;
@@ -1224,7 +1243,7 @@ const StarMap = {
     }
   },
 
-  _drawGate(ctx, gx, gy, t) {
+  _drawGate(ctx, gx, gy, t, destName) {
     ctx.save();
     const glow = ctx.createRadialGradient(gx, gy, 2, gx, gy, 34);
     glow.addColorStop(0, "rgba(130,200,255,.5)"); glow.addColorStop(1, "rgba(130,200,255,0)");
@@ -1238,7 +1257,9 @@ const StarMap = {
     ctx.fillStyle = "rgba(210,238,255,.95)"; ctx.beginPath(); ctx.arc(gx, gy, 3.5, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "rgba(170,210,255,.75)"; ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-    ctx.fillText("⇋ HYPERSPACE GATE", gx, gy + 30);
+    // generated names can already end in "Gate" (Daxor Gate) — don't double it
+    const label = destName ? destName.toUpperCase().replace(/ GATE$/, "") + " GATE" : "HYPERSPACE GATE";
+    ctx.fillText("⇋ " + label, gx, gy + 30);
     ctx.restore();
   },
 

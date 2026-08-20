@@ -1,6 +1,8 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: DESIGN. Nothing here is built. No code has been written.**
+**Status: Step 1 of §8 is built** — lane graph (`js/lanes.js`), galaxy-view
+lane render, per-bearing gates, lane-routed travel ETAs, `tools/check_lanes.js`.
+**Steps 2–4 (combat view, voyages, system-view vignettes) remain design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.
@@ -33,9 +35,12 @@ must be watched. Presence adds; absence never subtracts.
 
 ### 2.1 Sector ring (trunk lanes)
 
-The six sector capitals connect in a loop — every sector has exactly two trunk
+The six sectors connect in a loop — every sector has exactly two trunk
 connectors to its neighbours (Core Worlds ↔ Korrin Belt, Core Worlds ↔ Helm
-Tide, and on around). Drawn as bright "highways" on the galaxy view.
+Tide, and on around). Each connector is anchored on the sectors' **edge
+systems** — the closest cross-border pair — not capital-to-capital, so a
+highway enters a sector at its rim and traffic reaches the capital over local
+lanes. Drawn as bright "highways" on the galaxy view.
 
 ### 2.2 Intra-sector lanes
 

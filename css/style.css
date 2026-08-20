@@ -907,7 +907,8 @@ body.reduced .tt-dot { animation: none; }
 .sector-halo { opacity: .06; }
 .sector-label { fill: var(--ink-dim); font-size: 15px; font-weight: 700; letter-spacing: 2px;
   text-anchor: middle; font-family: var(--sans); opacity: .8; }
-.sector-link { stroke: rgba(150,170,220,.10); stroke-width: 1; }
+.lane { stroke: rgba(150,170,220,.32); stroke-width: 1.4; }
+.lane-trunk { stroke: rgba(130,200,255,.55); stroke-width: 2.5; }
 .node-ring { fill: rgba(8,10,18,.7); stroke: #3a4560; stroke-width: 2; transition: stroke .5s; }
 .node:hover .node-ring { stroke: #fff !important; }
 .node.docked .node-ring { stroke: var(--accent) !important; stroke-width: 3; }
