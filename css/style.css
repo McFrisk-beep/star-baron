@@ -1295,9 +1295,11 @@ body.reduced .floatnav-indicator { transition: none; }
 .haul-shipments { margin-top: 10px; font-size: 12px; }
 .haul-ship-line { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); margin-top: 3px; }
 .hub-transit-bar { margin-top: 6px; max-width: 280px; }
-/* Hub Live View — chase cam on the followed ship, chart inset top-right (voyage.js) */
-.hub-live-scene { border: 1px solid #1c3450; border-radius: 8px; overflow: hidden; }
-.hub-live-scene canvas { display: block; width: 100%; }
+/* Hub Live View — the real system scene chasing the followed ship (voyage.js).
+   The box needs a hard height: the scene renderer sizes its canvas from it. */
+.hub-live-scene { border: 1px solid #1c3450; border-radius: 8px; overflow: hidden;
+  height: min(48vh, 440px); min-height: 260px; }
+.hub-live-scene canvas { display: block; width: 100%; height: 100%; }
 .hub-live-follow { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 .hub-live-follow .btn.active { border-color: var(--accent); color: var(--accent); }
 .hub-live-follow:empty { display: none; }

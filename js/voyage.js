@@ -457,12 +457,16 @@ const Voyages = {
   },
 
   // ===== Hub Live View — chase cam on the followed ship =====================
-  // The whole panel is the ship's-eye stage: leaving port, braking into the
-  // gate, hyperdrive spool + jump, the hyperspace tunnel, drop-out, approach —
-  // with a mini chart inset showing where on the map that actually is.
+  // While the ship is inside a system this runs the REAL system scene
+  // (StarMap.startScene onto the hub canvas — nebula, planets, gates, ambient
+  // traffic) with the camera gliding after the followed voyage. Mid-lane it
+  // switches to the hyperspace tunnel. A mini chart inset shows where on the
+  // map that actually is.
   followId: null,
   _liveRaf: null, _liveFx: { mode: "", flashT: 0, trail: [] },
   _liveStars: null, _imgs: {},
+  _hubScene: null,   // StarMap.startScene handle rendering onto the hub canvas
+  _stopHubScene() { if (this._hubScene) { this._hubScene.stop(); this._hubScene = null; } },
 
   img(ref) {
     const [kind, id] = String(ref || "ship:shuttle").split(":");
@@ -484,12 +488,14 @@ const Voyages = {
   hubSync() {
     const panel = document.getElementById("hub-live");
     if (!panel) return;
-    const onHub = !!(window.UI && UI.page === "hub");
+    // The star-map overlay covers the hub — don't render two scenes at once.
+    const onHub = !!(window.UI && UI.page === "hub") && !(window.StarMap && StarMap.open);
     const list = onHub ? this.followable() : [];
     panel.classList.toggle("hidden", !list.length);
     if (!list.length) {
       // the id may be a rAF handle or a reduced-motion timeout — clear both
       if (this._liveRaf) { cancelAnimationFrame(this._liveRaf); clearTimeout(this._liveRaf); this._liveRaf = null; }
+      this._stopHubScene();
       return;
     }
     if (!list.some(v => v.id === this.followId)) this.followId = list[0].id;
@@ -521,182 +527,57 @@ const Voyages = {
   // generated names can already end in "Gate" (Daxor Gate) — don't double it
   _gateName(sys) { return sys.name.replace(/\s+gate$/i, ""); },
 
+  // The coordinator: each frame decide which stage the followed ship is on.
+  // Inside a system → the REAL system scene (StarMap.startScene on our
+  // canvas, chase cam). Mid-lane → the hyperspace tunnel, drawn here.
   _liveDraw() {
     this._liveRaf = null;
     const cv = document.getElementById("hub-live-canvas");
-    if (!cv || !window.UI || UI.page !== "hub") { this.hubSync(); return; }
+    if (!cv || !window.UI || UI.page !== "hub" || (window.StarMap && StarMap.open)) {
+      this._stopHubScene(); this.hubSync(); return;
+    }
     const now = Date.now();
     const list = this.followable(now);
     const v = list.find(x => x.id === this.followId) || list[0];
-    if (!v) { this.hubSync(); return; }
-    const ctx = cv.getContext("2d"); if (!ctx) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const r = cv.parentElement.getBoundingClientRect();
-    const w = Math.max(300, Math.floor(r.width)), h = Math.max(240, Math.min(420, Math.floor(window.innerHeight * 0.45)));
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
-      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
-      cv.style.height = h + "px";
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h);
-    if (!this._liveStars) {
-      const rng = Combat._mk(Combat.seedFrom("livestars"));
-      this._liveStars = Array.from({ length: 130 }, () => ({ x: rng(), y: rng(), b: 0.2 + rng() * 0.7, d: 0.25 + rng() * 0.75 }));
-    }
-    const fx = this._liveFx;
-    const shipX = w * 0.42, shipY = h * 0.55;
+    if (!v) { this._stopHubScene(); this.hubSync(); return; }
 
-    let mode, sub, speed = 0;   // speed 0..1 drives plume + star drift
-    let sysA = null, sysB = null, ph = null;
+    let sub = "", ph = null, sysA = null, sysB = null, sysId = v.sysId;
     if (v.at) {
       ph = this.legPhase(v.at.legP);
       sysA = Galaxy.get(v.at.a); sysB = Galaxy.get(v.at.b);
-      mode = ph.mode + ":" + ph.side;
-    } else { mode = "working"; }
+      sysId = ph.mode === "hyper" ? null : (ph.side === "out" ? v.at.a : v.at.b);
+    }
+    // white flash on every stage handoff (jump, drop-out, system hop)
+    const fx = this._liveFx;
+    const stage = (sysId || "hyper") + "|" + v.id;
+    if (fx.mode && fx.mode !== stage) { fx.flashT = now; fx.trail = []; }
+    fx.mode = stage;
 
-    // mode-transition flash (gate jump / drop-out)
-    if (mode !== fx.mode) { if (/hyper|gate/.test(mode + fx.mode)) fx.flashT = now; fx.mode = mode; fx.trail = []; }
-    const bell = f => 4 * f * (1 - f);   // accelerate-then-brake speed curve
-
-    // ---- starfield: drifts left as "speed"; streaks in hyperspace ----------
-    const drawStars = (sp, streak) => {
-      for (const st of this._liveStars) {
-        const x = ((st.x - (now / 40000) * sp * st.d) % 1 + 1) % 1 * w;
-        const y = st.y * h;
-        ctx.globalAlpha = st.b * 0.8;
-        if (streak > 0) {
-          const len = 2 + streak * 90 * st.d;
-          const g = ctx.createLinearGradient(x, y, x + len, y);
-          g.addColorStop(0, "rgba(160,200,255,.9)"); g.addColorStop(1, "rgba(160,200,255,0)");
-          ctx.strokeStyle = g; ctx.lineWidth = 1 + st.d;
-          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
-        } else { ctx.fillStyle = "#eaf0ff"; ctx.fillRect(x, y, 1.4, 1.4); }
+    if (sysId) {
+      if (!this._hubScene || this._hubScene.sysId !== sysId || this._hubScene.followVoy !== v.id) {
+        this._stopHubScene();
+        const h = (window.StarMap && StarMap.startScene)
+          ? StarMap.startScene(Galaxy.get(sysId), {
+              canvas: cv, followVoy: v.id, zoom: 1.7,
+              overlay: (octx, w, oh) => this._liveOverlay(octx, w, oh),
+            })
+          : null;
+        if (h) { h.followVoy = v.id; this._hubScene = h; }
       }
-      ctx.globalAlpha = 1;
-    };
-
-    const drawSystem = (sys, x, dir) => {   // big glowing system disc + name
-      if (!sys) return;
-      const y = h * 0.5, R = h * 0.34;
-      const g = ctx.createRadialGradient(x, y, 6, x, y, R);
-      g.addColorStop(0, "rgba(255,236,190,.95)"); g.addColorStop(0.25, "rgba(255,210,130,.45)");
-      g.addColorStop(1, "rgba(255,200,120,0)");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill();
-      ctx.fillStyle = "#ffe9c4"; ctx.beginPath(); ctx.arc(x, y, h * 0.055, 0, 7); ctx.fill();
-      ctx.fillStyle = "rgba(220,232,255,.85)"; ctx.font = "600 12px system-ui, sans-serif";
-      ctx.textAlign = dir; ctx.fillText(sys.name.toUpperCase(), x + (dir === "left" ? 20 : -20), h * 0.16);
-    };
-
-    const drawGate = (x, charge) => {   // the hyperspace gate, charging when told
-      const y = h * 0.5, t = now * 0.001;
-      const glow = ctx.createRadialGradient(x, y, 4, x, y, 70 + charge * 40);
-      glow.addColorStop(0, `rgba(130,200,255,${0.45 + charge * 0.4})`); glow.addColorStop(1, "rgba(130,200,255,0)");
-      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, 70 + charge * 40, 0, 7); ctx.fill();
-      ctx.lineWidth = 2.5;
-      for (let k = 0; k < 3; k++) {
-        ctx.strokeStyle = `rgba(150,210,255,${(0.85 - k * 0.18).toFixed(2)})`;
-        const rr = 22 + k * 12;
-        ctx.beginPath(); ctx.ellipse(x, y, rr * 0.42, rr, t * (1.1 + k * 0.5), 0, 7); ctx.stroke();
-      }
-      ctx.fillStyle = "rgba(210,238,255,.95)"; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
-    };
-
-    const drawShip = (x, y, sp, hyper) => {
-      // exhaust trail — recent positions fade out behind the hull
-      fx.trail.push({ x, y, t: now });
-      while (fx.trail.length && now - fx.trail[0].t > 900) fx.trail.shift();
-      ctx.lineCap = "round";
-      for (let i = 1; i < fx.trail.length; i++) {
-        const a = fx.trail[i - 1], b = fx.trail[i];
-        const age = 1 - (now - b.t) / 900;
-        ctx.strokeStyle = `rgba(120,200,255,${(age * 0.35 * (0.3 + sp)).toFixed(3)})`;
-        ctx.lineWidth = 1 + age * 3;
-        ctx.beginPath(); ctx.moveTo(a.x - (now - a.t) * sp * 0.05, a.y); ctx.lineTo(b.x - (now - b.t) * sp * 0.05, b.y); ctx.stroke();
-      }
-      // plume
-      const fl = (8 + Math.sin(now * 0.018) * 3) * (0.25 + sp) * (hyper ? 2.2 : 1);
-      const g = ctx.createLinearGradient(x - 18, y, x - 18 - fl * 3, y);
-      g.addColorStop(0, hyper ? "rgba(190,225,255,.95)" : "rgba(120,200,255,.8)");
-      g.addColorStop(1, "rgba(120,200,255,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.moveTo(x - 16, y - 4); ctx.lineTo(x - 16 - fl * 3, y); ctx.lineTo(x - 16, y + 4); ctx.closePath(); ctx.fill();
-      // hull
-      const im = this.img(v.sprite);
-      const bob = Math.sin(now * 0.0012) * 2;
-      if (im.ok) { ctx.drawImage(im, x - 26, y - 15 + bob, 52, 30); }
-      else {
-        ctx.fillStyle = "#3fe3ff";
-        ctx.beginPath(); ctx.moveTo(x + 24, y + bob); ctx.lineTo(x - 18, y - 12 + bob); ctx.lineTo(x - 9, y + bob); ctx.lineTo(x - 18, y + 12 + bob); ctx.closePath(); ctx.fill();
-      }
-      // owner over the hull
-      ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center";
-      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.8)";
-      const nm = v.kind === "flagship" ? (v.name || "You") : v.label;
-      ctx.strokeText(nm, x, y - 24 + bob);
-      ctx.fillStyle = v.kind === "flagship" ? "#3fe3ff" : "#aab9dc";
-      ctx.fillText(nm, x, y - 24 + bob);
-    };
-
-    if (!v.at) {
-      // on site: the fleet loiters off the destination, visibly working
-      drawStars(0.12, 0);
-      drawSystem(Galaxy.get(v.sysId), w * 0.72, "right");
-      const a = now * 0.0004;
-      const x = w * 0.72 + Math.cos(a) * h * 0.24, y = h * 0.5 + Math.sin(a) * h * 0.2;
-      // scan pulse
-      const pr = (now % 2200) / 2200;
-      ctx.strokeStyle = `rgba(95,215,255,${(1 - pr) * 0.5})`; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(x, y, 8 + pr * 46, 0, 7); ctx.stroke();
-      drawShip(x, y, 0.15, false);
-      sub = `${v.label} · ${v.phaseLabel || "on site"}`;
-    } else if (ph.mode === "cruise" && ph.side === "out") {
-      speed = bell(ph.f);
-      drawStars(0.25 + speed, 0);
-      drawSystem(sysA, w * 0.1, "left");
-      drawGate(w * 0.88, 0);
-      drawShip(w * (0.2 + 0.56 * this._ss(ph.f)), shipY, speed, false);
-      sub = `leaving ${sysA.name} — burning for the ${this._gateName(sysB)} gate`;
-    } else if (ph.mode === "gate" && ph.side === "out") {
-      drawStars(0.1, 0);
-      drawGate(w * 0.88, ph.f);
-      // spool particles converging on the drive
-      for (let i = 0; i < 8; i++) {
-        const q = ((now * 0.0015 + i / 8) % 1);
-        ctx.fillStyle = `rgba(150,215,255,${(1 - q) * ph.f})`;
-        ctx.fillRect(w * 0.76 - 60 * q + 60, shipY + Math.sin(i * 2.2 + now * 0.004) * 24 * q, 2.5, 2.5);
-      }
-      drawShip(w * 0.76, shipY, 0.08, false);
-      sub = `holding at the ${this._gateName(sysB)} gate — hyperdrive spooling`;
-    } else if (ph.mode === "hyper") {
-      drawStars(2.2, 0.5 + ph.f * 0.5);
-      // tunnel vignette
-      const vg = ctx.createRadialGradient(shipX, shipY, h * 0.18, shipX, shipY, h * 0.75);
-      vg.addColorStop(0, "rgba(60,120,255,0)"); vg.addColorStop(1, "rgba(40,70,200,.35)");
-      ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
-      drawShip(shipX, shipY, 1, true);
-      sub = `hyperspace — ${sysA.name} → ${sysB.name}`;
-    } else if (ph.mode === "gate" && ph.side === "in") {
-      drawStars(0.15, 0);
-      drawGate(w * 0.12, 1 - ph.f);
-      drawShip(w * 0.24, shipY, 0.1, false);
-      sub = `dropped out at the ${this._gateName(sysA)} gate — ${sysB.name} space`;
+      if (!v.at) sub = `${v.label} · ${v.phaseLabel || "on site"}`;
+      else if (ph.mode === "gate") sub = ph.side === "out"
+        ? `holding at the ${this._gateName(sysB)} gate — hyperdrive spooling`
+        : `dropped out at the ${this._gateName(sysA)} gate — ${sysB.name} space`;
+      else sub = ph.side === "out"
+        ? `leaving ${sysA.name} — burning for the ${this._gateName(sysB)} gate`
+        : `in ${sysB.name} space — on approach`;
     } else {
-      speed = 1 - this._ss(ph.f);                    // decelerating in
-      drawStars(0.2 + speed * 0.8, 0);
-      drawSystem(sysB, w * 0.9, "right");
-      drawGate(w * 0.08, 0);
-      drawShip(w * (0.2 + 0.5 * this._ss(ph.f)), shipY, speed, false);
-      sub = `in ${sysB.name} space — on approach`;
+      this._stopHubScene();
+      this._drawTunnel(cv, v, ph, now);
+      sub = `hyperspace — ${sysA.name} → ${sysB.name}`;
     }
 
-    // jump / drop-out flash
-    if (fx.flashT && now - fx.flashT < 380) {
-      ctx.fillStyle = `rgba(220,240,255,${(1 - (now - fx.flashT) / 380) * 0.75})`;
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    this._drawMini(ctx, v, w, h, now);
-    this._liveSub(sub || "");
+    this._liveSub(sub);
     // reduced motion: step twice a second instead of every frame
     const s = this.s();
     this._liveRaf = (s && s.settings && s.settings.reduced)
@@ -704,6 +585,82 @@ const Voyages = {
       : requestAnimationFrame(() => this._liveDraw());
   },
 
+  // The hyperspace tunnel — streaking stars, a blue-shift vignette, the ship
+  // riding the middle with a stretched drive plume and a fading trail.
+  _drawTunnel(cv, v, ph, now) {
+    const ctx = cv.getContext("2d"); if (!ctx) return;
+    const r = cv.parentElement.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(r.width)), h = Math.max(260, Math.floor(r.height));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h);
+    if (!this._liveStars) {
+      const rng = Combat._mk(Combat.seedFrom("livestars"));
+      this._liveStars = Array.from({ length: 130 }, () => ({ x: rng(), y: rng(), b: 0.2 + rng() * 0.7, d: 0.25 + rng() * 0.75 }));
+    }
+    const streak = 0.5 + ph.f * 0.5;
+    for (const st of this._liveStars) {
+      const x = ((st.x - (now / 40000) * 2.2 * st.d) % 1 + 1) % 1 * w;
+      const y = st.y * h;
+      ctx.globalAlpha = st.b * 0.8;
+      const len = 2 + streak * 90 * st.d;
+      const g = ctx.createLinearGradient(x, y, x + len, y);
+      g.addColorStop(0, "rgba(160,200,255,.9)"); g.addColorStop(1, "rgba(160,200,255,0)");
+      ctx.strokeStyle = g; ctx.lineWidth = 1 + st.d;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const sx = w * 0.42, sy = h * 0.52;
+    const vg = ctx.createRadialGradient(sx, sy, h * 0.18, sx, sy, h * 0.75);
+    vg.addColorStop(0, "rgba(60,120,255,0)"); vg.addColorStop(1, "rgba(40,70,200,.35)");
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
+
+    const fx = this._liveFx;
+    fx.trail.push({ x: sx, y: sy + Math.sin(now * 0.0012) * 2, t: now });
+    while (fx.trail.length && now - fx.trail[0].t > 900) fx.trail.shift();
+    ctx.lineCap = "round";
+    for (let i = 1; i < fx.trail.length; i++) {
+      const a = fx.trail[i - 1], b = fx.trail[i];
+      const age = 1 - (now - b.t) / 900;
+      ctx.strokeStyle = `rgba(120,200,255,${(age * 0.45).toFixed(3)})`;
+      ctx.lineWidth = 1 + age * 3;
+      ctx.beginPath(); ctx.moveTo(a.x - (now - a.t) * 0.05, a.y); ctx.lineTo(b.x - (now - b.t) * 0.05, b.y); ctx.stroke();
+    }
+    const bob = Math.sin(now * 0.0012) * 2;
+    const fl = (8 + Math.sin(now * 0.018) * 3) * 2.2;
+    const pg = ctx.createLinearGradient(sx - 18, sy, sx - 18 - fl * 3, sy);
+    pg.addColorStop(0, "rgba(190,225,255,.95)"); pg.addColorStop(1, "rgba(120,200,255,0)");
+    ctx.fillStyle = pg;
+    ctx.beginPath(); ctx.moveTo(sx - 16, sy - 4 + bob); ctx.lineTo(sx - 16 - fl * 3, sy + bob); ctx.lineTo(sx - 16, sy + 4 + bob); ctx.closePath(); ctx.fill();
+    const im = this.img(v.sprite);
+    if (im.ok) ctx.drawImage(im, sx - 26, sy - 15 + bob, 52, 30);
+    else {
+      ctx.fillStyle = "#3fe3ff";
+      ctx.beginPath(); ctx.moveTo(sx + 24, sy + bob); ctx.lineTo(sx - 18, sy - 12 + bob); ctx.lineTo(sx - 9, sy + bob); ctx.lineTo(sx - 18, sy + 12 + bob); ctx.closePath(); ctx.fill();
+    }
+    ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.8)";
+    const nm = v.kind === "flagship" ? (v.name || "You") : v.label;
+    ctx.strokeText(nm, sx, sy - 24 + bob);
+    ctx.fillStyle = v.kind === "flagship" ? "#3fe3ff" : "#aab9dc";
+    ctx.fillText(nm, sx, sy - 24 + bob);
+
+    this._liveOverlay(ctx, w, h);
+  },
+
+  // Chrome shared by both stages: the chart inset + stage-handoff flash.
+  // Uses Date.now() itself — the scene's overlay callback hands performance.now.
+  _liveOverlay(ctx, w, h) {
+    const now = Date.now();
+    const list = this.followable(now);
+    const v = list.find(x => x.id === this.followId) || list[0];
+    if (v) this._drawMini(ctx, v, w, h, now);
+    const fx = this._liveFx;
+    if (fx.flashT && now - fx.flashT < 380) {
+      ctx.fillStyle = `rgba(220,240,255,${((1 - (now - fx.flashT) / 380) * 0.75).toFixed(3)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+  },
   // The small screen: the actual chart — route, systems, and the ship's dot.
   _drawMini(ctx, v, w, h, now) {
     const mw = Math.min(220, w * 0.32), mh = mw * 0.62;

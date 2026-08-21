@@ -242,7 +242,12 @@ const Fleet = {
     }
     const speed = (this.mainDef().travelSpeed || 1) * (window.Senate ? Senate.travelSpeedMult() : 1);
     const seconds = (dist * k) / speed;
-    return (seconds * 1000) / (window.Game.timeScale || 1);
+    // Deliberate pacing (LIVING_GALAXY.md step 3): every hyperspace hop adds a
+    // ~5s gate dwell (spool + drop-out), so multi-lane routes read as journeys.
+    // Client-computed ETAs only — a server-stamped ETA wins unchanged.
+    const route = window.Lanes ? Lanes.route(fromId, toId) : null;
+    const hops = route ? Math.max(1, route.path.length - 1) : 1;
+    return (seconds * 1000 + hops * 5000) / (window.Game.timeScale || 1);
   },
 
   // ---- accessories --------------------------------------------------------

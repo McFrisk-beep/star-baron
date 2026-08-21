@@ -79,6 +79,7 @@ const StarMap = {
     this._stopVoyageLayer();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
     if (window.UI) UI.updateNavIndicator();        // restore glow to the underlying page tab
+    if (window.Voyages) Voyages.hubSync();         // the Hub Live View paused while the map covered it
   },
   showGalaxy() {
     this.stopSystem();
@@ -892,11 +893,21 @@ const StarMap = {
   },
 
   // ===== animated scene (canvas) =========================================
-  startScene(sys) {
-    this.stopScene();
-    this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0 };   // voyager view state (fresh per scene)
-    const canvas = this.refs.canvas;
-    if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return; // no-canvas env
+  // startScene(sys, opts) — the living system scene. Default: the star-map
+  // overlay canvas with drag/zoom input. With opts it also powers the Hub
+  // Live View: { canvas, followVoy: <voyage id>, zoom, overlay(ctx,w,h,now) }
+  // renders the SAME scene onto another canvas — nebula, planets, gates,
+  // ambient traffic and all — with the camera gliding after that voyage and
+  // no pointer input. Returns a { stop() } handle; an opts.canvas scene never
+  // touches the overlay scene's lifecycle fields, so both can coexist.
+  startScene(sys, opts = {}) {
+    const ext = !!opts.canvas;
+    if (!ext) this.stopScene();
+    const voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} };   // per-scene voyager view state
+    const canvas = opts.canvas || this.refs.canvas;
+    if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return null; // no-canvas env
+    const handle = { sysId: sys.id, stopped: false, raf: null, stop: null };
+    const cleanups = [];
     const reduced = this.s().settings.reduced;
     const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect();
@@ -905,12 +916,13 @@ const StarMap = {
       canvas.width = w; canvas.height = h;
     };
     resize();
-    this._onResize = resize;
     window.addEventListener("resize", resize);
+    cleanups.push(() => window.removeEventListener("resize", resize));
     // device-mode / flex / overlay panel changes don't always fire window.resize
     if (typeof ResizeObserver !== "undefined") {
-      this._sceneRO = new ResizeObserver(resize);
-      this._sceneRO.observe(canvas.parentElement);
+      const ro = new ResizeObserver(resize);
+      ro.observe(canvas.parentElement);
+      cleanups.push(() => ro.disconnect());
     }
 
     const W = () => canvas.width, H = () => canvas.height;
@@ -927,11 +939,23 @@ const StarMap = {
       cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
       cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
     };
+    // Chase cam (Hub Live View): glide the camera onto the followed voyage —
+    // its scene position is recorded by _drawVoyagers into voyFx.pos.
+    const followCam = () => {
+      if (!opts.followVoy) return;
+      cam.zoom = opts.zoom || 1.7;
+      const fp = voyFx.pos[opts.followVoy];
+      if (!fp) return;
+      const tx = W() / 2 - fp.x * cam.zoom, ty = H() / 2 - fp.y * cam.zoom;
+      cam.x += (tx - cam.x) * (cam._snapped ? 0.08 : 1);
+      cam.y += (ty - cam.y) * (cam._snapped ? 0.08 : 1);
+      cam._snapped = true;
+    };
     // Squat map panes (mobile stack: short top strip) used to crush the system
     // into Math.min(w,h). Start cover-zoomed instead — same idea as galaxy
     // _fitGalaxy — so outer orbits crop and the user pans / zooms out.
     // Deferred one frame so canvas size matches the unhidden system-view.
-    requestAnimationFrame(() => {
+    if (!ext && !opts.followVoy) requestAnimationFrame(() => {
       resize();
       if (H() < W() * 0.95) {
         cam.zoom = 1.35;
@@ -954,45 +978,49 @@ const StarMap = {
     const panBy = (dx, dy) => { cam.x += dx; cam.y += dy; clampCam(); hideHint(); redraw(); };
 
     // show the drag/zoom hint fresh each time a system opens; fade after a moment
-    if (this.refs.sceneHint) {
+    if (!ext && this.refs.sceneHint) {
       this.refs.sceneHint.classList.remove("faded");
       clearTimeout(hintTimer);
       hintTimer = setTimeout(() => { if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); }, 6000);
     }
 
-    // input: 1 pointer drag = pan · wheel = zoom · 2 pointers = pinch-zoom
-    const ptrs = new Map();
-    let pinchPrev = null;
-    const rectOf = () => canvas.getBoundingClientRect();
-    const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
-    const onMove = e => {
-      const p = ptrs.get(e.pointerId); if (!p) return;
-      const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
-      if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
-        const pts = [...ptrs.values()], r = rectOf();
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
-        if (pinchPrev && dist > 0) { zoomAt(mid.x, mid.y, dist / pinchPrev.dist); panBy(mid.x - pinchPrev.mid.x, mid.y - pinchPrev.mid.y); }
-        pinchPrev = { dist, mid };
-        return;
-      }
-      panBy(e.clientX - px, e.clientY - py);
-    };
-    const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
-    const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
-    canvas.addEventListener("pointerdown", onDown);
-    canvas.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    this._sceneCtrlCleanup = () => {
-      canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      canvas.removeEventListener("wheel", onWheel);
-      clearTimeout(hintTimer);
-    };
+    // input: 1 pointer drag = pan · wheel = zoom · 2 pointers = pinch-zoom.
+    // Chase-cam scenes take no input — the camera belongs to the followed ship.
+    if (!ext) {
+      const ptrs = new Map();
+      let pinchPrev = null;
+      const rectOf = () => canvas.getBoundingClientRect();
+      const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
+      const onMove = e => {
+        const p = ptrs.get(e.pointerId); if (!p) return;
+        const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+        if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
+          const pts = [...ptrs.values()], r = rectOf();
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
+          if (pinchPrev && dist > 0) { zoomAt(mid.x, mid.y, dist / pinchPrev.dist); panBy(mid.x - pinchPrev.mid.x, mid.y - pinchPrev.mid.y); }
+          pinchPrev = { dist, mid };
+          return;
+        }
+        panBy(e.clientX - px, e.clientY - py);
+      };
+      const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
+      const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
+      canvas.addEventListener("pointerdown", onDown);
+      canvas.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+      canvas.addEventListener("wheel", onWheel, { passive: false });
+      cleanups.push(() => {
+        canvas.removeEventListener("pointerdown", onDown);
+        canvas.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        canvas.removeEventListener("wheel", onWheel);
+        clearTimeout(hintTimer);
+      });
+      this._sceneCtrlCleanup = () => cleanups.forEach(f => f());
+    }
 
     const planets = sys.planets.map((p, i) => ({
       p, angle: (i * 2.39996) % (Math.PI * 2),
@@ -1104,7 +1132,9 @@ const StarMap = {
 
     let last = performance.now();
     const draw = (now) => {
+      if (handle.stopped) return;
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      followCam();
       const w = W(), h = H(), cx = w / 2, cy = h / 2;
       // Cover on squat panes (mobile top strip): size orbits to the long axis so
       // the system isn't crushed into the short side. Desktop stays contain.
@@ -1232,15 +1262,28 @@ const StarMap = {
       // purposeful ships (projections of real state): your flagship + other
       // barons' flagships with the owner's name on top, mission convoys,
       // couriers — crossing between the gates their route actually uses.
-      this._drawVoyagers(ctx, sys, gates(), sx, sy);
+      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx);
 
       ctx.restore();   // end camera transform
 
-      if (!reduced) this.raf = requestAnimationFrame(draw);
+      if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
+
+      if (!reduced) {
+        if (ext) handle.raf = requestAnimationFrame(draw);
+        else this.raf = requestAnimationFrame(draw);
+      }
     };
     if (reduced) { draw(performance.now()); }   // single static frame
+    else if (ext) handle.raf = requestAnimationFrame(draw);
     else this.raf = requestAnimationFrame(draw);
-    this.scene = { canvas };
+    if (!ext) this.scene = { canvas };
+    handle.stop = () => {
+      if (handle.stopped) return;
+      handle.stopped = true;
+      if (handle.raf) cancelAnimationFrame(handle.raf);
+      if (ext) cleanups.forEach(f => f());   // default scene cleans up via stopScene()
+    };
+    return handle;
   },
 
   // One ship's behaviour for a frame. States: warpIn → travel → (dock | land |
@@ -1345,9 +1388,10 @@ const StarMap = {
   // after drop-out (gateIn) — with a warp burst on the jump itself. Headings
   // are smoothed so course changes read as flown maneuvers. Names use
   // fillText, so other barons' display names stay plain text.
-  _drawVoyagers(ctx, sys, gateAt, sx, sy) {
+  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx) {
     if (!window.Voyages) return;
-    const fx = this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0 });
+    fx = fx || (this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} }));
+    fx.pos = fx.pos || {};
     const now = Date.now();
     const dt = Math.min(0.1, (now - (fx.last || now)) / 1000); fx.last = now;
     let list;
@@ -1392,6 +1436,7 @@ const StarMap = {
       const prev = fx.mode[v.id];
       if (gp && v.mode === "gateIn" && !prev) this._gateBurst(fx.parts, gp.x, gp.y);
       fx.mode[v.id] = { mode: v.mode, gx: gp ? gp.x : x, gy: gp ? gp.y : y };
+      fx.pos[v.id] = { x, y };   // scene position — the Live View chase cam reads this
       // flown turns: heading eases toward the wanted bearing
       if (fx.hdg[v.id] == null) fx.hdg[v.id] = want;
       const diff = Math.atan2(Math.sin(want - fx.hdg[v.id]), Math.cos(want - fx.hdg[v.id]));
@@ -1431,7 +1476,7 @@ const StarMap = {
     for (const id in fx.mode) if (!seen.has(id)) {
       const m = fx.mode[id];
       if (m && m.mode === "gateOut") this._gateBurst(fx.parts, m.gx, m.gy);
-      delete fx.mode[id]; delete fx.hdg[id];
+      delete fx.mode[id]; delete fx.hdg[id]; delete fx.pos[id];
     }
     // warp-burst particles
     for (let i = fx.parts.length - 1; i >= 0; i--) {

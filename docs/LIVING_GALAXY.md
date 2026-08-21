@@ -6,8 +6,12 @@ combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
 rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
 lane graph, moving markers on the galaxy chart, flagship/convoy vignettes in
 the system view (a slice of §6.2 shipped early), the Hub's **Live View**
-chase cam (screen centred on the followed ship — flagship, mission, charter,
-courier or survey — with a chart inset and follow chips), dispatch-seeded
+(the REAL system scene — `StarMap.startScene` rendering onto the Hub canvas
+with a chase cam gliding after the followed ship: flagship, mission,
+charter, courier or survey — plus a hyperspace-tunnel stage mid-lane, a
+chart inset and follow chips; each hyperspace hop also adds a ~5s gate
+dwell to client-computed flagship ETAs so routes read as journeys),
+dispatch-seeded
 event schedules with comms entries and watchable skirmishes, and
 cross-player flagship presence (`docs/sql/voyage_presence.sql`, optional).
 Every lane leg is choreographed (`Voyages.legPhase`): cruise out, brake into
