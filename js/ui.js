@@ -104,11 +104,6 @@ const UI = {
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
     if (window.I18n) I18n.init();
-    const live = $("hub-live-transit");
-    if (live) live.onclick = e => {   // literally watch your ships cross the chart
-      e.stopPropagation();
-      if (window.StarMap) StarMap.openGalaxy();
-    };
     this.buildExchange();
     this.buildOrders();
     this.wireControls();
@@ -812,6 +807,20 @@ const UI = {
     this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
     this.showPage("hub");   // also closes the star map overlay, if it was open
     return true;
+  },
+
+  // Point the Hub Live View at one voyage and bring it on screen. This is what
+  // "follow this mission" means now — the Hub IS the live view, so it never
+  // sends you off to the star map.
+  followVoyage(id) {
+    if (!window.Voyages) return;
+    Voyages.followId = id;
+    const chips = document.getElementById("hub-live-follow");
+    if (chips) chips.dataset.sig = "";        // force the chip row to repaint its active pill
+    Voyages.hubSync();
+    const panel = document.getElementById("hub-live");
+    if (panel && !panel.classList.contains("hidden"))
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
   },
 
   // Requisition terminal — the exchange trade-terminal pacing, for one-off
@@ -1847,10 +1856,12 @@ const UI = {
         <div class="mbar"><span class="mbar-fill"></span></div>
         <div class="m-foot"><span class="m-phase"></span><span class="m-eta"></span></div>
         <div class="m-events" data-evn="0"></div>
-        <div class="m-cancel">${this._missionCancelHtml(m)}</div>
+        <div class="m-cancel"><button class="btn btn-mini" data-follow-m="${m.uid}">▶ Follow live</button>${this._missionCancelHtml(m)}</div>
       </div>`;
     }).join("");
     el.onclick = e => {
+      const f = e.target.closest("[data-follow-m]");
+      if (f) return this.followVoyage("m:" + f.dataset.followM);
       const w = e.target.closest("[data-watch]");
       if (w) { if (window.Voyages) Voyages.watch(w.dataset.watch); return; }
       const b = e.target.closest("[data-mission-cancel]");
@@ -1876,6 +1887,13 @@ const UI = {
       const workLeft = Math.max(0, m.startedAt + m.totalMs - inMs - Date.now());
       node.querySelector(".m-eta").textContent =
         ph.dir === "work" ? `on site ${Util.duration(workLeft)}` : "in transit — watch on Live View";
+      const fb = node.querySelector("[data-follow-m]");
+      if (fb) {
+        const on = !!(window.Voyages && Voyages.followId === "m:" + m.uid);
+        fb.classList.toggle("active", on);
+        const label = on ? "● Following" : "▶ Follow live";
+        if (fb.textContent !== label) fb.textContent = label;
+      }
       // mid-flight events (LIVING_GALAXY.md §4.5) — fired ones appear as they happen
       const evEl = node.querySelector(".m-events");
       if (evEl && window.Voyages) {
@@ -1979,7 +1997,7 @@ const UI = {
     if (Economy.busy()) return;
     const r = await Missions.launch(c, this.selectedShipUids());
     if (!r.ok) return this.toast(r.msg, "warn");
-    this.toast("Mission launched ▸", "good");
+    this.toast("Mission launched ▸ — follow her on the Hub Live View.", "good");
     this._pending = null; this.refs.mission.classList.add("hidden");
     this._missionSig = "";
     window.Game.requestSave(); this.renderFleet(); this.renderBazaar(); this.renderDispatches();

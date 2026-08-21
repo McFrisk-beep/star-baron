@@ -9,7 +9,8 @@ the system view (a slice of §6.2 shipped early), the Hub's **Live View**
 (the REAL system scene — `StarMap.startScene` rendering onto the Hub canvas
 with a chase cam gliding after the followed ship: flagship, mission,
 charter, courier or survey — plus a hyperspace-tunnel stage mid-lane, a
-chart inset and follow chips; each hyperspace hop also adds a ~5s gate
+chart inset, follow chips, and a per-mission **▶ Follow live** button on
+the Hub's mission cards; each hyperspace hop also adds a ~5s gate
 dwell to client-computed flagship ETAs so routes read as journeys),
 dispatch-seeded
 event schedules with comms entries and watchable skirmishes, and

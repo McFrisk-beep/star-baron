@@ -1302,9 +1302,9 @@ body.reduced .floatnav-indicator { transition: none; }
   height: min(48vh, 440px); min-height: 260px; }
 .hub-live-scene canvas { display: block; width: 100%; height: 100%; }
 .hub-live-follow { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
-.hub-live-follow .btn.active { border-color: var(--accent); color: var(--accent); }
+.hub-live-follow .btn.active,
+.m-cancel .btn.active { border-color: var(--accent); color: var(--accent); }
 .hub-live-follow:empty { display: none; }
-.hub-live-btn { margin-left: auto; text-transform: none; letter-spacing: 0; }
 /* fired mid-flight voyage events on a Hub mission card (LIVING_GALAXY.md §4.5) */
 .m-events { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .m-events:empty { display: none; }

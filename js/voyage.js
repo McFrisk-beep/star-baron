@@ -149,10 +149,13 @@ const Voyages = {
       if (m.resolved || !m.phases) continue;
       const dest = this._sysByName(m.sysName); if (!dest) continue;
       const from = (m.fromSys && Galaxy.get(m.fromSys)) ? m.fromSys : here;
-      if (!from || from === dest.id) continue;
+      if (!from) continue;
       const ph = Missions.phaseAt(m, now);
       const base = { id: "m:" + m.uid, kind: "mission", label: m.title, you: true,
         sprite: this._fleetSprite(m.shipUids), mission: m };
+      // A job in the system we launched from has no transit legs — the fleet
+      // works local space the whole time. Still a voyage you can follow.
+      if (from === dest.id) { out.push({ ...base, sysId: dest.id, phaseLabel: ph.label }); continue; }
       const outMs = m.phases[0].ms, inMs = m.phases[m.phases.length - 1].ms;
       if (ph.dir === "out") {
         const plan = this.plan(from, dest.id, m.startedAt, outMs);
