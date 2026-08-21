@@ -243,6 +243,7 @@ const UI = {
     if (!exps.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
     panel.classList.remove("hidden");
     const now = Date.now();
+    const foll = this._followable();
     body.innerHTML = exps.map(e => {
       const sh = window.Fleet ? Fleet.ship(e.shipUid) : null;
       const ship = sh ? sh.name : "Survey ship";
@@ -251,8 +252,13 @@ const UI = {
       }
       const leftMs = Math.max(0, e.startedAt + e.etaMs - now);
       const tag = leftMs > 0 ? Util.duration(leftMs) : "returning…";
-      return `<div class="haul-ship-line">${ship} → <b>${this.sysName(e.sysId)}</b> · ${tag}${e.far ? " · far" : ""}</div>`;
+      return `<div class="haul-ship-line">${ship} → <b>${this.sysName(e.sysId)}</b> · ${tag}${e.far ? " · far" : ""}
+        ${this._followBtn(foll, "x:" + e.id)}</div>`;
     }).join("");
+    body.onclick = ev => {
+      const f = ev.target.closest("[data-follow-v]");
+      if (f) this.followVoyage(f.dataset.followV);
+    };
   },
 
   // In-flight courier lines on Hub — shown even while traveling (dock panel hides).
@@ -262,13 +268,19 @@ const UI = {
     const ships = window.Shipments ? Shipments.active() : [];
     if (!ships.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
     panel.classList.remove("hidden");
+    const foll = this._followable();
     body.innerHTML = ships.map(sh => {
       const leftMs = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
       const risk = sh.illicit
         ? ` · illicit · piracy ${(sh.riskPct * 100).toFixed(0)}%`
         : ` · piracy ${(sh.riskPct * 100).toFixed(0)}%`;
-      return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(leftMs)}${risk} · fee ${Util.credits(sh.fee)}c</div>`;
+      return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(leftMs)}${risk} · fee ${Util.credits(sh.fee)}c
+        ${this._followBtn(foll, "sh:" + sh.id)}</div>`;
     }).join("");
+    body.onclick = ev => {
+      const f = ev.target.closest("[data-follow-v]");
+      if (f) this.followVoyage(f.dataset.followV);
+    };
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -382,7 +394,7 @@ const UI = {
     return `<div class="contract pending-card">
       <div class="c-head"><b>${label}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
       <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · ${eta}</div>
-      <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
+      <div class="c-actions">${this._followBtn(this._followable(), "c:" + c.id)}<button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
   _pendingCardHtml(c) {
@@ -809,12 +821,25 @@ const UI = {
     return true;
   },
 
+  // Ids of voyages the Live View can actually follow right now — so a row only
+  // offers "Follow" when there's something to watch (a survey between legs, a
+  // charter that hasn't started moving, etc. simply has no button).
+  _followable() {
+    return window.Voyages ? new Set(Voyages.followable().map(v => v.id)) : new Set();
+  },
+  _followBtn(set, id) {
+    if (!set.has(id)) return "";
+    const on = window.Voyages && Voyages.followId === id;
+    return `<button class="btn btn-mini${on ? " active" : ""}" data-follow-v="${id}">${on ? "● Following" : "▶ Follow live"}</button>`;
+  },
+
   // Point the Hub Live View at one voyage and bring it on screen. This is what
   // "follow this mission" means now — the Hub IS the live view, so it never
   // sends you off to the star map.
   followVoyage(id) {
     if (!window.Voyages) return;
     Voyages.followId = id;
+    if (this.page !== "hub") this.showPage("hub");   // charters live on the Fleet page
     const chips = document.getElementById("hub-live-follow");
     if (chips) chips.dataset.sig = "";        // force the chip row to repaint its active pill
     Voyages.hubSync();
@@ -1179,6 +1204,8 @@ const UI = {
     }
     el.innerHTML = `<div class="contract-list">` + list.map(c => this._charterCardHtml(c)).join("") + `</div>`;
     el.onclick = e => {
+      const f = e.target.closest("[data-follow-v]");
+      if (f) return this.followVoyage(f.dataset.followV);
       const btn = e.target.closest("[data-charter-cancel]"); if (!btn) return;
       this.cancelCharter(btn.dataset.charterCancel);
     };

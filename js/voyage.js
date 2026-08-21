@@ -487,9 +487,13 @@ const Voyages = {
   // working on site. A docked flagship is berthed — nothing to watch.
   followable(now = Date.now()) {
     const order = { flagship: 0, mission: 1, charter: 2, courier: 3, survey: 4 };
-    return this.active(now).filter(v => v.at || v.sysId)
+    // Other barons' flagships are followable too — you can watch a rival run a
+    // lane. Yours always sort first so the default follow is your own.
+    return this.active(now).concat(this.others(now))
+      .filter(v => v.at || v.sysId)
       .filter(v => !(v.kind === "flagship" && !v.at))
-      .sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+      .sort((a, b) => (b.you ? 1 : 0) - (a.you ? 1 : 0)
+        || (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
   },
 
   hubSync() {
@@ -512,9 +516,18 @@ const Voyages = {
       const sig = list.map(v => v.id).join(",") + "|" + this.followId;
       if (chips.dataset.sig !== sig) {
         chips.dataset.sig = sig;
-        chips.innerHTML = list.map(v =>
-          `<button type="button" class="btn btn-mini${v.id === this.followId ? " active" : ""}"
-            data-follow="${v.id}">${v.kind === "flagship" ? "★ Flagship" : v.label}</button>`).join("");
+        chips.textContent = "";
+        for (const v of list) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "btn btn-mini" + (v.id === this.followId ? " active" : "");
+          b.dataset.follow = v.id;
+          // textContent, never innerHTML — other barons' display names (and
+          // admin-authored contract titles) are untrusted text.
+          b.textContent = v.kind === "flagship"
+            ? (v.you ? "★ Flagship" : "◈ " + v.name) : v.label;
+          chips.appendChild(b);
+        }
         if (!chips._wired) {
           chips._wired = true;
           chips.onclick = e => {
@@ -584,7 +597,7 @@ const Voyages = {
       sub = `hyperspace — ${sysA.name} → ${sysB.name}`;
     }
 
-    this._liveSub(sub);
+    this._liveSub(v.you === false && v.name ? v.name + " · " + sub : sub);
     // reduced motion: step twice a second instead of every frame
     const s = this.s();
     this._liveRaf = (s && s.settings && s.settings.reduced)

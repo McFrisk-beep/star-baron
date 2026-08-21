@@ -9,8 +9,13 @@ the system view (a slice of §6.2 shipped early), the Hub's **Live View**
 (the REAL system scene — `StarMap.startScene` rendering onto the Hub canvas
 with a chase cam gliding after the followed ship: flagship, mission,
 charter, courier or survey — plus a hyperspace-tunnel stage mid-lane, a
-chart inset, follow chips, and a per-mission **▶ Follow live** button on
-the Hub's mission cards; each hyperspace hop also adds a ~5s gate
+chart inset, and follow chips for **every** voyage — your flagship,
+missions, charters, couriers, surveys, and other barons' flagships in
+transit (yours sort first). Each row that owns a voyage also carries a
+**▶ Follow live** button: mission cards, survey and courier lines on the
+Hub, and charter cards on Fleet (which jumps to the Hub). Chips are built
+with `textContent`, never innerHTML — another baron's display name is
+untrusted text. Each hyperspace hop also adds a ~5s gate
 dwell to client-computed flagship ETAs so routes read as journeys),
 dispatch-seeded
 event schedules with comms entries and watchable skirmishes, and
