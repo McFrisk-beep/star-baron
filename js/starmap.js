@@ -112,12 +112,21 @@ const StarMap = {
     const W = 1000, H = 620;
     const tick = () => {
       if (!this.open || this.refs.galaxyView.classList.contains("hidden")) { this._stopVoyageLayer(); return; }
+      const now = Date.now();
       const live = new Set();
       for (const v of Voyages.markers()) {
         live.add(v.id);
         const el = this._voyEls[v.id] || (this._voyEls[v.id] = this._mkVoyEl(layer, v));
         el.g.setAttribute("transform", `translate(${(v.at.x * W).toFixed(1)},${(v.at.y * H).toFixed(1)})`);
-        el.hull.setAttribute("transform", `rotate(${(v.at.heading * 180 / Math.PI).toFixed(1)})`);
+        // flown turns: ease the drawn heading toward the route bearing
+        if (el.hdg == null) el.hdg = v.at.heading;
+        const diff = Math.atan2(Math.sin(v.at.heading - el.hdg), Math.cos(v.at.heading - el.hdg));
+        el.hdg += reduced ? diff : diff * 0.12;
+        el.hull.setAttribute("transform", `rotate(${(el.hdg * 180 / Math.PI).toFixed(1)})`);
+        // exhaust flicker, stretched to a streak mid-lane (hyperspace)
+        const ph = Voyages.legPhase(v.at.legP);
+        const fl = (ph.mode === "hyper" ? 16 : ph.mode === "gate" ? 3 : 7) + Math.sin(now * 0.02 + v.at.x * 40) * 2;
+        el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
       }
       for (const id in this._voyEls) if (!live.has(id)) { this._voyEls[id].g.remove(); delete this._voyEls[id]; }
       // reduced motion: step once a second instead of every frame
@@ -129,15 +138,23 @@ const StarMap = {
   _mkVoyEl(layer, v) {
     const ns = "http://www.w3.org/2000/svg";
     const g = document.createElementNS(ns, "g");
+    const hullG = document.createElementNS(ns, "g");   // rotates: plume + hull together
+    const plume = document.createElementNS(ns, "polygon");
+    plume.setAttribute("class", "voy-plume");
+    hullG.appendChild(plume);
     const hull = document.createElementNS(ns, "polygon");
+    let tail;
     if (v.kind === "flagship") {
       hull.setAttribute("points", "9,0 -7,5.5 -3.5,0 -7,-5.5");
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
+      tail = 6;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
       hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
+      tail = 4;
     }
-    g.appendChild(hull);
+    hullG.appendChild(hull);
+    g.appendChild(hullG);
     if (v.kind === "flagship" && v.name) {
       const t = document.createElementNS(ns, "text");
       t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
@@ -146,7 +163,7 @@ const StarMap = {
       g.appendChild(t);
     }
     layer.appendChild(g);
-    return { g, hull };
+    return { g, hull: hullG, plume, tail };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -877,6 +894,7 @@ const StarMap = {
   // ===== animated scene (canvas) =========================================
   startScene(sys) {
     this.stopScene();
+    this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0 };   // voyager view state (fresh per scene)
     const canvas = this.refs.canvas;
     if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return; // no-canvas env
     const reduced = this.s().settings.reduced;
@@ -1187,6 +1205,14 @@ const StarMap = {
         if (a <= 0) continue;
         const sc = sh.scale ?? 1;
         ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
+        // exhaust plume — every hull under thrust trails engine wash
+        if (sh.state !== "dock") {
+          const fl = (5 + Math.sin(now * 0.02 + sh.x * 0.7) * 2) * sc * (sh.state === "warpOut" ? 1.8 : 1);
+          const g2 = ctx.createLinearGradient(-9 * sc, 0, -9 * sc - fl * 2, 0);
+          g2.addColorStop(0, "rgba(140,195,255,.6)"); g2.addColorStop(1, "rgba(140,195,255,0)");
+          ctx.fillStyle = g2;
+          ctx.beginPath(); ctx.moveTo(-8 * sc, -1.8 * sc); ctx.lineTo(-8 * sc - fl * 2, 0); ctx.lineTo(-8 * sc, 1.8 * sc); ctx.closePath(); ctx.fill();
+        }
         if (sh.img && sh.img.ok) ctx.drawImage(sh.img, -10 * sc, -6 * sc, 20 * sc, 12 * sc);
         else { ctx.fillStyle = RACES[sh.race] ? RACES[sh.race].color : "#cdd6f5"; ctx.fillRect(-4 * sc, -2 * sc, 8 * sc, 4 * sc); }
         ctx.restore();
@@ -1224,10 +1250,18 @@ const StarMap = {
   // delayed replies tick down here too.
   _stepShip(sh, dt, env) {
     const { targetPos, pickTarget, explode, spark, say, warpFlash, sx, sy } = env;
+    // Inertial flight: the hull steers toward the target at a bounded turn
+    // rate and thrusts along its own heading, so course changes are flown as
+    // banking arcs instead of instant snaps.
     const moveTo = (tx, ty, slow) => {
       const dx = tx - sh.x, dy = ty - sh.y, d = Math.hypot(dx, dy) || 1;
+      const want = Math.atan2(dy, dx);
+      if (sh.ang == null) sh.ang = want;
+      let diff = Math.atan2(Math.sin(want - sh.ang), Math.cos(want - sh.ang));
+      const turn = 2.4 * dt;                       // rad/s — tight enough to never orbit
+      sh.ang += Util.clamp(diff, -turn, turn);
       const v = sh.spd * (slow ? 0.5 : 1) * dt;
-      sh.x += dx / d * v; sh.y += dy / d * v; sh.ang = Math.atan2(dy, dx);
+      sh.x += Math.cos(sh.ang) * v; sh.y += Math.sin(sh.ang) * v;
       return d;
     };
     // voice-line bubble lifetime + any pending reply
@@ -1304,37 +1338,76 @@ const StarMap = {
     if (sh._interfere != null) { sh._interfere -= dt; if (sh._interfere <= 0) sh._interfere = null; }
   },
 
-  // Real fleets visible in this system (Voyages.inSystem): docked ones hold a
-  // slow parking orbit off the station; transits fly station ↔ the correct
-  // gate for their route, at the fraction the clock says. Names use fillText,
-  // so other barons' display names stay plain text.
+  // Real fleets visible in this system (Voyages.inSystem). A docked flagship
+  // is berthed inside the station and not drawn; mission/survey fleets loiter
+  // on site "working". Transits fly station ↔ the correct gate for their
+  // route, holding at the gate while the hyperdrive spools (gateOut) or just
+  // after drop-out (gateIn) — with a warp burst on the jump itself. Headings
+  // are smoothed so course changes read as flown maneuvers. Names use
+  // fillText, so other barons' display names stay plain text.
   _drawVoyagers(ctx, sys, gateAt, sx, sy) {
     if (!window.Voyages) return;
+    const fx = this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0 });
     const now = Date.now();
+    const dt = Math.min(0.1, (now - (fx.last || now)) / 1000); fx.last = now;
     let list;
     try { list = Voyages.inSystem(sys.id, now); } catch (e) { return; }
+    const seen = new Set();
     for (const v of list) {
-      let x, y, ang;
-      if (v.mode === "docked") {
+      seen.add(v.id);
+      let x, y, want, thrust = 1;
+      const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
+      if (v.mode === "working") {
         const h = window.Combat ? Combat.seedFrom(v.id) : 1;
         const rr = 34 + (h % 3) * 9;
         const a = (h % 628) / 100 + now * 0.00012;
         x = sx + Math.cos(a) * rr; y = sy + Math.sin(a) * rr;
-        ang = a + Math.PI / 2;
+        want = a + Math.PI / 2; thrust = 0.3;
+        const pr = (now % 2400) / 2400;              // scan pulse — visibly at work
+        ctx.strokeStyle = `rgba(95,215,255,${((1 - pr) * 0.45).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(x, y, 8 + pr * 40, 0, 7); ctx.stroke();
+      } else if (v.mode === "gateOut" || v.mode === "gateIn") {
+        if (!gp) continue;
+        const off = v.mode === "gateOut" ? 26 : -26;  // hold just short of / past the ring
+        const toC = Math.atan2(sy - gp.y, sx - gp.x);
+        x = gp.x + Math.cos(toC) * off; y = gp.y + Math.sin(toC) * off;
+        want = toC + Math.PI; thrust = 0.15;
+        if (v.mode === "gateOut") {                   // hyperdrive spooling — charge glow
+          const g = ctx.createRadialGradient(x, y, 2, x, y, 24 + v.f * 22);
+          g.addColorStop(0, `rgba(150,215,255,${(0.25 + v.f * 0.45).toFixed(2)})`);
+          g.addColorStop(1, "rgba(150,215,255,0)");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 24 + v.f * 22, 0, 7); ctx.fill();
+        }
       } else {
-        const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
         if (!gp) continue;
         const from = v.mode === "departing" ? { x: sx, y: sy } : gp;
         const to = v.mode === "departing" ? gp : { x: sx, y: sy };
         x = from.x + (to.x - from.x) * v.frac;
         y = from.y + (to.y - from.y) * v.frac;
-        ang = Math.atan2(to.y - from.y, to.x - from.x);
+        want = Math.atan2(to.y - from.y, to.x - from.x);
+        thrust = 0.4 + 2.4 * v.f * (1 - v.f);        // accelerate, then brake
       }
+      // warp burst on drop-out (ship appears at the arrival gate from nowhere)
+      const prev = fx.mode[v.id];
+      if (gp && v.mode === "gateIn" && !prev) this._gateBurst(fx.parts, gp.x, gp.y);
+      fx.mode[v.id] = { mode: v.mode, gx: gp ? gp.x : x, gy: gp ? gp.y : y };
+      // flown turns: heading eases toward the wanted bearing
+      if (fx.hdg[v.id] == null) fx.hdg[v.id] = want;
+      const diff = Math.atan2(Math.sin(want - fx.hdg[v.id]), Math.cos(want - fx.hdg[v.id]));
+      fx.hdg[v.id] += Util.clamp(diff, -2.2 * dt, 2.2 * dt);
+      const ang = fx.hdg[v.id];
+
       const [kind, id] = String(v.sprite || "ship:shuttle").split(":");
       const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
       const flag = v.kind === "flagship";
       const sz = flag ? 15 : 10;
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+      const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
+      const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
+      pg.addColorStop(0, "rgba(130,195,255,.65)"); pg.addColorStop(1, "rgba(130,195,255,0)");
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.moveTo(-sz * 0.75, -sz * 0.22); ctx.lineTo(-sz * 0.75 - fl * 2, 0); ctx.lineTo(-sz * 0.75, sz * 0.22); ctx.closePath(); ctx.fill();
       if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
       else {
         ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "#7b8cff";
@@ -1352,6 +1425,21 @@ const StarMap = {
       ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "rgba(170,185,220,.9)";
       ctx.fillText(label, x, y - sz - 4);
       ctx.restore();
+    }
+    // ships that left the scene: a hull that was spooling at a gate just
+    // jumped — flash the burst it vanished with, then forget it
+    for (const id in fx.mode) if (!seen.has(id)) {
+      const m = fx.mode[id];
+      if (m && m.mode === "gateOut") this._gateBurst(fx.parts, m.gx, m.gy);
+      delete fx.mode[id]; delete fx.hdg[id];
+    }
+    // warp-burst particles
+    for (let i = fx.parts.length - 1; i >= 0; i--) {
+      const p = fx.parts[i]; p.life -= dt;
+      if (p.life <= 0) { fx.parts.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      ctx.fillStyle = p.color + (p.life / p.max).toFixed(2) + ")";
+      ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
     }
   },
 

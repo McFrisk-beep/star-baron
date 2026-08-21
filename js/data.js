@@ -1325,7 +1325,7 @@ const PLANET_TYPES = ["rocky", "terran", "ocean", "ice", "lava", "gas_giant", "b
    traffic, the hyperspace gate ships warp in/out through, and ship voice-lines.
    Lower ship speeds make the system feel vast.                                 */
 const SYSTEMVIEW = {
-  shipSpeedMin: 24, shipSpeedMax: 52,   // px/s — was 42–90; slower = bigger space
+  shipSpeedMin: 13, shipSpeedMax: 28,   // px/s — was 24–52; slower still = bigger space
   gateLeaveChance: 0.22,                 // chance a ship picks the gate (jumps out) over a dock
   chatterMinGapMs: 3800,                 // min real gap between ambient hail/reply exchanges
   chatterRate: 0.5,                      // per-second chance of an exchange once off cooldown

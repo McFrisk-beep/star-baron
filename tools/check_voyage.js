@@ -59,6 +59,21 @@ const dest = Galaxy.list.find(s => !s.capital && s.id !== from);
   const plan2 = ctx2.Voyages.plan(from, dest.id, T0, ETA);
   times.forEach(t => assert.deepStrictEqual({ ...ctx2.Voyages.pos(plan2, t) }, { ...byT[t] },
     "pos(t) identical across independent builds"));
+
+  // gate choreography: eased distance is monotonic, 0→0 / 1→1, and the ship
+  // holds AT the gate through both gate windows (slow in, spool, jump)
+  let prev = -1;
+  for (let f = 0; f <= 1.0001; f += 0.01) {
+    const d = Voyages._legD(Math.min(1, f));
+    assert.ok(d >= prev - 1e-12, "leg distance never runs backwards");
+    prev = d;
+  }
+  assert.strictEqual(Voyages._legD(0), 0, "leg starts at the near system");
+  assert.strictEqual(Voyages._legD(1), 1, "leg ends at the far system");
+  const gd = Voyages.LEG.gateD;
+  assert.strictEqual(Voyages._legD(0.32), gd, "holds at the outbound gate while spooling");
+  assert.strictEqual(Voyages._legD(0.65), 1 - gd, "holds at the arrival gate after drop-out");
+  assert.strictEqual(Voyages.legPhase(0.5).mode, "hyper", "mid-leg is hyperspace");
 }
 
 // ---- mission voyage: out leg, on-site, return leg --------------------------
@@ -85,17 +100,34 @@ const mkMission = (uid, type, danger, startedAt, totalMs) => ({
   const home = Voyages.pos(back.plan, T0 + TOT);
   assert.ok(Math.hypot(home.x - A.x, home.y - A.y) < 1e-9, "return leg ends at the origin");
 
-  // a transiting ship is never in two system scenes at once
+  // never in two system scenes at once; mid-hyperspace it's in none at all
   const routeSys = out.plan.legs.concat([caps[1]]);
   for (let k = 1; k < 10; k++) {
     const t = T0 + (TOT * 0.3) * (k / 10);
     const hits = routeSys.filter(id => Voyages.inSystem(id, t).some(v => v.id === "m:m1"));
-    assert.strictEqual(hits.length, 1, `transit at ${k}/10 appears in exactly one system scene`);
+    assert.ok(hits.length <= 1, `transit at ${k}/10 appears in at most one system scene`);
   }
   ctx.Game.state.missions = [];
 }
 
-// ---- flagship: travel marker + docked presence in the system view ----------
+// ---- one-lane leg: departing → gate → hyperspace → gate → arriving ---------
+{
+  const lane = Lanes.list[0];
+  const T0 = 7000000, ETA = 400000;
+  ctx.Game.state.currentSystem = lane.a;
+  ctx.Game.state.travel = { from: lane.a, to: lane.b, departedAt: T0, etaMs: ETA };
+  const at = f => T0 + ETA * f;
+  const inA = f => Voyages.inSystem(lane.a, at(f)).find(v => v.id === "flag");
+  const inB = f => Voyages.inSystem(lane.b, at(f)).find(v => v.id === "flag");
+  assert.strictEqual(inA(0.15).mode, "departing", "cruises for its gate");
+  assert.strictEqual(inA(0.35).mode, "gateOut", "holds at the gate, hyperdrive spooling");
+  assert.ok(!inA(0.5) && !inB(0.5), "mid-hyperspace it is in neither system");
+  assert.strictEqual(inB(0.65).mode, "gateIn", "drops out at the arrival gate");
+  assert.strictEqual(inB(0.85).mode, "arriving", "then cruises in from the gate");
+  ctx.Game.state.travel = null;
+}
+
+// ---- flagship: travel marker; docked = berthed, not drawn ------------------
 {
   const T0 = 9000000, ETA = 300000;
   ctx.Game.state.currentSystem = from;
@@ -103,8 +135,64 @@ const mkMission = (uid, type, danger, startedAt, totalMs) => ({
   const mv = Voyages.markers(T0 + ETA / 2).find(v => v.id === "flag");
   assert.ok(mv && mv.at && mv.name === "You", "travelling flagship is a named moving marker");
   ctx.Game.state.travel = null;
-  const parked = Voyages.inSystem(from, T0).find(v => v.id === "flag");
-  assert.ok(parked && parked.mode === "docked", "docked flagship shows in its system scene");
+  assert.ok(!Voyages.inSystem(from, T0).some(v => v.id === "flag"),
+    "a docked flagship is berthed inside the station — not in the scene");
+  assert.ok(!Voyages.markers(T0).some(v => v.id === "flag"), "and not on the chart");
+}
+
+// ---- §4.4: the dice roll moves to dispatch ---------------------------------
+// Client-local outcomes are drawn from a stream seeded by the voyage uid:
+// identical across runs, and independent of WHEN resolve happens.
+{
+  const bootResolve = () => {
+    const c = vm.createContext({ console, Math, Date });
+    c.window = c;
+    for (const f of ["store.js", "data.js", "fleet.js", "missions.js", "charters.js", "combat.js"])
+      vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), c, { filename: f });
+    c.Economy = { authoritative: () => false, afterTax: x => x, refreshNetWorth() {}, checkAchievements() {}, depth: () => 1e9 };
+    c.Rep = { rewardMult: () => 1, successBonus: () => 0, onContract() {}, onContractCancel: () => 0 };
+    c.Items = { gen: () => ({ uid: "it1", kind: "gear", value: 1 }) };
+    c.SHIP_NAME_A = ["Test"]; c.SHIP_NAME_B = ["Ship"];   // live in flavor.js
+    c.Game = { state: { credits: 0, seq: 1, ships: [], missions: [], charters: [], reports: [],
+      items: {}, positions: {}, avgCost: {}, stats: {}, currentSystem: "navos",
+      mainShip: { type: c.SHIP_CATALOG.main[0].id } } };
+    return c;
+  };
+  const runMission = (now) => {
+    const c = bootResolve();
+    const s = c.Game.state;
+    const a = c.Fleet.makeShip("corvette"), b = c.Fleet.makeShip("frigate");
+    a.uid = "sA"; b.uid = "sB"; s.ships.push(a, b); a.status = b.status = "mission";
+    s.missions.push({ uid: "m77", type: "combat", title: "t", shipUids: ["sA", "sB"], phases: [],
+      totalMs: 1000, startedAt: now - 5000, successChance: 0.5, reward: { credits: 1000, itemChance: 0.5, stockChance: 0.5 },
+      impound: false, danger: "extreme", stakeTier: 0, faction: null, resolved: false });
+    const rep = c.Missions.resolveMatured(now)[0];
+    return { success: rep.success, lost: [...rep.lost].map(x => x.uid).join(),
+      dmg: [...rep.damaged].map(x => x.uid + ":" + x.pct).join(), credits: c.Game.state.credits };
+  };
+  const r1 = runMission(50000000), r2 = runMission(50000000), r3 = runMission(50000000 + 3600000);
+  assert.deepStrictEqual(r1, r2, "same mission resolves to the same outcome every time");
+  assert.strictEqual(r1.success, r3.success, "resolving an hour later applies the SAME dispatch-seeded verdict");
+  assert.strictEqual(r1.lost, r3.lost, "…including which hulls were lost");
+
+  const runCharter = (now) => {
+    const c = bootResolve();
+    const s = c.Game.state;
+    const a = c.Fleet.makeShip("mule"); a.uid = "cA"; s.ships.push(a); a.status = "charter";
+    s.charters.push({ id: "ch77", shipUid: "cA", shipUids: ["cA"], band: "extreme", durationMs: 1000,
+      startedAt: now - 5000, reward: 500, cargoByShip: { cA: 10 }, cargoTotal: 10, faction: null,
+      destroyChance: 0.5, impoundChance: 0.3, impound: true, resolved: false });
+    const rep = c.Charters._resolveLocal(now)[0];
+    return { success: rep.success, lost: [...rep.lost].map(x => x.uid).join(),
+      imp: [...rep.impounded].map(x => x.uid).join() };
+  };
+  const c1 = runCharter(60000000), c2 = runCharter(60000000 + 7200000);
+  assert.deepStrictEqual(c1, c2, "charter outcome is fixed at dispatch, not at maturity");
+
+  // rolledSuccess previews the exact verdict the resolver will apply
+  const c = bootResolve();
+  const m = { uid: "m77", successChance: 0.5 };
+  assert.strictEqual(c.Missions.rolledSuccess(m), r1.success, "rolledSuccess = the resolver's first draw");
 }
 
 // ---- event schedules: seeded at dispatch, deterministic, windowed ----------

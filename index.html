@@ -55,6 +55,13 @@
       <div class="pages-wrap">
       <!-- HUB — page background + active blackbox boost bar -->
       <section class="page hidden" id="page-hub">
+        <div class="panel hub-live hidden" id="hub-live">
+          <h2>Live View <small id="hub-live-sub"></small></h2>
+          <div class="hub-live-follow" id="hub-live-follow"></div>
+          <div class="hub-live-scene">
+            <canvas id="hub-live-canvas" aria-label="Live view — following your ship through space, with a chart inset"></canvas>
+          </div>
+        </div>
         <div class="panel hub-dock hidden" id="hub-dock">
           <h2>Dock Status <small>where you're berthed</small></h2>
           <div id="hub-dock-body"></div>
@@ -62,9 +69,6 @@
         <div class="panel hub-transit hidden" id="hub-transit">
           <h2>In Transit <small>flagship en route</small></h2>
           <div id="hub-transit-body"></div>
-          <div class="hub-transit-view hidden" id="hub-transit-view">
-            <canvas id="hub-transit-canvas" aria-label="Live galaxy view — your flagship moving through space"></canvas>
-          </div>
         </div>
         <div class="panel hub-missions hidden" id="hub-missions-panel">
           <h2><span data-i18n="fleet.missions">Active Missions</span>

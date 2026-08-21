@@ -304,11 +304,19 @@ const Charters = {
     } finally { this._authBusy = false; }
   },
 
+  // §4.4 (LIVING_GALAXY.md): client-local charter outcomes draw from a stream
+  // seeded by the charter id at dispatch — resolve applies, it doesn't roll.
+  // Math.random fallback when combat.js isn't loaded (tool checks pin it).
+  _mkOutcomeRng(id) {
+    return window.Combat ? Combat._mk(Combat.seedFrom(id + ":outcome")) : Math.random;
+  },
+
   _resolveLocal(now = Date.now()) {
     const s = this.s();
     const out = [];
     for (const c of this.list()) {
       if (c.resolved || (!c.deferred && now < c.startedAt + c.durationMs)) continue;
+      const roll = this._mkOutcomeRng(c.id);
       const uids = this.shipUids(c);
       const ships = uids.map(u => Fleet.ship(u)).filter(Boolean);
       const bandLabel = (DANGER.find(d => d.id === c.band) || {}).label || c.band;
@@ -338,10 +346,10 @@ const Charters = {
         // Each hull rolls the convoy chance — escorts lower that shared rate.
         const survivors = [];
         for (const sh of ships) {
-          if (Math.random() < (c.destroyChance || 0)) {
+          if (roll() < (c.destroyChance || 0)) {
             report.lost.push({ uid: sh.uid, name: sh.name });
             s.ships = s.ships.filter(x => x.uid !== sh.uid);
-          } else if (c.impound && Math.random() < (c.impoundChance || 0)) {
+          } else if (c.impound && roll() < (c.impoundChance || 0)) {
             sh.status = "impounded";
             sh.retrieveCost = Fleet.impoundFine(sh);   // stamp = the half-value fee (display-legacy)
             report.impounded.push({ uid: sh.uid, name: sh.name, cost: sh.retrieveCost });
@@ -364,9 +372,9 @@ const Charters = {
           // survivors don't come home untouched.
           const incident = report.lost.length || report.impounded.length;
           for (const sh of survivors) {
-            if (Math.random() < (incident ? 1 : prof.chance)) {
+            if (roll() < (incident ? 1 : prof.chance)) {
               const before = sh.dmg || 0;
-              Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult);
+              Fleet.addDamage(sh, (prof.dmg[0] + roll() * (prof.dmg[1] - prof.dmg[0])) * dangerMult);
               report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
             }
             sh.status = "idle";

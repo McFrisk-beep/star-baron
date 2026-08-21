@@ -235,11 +235,9 @@ const UI = {
       return;
     }
     panel.classList.remove("hidden");
-    const leftMs = Math.max(0, t.departedAt + t.etaMs - Date.now());
-    const pct = (Economy.travelProgress() * 100).toFixed(1);
-    body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · ${Util.duration(leftMs)} remaining</div>
-      <div class="bar hub-transit-bar"><span style="width:${pct}%"></span></div>`;
-    if (window.Voyages) Voyages.hubSync();   // live galaxy view, flagship centred
+    // No countdown — the ship is the timer now: she arrives when she arrives.
+    body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · under way — follow her on the Live View above</div>`;
+    if (window.Voyages) Voyages.hubSync();
   },
 
   // Active survey expeditions — charting runs still out.
@@ -867,8 +865,7 @@ const UI = {
       this.refs.transit.innerHTML =
         `<div class="transit-card"><div class="transit-h">In transit</div>
          <div class="transit-sub">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b></div>
-         <div class="bar"><span style="width:${(Economy.travelProgress() * 100).toFixed(1)}%"></span></div>
-         <div class="transit-eta">arriving in ${Util.duration(Economy.travelRemaining())}</div>
+         <div class="transit-eta">under way — follow her on the Hub Live View</div>
          <div class="muted-note">the exchange opens when you dock</div></div>`;
     } else this.refs.transit.classList.add("hidden");
 
@@ -1008,7 +1005,7 @@ const UI = {
     } else if (this.refs.rank) {
       this.refs.rank.textContent = "—";
     }
-    this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
+    this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} · in transit` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = Economy.tierTitle();
     const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
     this.refs.sentiment.style.width = pct.toFixed(0) + "%";
@@ -1833,7 +1830,12 @@ const UI = {
       let w = ph.dir === "out" ? ph.phaseProgress * 100 : ph.dir === "in" ? (1 - ph.phaseProgress) * 100 : 100;
       fill.style.width = w.toFixed(1) + "%";
       node.querySelector(".m-phase").textContent = (ph.dir === "out" ? "▸ " : ph.dir === "in" ? "◂ " : "● ") + ph.label;
-      node.querySelector(".m-eta").textContent = "ETA " + Util.duration(ph.remaining);
+      // The only clock shown is the work itself (the ship doing the mission);
+      // transit legs have no countdown — the ship arrives when it arrives.
+      const inMs = m.phases[m.phases.length - 1].ms;
+      const workLeft = Math.max(0, m.startedAt + m.totalMs - inMs - Date.now());
+      node.querySelector(".m-eta").textContent =
+        ph.dir === "work" ? `on site ${Util.duration(workLeft)}` : "in transit — watch on Live View";
       // mid-flight events (LIVING_GALAXY.md §4.5) — fired ones appear as they happen
       const evEl = node.querySelector(".m-events");
       if (evEl && window.Voyages) {
@@ -2457,7 +2459,7 @@ const UI = {
     const gSys = window.Galaxy && Galaxy.get(sysId);
     const isStation = !!(gSys && !gSys.capital && window.Stations && Stations.get(sysId));
     if (here) return `<span class="badge">docked</span>`;
-    if (s.travel && s.travel.to === sysId) return `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
+    if (s.travel && s.travel.to === sysId) return `<span class="badge">arriving…</span>`;
     if (!isStation && !unlocked) {
       const cost = (SYSTEMS.find(x => x.id === sysId) || {}).unlock || 0;
       return `<button class="btn btn-mini" data-unlock="${sysId}" data-cost="${cost}">Unlock ${Util.credits(cost)}c</button>`;
@@ -4441,7 +4443,7 @@ const UI = {
       if (window.Game._booting) return;
       const name = this.sysName(e.to);
       const warp = window.Senate ? Senate.travelEdictNote(e.etaMs) : "";
-      this.toast(`Launched toward ${name} — ETA ${Util.duration(e.etaMs)}${warp}`, "good");
+      this.toast(`Launched toward ${name} — follow her on the Hub Live View${warp}`, "good");
       this.renderHubTransit();
       this.updateHeader(); this.updateExchange(); this.updateDockGates();
       if (this.page === "hub") this.renderHubDock();

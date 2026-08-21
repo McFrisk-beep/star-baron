@@ -5,15 +5,26 @@ galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
 combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
 rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
 lane graph, moving markers on the galaxy chart, flagship/convoy vignettes in
-the system view (a slice of §6.2 shipped early), the Hub's in-transit galaxy
-view + Active Missions cards, dispatch-seeded event schedules with comms
-entries and watchable skirmishes, and cross-player flagship presence
-(`docs/sql/voyage_presence.sql`, optional). Deviations from this document,
-v1: events are **non-decisive** for every voyage (the §4.4 dice-move to
-dispatch and the §4.3 online-choice modal remain future work — outcomes are
-still rolled at maturity exactly as before), and event catch-up after time
-away primes silently instead of posting missed comms entries in order (§4.5).
-**Step 4 (world-space camera + full vignettes) remains design.**
+the system view (a slice of §6.2 shipped early), the Hub's **Live View**
+chase cam (screen centred on the followed ship — flagship, mission, charter,
+courier or survey — with a chart inset and follow chips), dispatch-seeded
+event schedules with comms entries and watchable skirmishes, and
+cross-player flagship presence (`docs/sql/voyage_presence.sql`, optional).
+Every lane leg is choreographed (`Voyages.legPhase`): cruise out, brake into
+the gate, hyperdrive spool + jump flash, hyperspace, drop-out, approach —
+total leg time unchanged, only where the ship is drawn moves. Docked ships
+are berthed inside the station and not drawn. Arrival countdowns are gone
+from the travel/mission UI — the ship itself is the timer (mechanics are
+untouched: arrival still lands at `departedAt + etaMs`); only on-site work
+shows a clock. **§4.4 is in for client-local voyages**: mission and charter
+outcomes draw from a stream seeded by the voyage uid at dispatch
+(`Missions._mkOutcomeRng` / `Charters._mkOutcomeRng` — resolve applies, it
+doesn't roll), so a mid-flight skirmish already knows the verdict
+(`Missions.rolledSuccess`); server-settled voyages keep the server verdict
+and non-decisive events. Still future: the §4.3 online-choice modal, the
+§4.4 server-side outcome-seed column, and §4.5 ordered catch-up (past
+events prime silently). **Step 4 (world-space camera + full vignettes)
+remains design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.

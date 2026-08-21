@@ -6,16 +6,25 @@
    the mid-flight event schedule is a pure function of the voyage uid, so every
    reload recomputes the identical journey. Nothing new is persisted.
 
-   Three consumers:
+   Every lane leg is choreographed (legPhase): accelerate out of the system,
+   slow into the gate, hold while the hyperdrive spools, streak down the lane,
+   drop out at the far gate, then cruise in — so ships visibly do the maneuver
+   instead of teleporting at constant speed. Total leg time is unchanged;
+   only where the ship is drawn inside the leg moves.
+
+   Consumers:
      • StarMap galaxy view — moving markers on the lane polylines.
      • StarMap system view — flagships / convoys crossing between real gates,
-       with the owner's name over flagships (own + other players').
-     • Hub — the in-transit mini galaxy view (flagship centred, moving), and
-       the Active Missions cards' "▶ watch" skirmish buttons.
+       with the owner's name over flagships (own + other players'). Docked
+       ships are berthed inside the station and not drawn.
+     • Hub — the Live View chase cam (screen centred on the followed ship,
+       with a mini chart inset), and the mission cards' "▶ watch" buttons.
 
-   Events are non-decisive skirmishes in v1: they never touch the wallet — the
-   resolver math is untouched (§7) and server-settled voyages keep their server
-   verdict. The §4.4 "dice roll moves to dispatch" upgrade stays future work.
+   §4.4: for client-local voyages (guests, charters' local loop) the dice roll
+   moved to dispatch — Missions/Charters draw outcomes from a stream seeded by
+   the voyage uid, so a mid-flight skirmish can already know the verdict.
+   Server-settled voyages keep the server verdict; their events stay
+   non-decisive. Nothing here ever touches the wallet.
 
    Cross-player flagships ride a tiny optional table (docs/sql/voyage_presence.sql):
    one row per player — from/to/departedAt/etaMs — and every client replays the
@@ -23,7 +32,7 @@
 
 const Voyages = {
   s() { return window.Game && Game.state; },
-  _plans: {},        // id+route key → plan (derived cache, never persisted)
+  _plans: {},        // route key → legs (derived cache, never persisted)
   _seen: new Set(),  // announced event ids (session memory; past events prime silently)
   _primed: false,
 
@@ -52,8 +61,32 @@ const Voyages = {
     return (legs._cum = cum);
   },
 
+  // Per-leg choreography, by time fraction through the leg. gateD is where the
+  // gate sits along the lane (distance fraction from each end).
+  LEG: { cruiseOut: 0.30, gateOut: 0.40, hyperEnd: 0.60, gateIn: 0.70, gateD: 0.08 },
+  _ss(x) { x = Util.clamp(x, 0, 1); return x * x * (3 - 2 * x); },   // smoothstep
+  legPhase(legP) {
+    const L = this.LEG;
+    if (legP < L.cruiseOut) return { mode: "cruise", side: "out", f: legP / L.cruiseOut };
+    if (legP < L.gateOut) return { mode: "gate", side: "out", f: (legP - L.cruiseOut) / (L.gateOut - L.cruiseOut) };
+    if (legP < L.hyperEnd) return { mode: "hyper", side: "out", f: (legP - L.gateOut) / (L.hyperEnd - L.gateOut) };
+    if (legP < L.gateIn) return { mode: "gate", side: "in", f: (legP - L.hyperEnd) / (L.gateIn - L.hyperEnd) };
+    return { mode: "cruise", side: "in", f: (legP - L.gateIn) / (1 - L.gateIn) };
+  },
+  // Time fraction → eased DISTANCE fraction along the leg: slow near the ends
+  // (accelerate away, decelerate into the gate, stop-and-go at each side),
+  // fast through the middle (hyperspace). Monotonic, 0→0 and 1→1, pure.
+  _legD(legP) {
+    const L = this.LEG, gd = L.gateD;
+    const ph = this.legPhase(legP);
+    if (ph.mode === "cruise") return ph.side === "out" ? gd * this._ss(ph.f) : 1 - gd + gd * this._ss(ph.f);
+    if (ph.mode === "gate") return ph.side === "out" ? gd : 1 - gd;
+    return gd + (1 - 2 * gd) * ph.f;
+  },
+
   // Where a plan is at time t. Pure — same t in, same point out, in any order
   // (the §9 anti-accumulation property). Galaxy pos space (0..1 fractions).
+  // legP is the raw TIME fraction through the leg; x/y apply the choreography.
   // → { x, y, heading, a, b, leg, p, legP } or null (degenerate plan).
   pos(plan, t = Date.now()) {
     if (!plan || !plan.legs || plan.legs.length < 2) return null;
@@ -66,7 +99,8 @@ const Voyages = {
     const a = Galaxy.get(plan.legs[i]).pos, b = Galaxy.get(plan.legs[i + 1]).pos;
     const seg = Math.max(1e-9, cum[i + 1] - cum[i]);
     const legP = Util.clamp((d - cum[i]) / seg, 0, 1);
-    return { x: a.x + (b.x - a.x) * legP, y: a.y + (b.y - a.y) * legP,
+    const ld = this._legD(legP);
+    return { x: a.x + (b.x - a.x) * ld, y: a.y + (b.y - a.y) * ld,
       heading: Math.atan2(b.y - a.y, b.x - a.x),
       a: plan.legs[i], b: plan.legs[i + 1], leg: i, p, legP };
   },
@@ -99,14 +133,11 @@ const Voyages = {
     const out = [];
     const here = s.currentSystem;
 
-    // flagship — travelling or docked
+    // flagship — only while travelling; docked = berthed inside the station
     if (s.travel) {
       const plan = this.plan(s.travel.from, s.travel.to, s.travel.departedAt, s.travel.etaMs);
       if (plan) out.push({ id: "flag", kind: "flagship", label: "Flagship", name: this.playerName(),
         you: true, sprite: this._flagSprite(), plan, at: this.pos(plan, now) });
-    } else if (here) {
-      out.push({ id: "flag", kind: "flagship", label: "Flagship", name: this.playerName(),
-        you: true, sprite: this._flagSprite(), sysId: here });
     }
 
     // missions — out leg, on-site work, return leg (Missions.phaseAt drives it)
@@ -125,7 +156,7 @@ const Voyages = {
       } else if (ph.dir === "in") {
         const plan = this.plan(dest.id, from, m.startedAt + m.totalMs - inMs, inMs);
         if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
-      } else out.push({ ...base, sysId: dest.id });
+      } else out.push({ ...base, sysId: dest.id, phaseLabel: ph.label });
     }
 
     // charters — abstract timed jobs get a deterministic out-and-back patrol
@@ -169,7 +200,7 @@ const Voyages = {
         : p >= 0.55 ? this.plan(e.sysId, from, e.startedAt + e.etaMs * 0.55, legMs)
         : null;
       if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
-      else if (p >= 0.45 && p < 0.55) out.push({ ...base, sysId: e.sysId });
+      else if (p >= 0.45 && p < 0.55) out.push({ ...base, sysId: e.sysId, phaseLabel: "Charting the system" });
     }
     return out;
   },
@@ -205,20 +236,17 @@ const Voyages = {
     }
   },
 
-  // Presence rows → the same marker shape as active(). you:false.
+  // Presence rows → the same marker shape as active(). you:false. Docked
+  // barons are berthed inside their station — only transits are visible.
   others(now = Date.now()) {
     const out = [];
     for (const r of this._presence) {
       if (!Galaxy.get(r.to)) continue;
       const flying = r.departedAt && r.etaMs && now < r.departedAt + r.etaMs && Galaxy.get(r.from);
-      if (flying) {
-        const plan = this.plan(r.from, r.to, r.departedAt, r.etaMs);
-        if (plan) out.push({ id: r.id, kind: "flagship", label: "Flagship", name: r.name,
-          you: false, sprite: r.sprite, plan, at: this.pos(plan, now) });
-      } else {
-        out.push({ id: r.id, kind: "flagship", label: "Flagship", name: r.name,
-          you: false, sprite: r.sprite, sysId: r.to });
-      }
+      if (!flying) continue;
+      const plan = this.plan(r.from, r.to, r.departedAt, r.etaMs);
+      if (plan) out.push({ id: r.id, kind: "flagship", label: "Flagship", name: r.name,
+        you: false, sprite: r.sprite, plan, at: this.pos(plan, now) });
     }
     return out;
   },
@@ -252,19 +280,28 @@ const Voyages = {
     return this.active(now).concat(this.others(now)).filter(v => v.at);
   },
 
-  // What's visibly IN a system for the system view: parked entries, plus a
-  // transit whose current leg touches it (first half of a leg = departing the
-  // near end, second half = arriving at the far end, so a ship is never in two
-  // system scenes at once). gate = which lane gate it uses (§2.4).
+  // What's visibly IN a system for the system view. Docked flagships are
+  // berthed inside the station (not drawn). A transit shows in the near
+  // system while cruising/holding at its gate, in NO system mid-hyperspace,
+  // then in the far system — never two scenes at once. gate = which lane
+  // gate it uses (§2.4); frac = eased station↔gate fraction.
   inSystem(sysId, now = Date.now()) {
     const out = [];
     for (const v of this.active(now).concat(this.others(now))) {
-      if (v.sysId === sysId) { out.push({ ...v, mode: "docked" }); continue; }
+      if (v.sysId === sysId) {
+        if (v.kind !== "flagship") out.push({ ...v, mode: "working" });
+        continue;
+      }
       const at = v.at; if (!at) continue;
-      if (at.a === sysId && at.legP < 0.5)
-        out.push({ ...v, mode: "departing", gate: at.b, frac: at.legP * 2 });
-      else if (at.b === sysId && at.legP >= 0.5)
-        out.push({ ...v, mode: "arriving", gate: at.a, frac: (at.legP - 0.5) * 2 });
+      const ph = this.legPhase(at.legP);
+      if (ph.mode === "hyper") continue;
+      const inA = ph.side === "out";
+      if ((inA ? at.a : at.b) !== sysId) continue;
+      out.push({ ...v,
+        mode: ph.mode === "gate" ? (inA ? "gateOut" : "gateIn") : (inA ? "departing" : "arriving"),
+        gate: inA ? at.b : at.a,
+        frac: ph.mode === "gate" ? (inA ? 1 : 0) : this._ss(ph.f),
+        f: ph.f });
     }
     return out;
   },
@@ -333,7 +370,7 @@ const Voyages = {
   _eventSys(e, now) {
     const src = e.m || e.c;
     const v = this.active(e.t <= now ? e.t : now)
-      .find(x => x.mission === src || x.charter === src || x.id.slice(2) === (src.uid || src.id));
+      .find(x => x.mission === src || x.charter === src);
     if (v && v.at) { const sys = Galaxy.get(v.at.legP < 0.5 ? v.at.a : v.at.b); if (sys) return sys.name; }
     if (v && v.sysId) { const sys = Galaxy.get(v.sysId); if (sys) return sys.name; }
     return (e.m && e.m.sysName) || "deep space";
@@ -353,21 +390,16 @@ const Voyages = {
   // to the WYWA recap when journeys land in report cards.
   tick(now = Date.now()) {
     if (!this.s() || !window.Lanes || !Object.keys(Lanes.adj).length) return;
-    // keep other barons' flagships fresh while someone is actually watching
-    if ((window.UI && UI.page === "hub") || (window.StarMap && StarMap.open))
-      void this.refreshPresence();
     const evs = this.allEvents();
     if (!this._primed) {
       this._primed = true;
       for (const e of evs) if (e.t <= now) this._seen.add(e.id);
       return;
     }
-    let announced = 0;
     for (const e of evs) {
       if (e.t > now || this._seen.has(e.id)) continue;
       this._seen.add(e.id);
-      // resume() after time away matures a batch at once — two toasts, not a wall
-      if (announced++ < 2) this._announce(e, now);
+      this._announce(e, now);
     }
     if (this._seen.size > 200) {
       const live = new Set(evs.map(e => e.id));
@@ -387,8 +419,10 @@ const Voyages = {
     }
   },
 
-  // ▶ watch: play the encounter as a non-decisive skirmish. Seeded by the event
-  // id — the same fight plays every time. Never touches the report or wallet.
+  // ▶ watch: play the encounter, seeded by the event id — the same fight plays
+  // every time. Client-local voyages (§4.4) already know their verdict, so a
+  // skirmish on a doomed run reads as your line getting mauled; server-settled
+  // voyages stay non-decisive (the server verdict lands at settle).
   watch(eventId) {
     const e = this.allEvents().find(x => x.id === eventId);
     if (!e || !window.BattleView || !window.Combat) return;
@@ -401,12 +435,14 @@ const Voyages = {
     if (!roster.length) return;
     const type = e.m ? (e.kind === "toll" || e.kind === "customs" ? "smuggle" : e.m.type)
       : (e.c.band === "high" || e.c.band === "extreme" ? "smuggle" : "transport");
+    const localVerdict = e.m && window.Missions && !Missions.authoritative()
+      ? Missions.rolledSuccess(e.m) : true;
     BattleView.open({
       uid: "sk:" + e.id, skirmish: true,
       title: (e.m ? e.m.title : "Charter fleet") + " — skirmish",
       type, danger: e.m ? e.m.danger : e.c.band,
       faction: src.faction || null, sysName: this._eventSys(e, Date.now()),
-      success: true, lost: [], damaged: [], impounded: [], items: [], roster,
+      success: localVerdict, lost: [], damaged: [], impounded: [], items: [], roster,
     });
   },
 
@@ -420,106 +456,290 @@ const Voyages = {
     void this.refreshPresence(true);
   },
 
-  // ---- Hub mini galaxy view (flagship centred, moving through space) -------
-  _hubRaf: null, _hubStars: null,
-  hubSync() {
-    const s = this.s();
-    const wrap = document.getElementById("hub-transit-view");
-    const on = !!(s && s.travel && window.UI && UI.page === "hub" && wrap);
-    if (wrap) wrap.classList.toggle("hidden", !on);
-    if (on && !this._hubRaf) this._hubRaf = requestAnimationFrame(t => this._hubDraw(t));
-    if (!on && this._hubRaf) { cancelAnimationFrame(this._hubRaf); this._hubRaf = null; }
+  // ===== Hub Live View — chase cam on the followed ship =====================
+  // The whole panel is the ship's-eye stage: leaving port, braking into the
+  // gate, hyperdrive spool + jump, the hyperspace tunnel, drop-out, approach —
+  // with a mini chart inset showing where on the map that actually is.
+  followId: null,
+  _liveRaf: null, _liveFx: { mode: "", flashT: 0, trail: [] },
+  _liveStars: null, _imgs: {},
+
+  img(ref) {
+    const [kind, id] = String(ref || "ship:shuttle").split(":");
+    const url = kind === "race" ? ASSET.raceship(id) : ASSET.ship(id);
+    let im = this._imgs[url];
+    if (!im) { im = new Image(); im.onload = () => { im.ok = true; }; im.src = url; this._imgs[url] = im; }
+    return im;
   },
-  _hubDraw() {
-    this._hubRaf = null;
-    const s = this.s();
-    const cv = document.getElementById("hub-transit-canvas");
-    if (!cv || !s || !s.travel || !window.UI || UI.page !== "hub") { this.hubSync(); return; }
+
+  // Voyages worth putting on the big screen: anything moving, plus fleets
+  // working on site. A docked flagship is berthed — nothing to watch.
+  followable(now = Date.now()) {
+    const order = { flagship: 0, mission: 1, charter: 2, courier: 3, survey: 4 };
+    return this.active(now).filter(v => v.at || v.sysId)
+      .filter(v => !(v.kind === "flagship" && !v.at))
+      .sort((a, b) => (order[a.kind] ?? 9) - (order[b.kind] ?? 9));
+  },
+
+  hubSync() {
+    const panel = document.getElementById("hub-live");
+    if (!panel) return;
+    const onHub = !!(window.UI && UI.page === "hub");
+    const list = onHub ? this.followable() : [];
+    panel.classList.toggle("hidden", !list.length);
+    if (!list.length) {
+      // the id may be a rAF handle or a reduced-motion timeout — clear both
+      if (this._liveRaf) { cancelAnimationFrame(this._liveRaf); clearTimeout(this._liveRaf); this._liveRaf = null; }
+      return;
+    }
+    if (!list.some(v => v.id === this.followId)) this.followId = list[0].id;
+    // follow chips — rebuilt only when the set changes
+    const chips = document.getElementById("hub-live-follow");
+    if (chips) {
+      const sig = list.map(v => v.id).join(",") + "|" + this.followId;
+      if (chips.dataset.sig !== sig) {
+        chips.dataset.sig = sig;
+        chips.innerHTML = list.map(v =>
+          `<button type="button" class="btn btn-mini${v.id === this.followId ? " active" : ""}"
+            data-follow="${v.id}">${v.kind === "flagship" ? "★ Flagship" : v.label}</button>`).join("");
+        if (!chips._wired) {
+          chips._wired = true;
+          chips.onclick = e => {
+            const b = e.target.closest("[data-follow]");
+            if (b) { this.followId = b.dataset.follow; chips.dataset.sig = ""; this.hubSync(); }
+          };
+        }
+      }
+    }
+    if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => this._liveDraw());
+  },
+
+  _liveSub(text) {
+    const el = document.getElementById("hub-live-sub");
+    if (el && el.textContent !== text) el.textContent = text;
+  },
+  // generated names can already end in "Gate" (Daxor Gate) — don't double it
+  _gateName(sys) { return sys.name.replace(/\s+gate$/i, ""); },
+
+  _liveDraw() {
+    this._liveRaf = null;
+    const cv = document.getElementById("hub-live-canvas");
+    if (!cv || !window.UI || UI.page !== "hub") { this.hubSync(); return; }
     const now = Date.now();
-    const flag = this.active(now).find(v => v.kind === "flagship");
-    const at = flag && flag.at;
+    const list = this.followable(now);
+    const v = list.find(x => x.id === this.followId) || list[0];
+    if (!v) { this.hubSync(); return; }
     const ctx = cv.getContext("2d"); if (!ctx) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = cv.parentElement.getBoundingClientRect();
-    const w = Math.max(280, Math.floor(r.width)), h = 230;
-    if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const w = Math.max(300, Math.floor(r.width)), h = Math.max(240, Math.min(420, Math.floor(window.innerHeight * 0.45)));
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      cv.style.height = h + "px";
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#06080f"; ctx.fillRect(0, 0, w, h);
-    if (!at) { this.hubSync(); return; }
-
-    // parallax starfield seeded once; drifts against travel so motion reads
-    if (!this._hubStars) {
-      const rng = Combat._mk(Combat.seedFrom("hubstars"));
-      this._hubStars = Array.from({ length: 90 }, () => ({ x: rng(), y: rng(), b: 0.25 + rng() * 0.6, d: 0.3 + rng() * 0.7 }));
+    ctx.fillStyle = "#05070e"; ctx.fillRect(0, 0, w, h);
+    if (!this._liveStars) {
+      const rng = Combat._mk(Combat.seedFrom("livestars"));
+      this._liveStars = Array.from({ length: 130 }, () => ({ x: rng(), y: rng(), b: 0.2 + rng() * 0.7, d: 0.25 + rng() * 0.75 }));
     }
-    const K = Math.min(w, h) / 0.16;          // px per galaxy unit — a close view
-    const cx = w / 2, cy = h / 2;
-    const px = gx => cx + (gx - at.x) * K, py = gy => cy + (gy - at.y) * K;
-    ctx.fillStyle = "#fff";
-    for (const st of this._hubStars) {
-      const x = ((st.x - at.x * st.d * 0.5) % 1 + 1) % 1 * w;
-      const y = ((st.y - at.y * st.d * 0.5) % 1 + 1) % 1 * h;
-      ctx.globalAlpha = st.b * 0.7; ctx.fillRect(x, y, 1.2, 1.2);
-    }
-    ctx.globalAlpha = 1;
+    const fx = this._liveFx;
+    const shipX = w * 0.42, shipY = h * 0.55;
 
-    // lanes + systems near the flagship
+    let mode, sub, speed = 0;   // speed 0..1 drives plume + star drift
+    let sysA = null, sysB = null, ph = null;
+    if (v.at) {
+      ph = this.legPhase(v.at.legP);
+      sysA = Galaxy.get(v.at.a); sysB = Galaxy.get(v.at.b);
+      mode = ph.mode + ":" + ph.side;
+    } else { mode = "working"; }
+
+    // mode-transition flash (gate jump / drop-out)
+    if (mode !== fx.mode) { if (/hyper|gate/.test(mode + fx.mode)) fx.flashT = now; fx.mode = mode; fx.trail = []; }
+    const bell = f => 4 * f * (1 - f);   // accelerate-then-brake speed curve
+
+    // ---- starfield: drifts left as "speed"; streaks in hyperspace ----------
+    const drawStars = (sp, streak) => {
+      for (const st of this._liveStars) {
+        const x = ((st.x - (now / 40000) * sp * st.d) % 1 + 1) % 1 * w;
+        const y = st.y * h;
+        ctx.globalAlpha = st.b * 0.8;
+        if (streak > 0) {
+          const len = 2 + streak * 90 * st.d;
+          const g = ctx.createLinearGradient(x, y, x + len, y);
+          g.addColorStop(0, "rgba(160,200,255,.9)"); g.addColorStop(1, "rgba(160,200,255,0)");
+          ctx.strokeStyle = g; ctx.lineWidth = 1 + st.d;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+        } else { ctx.fillStyle = "#eaf0ff"; ctx.fillRect(x, y, 1.4, 1.4); }
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    const drawSystem = (sys, x, dir) => {   // big glowing system disc + name
+      if (!sys) return;
+      const y = h * 0.5, R = h * 0.34;
+      const g = ctx.createRadialGradient(x, y, 6, x, y, R);
+      g.addColorStop(0, "rgba(255,236,190,.95)"); g.addColorStop(0.25, "rgba(255,210,130,.45)");
+      g.addColorStop(1, "rgba(255,200,120,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R, 0, 7); ctx.fill();
+      ctx.fillStyle = "#ffe9c4"; ctx.beginPath(); ctx.arc(x, y, h * 0.055, 0, 7); ctx.fill();
+      ctx.fillStyle = "rgba(220,232,255,.85)"; ctx.font = "600 12px system-ui, sans-serif";
+      ctx.textAlign = dir; ctx.fillText(sys.name.toUpperCase(), x + (dir === "left" ? 20 : -20), h * 0.16);
+    };
+
+    const drawGate = (x, charge) => {   // the hyperspace gate, charging when told
+      const y = h * 0.5, t = now * 0.001;
+      const glow = ctx.createRadialGradient(x, y, 4, x, y, 70 + charge * 40);
+      glow.addColorStop(0, `rgba(130,200,255,${0.45 + charge * 0.4})`); glow.addColorStop(1, "rgba(130,200,255,0)");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, 70 + charge * 40, 0, 7); ctx.fill();
+      ctx.lineWidth = 2.5;
+      for (let k = 0; k < 3; k++) {
+        ctx.strokeStyle = `rgba(150,210,255,${(0.85 - k * 0.18).toFixed(2)})`;
+        const rr = 22 + k * 12;
+        ctx.beginPath(); ctx.ellipse(x, y, rr * 0.42, rr, t * (1.1 + k * 0.5), 0, 7); ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(210,238,255,.95)"; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill();
+    };
+
+    const drawShip = (x, y, sp, hyper) => {
+      // exhaust trail — recent positions fade out behind the hull
+      fx.trail.push({ x, y, t: now });
+      while (fx.trail.length && now - fx.trail[0].t > 900) fx.trail.shift();
+      ctx.lineCap = "round";
+      for (let i = 1; i < fx.trail.length; i++) {
+        const a = fx.trail[i - 1], b = fx.trail[i];
+        const age = 1 - (now - b.t) / 900;
+        ctx.strokeStyle = `rgba(120,200,255,${(age * 0.35 * (0.3 + sp)).toFixed(3)})`;
+        ctx.lineWidth = 1 + age * 3;
+        ctx.beginPath(); ctx.moveTo(a.x - (now - a.t) * sp * 0.05, a.y); ctx.lineTo(b.x - (now - b.t) * sp * 0.05, b.y); ctx.stroke();
+      }
+      // plume
+      const fl = (8 + Math.sin(now * 0.018) * 3) * (0.25 + sp) * (hyper ? 2.2 : 1);
+      const g = ctx.createLinearGradient(x - 18, y, x - 18 - fl * 3, y);
+      g.addColorStop(0, hyper ? "rgba(190,225,255,.95)" : "rgba(120,200,255,.8)");
+      g.addColorStop(1, "rgba(120,200,255,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(x - 16, y - 4); ctx.lineTo(x - 16 - fl * 3, y); ctx.lineTo(x - 16, y + 4); ctx.closePath(); ctx.fill();
+      // hull
+      const im = this.img(v.sprite);
+      const bob = Math.sin(now * 0.0012) * 2;
+      if (im.ok) { ctx.drawImage(im, x - 26, y - 15 + bob, 52, 30); }
+      else {
+        ctx.fillStyle = "#3fe3ff";
+        ctx.beginPath(); ctx.moveTo(x + 24, y + bob); ctx.lineTo(x - 18, y - 12 + bob); ctx.lineTo(x - 9, y + bob); ctx.lineTo(x - 18, y + 12 + bob); ctx.closePath(); ctx.fill();
+      }
+      // owner over the hull
+      ctx.font = "600 11px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.8)";
+      const nm = v.kind === "flagship" ? (v.name || "You") : v.label;
+      ctx.strokeText(nm, x, y - 24 + bob);
+      ctx.fillStyle = v.kind === "flagship" ? "#3fe3ff" : "#aab9dc";
+      ctx.fillText(nm, x, y - 24 + bob);
+    };
+
+    if (!v.at) {
+      // on site: the fleet loiters off the destination, visibly working
+      drawStars(0.12, 0);
+      drawSystem(Galaxy.get(v.sysId), w * 0.72, "right");
+      const a = now * 0.0004;
+      const x = w * 0.72 + Math.cos(a) * h * 0.24, y = h * 0.5 + Math.sin(a) * h * 0.2;
+      // scan pulse
+      const pr = (now % 2200) / 2200;
+      ctx.strokeStyle = `rgba(95,215,255,${(1 - pr) * 0.5})`; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y, 8 + pr * 46, 0, 7); ctx.stroke();
+      drawShip(x, y, 0.15, false);
+      sub = `${v.label} · ${v.phaseLabel || "on site"}`;
+    } else if (ph.mode === "cruise" && ph.side === "out") {
+      speed = bell(ph.f);
+      drawStars(0.25 + speed, 0);
+      drawSystem(sysA, w * 0.1, "left");
+      drawGate(w * 0.88, 0);
+      drawShip(w * (0.2 + 0.56 * this._ss(ph.f)), shipY, speed, false);
+      sub = `leaving ${sysA.name} — burning for the ${this._gateName(sysB)} gate`;
+    } else if (ph.mode === "gate" && ph.side === "out") {
+      drawStars(0.1, 0);
+      drawGate(w * 0.88, ph.f);
+      // spool particles converging on the drive
+      for (let i = 0; i < 8; i++) {
+        const q = ((now * 0.0015 + i / 8) % 1);
+        ctx.fillStyle = `rgba(150,215,255,${(1 - q) * ph.f})`;
+        ctx.fillRect(w * 0.76 - 60 * q + 60, shipY + Math.sin(i * 2.2 + now * 0.004) * 24 * q, 2.5, 2.5);
+      }
+      drawShip(w * 0.76, shipY, 0.08, false);
+      sub = `holding at the ${this._gateName(sysB)} gate — hyperdrive spooling`;
+    } else if (ph.mode === "hyper") {
+      drawStars(2.2, 0.5 + ph.f * 0.5);
+      // tunnel vignette
+      const vg = ctx.createRadialGradient(shipX, shipY, h * 0.18, shipX, shipY, h * 0.75);
+      vg.addColorStop(0, "rgba(60,120,255,0)"); vg.addColorStop(1, "rgba(40,70,200,.35)");
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
+      drawShip(shipX, shipY, 1, true);
+      sub = `hyperspace — ${sysA.name} → ${sysB.name}`;
+    } else if (ph.mode === "gate" && ph.side === "in") {
+      drawStars(0.15, 0);
+      drawGate(w * 0.12, 1 - ph.f);
+      drawShip(w * 0.24, shipY, 0.1, false);
+      sub = `dropped out at the ${this._gateName(sysA)} gate — ${sysB.name} space`;
+    } else {
+      speed = 1 - this._ss(ph.f);                    // decelerating in
+      drawStars(0.2 + speed * 0.8, 0);
+      drawSystem(sysB, w * 0.9, "right");
+      drawGate(w * 0.08, 0);
+      drawShip(w * (0.2 + 0.5 * this._ss(ph.f)), shipY, speed, false);
+      sub = `in ${sysB.name} space — on approach`;
+    }
+
+    // jump / drop-out flash
+    if (fx.flashT && now - fx.flashT < 380) {
+      ctx.fillStyle = `rgba(220,240,255,${(1 - (now - fx.flashT) / 380) * 0.75})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    this._drawMini(ctx, v, w, h, now);
+    this._liveSub(sub || "");
+    // reduced motion: step twice a second instead of every frame
+    const s = this.s();
+    this._liveRaf = (s && s.settings && s.settings.reduced)
+      ? setTimeout(() => { this._liveRaf = null; this._liveDraw(); }, 500)
+      : requestAnimationFrame(() => this._liveDraw());
+  },
+
+  // The small screen: the actual chart — route, systems, and the ship's dot.
+  _drawMini(ctx, v, w, h, now) {
+    const mw = Math.min(220, w * 0.32), mh = mw * 0.62;
+    const mx = w - mw - 10, my = 10;
+    ctx.save();
+    ctx.fillStyle = "rgba(5,8,16,.82)"; ctx.strokeStyle = "rgba(63,227,255,.35)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.rect(mx, my, mw, mh); ctx.fill(); ctx.stroke();
+    ctx.clip();
+    const px = gx => mx + gx * mw, py = gy => my + gy * mh;
     for (const lane of Lanes.list) {
       const a = Galaxy.get(lane.a).pos, b = Galaxy.get(lane.b).pos;
-      const x1 = px(a.x), y1 = py(a.y), x2 = px(b.x), y2 = py(b.y);
-      if (Math.max(x1, x2) < -80 || Math.min(x1, x2) > w + 80 || Math.max(y1, y2) < -80 || Math.min(y1, y2) > h + 80) continue;
-      const onRoute = flag.plan.legs.some((id, i) => i + 1 < flag.plan.legs.length
-        && ((id === lane.a && flag.plan.legs[i + 1] === lane.b) || (id === lane.b && flag.plan.legs[i + 1] === lane.a)));
-      ctx.strokeStyle = onRoute ? "rgba(63,227,255,.65)" : lane.trunk ? "rgba(130,200,255,.35)" : "rgba(150,170,220,.18)";
-      ctx.lineWidth = onRoute ? 2 : lane.trunk ? 1.6 : 1;
-      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.strokeStyle = lane.trunk ? "rgba(130,200,255,.25)" : "rgba(150,170,220,.12)";
+      ctx.lineWidth = lane.trunk ? 1 : 0.6;
+      ctx.beginPath(); ctx.moveTo(px(a.x), py(a.y)); ctx.lineTo(px(b.x), py(b.y)); ctx.stroke();
     }
-    const destId = s.travel.to;
+    if (v.plan) {
+      ctx.strokeStyle = "rgba(63,227,255,.8)"; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      v.plan.legs.forEach((id, i) => {
+        const p = Galaxy.get(id).pos;
+        i ? ctx.lineTo(px(p.x), py(p.y)) : ctx.moveTo(px(p.x), py(p.y));
+      });
+      ctx.stroke();
+    }
     for (const sys of Galaxy.list) {
-      const x = px(sys.pos.x), y = py(sys.pos.y);
-      if (x < -30 || x > w + 30 || y < -30 || y > h + 30) continue;
-      const dest = sys.id === destId;
-      ctx.fillStyle = dest ? "#3fe3ff" : sys.capital ? "#ffd9a0" : "#9aa9c8";
-      ctx.beginPath(); ctx.arc(x, y, dest ? 4.5 : sys.capital ? 3.5 : 2.2, 0, 7); ctx.fill();
-      if (dest) {
-        const pulse = 7 + Math.sin(now / 300) * 2.5;
-        ctx.strokeStyle = "rgba(63,227,255,.7)"; ctx.lineWidth = 1.2;
-        ctx.beginPath(); ctx.arc(x, y, pulse, 0, 7); ctx.stroke();
-      }
-      if (sys.capital || dest || sys.id === s.travel.from) {
-        ctx.fillStyle = "rgba(207,227,255,.8)"; ctx.font = "10px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.fillText(sys.name, x, y + 14);
-      }
+      if (!sys.capital) continue;
+      ctx.fillStyle = "#ffd9a0"; ctx.beginPath(); ctx.arc(px(sys.pos.x), py(sys.pos.y), 1.6, 0, 7); ctx.fill();
     }
-
-    // fellow travellers in frame (missions, couriers, other barons)
-    for (const v of this.markers(now)) {
-      if (v.id === "flag") continue;
-      const x = px(v.at.x), y = py(v.at.y);
-      if (x < -20 || x > w + 20 || y < -20 || y > h + 20) continue;
-      ctx.save(); ctx.translate(x, y); ctx.rotate(v.at.heading);
-      ctx.fillStyle = v.kind === "flagship" ? "#ffd9a0" : "rgba(123,140,255,.9)";
-      ctx.beginPath(); ctx.moveTo(5, 0); ctx.lineTo(-4, 3); ctx.lineTo(-4, -3); ctx.closePath(); ctx.fill();
-      ctx.restore();
-      if (v.kind === "flagship" && v.name) {
-        ctx.fillStyle = "rgba(255,217,160,.85)"; ctx.font = "9px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.fillText(v.name, x, y - 8);
-      }
+    const at = v.at || (v.sysId && { x: Galaxy.get(v.sysId).pos.x, y: Galaxy.get(v.sysId).pos.y });
+    if (at) {
+      const pulse = 3 + Math.sin(now / 220) * 1.2;
+      ctx.strokeStyle = "rgba(63,227,255,.9)"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(px(at.x), py(at.y), pulse, 0, 7); ctx.stroke();
+      ctx.fillStyle = "#3fe3ff"; ctx.beginPath(); ctx.arc(px(at.x), py(at.y), 1.8, 0, 7); ctx.fill();
     }
-
-    // the flagship, centred, thrusting
-    ctx.save(); ctx.translate(cx, cy); ctx.rotate(at.heading);
-    const fl = 6 + Math.sin(now / 60) * 2.5;
-    const g = ctx.createLinearGradient(-8, 0, -8 - fl * 2, 0);
-    g.addColorStop(0, "rgba(120,200,255,.9)"); g.addColorStop(1, "rgba(120,200,255,0)");
-    ctx.fillStyle = g; ctx.fillRect(-8 - fl * 2, -2, fl * 2, 4);
-    ctx.fillStyle = "#3fe3ff";
-    ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(-8, 6); ctx.lineTo(-4, 0); ctx.lineTo(-8, -6); ctx.closePath(); ctx.fill();
     ctx.restore();
-    ctx.fillStyle = "#cfe3ff"; ctx.font = "600 10px system-ui, sans-serif";
-    ctx.textAlign = "center"; ctx.fillText(this.playerName(), cx, cy - 14);
-
-    this._hubRaf = requestAnimationFrame(t => this._hubDraw(t));
   },
 };
 
