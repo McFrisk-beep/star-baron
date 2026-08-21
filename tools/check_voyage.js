@@ -127,6 +127,41 @@ const mkMission = (uid, type, danger, startedAt, totalMs) => ({
   ctx.Game.state.travel = null;
 }
 
+// ---- server-shaped missions (placeholder destinations) ---------------------
+// app_board_contract names destinations "Sector 12" — the SQL has no galaxy
+// table. Those missions must still fly somewhere real, or every signed-in
+// player's Live View is empty.
+{
+  const T0 = 6100000, TOT = 900000;
+  ctx.Game.state.currentSystem = from;
+  const srv = mkMission("mSRV", "escort", "moderate", T0, TOT);
+  srv.title = "Escort contract #4";        // the server's title format
+  srv.sysName = "Sector 12";               // the server's placeholder destination
+  ctx.Game.state.missions = [srv];
+  const v = Voyages.active(T0 + TOT * 0.1).find(x => x.kind === "mission");
+  assert.ok(v, "a mission with a placeholder destination still becomes a voyage");
+  assert.ok(v.at, "…and it is actually flying");
+  assert.ok(Voyages.followable(T0 + TOT * 0.1).some(x => x.id === "m:mSRV"),
+    "…and it can be followed on the Live View");
+  // stable: the same placeholder always resolves to the same real system
+  const again = boot();
+  again.Game.state.currentSystem = from;
+  const srv2 = { ...srv };
+  again.Game.state.missions = [srv2];
+  const v2 = again.Voyages.active(T0 + TOT * 0.1).find(x => x.kind === "mission");
+  assert.strictEqual(v2.plan.legs[v2.plan.legs.length - 1], v.plan.legs[v.plan.legs.length - 1],
+    "the same placeholder name resolves to the same system on every client");
+  // a different placeholder generally lands somewhere else
+  const names = ["Sector 1", "Sector 5", "Sector 12", "Sector 19"];
+  const dests = new Set(names.map(n => {
+    ctx.Game.state.missions = [Object.assign(mkMission("mS" + n, "escort", "low", T0, TOT), { sysName: n })];
+    const vv = Voyages.active(T0 + TOT * 0.1).find(x => x.kind === "mission");
+    return vv && vv.plan ? vv.plan.legs[vv.plan.legs.length - 1] : null;
+  }));
+  assert.ok(dests.size > 1, "different placeholder sectors spread across systems");
+  ctx.Game.state.missions = [];
+}
+
 // ---- flagship: travel marker; docked = berthed, not drawn ------------------
 {
   const T0 = 9000000, ETA = 300000;

@@ -109,7 +109,21 @@ const Voyages = {
       a: plan.legs[i], b: plan.legs[i + 1], leg: i, p, legP };
   },
 
-  _sysByName(name) { return name ? Galaxy.list.find(x => x.name === name) : null; },
+  // Board contracts generated SERVER-side carry a PLACEHOLDER destination
+  // ("Sector 12"): the SQL has no galaxy table — the galaxy is client-seeded
+  // from GALAXY.seed — so app_board_contract can't name a real system. An
+  // unresolvable name maps to a real system deterministically from the name
+  // itself, so every client agrees and the same label always means the same
+  // place. Without this every signed-in player's missions had no destination
+  // and vanished from the Live View entirely.
+  _sysByName(name) {
+    if (!name) return null;
+    const hit = Galaxy.list.find(x => x.name === name);
+    if (hit) return hit;
+    if (!window.Combat || !Galaxy.list.length) return null;
+    const rng = Combat._mk(Combat.seedFrom("sysname:" + name));
+    return Galaxy.list[Math.floor(rng() * Galaxy.list.length)] || null;
+  },
   playerName() {
     return (window.Cloud && Cloud.signedIn && Cloud.signedIn()
       && Cloud.displayName && Cloud.displayName()) || "You";
