@@ -774,6 +774,46 @@ const UI = {
       modal.onclick = e => { if (e.target === modal) done(false); };
     });
   },
+  // ---- launch clearance ---------------------------------------------------
+  // Docking somewhere else is a real departure now (you watch the run on the
+  // Hub), so it gets a beat: the bridge reports the course is laid in and waits
+  // for the word. Seeded per destination so reopening shows the same line.
+  LAUNCH_LINES: [
+    "Flight trajectories have been finalized, Captain. Say the word and we break dock.",
+    "Course to {SYS} is laid in and the drive is warm. Ready when you are, Captain.",
+    "Navigation's plotted the lane run to {SYS}. Awaiting your go, Captain.",
+    "Moorings are clear and the helm is standing by for {SYS}. Your call, Captain.",
+    "We've filed the departure with control, Captain — {SYS} on the far end. Shall we?",
+    "Hyperdrive checks are green and the gate queue is short. Take us to {SYS}, Captain?",
+  ],
+  async confirmLaunch(sysId) {
+    const name = this.sysName(sysId);
+    const seed = window.Combat ? Combat.seedFrom("launch:" + sysId) : 0;
+    const line = this.LAUNCH_LINES[seed % this.LAUNCH_LINES.length].replace(/\{SYS\}/g, name);
+    const eta = Fleet.dockTravelMs(this.s().currentSystem, sysId);
+    return this.confirmDialog({
+      title: "Launch Clearance",
+      body: `<p class="inc-text">${line}</p>
+        <p class="muted-note">${this.sysName(this.s().currentSystem)} → <b>${name}</b> · roughly ${Util.duration(eta)} under way.
+        You'll follow her live from the Hub.</p>`,
+      okLabel: "All set — launch ▸",
+      cancelLabel: "Hold position",
+    });
+  },
+  // Shared by the Star Systems list and the star map: confirm, launch, then
+  // hand the player to the Hub so the departure is the thing they're watching.
+  async launchTo(sysId) {
+    if (Economy.busy()) return false;
+    if (!await this.confirmLaunch(sysId)) return false;
+    if (Economy.busy()) return false;
+    const r = await Economy.dockAt(sysId);
+    if (!r || !r.ok) { this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn"); return false; }
+    window.Game.requestSave();
+    this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
+    this.showPage("hub");   // also closes the star map overlay, if it was open
+    return true;
+  },
+
   // Requisition terminal — the exchange trade-terminal pacing, for one-off
   // Bazaar purchases. Assumes the buy already settled; shows name + cost.
   playBuyAnim(name, cost) {
@@ -2582,11 +2622,8 @@ const UI = {
         this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good");
         this.flashCredits(); window.Game.requestSave(); this.renderSystems();
       } else if (d) {
-        if (Economy.busy()) return;
-        const r = await Economy.dockAt(d.dataset.dock);
-        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
         // Launch toast + hub transit status come from Bus.on("travelStart").
-        window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
+        await this.launchTo(d.dataset.dock);
       }
     };
   },

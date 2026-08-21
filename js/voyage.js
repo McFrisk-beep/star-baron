@@ -90,6 +90,10 @@ const Voyages = {
   // → { x, y, heading, a, b, leg, p, legP } or null (degenerate plan).
   pos(plan, t = Date.now()) {
     if (!plan || !plan.legs || plan.legs.length < 2) return null;
+    // A malformed voyage (corrupt save, a mission built with no duration) would
+    // otherwise produce NaN coordinates and draw nothing, invisibly. Degrade to
+    // "not flying" so callers skip it instead of painting at NaN.
+    if (!Number.isFinite(plan.departedAt) || !Number.isFinite(plan.etaMs)) return null;
     const p = Util.clamp((t - plan.departedAt) / Math.max(1, plan.etaMs), 0, 1);
     const cum = this._cum(plan.legs);
     const total = cum[cum.length - 1] || 1e-9;

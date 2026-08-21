@@ -16,8 +16,17 @@ event schedules with comms entries and watchable skirmishes, and
 cross-player flagship presence (`docs/sql/voyage_presence.sql`, optional).
 Every lane leg is choreographed (`Voyages.legPhase`): cruise out, brake into
 the gate, hyperdrive spool + jump flash, hyperspace, drop-out, approach —
-total leg time unchanged, only where the ship is drawn moves. Docked ships
-are berthed inside the station and not drawn. Arrival countdowns are gone
+total leg time unchanged, only where the ship is drawn moves. In the scene
+the cruise legs and the gate hold share one **hold point** (26px inside the
+gate) so a ship never teleports between stages. Stations are **fixed in
+space** — parked at a seeded per-system berth angle, out at orbit 0.36 so
+departures aren't lost in the star's glare — and transits run station ↔ gate
+because the station is the system's port. The ship the Live View follows
+wears a tracking reticle and draws larger, so it stays findable among
+ambient traffic. Docked ships are berthed inside the station and not drawn.
+Committing to a transfer (Star Systems list or star map) goes through a
+**launch-clearance** confirm — a seeded bridge line, the route and rough
+time — and on "go" hands the player to the Hub to watch the run. Arrival countdowns are gone
 from the travel/mission UI — the ship itself is the timer (mechanics are
 untouched: arrival still lands at `departedAt + etaMs`); only on-site work
 shows a clock. **§4.4 is in for client-local voyages**: mission and charter

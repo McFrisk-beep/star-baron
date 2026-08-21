@@ -700,12 +700,10 @@ const StarMap = {
 
     const dock = document.getElementById("sm-dock");
     if (dock) dock.onclick = async () => {
-      if (Economy.busy()) return;
-      const r = await Economy.dockAt(sys.id);
-      if (!r || !r.ok) return UI.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
-      UI.updateExchange(); UI.updateHeader(); UI.renderSystems();
-      window.Game.requestSave(); this.renderInfo(sys); this.updateGalaxyNodes();
+      // Same launch-clearance beat as the Star Systems list; on "go" it closes
+      // the map and lands on the Hub so you watch the run.
       // Launch toast + hub transit status come from Bus.on("travelStart").
+      if (!await UI.launchTo(sys.id)) { this.renderInfo(sys); this.updateGalaxyNodes(); }
     };
     const unlock = document.getElementById("sm-unlock");
     if (unlock) unlock.onclick = async () => {
@@ -1028,7 +1026,11 @@ const StarMap = {
       speed: (0.10 - i * 0.012) * 0.3, img: this.img(ASSET.planet(p.type)),
       size: 16 + (p.type === "gas_giant" || p.type === "ringed" ? 12 : 6),
     }));
-    const station = { angle: 0, orbit: 0.16, speed: 0.25, img: this.img(ASSET.station(sys.race)) };
+    // Stations hold station — they're parked, not in orbit. A fixed berth
+    // angle, seeded per system so no two sit the same way, out far enough that
+    // ships leaving the dock aren't swallowed by the star's glare.
+    const berth = window.Combat ? (Combat.seedFrom("berth:" + sys.id) % 628) / 100 : 0;
+    const station = { angle: berth, orbit: 0.36, speed: 0, img: this.img(ASSET.station(sys.race)) };
     const starImg = this.img(ASSET.star(sys.star));
     // Admin-uploaded (or git-committed default) per-system space background
     // takes precedence over the sector nebula.
@@ -1177,8 +1179,7 @@ const StarMap = {
         if (pl.img.ok) ctx.drawImage(pl.img, px - pl.size, py - pl.size, pl.size * 2, pl.size * 2);
         else { ctx.fillStyle = "#7aa0d0"; ctx.beginPath(); ctx.arc(px, py, pl.size, 0, Math.PI * 2); ctx.fill(); }
       }
-      // station
-      if (!reduced) station.angle += station.speed * dt;
+      // station — fixed in space (speed 0); sx/sy stay put frame to frame
       const sx = cx + Math.cos(station.angle) * station.orbit * R, sy = cy + Math.sin(station.angle) * station.orbit * R;
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
@@ -1262,7 +1263,7 @@ const StarMap = {
       // purposeful ships (projections of real state): your flagship + other
       // barons' flagships with the owner's name on top, mission convoys,
       // couriers — crossing between the gates their route actually uses.
-      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx);
+      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy);
 
       ctx.restore();   // end camera transform
 
@@ -1388,11 +1389,18 @@ const StarMap = {
   // after drop-out (gateIn) — with a warp burst on the jump itself. Headings
   // are smoothed so course changes read as flown maneuvers. Names use
   // fillText, so other barons' display names stay plain text.
-  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx) {
+  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx, followId) {
     if (!window.Voyages) return;
     fx = fx || (this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} }));
     fx.pos = fx.pos || {};
     const now = Date.now();
+    // The berth↔gate corridor. Cruise legs run station ↔ holdPoint and the gate
+    // hold sits exactly ON holdPoint, so a ship never teleports between the two
+    // stages — it flies in, stops, spools, and jumps from where it stopped.
+    const holdOf = g => {
+      const a = Math.atan2(sy - g.y, sx - g.x);
+      return { x: g.x + Math.cos(a) * 26, y: g.y + Math.sin(a) * 26 };
+    };
     const dt = Math.min(0.1, (now - (fx.last || now)) / 1000); fx.last = now;
     let list;
     try { list = Voyages.inSystem(sys.id, now); } catch (e) { return; }
@@ -1413,10 +1421,14 @@ const StarMap = {
         ctx.beginPath(); ctx.arc(x, y, 8 + pr * 40, 0, 7); ctx.stroke();
       } else if (v.mode === "gateOut" || v.mode === "gateIn") {
         if (!gp) continue;
-        const off = v.mode === "gateOut" ? 26 : -26;  // hold just short of / past the ring
-        const toC = Math.atan2(sy - gp.y, sx - gp.x);
-        x = gp.x + Math.cos(toC) * off; y = gp.y + Math.sin(toC) * off;
-        want = toC + Math.PI; thrust = 0.15;
+        const hold = holdOf(gp);
+        x = hold.x; y = hold.y;
+        // outbound holds facing the gate it's about to enter; inbound has just
+        // come through and is already turning for the station
+        want = v.mode === "gateOut"
+          ? Math.atan2(gp.y - hold.y, gp.x - hold.x)
+          : Math.atan2(sy - hold.y, sx - hold.x);
+        thrust = 0.15;
         if (v.mode === "gateOut") {                   // hyperdrive spooling — charge glow
           const g = ctx.createRadialGradient(x, y, 2, x, y, 24 + v.f * 22);
           g.addColorStop(0, `rgba(150,215,255,${(0.25 + v.f * 0.45).toFixed(2)})`);
@@ -1425,8 +1437,9 @@ const StarMap = {
         }
       } else {
         if (!gp) continue;
-        const from = v.mode === "departing" ? { x: sx, y: sy } : gp;
-        const to = v.mode === "departing" ? gp : { x: sx, y: sy };
+        const hold = holdOf(gp);                       // same endpoint the gate hold uses
+        const from = v.mode === "departing" ? { x: sx, y: sy } : hold;
+        const to = v.mode === "departing" ? hold : { x: sx, y: sy };
         x = from.x + (to.x - from.x) * v.frac;
         y = from.y + (to.y - from.y) * v.frac;
         want = Math.atan2(to.y - from.y, to.x - from.x);
@@ -1446,7 +1459,20 @@ const StarMap = {
       const [kind, id] = String(v.sprite || "ship:shuttle").split(":");
       const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
       const flag = v.kind === "flagship";
-      const sz = flag ? 15 : 10;
+      const followed = !!followId && v.id === followId;
+      const sz = (flag ? 15 : 11) * (followed ? 1.3 : 1);
+      // Tracking reticle on the ship the Live View is following, so it never
+      // gets lost among ambient traffic or washed out against the star.
+      if (followed) {
+        const rr = sz + 10 + Math.sin(now * 0.004) * 1.5;
+        ctx.save();
+        ctx.strokeStyle = "rgba(63,227,255,.85)"; ctx.lineWidth = 1.5;
+        for (let k = 0; k < 4; k++) {
+          const a0 = k * Math.PI / 2 + 0.35;
+          ctx.beginPath(); ctx.arc(x, y, rr, a0, a0 + 0.55); ctx.stroke();
+        }
+        ctx.restore();
+      }
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
       const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
       const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
@@ -1465,10 +1491,11 @@ const StarMap = {
       ctx.save();
       ctx.font = flag ? "600 11px system-ui, sans-serif" : "10px system-ui, sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.8)";
-      ctx.strokeText(label, x, y - sz - 4);
-      ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "rgba(170,185,220,.9)";
-      ctx.fillText(label, x, y - sz - 4);
+      ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      const ly = y - sz - (followed ? 16 : 8);   // clear of the reticle
+      ctx.strokeText(label, x, ly);
+      ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : (followed ? "#cfe3ff" : "rgba(170,185,220,.9)");
+      ctx.fillText(label, x, ly);
       ctx.restore();
     }
     // ships that left the scene: a hull that was spooling at a gate just
