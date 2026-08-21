@@ -1431,6 +1431,9 @@ body.reduced .floatnav-indicator { transition: none; }
 
 /* ===== modals: mission + equip ===== */
 .modal-wide { max-width: 560px; }
+.battle-modal { max-width: 720px; }
+.battle-modal canvas { display: block; width: 100%; height: min(420px, 52vh);
+  background: #05070e; border: 1px solid #1c2438; border-radius: 8px; }
 .mm-req { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin-bottom: 6px; }
 .mm-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .mm-ship { display: flex; align-items: center; gap: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; cursor: pointer; }

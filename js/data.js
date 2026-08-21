@@ -1092,6 +1092,36 @@ const DMGCFG = {
   },
 };
 
+/* ---- ENEMY CATALOG (LIVING_GALAXY.md §5.5) --------------------------------
+   Opposition hulls for the combat view. Mirrors SHIP_CATALOG's stat shape so
+   Combat can choreograph both sides with one code path. Three flavours:
+   pirates (light, swarming), syndicate enforcers (mid, disciplined), corporate
+   security (heavy, shielded). Sprites reuse the two raceship silhouettes no
+   player hull uses (mechanim, syndics) plus "stolen" civilian hulls for pirate
+   flavour — zero new art. `tier` gates which hulls a danger band fields.      */
+const ENEMY_CATALOG = {
+  pirate: [
+    { id: "pir_dart",     name: "Rust Dart",        firepower: 10,  hull: 55,  armor: 8,   shields: 0,  speed: 2.3,  sprite: "mechanim", tier: 0 },
+    { id: "pir_skiff",    name: "Scav Skiff",       firepower: 8,   hull: 45,  armor: 6,   shields: 0,  speed: 2.1,  sprite: "shuttle",  tier: 0 },
+    { id: "pir_cutter",   name: "Blade Cutter",     firepower: 20,  hull: 95,  armor: 16,  shields: 5,  speed: 1.9,  sprite: "mechanim", tier: 1 },
+    { id: "pir_mauler",   name: "Hull Mauler",      firepower: 34,  hull: 170, armor: 30,  shields: 8,  speed: 1.5,  sprite: "hauler",   tier: 2 },
+    { id: "pir_reaver",   name: "Reaver Frigate",   firepower: 52,  hull: 240, armor: 48,  shields: 18, speed: 1.4,  sprite: "mechanim", tier: 3 },
+  ],
+  syndicate: [
+    { id: "syn_blade",    name: "Silent Blade",     firepower: 22,  hull: 100, armor: 24,  shields: 14, speed: 2.0,  sprite: "syndics",  tier: 0 },
+    { id: "syn_enforcer", name: "Enforcer",         firepower: 38,  hull: 165, armor: 40,  shields: 26, speed: 1.7,  sprite: "syndics",  tier: 1 },
+    { id: "syn_collector",name: "Debt Collector",   firepower: 58,  hull: 250, armor: 60,  shields: 42, speed: 1.5,  sprite: "syndics",  tier: 2 },
+    { id: "syn_widow",    name: "Widow Cruiser",    firepower: 115, hull: 460, armor: 115, shields: 85, speed: 1.2,  sprite: "syndics",  tier: 3 },
+  ],
+  corporate: [
+    { id: "corp_ward",    name: "Ward Picket",      firepower: 26,  hull: 130, armor: 34,  shields: 30, speed: 1.7,  sprite: "mechanim", tier: 0 },
+    { id: "corp_lancer",  name: "Compliance Lancer",firepower: 45,  hull: 210, armor: 55,  shields: 50, speed: 1.5,  sprite: "syndics",  tier: 1 },
+    { id: "corp_bastion", name: "Bastion Frigate",  firepower: 70,  hull: 300, armor: 80,  shields: 75, speed: 1.3,  sprite: "mechanim", tier: 2 },
+    { id: "corp_aegis",   name: "Aegis Cruiser",    firepower: 130, hull: 520, armor: 130, shields: 120,speed: 1.15, sprite: "syndics",  tier: 3 },
+    { id: "corp_regent",  name: "Regent Battleship",firepower: 230, hull: 820, armor: 210, shields: 170,speed: 1.0,  sprite: "leviathan",tier: 4 },
+  ],
+};
+
 /* ---- FACTIONS -------------------------------------------------------------
    Themes the newswire AND is the reputation axis. `domain` = the commodity
    categories a faction controls; `rival` = who you annoy when you help them.  */
@@ -1570,6 +1600,7 @@ window.ACCESSORY_KINDS = ACCESSORY_KINDS;
 window.RARITIES = RARITIES;
 window.BAZAARCFG = BAZAARCFG;
 window.DMGCFG = DMGCFG;
+window.ENEMY_CATALOG = ENEMY_CATALOG;
 window.CUSTOMS = CUSTOMS;
 window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;

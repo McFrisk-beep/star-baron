@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<!-- battle_demo.html — a scenario bench for the combat view (LIVING_GALAXY.md §5).
+     Drives the REAL js/combat.js + js/battleview.js with canned reports so every
+     template / outcome can be watched without flying a mission. Dev tool only:
+     nothing here is loaded by index.html, so the game bundle is untouched.
+     Open directly (file://) or at /tools/battle_demo.html on a deploy. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- ASSET paths in data.js are repo-root relative ("assets/ships/x.png"); this page
+     lives in tools/, so anchor every relative URL at the root. -->
+<base href="../">
+<title>Cosmocrat — battle scenario bench</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body { margin: 0; padding: 18px; background: #05070e; color: #e6ecff;
+    font-family: ui-sans-serif, system-ui, sans-serif; }
+  h1 { font-size: 18px; letter-spacing: 2px; margin: 0 0 4px; }
+  p.note { color: #8b97b8; font-size: 13px; margin: 0 0 16px; max-width: 70ch; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); max-width: 1100px; }
+  .card { background: #0b1020; border: 1px solid #1c2438; border-radius: 10px; padding: 12px; cursor: pointer; }
+  .card:hover { border-color: #7b8cff; }
+  .card b { display: block; margin-bottom: 4px; }
+  .card span { color: #8b97b8; font-size: 12px; line-height: 1.45; }
+  .tag { display: inline-block; font-size: 10px; letter-spacing: 1px; padding: 1px 6px;
+    border-radius: 999px; margin-top: 8px; }
+  .win { background: rgba(70,211,154,.15); color: #46d39a; }
+  .lose { background: rgba(255,93,115,.15); color: #ff5d73; }
+</style>
+</head>
+<body>
+<h1>BATTLE SCENARIO BENCH</h1>
+<p class="note">Each card plays a real <code>Combat.script()</code> through the real renderer, from a
+canned report. Duration and cast scale with the danger band, so the extreme ones run ~60s —
+Skip closes any of them. Reload for the same fights (they're seeded by uid).</p>
+<div class="grid" id="grid"></div>
+
+<div class="modal-backdrop hidden" id="battle-modal">
+  <div class="modal modal-wide battle-modal">
+    <h3 id="battle-title">Engagement</h3>
+    <canvas id="battle-canvas"></canvas>
+    <div class="settings-actions"><button class="btn" id="battle-skip">Skip ▸</button></div>
+  </div>
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/assets-local.js"></script>
+<script src="js/data.js"></script>
+<script src="js/flavor.js"></script>
+<script src="js/galaxy.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/battleview.js"></script>
+<script>
+// Minimal host: BattleView reads Game.state.settings and requestSave on skip.
+window.Game = { state: { settings: { reduced: false } }, requestSave() {} };
+Galaxy.build();   // gives reports a real sysName → real nebula backdrop
+
+const belt = Galaxy.list.find(s => s.asteroidBelt) || Galaxy.list[0];
+const plain = Galaxy.list.find(s => !s.asteroidBelt) || Galaxy.list[1];
+const crew = (...defs) => defs.map(([uid, name, type]) => ({ uid, name, type }));
+
+const SCENARIOS = [
+  { key: "combat-flawless", label: "Fleet battle — flawless", danger: "extreme",
+    blurb: "Two lines close to gun range and slug it out. Nothing of yours is scratched, so nothing of yours is ever shown hit.",
+    report: { type: "combat", success: true, sysName: belt.name, faction: null,
+      lost: [], damaged: [], roster: crew(["a1","Iron Vigil","battleship"],["a2","Sparrow","corvette"],["a3","Kestrel","corvette"],["a4","Long Watch","frigate"]) } },
+
+  { key: "combat-pyrrhic", label: "Fleet battle — won, at a cost", danger: "high",
+    blurb: "You take the field but lose a hull. Watch the wreck keep drifting and shedding embers after it dies.",
+    report: { type: "combat", success: true, sysName: plain.name, faction: "syndicate",
+      lost: [["b2","Sparrow"]], damaged: [["b1","Iron Vigil",22],["b4","Long Watch",9]],
+      roster: crew(["b1","Iron Vigil","battleship"],["b2","Sparrow","corvette"],["b3","Hangar Queen","carrier"],["b4","Long Watch","frigate"]) } },
+
+  { key: "combat-loss", label: "Fleet battle — line breaks", danger: "extreme",
+    blurb: "The failure read: shields collapse, the radio calls the retreat, and your survivors burn for the map edge while the enemy holds the field.",
+    report: { type: "combat", success: false, sysName: belt.name, faction: null,
+      lost: [["c1","Sparrow"]], damaged: [["c2","Long Watch",34],["c3","Iron Vigil",18]],
+      roster: crew(["c1","Sparrow","corvette"],["c2","Long Watch","frigate"],["c3","Iron Vigil","battleship"]) } },
+
+  { key: "combat-wipe", label: "Fleet battle — total loss", danger: "extreme",
+    blurb: "Everything dies. The last hull calls a mayday before it goes.",
+    report: { type: "combat", success: false, wipe: true, sysName: plain.name, faction: "free_trade",
+      lost: [["d1","Sparrow"],["d2","Kestrel"],["d3","Long Watch"]], damaged: [],
+      roster: crew(["d1","Sparrow","corvette"],["d2","Kestrel","gunboat"],["d3","Long Watch","frigate"]) } },
+
+  { key: "escort", label: "Escort — convoy under raid", danger: "moderate",
+    blurb: "The freighters huddle while escorts screen them; raiders converge from every bearing and hold a firing ring.",
+    report: { type: "escort", success: true, sysName: belt.name, faction: "mining_combine",
+      lost: [], damaged: [["e1","Ore Mule",14],["e3","Kestrel",6]],
+      roster: crew(["e1","Ore Mule","ore_mule"],["e2","Bulk Nine","bulk"],["e3","Kestrel","gunboat"],["e4","Sparrow","corvette"]) } },
+
+  { key: "smuggle-run", label: "Smuggling — running the gate", danger: "moderate",
+    blurb: "A chase, not a brawl: you burn for the hyperspace gate on the right while customs cutters cut angles from above and below.",
+    report: { type: "smuggle", success: true, sysName: plain.name, faction: "syndicate",
+      lost: [], damaged: [["f1","Quiet Margin",11]],
+      roster: crew(["f1","Quiet Margin","clipper"],["f2","Lane Ghost","craft_courier"]) } },
+
+  { key: "smuggle-caught", label: "Smuggling — boarded", danger: "high",
+    blurb: "The run fails and the hold gets impounded: no escape burn, your ships end up dead in space while the cutters close.",
+    report: { type: "smuggle", success: false, sysName: belt.name, faction: "syndicate",
+      lost: [], damaged: [["g1","Quiet Margin",19]], impounded: [["g1","Quiet Margin"]],
+      roster: crew(["g1","Quiet Margin","clipper"],["g2","Second Thought","drift"]) } },
+
+  { key: "assassinate", label: "Assassination — ringed target", danger: "extreme",
+    blurb: "One high-value hull sits inside a screening ring; you punch inward and shoot through the escorts to reach it.",
+    report: { type: "assassinate", success: true, sysName: plain.name, faction: "syndicate",
+      lost: [], damaged: [["h1","Sparrow",26]],
+      roster: crew(["h1","Sparrow","corvette"],["h2","Kestrel","gunboat"]) } },
+
+  { key: "transport", label: "Transport — ambushed strung out", danger: "high",
+    blurb: "Caught mid-column with no formation: raiders come in off one flank and the haulers run for it.",
+    report: { type: "transport", success: false, sysName: belt.name, faction: null,
+      lost: [["i2","Cryo Tanker"]], damaged: [["i1","Bulk Nine",21]],
+      roster: crew(["i1","Bulk Nine","bulk"],["i2","Cryo Tanker","tanker"]) } },
+
+  { key: "charter", label: "Charter — freight lost a hull", danger: "high",
+    blurb: "Charters replay too. High/extreme bands fight the smuggle chase; calmer bands get the freight ambush.",
+    report: { type: "charter", success: true, sysName: plain.name, faction: null,
+      lost: [["j1","Drift Hauler"]], damaged: [["j2","Bulk Nine",16]],
+      roster: crew(["j1","Drift Hauler","drift"],["j2","Bulk Nine","bulk"]) } },
+];
+
+// canned rows → the exact report shape missions.js/charters.js write
+function build(s) {
+  const r = Object.assign({
+    uid: "demo-" + s.key, title: s.label, ts: Date.now(), danger: s.danger,
+    credits: 0, items: [], stock: null, impounded: [],
+  }, s.report);
+  r.lost = (r.lost || []).map(x => Array.isArray(x) ? { uid: x[0], name: x[1] } : x);
+  r.damaged = (r.damaged || []).map(x => Array.isArray(x) ? { uid: x[0], name: x[1], pct: x[2] } : x);
+  r.impounded = (r.impounded || []).map(x => Array.isArray(x) ? { uid: x[0], name: x[1] } : x);
+  return r;
+}
+
+const grid = document.getElementById("grid");
+for (const s of SCENARIOS) {
+  const rep = build(s);
+  const sc = Combat.script(rep, rep.roster);
+  const el = document.createElement("div");
+  el.className = "card";
+  const cls = sc.outcome === "loss" || sc.outcome === "wipe" ? "lose" : "win";
+  el.innerHTML = `<b>${s.label}</b><span>${s.blurb}</span>` +
+    `<span class="tag ${cls}">${s.danger.toUpperCase()} · ${sc.duration}s · ` +
+    `${sc.ships.length} ships · ${sc.events.length} events</span>`;
+  el.addEventListener("click", () => BattleView.open(rep));
+  grid.appendChild(el);
+}
+// ?play=<key> jumps straight into one (used by the screenshot harness)
+const want = new URLSearchParams(location.search).get("play");
+if (want) { const s = SCENARIOS.find(x => x.key === want); if (s) BattleView.open(build(s)); }
+</script>
+</body>
+</html>

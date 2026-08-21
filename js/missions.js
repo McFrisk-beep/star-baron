@@ -195,11 +195,66 @@ const Missions = {
     return this._resolveLocal(now, { stationOnly: true });
   },
 
+  // Replay roster: {uid, name, type} per participant, capped (~200 bytes).
+  _roster(m) {
+    return (m.shipUids || []).map(u => {
+      const sh = Fleet.ship(u);
+      return sh ? { uid: sh.uid, name: sh.name, type: sh.type } : null;
+    }).filter(Boolean).slice(0, 12);
+  },
+
+  // The server rolls destruction but NO hull damage (app_mission_resolve
+  // returns damaged:[]), so logged-in fleets came home from lost battles
+  // without a scratch. Until the §4.4 server upgrade lands, stamp damage
+  // client-side after the verdict — deterministic from the mission uid, same
+  // DMGCFG math as the local roll, persisted by the normal autosave commit
+  // (the same path charter damage already rides for logged-in players).
+  _stampAuthDamage(rep) {
+    if (!Array.isArray(rep.roster) || (rep.damaged || []).length) return;
+    const prof = DMGCFG.types[rep.type] || DMGCFG.types.transport;
+    const dangerMult = DMGCFG.dangerMult[rep.danger] || 1;
+    const lost = new Set((rep.lost || []).map(x => x.uid));
+    const rng = window.Combat ? Combat._mk(Combat.seedFrom(rep.uid + ":dmg")) : Math.random;
+    rep.damaged = rep.damaged || [];
+    for (const p of rep.roster) {
+      if (lost.has(p.uid)) continue;
+      const sh = Fleet.ship(p.uid); if (!sh) continue;
+      if (rng() >= (rep.success ? prof.chance : 1)) continue;
+      const before = sh.dmg || 0;
+      const mag = prof.dmg[0] + rng() * (prof.dmg[1] - prof.dmg[0]);
+      Fleet.addDamage(sh, mag * dangerMult * (rep.success ? 1 : prof.failMult));
+      rep.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
+    }
+  },
+
   async _resolveAuth(now) {
+    // Snapshot rosters (+ fields the server report omits) BEFORE the RPC — the
+    // server slice replaces ships and missions, and lost hulls are gone by the
+    // time the reports come back.
+    const pre = {};
+    for (const m of this.s().missions) if (!m.resolved)
+      pre[m.uid] = { roster: this._roster(m), danger: m.danger || null,
+        faction: m.faction || null, sysName: m.sysName || null };
     const r = await Economy._rpcOnly(() => Cloud.missionResolve(), "Couldn't resolve missions — try again.");
     if (r && r.missing) return this._resolveLocal(now, { skipStation: true });
     if (!r || !r.ok) return [];
     const out = Array.isArray(r.resolved) ? r.resolved : [];
+    for (const rep of out) {
+      const p = pre[rep.uid]; if (!p) continue;
+      if (!rep.roster) rep.roster = p.roster;
+      if (rep.danger == null) rep.danger = p.danger;
+      if (rep.faction == null) rep.faction = p.faction;
+      if (rep.sysName == null) rep.sysName = p.sysName;
+      this._stampAuthDamage(rep);
+    }
+    // ponytail: the next server slice may drop rosters again (server doesn't
+    // store them yet — §4.4 upgrade path); the Replay button just disappears.
+    for (const sr of this.s().reports || []) {
+      const p = pre[sr.uid]; if (!p) continue;
+      if (!sr.roster) sr.roster = p.roster;
+      const fresh = out.find(x => x.uid === sr.uid);
+      if (fresh && !(sr.damaged || []).length) sr.damaged = fresh.damaged;
+    }
     Economy.refreshNetWorth();
     Economy.checkAchievements();
     for (const rep of out) {
@@ -246,7 +301,10 @@ const Missions = {
 
       const report = { uid: m.uid, title: m.title, type: m.type, success, ts: now,
         sysName: m.sysName || null, danger: m.danger || null, faction: m.faction || null,
-        credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [] };
+        credits: 0, items: [], stock: null, lost: [], impounded: [], damaged: [],
+        // LIVING_GALAXY.md §5.7: replays need the roster — lost ships leave
+        // s.ships. Capped small; reports are already capped at 20.
+        roster: this._roster(m) };
 
       // ---- battle damage & attrition: every ship rolls wear against the
       // mission type's profile (a courier grazes an asteroid; a battle line
@@ -259,7 +317,9 @@ const Missions = {
         const sh = Fleet.ship(u); if (!sh) continue;
         const destroyP = Util.clamp((success ? prof.destroy : prof.destroyFail * riskMult) * odds, 0, 0.9);
         if (Math.random() < destroyP) { report.lost.push({ uid: sh.uid, name: sh.name }); continue; }
-        const hitP = success ? prof.chance : Math.min(1, prof.chance * 1.5);
+        // Failure means the engagement went badly — every hull that limps home
+        // limps: guaranteed wear, so a lost fight always has repair costs.
+        const hitP = success ? prof.chance : 1;
         if (Math.random() < hitP) {
           const before = sh.dmg || 0;
           const dmgMult = window.Boosts ? Math.max(0, 1 + Boosts.mag("missionDamage")) : 1;
