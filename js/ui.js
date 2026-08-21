@@ -45,7 +45,8 @@ const UI = {
       exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"), warBanner: $("war-banner"),
       tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
       navTrack: $("floatnav-track"), navIndicator: $("floatnav-indicator"),
-      fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
+      fleetMain: $("fleet-main"),
+      hubMissions: $("hub-missions"), hubMissionsPanel: $("hub-missions-panel"),
       fleetCharters: $("fleet-charters"), chartersSub: $("charters-sub"),
       fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
@@ -151,7 +152,7 @@ const UI = {
     else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
+    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); this._missionSig = ""; this.renderMissions(); }
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
@@ -223,12 +224,15 @@ const UI = {
     const panel = this.refs.hubTransit, body = this.refs.hubTransitBody;
     if (!panel || !body) return;
     const t = this.s().travel;
-    if (!t) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
+    if (!t) {
+      panel.classList.add("hidden"); body.innerHTML = "";
+      if (window.Voyages) Voyages.hubSync();
+      return;
+    }
     panel.classList.remove("hidden");
-    const leftMs = Math.max(0, t.departedAt + t.etaMs - Date.now());
-    const pct = (Economy.travelProgress() * 100).toFixed(1);
-    body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · ${Util.duration(leftMs)} remaining</div>
-      <div class="bar hub-transit-bar"><span style="width:${pct}%"></span></div>`;
+    // No countdown — the ship is the timer now: she arrives when she arrives.
+    body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · under way — follow her on the Live View above</div>`;
+    if (window.Voyages) Voyages.hubSync();
   },
 
   // Active survey expeditions — charting runs still out.
@@ -239,6 +243,7 @@ const UI = {
     if (!exps.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
     panel.classList.remove("hidden");
     const now = Date.now();
+    const foll = this._followable();
     body.innerHTML = exps.map(e => {
       const sh = window.Fleet ? Fleet.ship(e.shipUid) : null;
       const ship = sh ? sh.name : "Survey ship";
@@ -247,8 +252,13 @@ const UI = {
       }
       const leftMs = Math.max(0, e.startedAt + e.etaMs - now);
       const tag = leftMs > 0 ? Util.duration(leftMs) : "returning…";
-      return `<div class="haul-ship-line">${ship} → <b>${this.sysName(e.sysId)}</b> · ${tag}${e.far ? " · far" : ""}</div>`;
+      return `<div class="haul-ship-line">${ship} → <b>${this.sysName(e.sysId)}</b> · ${tag}${e.far ? " · far" : ""}
+        ${this._followBtn(foll, "x:" + e.id)}</div>`;
     }).join("");
+    body.onclick = ev => {
+      const f = ev.target.closest("[data-follow-v]");
+      if (f) this.followVoyage(f.dataset.followV);
+    };
   },
 
   // In-flight courier lines on Hub — shown even while traveling (dock panel hides).
@@ -258,13 +268,19 @@ const UI = {
     const ships = window.Shipments ? Shipments.active() : [];
     if (!ships.length) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
     panel.classList.remove("hidden");
+    const foll = this._followable();
     body.innerHTML = ships.map(sh => {
       const leftMs = Math.max(0, sh.departedAt + sh.etaMs - Date.now());
       const risk = sh.illicit
         ? ` · illicit · piracy ${(sh.riskPct * 100).toFixed(0)}%`
         : ` · piracy ${(sh.riskPct * 100).toFixed(0)}%`;
-      return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(leftMs)}${risk} · fee ${Util.credits(sh.fee)}c</div>`;
+      return `<div class="haul-ship-line">${this.sysName(sh.from)} → <b>${this.sysName(sh.to)}</b> · ${sh.slots} slots · ${Util.duration(leftMs)}${risk} · fee ${Util.credits(sh.fee)}c
+        ${this._followBtn(foll, "sh:" + sh.id)}</div>`;
     }).join("");
+    body.onclick = ev => {
+      const f = ev.target.closest("[data-follow-v]");
+      if (f) this.followVoyage(f.dataset.followV);
+    };
   },
 
   // ---- Fleet subtabs (Logistics / Owned Ships / Inventory) ----------------
@@ -378,7 +394,7 @@ const UI = {
     return `<div class="contract pending-card">
       <div class="c-head"><b>${label}</b><span class="ctype dgr-${c.band}">${danger}</span></div>
       <div class="c-meta">Payout <b class="up">${Util.credits(c.reward)}c</b> · loss ${((c.destroyChance || 0) * 100).toFixed(0)}%${nTag} · ${eta}</div>
-      <div class="c-actions"><button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
+      <div class="c-actions">${this._followBtn(this._followable(), "c:" + c.id)}<button class="${btnCls}" data-charter-cancel="${c.id}">${btnLabel}</button></div>
     </div>`;
   },
   _pendingCardHtml(c) {
@@ -765,6 +781,73 @@ const UI = {
       modal.onclick = e => { if (e.target === modal) done(false); };
     });
   },
+  // ---- launch clearance ---------------------------------------------------
+  // Docking somewhere else is a real departure now (you watch the run on the
+  // Hub), so it gets a beat: the bridge reports the course is laid in and waits
+  // for the word. Seeded per destination so reopening shows the same line.
+  LAUNCH_LINES: [
+    "Flight trajectories have been finalized, Captain. Say the word and we break dock.",
+    "Course to {SYS} is laid in and the drive is warm. Ready when you are, Captain.",
+    "Navigation's plotted the lane run to {SYS}. Awaiting your go, Captain.",
+    "Moorings are clear and the helm is standing by for {SYS}. Your call, Captain.",
+    "We've filed the departure with control, Captain — {SYS} on the far end. Shall we?",
+    "Hyperdrive checks are green and the gate queue is short. Take us to {SYS}, Captain?",
+  ],
+  async confirmLaunch(sysId) {
+    const name = this.sysName(sysId);
+    const seed = window.Combat ? Combat.seedFrom("launch:" + sysId) : 0;
+    const line = this.LAUNCH_LINES[seed % this.LAUNCH_LINES.length].replace(/\{SYS\}/g, name);
+    const eta = Fleet.dockTravelMs(this.s().currentSystem, sysId);
+    return this.confirmDialog({
+      title: "Launch Clearance",
+      body: `<p class="inc-text">${line}</p>
+        <p class="muted-note">${this.sysName(this.s().currentSystem)} → <b>${name}</b> · roughly ${Util.duration(eta)} under way.
+        You'll follow her live from the Hub.</p>`,
+      okLabel: "All set — launch ▸",
+      cancelLabel: "Hold position",
+    });
+  },
+  // Shared by the Star Systems list and the star map: confirm, launch, then
+  // hand the player to the Hub so the departure is the thing they're watching.
+  async launchTo(sysId) {
+    if (Economy.busy()) return false;
+    if (!await this.confirmLaunch(sysId)) return false;
+    if (Economy.busy()) return false;
+    const r = await Economy.dockAt(sysId);
+    if (!r || !r.ok) { this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn"); return false; }
+    window.Game.requestSave();
+    this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
+    this.showPage("hub");   // also closes the star map overlay, if it was open
+    return true;
+  },
+
+  // Ids of voyages the Live View can actually follow right now — so a row only
+  // offers "Follow" when there's something to watch (a survey between legs, a
+  // charter that hasn't started moving, etc. simply has no button).
+  _followable() {
+    return window.Voyages ? new Set(Voyages.followable().map(v => v.id)) : new Set();
+  },
+  _followBtn(set, id) {
+    if (!set.has(id)) return "";
+    const on = window.Voyages && Voyages.followId === id;
+    return `<button class="btn btn-mini${on ? " active" : ""}" data-follow-v="${id}">${on ? "● Following" : "▶ Follow live"}</button>`;
+  },
+
+  // Point the Hub Live View at one voyage and bring it on screen. This is what
+  // "follow this mission" means now — the Hub IS the live view, so it never
+  // sends you off to the star map.
+  followVoyage(id) {
+    if (!window.Voyages) return;
+    Voyages.followId = id;
+    if (this.page !== "hub") this.showPage("hub");   // charters live on the Fleet page
+    const chips = document.getElementById("hub-live-follow");
+    if (chips) chips.dataset.sig = "";        // force the chip row to repaint its active pill
+    Voyages.hubSync();
+    const panel = document.getElementById("hub-live");
+    if (panel && !panel.classList.contains("hidden"))
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  },
+
   // Requisition terminal — the exchange trade-terminal pacing, for one-off
   // Bazaar purchases. Assumes the buy already settled; shows name + cost.
   playBuyAnim(name, cost) {
@@ -856,8 +939,7 @@ const UI = {
       this.refs.transit.innerHTML =
         `<div class="transit-card"><div class="transit-h">In transit</div>
          <div class="transit-sub">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b></div>
-         <div class="bar"><span style="width:${(Economy.travelProgress() * 100).toFixed(1)}%"></span></div>
-         <div class="transit-eta">arriving in ${Util.duration(Economy.travelRemaining())}</div>
+         <div class="transit-eta">under way — follow her on the Hub Live View</div>
          <div class="muted-note">the exchange opens when you dock</div></div>`;
     } else this.refs.transit.classList.add("hidden");
 
@@ -997,7 +1079,7 @@ const UI = {
     } else if (this.refs.rank) {
       this.refs.rank.textContent = "—";
     }
-    this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} (${Util.duration(Economy.travelRemaining())})` : this.sysName(s.currentSystem);
+    this.refs.system.textContent = s.travel ? `→ ${this.sysName(s.travel.to)} · in transit` : this.sysName(s.currentSystem);
     this.refs.tier.textContent = Economy.tierTitle();
     const sent = Market.sentiment(), pct = (sent + 1) / 2 * 100;
     this.refs.sentiment.style.width = pct.toFixed(0) + "%";
@@ -1122,6 +1204,8 @@ const UI = {
     }
     el.innerHTML = `<div class="contract-list">` + list.map(c => this._charterCardHtml(c)).join("") + `</div>`;
     el.onclick = e => {
+      const f = e.target.closest("[data-follow-v]");
+      if (f) return this.followVoyage(f.dataset.followV);
       const btn = e.target.closest("[data-charter-cancel]"); if (!btn) return;
       this.cancelCharter(btn.dataset.charterCancel);
     };
@@ -1781,24 +1865,32 @@ const UI = {
     this.flashCredits(); window.Game.requestSave(); this.renderFleet();
   },
 
-  // ---- missions -----------------------------------------------------------
+  // ---- missions (Hub panel — hidden when none are active) ------------------
   renderMissions() {
+    const el = this.refs.hubMissions, panel = this.refs.hubMissionsPanel;
+    if (!el) return;
     const ms = this.s().missions;
+    if (panel) panel.classList.toggle("hidden", !ms.length);
     const sig = ms.map(m => m.uid).join(",");
     if (sig === this._missionSig) { this.updateMissions(); return; }
     this._missionSig = sig;
-    if (!ms.length) { this.refs.fleetMissions.innerHTML = `<p class="muted-note">No active missions. Take a contract in the Bazaar.</p>`; return; }
-    this.refs.fleetMissions.innerHTML = ms.map(m => {
+    if (!ms.length) { el.innerHTML = ""; return; }
+    el.innerHTML = ms.map(m => {
       const icons = m.shipUids.map(u => { const sh = Fleet.ship(u); if (!sh) return ""; const sprite = ASSET.shipArt(sh.type, sh.uid); return `<img class="mi" src="${sprite}" alt="" title="${sh.name}" onerror="this.style.display='none'"/>`; }).join("");
       return `<div class="mission" data-m="${m.uid}">
         <div class="m-head"><b>${m.title}</b><span class="m-chance">${(m.successChance * 100).toFixed(0)}% success</span></div>
         <div class="m-ships">${icons}</div>
         <div class="mbar"><span class="mbar-fill"></span></div>
         <div class="m-foot"><span class="m-phase"></span><span class="m-eta"></span></div>
-        <div class="m-cancel">${this._missionCancelHtml(m)}</div>
+        <div class="m-events" data-evn="0"></div>
+        <div class="m-cancel"><button class="btn btn-mini" data-follow-m="${m.uid}">▶ Follow live</button>${this._missionCancelHtml(m)}</div>
       </div>`;
     }).join("");
-    this.refs.fleetMissions.onclick = e => {
+    el.onclick = e => {
+      const f = e.target.closest("[data-follow-m]");
+      if (f) return this.followVoyage("m:" + f.dataset.followM);
+      const w = e.target.closest("[data-watch]");
+      if (w) { if (window.Voyages) Voyages.watch(w.dataset.watch); return; }
       const b = e.target.closest("[data-mission-cancel]");
       if (b) this.cancelMission(b.dataset.missionCancel);
     };
@@ -1806,8 +1898,9 @@ const UI = {
   },
 
   updateMissions() {
+    if (!this.refs.hubMissions) return;
     for (const m of this.s().missions) {
-      const node = this.refs.fleetMissions.querySelector(`[data-m="${m.uid}"]`); if (!node) continue;
+      const node = this.refs.hubMissions.querySelector(`[data-m="${m.uid}"]`); if (!node) continue;
       const ph = Missions.phaseAt(m);
       const fill = node.querySelector(".mbar-fill"), bar = node.querySelector(".mbar");
       bar.classList.toggle("work", ph.dir === "work");
@@ -1815,7 +1908,32 @@ const UI = {
       let w = ph.dir === "out" ? ph.phaseProgress * 100 : ph.dir === "in" ? (1 - ph.phaseProgress) * 100 : 100;
       fill.style.width = w.toFixed(1) + "%";
       node.querySelector(".m-phase").textContent = (ph.dir === "out" ? "▸ " : ph.dir === "in" ? "◂ " : "● ") + ph.label;
-      node.querySelector(".m-eta").textContent = "ETA " + Util.duration(ph.remaining);
+      // The only clock shown is the work itself (the ship doing the mission);
+      // transit legs have no countdown — the ship arrives when it arrives.
+      const inMs = m.phases[m.phases.length - 1].ms;
+      const workLeft = Math.max(0, m.startedAt + m.totalMs - inMs - Date.now());
+      node.querySelector(".m-eta").textContent =
+        ph.dir === "work" ? `on site ${Util.duration(workLeft)}` : "in transit — watch on Live View";
+      const fb = node.querySelector("[data-follow-m]");
+      if (fb) {
+        const on = !!(window.Voyages && Voyages.followId === "m:" + m.uid);
+        fb.classList.toggle("active", on);
+        const label = on ? "● Following" : "▶ Follow live";
+        if (fb.textContent !== label) fb.textContent = label;
+      }
+      // mid-flight events (LIVING_GALAXY.md §4.5) — fired ones appear as they happen
+      const evEl = node.querySelector(".m-events");
+      if (evEl && window.Voyages) {
+        const evs = Voyages.firedEventsFor(m.uid);
+        if (evEl.dataset.evn !== String(evs.length)) {
+          evEl.dataset.evn = String(evs.length);
+          evEl.innerHTML = evs.map(e => {
+            const meta = Voyages.EVENT_TEXT[e.kind] || { ico: "•" };
+            return `<span class="m-event">${meta.ico} ${e.kind}${e.watch
+              ? ` <button class="btn btn-mini" data-watch="${e.id}">▶ Watch</button>` : ""}</span>`;
+          }).join("");
+        }
+      }
     }
   },
 
@@ -1906,7 +2024,7 @@ const UI = {
     if (Economy.busy()) return;
     const r = await Missions.launch(c, this.selectedShipUids());
     if (!r.ok) return this.toast(r.msg, "warn");
-    this.toast("Mission launched ▸", "good");
+    this.toast("Mission launched ▸ — follow her on the Hub Live View.", "good");
     this._pending = null; this.refs.mission.classList.add("hidden");
     this._missionSig = "";
     window.Game.requestSave(); this.renderFleet(); this.renderBazaar(); this.renderDispatches();
@@ -2426,7 +2544,7 @@ const UI = {
     const gSys = window.Galaxy && Galaxy.get(sysId);
     const isStation = !!(gSys && !gSys.capital && window.Stations && Stations.get(sysId));
     if (here) return `<span class="badge">docked</span>`;
-    if (s.travel && s.travel.to === sysId) return `<span class="badge">arriving ${Util.duration(Economy.travelRemaining())}</span>`;
+    if (s.travel && s.travel.to === sysId) return `<span class="badge">arriving…</span>`;
     if (!isStation && !unlocked) {
       const cost = (SYSTEMS.find(x => x.id === sysId) || {}).unlock || 0;
       return `<button class="btn btn-mini" data-unlock="${sysId}" data-cost="${cost}">Unlock ${Util.credits(cost)}c</button>`;
@@ -2549,11 +2667,8 @@ const UI = {
         this.toast(`Unlocked ${this.sysName(u.dataset.unlock)}!`, "good");
         this.flashCredits(); window.Game.requestSave(); this.renderSystems();
       } else if (d) {
-        if (Economy.busy()) return;
-        const r = await Economy.dockAt(d.dataset.dock);
-        if (!r || !r.ok) return this.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
         // Launch toast + hub transit status come from Bus.on("travelStart").
-        window.Game.requestSave(); this.renderSystems(); this.updateHeader(); this.updateExchange(); this.updateDockGates();
+        await this.launchTo(d.dataset.dock);
       }
     };
   },
@@ -4410,7 +4525,7 @@ const UI = {
       if (window.Game._booting) return;
       const name = this.sysName(e.to);
       const warp = window.Senate ? Senate.travelEdictNote(e.etaMs) : "";
-      this.toast(`Launched toward ${name} — ETA ${Util.duration(e.etaMs)}${warp}`, "good");
+      this.toast(`Launched toward ${name} — follow her on the Hub Live View${warp}`, "good");
       this.renderHubTransit();
       this.updateHeader(); this.updateExchange(); this.updateDockGates();
       if (this.page === "hub") this.renderHubDock();
@@ -4481,7 +4596,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
+    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); this.renderMissions(); }
     if (this.page === "assets" && window.Shipments && Shipments.active().length) this.renderAssets();
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.
@@ -4492,7 +4607,7 @@ const UI = {
       if (!holding) this.renderStations();
     }
     if (this.page === "fleet") {
-      this.renderMissions(); this.renderCharters();
+      this.renderCharters();
       // Live survey countdown on the ship cards — skip while the sort <select>
       // is open so the dropdown isn't nuked mid-choice.
       if ((this.s().expeditions || []).some(e => !e.resolved)) {

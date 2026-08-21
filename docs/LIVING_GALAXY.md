@@ -1,9 +1,49 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: Steps 1–2 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
+**Status: Steps 1–3 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
 galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
 combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
-rosters + replays. **Steps 3–4 (voyages, system-view vignettes) remain design.**
+rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
+lane graph, moving markers on the galaxy chart, flagship/convoy vignettes in
+the system view (a slice of §6.2 shipped early), the Hub's **Live View**
+(the REAL system scene — `StarMap.startScene` rendering onto the Hub canvas
+with a chase cam gliding after the followed ship: flagship, mission,
+charter, courier or survey — plus a hyperspace-tunnel stage mid-lane, a
+chart inset, and follow chips for **every** voyage — your flagship,
+missions, charters, couriers, surveys, and other barons' flagships in
+transit (yours sort first). Each row that owns a voyage also carries a
+**▶ Follow live** button: mission cards, survey and courier lines on the
+Hub, and charter cards on Fleet (which jumps to the Hub). Chips are built
+with `textContent`, never innerHTML — another baron's display name is
+untrusted text. Each hyperspace hop also adds a ~5s gate
+dwell to client-computed flagship ETAs so routes read as journeys),
+dispatch-seeded
+event schedules with comms entries and watchable skirmishes, and
+cross-player flagship presence (`docs/sql/voyage_presence.sql`, optional).
+Every lane leg is choreographed (`Voyages.legPhase`): cruise out, brake into
+the gate, hyperdrive spool + jump flash, hyperspace, drop-out, approach —
+total leg time unchanged, only where the ship is drawn moves. In the scene
+the cruise legs and the gate hold share one **hold point** (26px inside the
+gate) so a ship never teleports between stages. Stations are **fixed in
+space** — parked at a seeded per-system berth angle, out at orbit 0.36 so
+departures aren't lost in the star's glare — and transits run station ↔ gate
+because the station is the system's port. The ship the Live View follows
+wears a tracking reticle and draws larger, so it stays findable among
+ambient traffic. Docked ships are berthed inside the station and not drawn.
+Committing to a transfer (Star Systems list or star map) goes through a
+**launch-clearance** confirm — a seeded bridge line, the route and rough
+time — and on "go" hands the player to the Hub to watch the run. Arrival countdowns are gone
+from the travel/mission UI — the ship itself is the timer (mechanics are
+untouched: arrival still lands at `departedAt + etaMs`); only on-site work
+shows a clock. **§4.4 is in for client-local voyages**: mission and charter
+outcomes draw from a stream seeded by the voyage uid at dispatch
+(`Missions._mkOutcomeRng` / `Charters._mkOutcomeRng` — resolve applies, it
+doesn't roll), so a mid-flight skirmish already knows the verdict
+(`Missions.rolledSuccess`); server-settled voyages keep the server verdict
+and non-decisive events. Still future: the §4.3 online-choice modal, the
+§4.4 server-side outcome-seed column, and §4.5 ordered catch-up (past
+events prime silently). **Step 4 (world-space camera + full vignettes)
+remains design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.

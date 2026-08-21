@@ -66,6 +66,9 @@ const Missions = {
       successChance: this.successChance(contract, uids),
       reward: contract.reward, impound: !!contract.impound, danger: contract.danger,
       stakeTier: contract.stakeTier || 0,
+      // Launch system, for the voyage view (cosmetic; server slices may drop it
+      // and voyage.js falls back to the current system).
+      fromSys: s.currentSystem,
       faction: contract.faction, resolved: false,
       contractId: contract.id || null,
       // Station Contract Office haul (docs/STATIONS.md §11)
@@ -146,6 +149,17 @@ const Missions = {
       "Couldn't abort mission — try again."
     );
   },
+
+  // §4.4 (LIVING_GALAXY.md): the dice roll moves from arrival to dispatch.
+  // Client-local outcomes draw from a stream seeded by the mission uid — fixed
+  // the moment the fleet launches — so resolveMatured stops rolling and starts
+  // APPLYING, and a mid-flight event can already know the verdict. Falls back
+  // to Math.random when combat.js isn't loaded (tool checks pin it there).
+  _mkOutcomeRng(uid) {
+    return window.Combat ? Combat._mk(Combat.seedFrom(uid + ":outcome")) : Math.random;
+  },
+  // The success verdict is the stream's FIRST draw — _resolveLocal must keep it so.
+  rolledSuccess(m) { return this._mkOutcomeRng(m.uid)() < m.successChance; },
 
   phaseAt(m, now = Date.now()) {
     let elapsed = Util.clamp(now - m.startedAt, 0, m.totalMs);
@@ -292,10 +306,13 @@ const Missions = {
       }
 
       m.resolved = true;
-      // Shared: one server roll. Guest/local: client roll (and local settle below).
+      // Shared: one server roll. Guest/local: the outcome stream seeded at
+      // dispatch (§4.4) — success is its first draw (see rolledSuccess).
+      const roll = this._mkOutcomeRng(m.uid);
+      const pick = arr => arr.length ? arr[Math.floor(roll() * arr.length)] : undefined;
       let success = sharedHaul
         ? !!(pre && pre.ok && pre.outcome === "success")
-        : Math.random() < m.successChance;
+        : roll() < m.successChance;
       const sharedPaid = sharedHaul && success;
       if (sharedPaid && pre.credits != null) s.credits = +pre.credits;
 
@@ -316,14 +333,15 @@ const Missions = {
       for (const u of m.shipUids) {
         const sh = Fleet.ship(u); if (!sh) continue;
         const destroyP = Util.clamp((success ? prof.destroy : prof.destroyFail * riskMult) * odds, 0, 0.9);
-        if (Math.random() < destroyP) { report.lost.push({ uid: sh.uid, name: sh.name }); continue; }
+        if (roll() < destroyP) { report.lost.push({ uid: sh.uid, name: sh.name }); continue; }
         // Failure means the engagement went badly — every hull that limps home
         // limps: guaranteed wear, so a lost fight always has repair costs.
         const hitP = success ? prof.chance : 1;
-        if (Math.random() < hitP) {
+        if (roll() < hitP) {
           const before = sh.dmg || 0;
           const dmgMult = window.Boosts ? Math.max(0, 1 + Boosts.mag("missionDamage")) : 1;
-          Fleet.addDamage(sh, Util.randFloat(prof.dmg[0], prof.dmg[1]) * dangerMult * (success ? 1 : prof.failMult) * dmgMult);
+          const mag = prof.dmg[0] + roll() * (prof.dmg[1] - prof.dmg[0]);
+          Fleet.addDamage(sh, mag * dangerMult * (success ? 1 : prof.failMult) * dmgMult);
           report.damaged.push({ uid: sh.uid, name: sh.name, pct: Math.round((sh.dmg - before) * 100) });
         }
       }
@@ -348,18 +366,18 @@ const Missions = {
         if (m.faction && !stationHaul) Rep.onContract(m.faction, m.type, m.danger);
         if (!stationHaul) {
           const bias = { safe: 0, low: 0.1, moderate: 0.25, high: 0.45, extreme: 0.7 }[m.danger] || 0;
-          if (Math.random() < (m.reward.itemChance || 0)) {
+          if (roll() < (m.reward.itemChance || 0)) {
             const it = Items.gen({ bias });
             s.items[it.uid] = it; report.items.push(it);
             if (window.Assets) Assets.parkGear(it.uid, s.currentSystem);
-            if (Math.random() < bias * 0.4) {
+            if (roll() < bias * 0.4) {
               const it2 = Items.gen({ bias }); s.items[it2.uid] = it2; report.items.push(it2);
               if (window.Assets) Assets.parkGear(it2.uid, s.currentSystem);
             }
           }
-          if (Math.random() < (m.reward.stockChance || 0)) {
-            const c = Util.pick(COMMODITIES.filter(x => !x.craftOnly)) || Util.pick(COMMODITIES);
-            const qty = Util.randInt(8, 40);
+          if (roll() < (m.reward.stockChance || 0)) {
+            const c = pick(COMMODITIES.filter(x => !x.craftOnly)) || pick(COMMODITIES);
+            const qty = 8 + Math.floor(roll() * 33);
             const held = s.positions[c.id] || 0, avg = s.avgCost[c.id] || 0;
             s.positions[c.id] = held + qty;
             s.avgCost[c.id] = held + qty > 0 ? (held * avg) / (held + qty) : 0; // granted free
@@ -369,10 +387,10 @@ const Missions = {
           // High-danger jobs can pay a Workshop blueprint (CRAFTING_AND_MATERIALS §3.5).
           const danger = m.danger || "";
           if (window.Workshop && (danger === "high" || danger === "extreme")
-              && Math.random() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
+              && roll() < (WORKSHOPCFG.missionBlueprintChance || 0)) {
             const pool = Workshop.dropPool("mission");
             if (pool.length) {
-              const bp = Util.pick(pool);
+              const bp = pick(pool);
               const gr = Workshop.grantBlueprint(bp.id);
               if (gr.ok) report.blueprint = bp.name;
             }

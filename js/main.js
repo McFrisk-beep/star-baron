@@ -489,6 +489,7 @@ const Game = {
     if (window.AdminUI) AdminUI.init();
     if (window.Bgm) Bgm.init();
     StarMap.init();
+    if (window.Voyages) Voyages.wire();   // visible voyages: presence + seeded events
     if (window.Senate) Senate.init();
     if (window.Story) Story.init();
     Feed.wire();
@@ -652,6 +653,7 @@ const Game = {
     if (window.Crime) Crime.decay(now);   // the record cools by 1 a day
     const senateBills = window.Senate ? Senate.tick(now) : [];
     Economy.checkArrival(now);
+    if (window.Voyages) Voyages.tick(now);   // announce seeded mid-flight events (§4.5)
     if (window.Economy && Economy.authoritative()) {
       // Phase 3: soft income banks via app_pull (throttled when something is due).
       // Phase 3 soft income via app_pull when due. Also retry while pull hasn't

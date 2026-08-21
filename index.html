@@ -55,6 +55,13 @@
       <div class="pages-wrap">
       <!-- HUB — page background + active blackbox boost bar -->
       <section class="page hidden" id="page-hub">
+        <div class="panel hub-live hidden" id="hub-live">
+          <h2>Live View <small id="hub-live-sub"></small></h2>
+          <div class="hub-live-follow" id="hub-live-follow"></div>
+          <div class="hub-live-scene">
+            <canvas id="hub-live-canvas" aria-label="Live view — following your ship through space, with a chart inset"></canvas>
+          </div>
+        </div>
         <div class="panel hub-dock hidden" id="hub-dock">
           <h2>Dock Status <small>where you're berthed</small></h2>
           <div id="hub-dock-body"></div>
@@ -62,6 +69,10 @@
         <div class="panel hub-transit hidden" id="hub-transit">
           <h2>In Transit <small>flagship en route</small></h2>
           <div id="hub-transit-body"></div>
+        </div>
+        <div class="panel hub-missions hidden" id="hub-missions-panel">
+          <h2><span data-i18n="fleet.missions">Active Missions</span> <small>follow one on the Live View above</small></h2>
+          <div id="hub-missions"></div>
         </div>
         <div class="panel hub-surveys hidden" id="hub-surveys">
           <h2>Surveys <small>ships on charting runs</small></h2>
@@ -127,10 +138,7 @@
         <div class="fleet-pane" data-fleet-pane="logistics">
           <section class="panel" id="fleet-main"></section>
 
-          <section class="panel">
-            <h2 data-i18n="fleet.missions">Active Missions</h2>
-            <div id="fleet-missions"></div>
-          </section>
+          <!-- Active Missions moved to the Hub (docs/LIVING_GALAXY.md step 3) -->
 
           <section class="panel hidden" id="fleet-reports-panel">
             <h2 data-i18n="fleet.reports">Mission Reports</h2>
@@ -794,6 +802,7 @@
   <script src="js/charters.js"></script>
   <script src="js/expeditions.js"></script>
   <script src="js/incidents.js"></script>
+  <script src="js/voyage.js"></script>
   <script src="js/orders.js"></script>
   <script src="js/extractors.js"></script>
   <script src="js/industries.js"></script>

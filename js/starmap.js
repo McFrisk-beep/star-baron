@@ -76,8 +76,10 @@ const StarMap = {
     document.body.classList.remove("starmap-open");
     this.stopSystem();
     this.stopStars();
+    this._stopVoyageLayer();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
     if (window.UI) UI.updateNavIndicator();        // restore glow to the underlying page tab
+    if (window.Voyages) Voyages.hubSync();         // the Hub Live View paused while the map covered it
   },
   showGalaxy() {
     this.stopSystem();
@@ -89,8 +91,86 @@ const StarMap = {
     this.refs.btnClose.classList.add("hidden");
     this.renderGalaxy();
     this.startStars();
+    this._startVoyageLayer();
     clearInterval(this.galaxyTimer);
     this.galaxyTimer = setInterval(() => this.updateGalaxyNodes(), CONFIG.marketTickMs);
+  },
+
+  // ===== voyage markers on the chart (LIVING_GALAXY.md §3) =================
+  // Every active voyage renders as a moving marker on its lane polyline —
+  // flying is arithmetic on the clock, so this just repaints Voyages.markers().
+  // Flagships (yours + other barons') carry the owner's name.
+  _startVoyageLayer() {
+    this._stopVoyageLayer();
+    if (!window.Voyages) return;
+    void Voyages.refreshPresence();
+    const ns = "http://www.w3.org/2000/svg";
+    const layer = document.createElementNS(ns, "g");
+    layer.setAttribute("pointer-events", "none");
+    this.refs.svg.appendChild(layer);
+    this._voyLayer = layer; this._voyEls = {};
+    const reduced = !!(this.s().settings && this.s().settings.reduced);
+    const W = 1000, H = 620;
+    const tick = () => {
+      if (!this.open || this.refs.galaxyView.classList.contains("hidden")) { this._stopVoyageLayer(); return; }
+      const now = Date.now();
+      const live = new Set();
+      for (const v of Voyages.markers()) {
+        live.add(v.id);
+        const el = this._voyEls[v.id] || (this._voyEls[v.id] = this._mkVoyEl(layer, v));
+        el.g.setAttribute("transform", `translate(${(v.at.x * W).toFixed(1)},${(v.at.y * H).toFixed(1)})`);
+        // flown turns: ease the drawn heading toward the route bearing
+        if (el.hdg == null) el.hdg = v.at.heading;
+        const diff = Math.atan2(Math.sin(v.at.heading - el.hdg), Math.cos(v.at.heading - el.hdg));
+        el.hdg += reduced ? diff : diff * 0.12;
+        el.hull.setAttribute("transform", `rotate(${(el.hdg * 180 / Math.PI).toFixed(1)})`);
+        // exhaust flicker, stretched to a streak mid-lane (hyperspace)
+        const ph = Voyages.legPhase(v.at.legP);
+        const fl = (ph.mode === "hyper" ? 16 : ph.mode === "gate" ? 3 : 7) + Math.sin(now * 0.02 + v.at.x * 40) * 2;
+        el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
+      }
+      for (const id in this._voyEls) if (!live.has(id)) { this._voyEls[id].g.remove(); delete this._voyEls[id]; }
+      // reduced motion: step once a second instead of every frame
+      this._voyRaf = reduced ? setTimeout(tick, 1000) : requestAnimationFrame(tick);
+      this._voyRafIsTimer = reduced;
+    };
+    tick();
+  },
+  _mkVoyEl(layer, v) {
+    const ns = "http://www.w3.org/2000/svg";
+    const g = document.createElementNS(ns, "g");
+    const hullG = document.createElementNS(ns, "g");   // rotates: plume + hull together
+    const plume = document.createElementNS(ns, "polygon");
+    plume.setAttribute("class", "voy-plume");
+    hullG.appendChild(plume);
+    const hull = document.createElementNS(ns, "polygon");
+    let tail;
+    if (v.kind === "flagship") {
+      hull.setAttribute("points", "9,0 -7,5.5 -3.5,0 -7,-5.5");
+      hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
+      tail = 6;
+    } else {
+      hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
+      hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
+      tail = 4;
+    }
+    hullG.appendChild(hull);
+    g.appendChild(hullG);
+    if (v.kind === "flagship" && v.name) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
+      t.setAttribute("y", -11);
+      t.textContent = v.name;   // textContent — other barons' names are untrusted text
+      g.appendChild(t);
+    }
+    layer.appendChild(g);
+    return { g, hull: hullG, plume, tail };
+  },
+  _stopVoyageLayer() {
+    if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
+    this._voyRaf = null;
+    if (this._voyLayer) { this._voyLayer.remove(); this._voyLayer = null; }
+    this._voyEls = {};
   },
 
   // ===== galaxy view (SVG) ================================================
@@ -340,6 +420,8 @@ const StarMap = {
     if (!sys) return;
     this.current = id;
     this.stopStars();
+    this._stopVoyageLayer();
+    if (window.Voyages) void Voyages.refreshPresence();
     this.refs.galaxyView.classList.add("hidden");
     this.refs.systemView.classList.remove("hidden");
     this.refs.btnClose.classList.remove("hidden");
@@ -618,12 +700,10 @@ const StarMap = {
 
     const dock = document.getElementById("sm-dock");
     if (dock) dock.onclick = async () => {
-      if (Economy.busy()) return;
-      const r = await Economy.dockAt(sys.id);
-      if (!r || !r.ok) return UI.toast((r && r.msg) || "Couldn't reach the exchange — try again.", "warn");
-      UI.updateExchange(); UI.updateHeader(); UI.renderSystems();
-      window.Game.requestSave(); this.renderInfo(sys); this.updateGalaxyNodes();
+      // Same launch-clearance beat as the Star Systems list; on "go" it closes
+      // the map and lands on the Hub so you watch the run.
       // Launch toast + hub transit status come from Bus.on("travelStart").
+      if (!await UI.launchTo(sys.id)) { this.renderInfo(sys); this.updateGalaxyNodes(); }
     };
     const unlock = document.getElementById("sm-unlock");
     if (unlock) unlock.onclick = async () => {
@@ -811,10 +891,21 @@ const StarMap = {
   },
 
   // ===== animated scene (canvas) =========================================
-  startScene(sys) {
-    this.stopScene();
-    const canvas = this.refs.canvas;
-    if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return; // no-canvas env
+  // startScene(sys, opts) — the living system scene. Default: the star-map
+  // overlay canvas with drag/zoom input. With opts it also powers the Hub
+  // Live View: { canvas, followVoy: <voyage id>, zoom, overlay(ctx,w,h,now) }
+  // renders the SAME scene onto another canvas — nebula, planets, gates,
+  // ambient traffic and all — with the camera gliding after that voyage and
+  // no pointer input. Returns a { stop() } handle; an opts.canvas scene never
+  // touches the overlay scene's lifecycle fields, so both can coexist.
+  startScene(sys, opts = {}) {
+    const ext = !!opts.canvas;
+    if (!ext) this.stopScene();
+    const voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} };   // per-scene voyager view state
+    const canvas = opts.canvas || this.refs.canvas;
+    if (!canvas || !canvas.getContext || !canvas.getContext("2d")) return null; // no-canvas env
+    const handle = { sysId: sys.id, stopped: false, raf: null, stop: null };
+    const cleanups = [];
     const reduced = this.s().settings.reduced;
     const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect();
@@ -823,12 +914,13 @@ const StarMap = {
       canvas.width = w; canvas.height = h;
     };
     resize();
-    this._onResize = resize;
     window.addEventListener("resize", resize);
+    cleanups.push(() => window.removeEventListener("resize", resize));
     // device-mode / flex / overlay panel changes don't always fire window.resize
     if (typeof ResizeObserver !== "undefined") {
-      this._sceneRO = new ResizeObserver(resize);
-      this._sceneRO.observe(canvas.parentElement);
+      const ro = new ResizeObserver(resize);
+      ro.observe(canvas.parentElement);
+      cleanups.push(() => ro.disconnect());
     }
 
     const W = () => canvas.width, H = () => canvas.height;
@@ -845,11 +937,23 @@ const StarMap = {
       cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
       cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
     };
+    // Chase cam (Hub Live View): glide the camera onto the followed voyage —
+    // its scene position is recorded by _drawVoyagers into voyFx.pos.
+    const followCam = () => {
+      if (!opts.followVoy) return;
+      cam.zoom = opts.zoom || 1.7;
+      const fp = voyFx.pos[opts.followVoy];
+      if (!fp) return;
+      const tx = W() / 2 - fp.x * cam.zoom, ty = H() / 2 - fp.y * cam.zoom;
+      cam.x += (tx - cam.x) * (cam._snapped ? 0.08 : 1);
+      cam.y += (ty - cam.y) * (cam._snapped ? 0.08 : 1);
+      cam._snapped = true;
+    };
     // Squat map panes (mobile stack: short top strip) used to crush the system
     // into Math.min(w,h). Start cover-zoomed instead — same idea as galaxy
     // _fitGalaxy — so outer orbits crop and the user pans / zooms out.
     // Deferred one frame so canvas size matches the unhidden system-view.
-    requestAnimationFrame(() => {
+    if (!ext && !opts.followVoy) requestAnimationFrame(() => {
       resize();
       if (H() < W() * 0.95) {
         cam.zoom = 1.35;
@@ -872,45 +976,49 @@ const StarMap = {
     const panBy = (dx, dy) => { cam.x += dx; cam.y += dy; clampCam(); hideHint(); redraw(); };
 
     // show the drag/zoom hint fresh each time a system opens; fade after a moment
-    if (this.refs.sceneHint) {
+    if (!ext && this.refs.sceneHint) {
       this.refs.sceneHint.classList.remove("faded");
       clearTimeout(hintTimer);
       hintTimer = setTimeout(() => { if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); }, 6000);
     }
 
-    // input: 1 pointer drag = pan · wheel = zoom · 2 pointers = pinch-zoom
-    const ptrs = new Map();
-    let pinchPrev = null;
-    const rectOf = () => canvas.getBoundingClientRect();
-    const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
-    const onMove = e => {
-      const p = ptrs.get(e.pointerId); if (!p) return;
-      const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
-      if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
-        const pts = [...ptrs.values()], r = rectOf();
-        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
-        if (pinchPrev && dist > 0) { zoomAt(mid.x, mid.y, dist / pinchPrev.dist); panBy(mid.x - pinchPrev.mid.x, mid.y - pinchPrev.mid.y); }
-        pinchPrev = { dist, mid };
-        return;
-      }
-      panBy(e.clientX - px, e.clientY - py);
-    };
-    const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
-    const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
-    canvas.addEventListener("pointerdown", onDown);
-    canvas.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    this._sceneCtrlCleanup = () => {
-      canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      canvas.removeEventListener("wheel", onWheel);
-      clearTimeout(hintTimer);
-    };
+    // input: 1 pointer drag = pan · wheel = zoom · 2 pointers = pinch-zoom.
+    // Chase-cam scenes take no input — the camera belongs to the followed ship.
+    if (!ext) {
+      const ptrs = new Map();
+      let pinchPrev = null;
+      const rectOf = () => canvas.getBoundingClientRect();
+      const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
+      const onMove = e => {
+        const p = ptrs.get(e.pointerId); if (!p) return;
+        const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+        if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
+          const pts = [...ptrs.values()], r = rectOf();
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          const mid = { x: (pts[0].x + pts[1].x) / 2 - r.left, y: (pts[0].y + pts[1].y) / 2 - r.top };
+          if (pinchPrev && dist > 0) { zoomAt(mid.x, mid.y, dist / pinchPrev.dist); panBy(mid.x - pinchPrev.mid.x, mid.y - pinchPrev.mid.y); }
+          pinchPrev = { dist, mid };
+          return;
+        }
+        panBy(e.clientX - px, e.clientY - py);
+      };
+      const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
+      const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
+      canvas.addEventListener("pointerdown", onDown);
+      canvas.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+      canvas.addEventListener("wheel", onWheel, { passive: false });
+      cleanups.push(() => {
+        canvas.removeEventListener("pointerdown", onDown);
+        canvas.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        canvas.removeEventListener("wheel", onWheel);
+        clearTimeout(hintTimer);
+      });
+      this._sceneCtrlCleanup = () => cleanups.forEach(f => f());
+    }
 
     const planets = sys.planets.map((p, i) => ({
       p, angle: (i * 2.39996) % (Math.PI * 2),
@@ -918,7 +1026,11 @@ const StarMap = {
       speed: (0.10 - i * 0.012) * 0.3, img: this.img(ASSET.planet(p.type)),
       size: 16 + (p.type === "gas_giant" || p.type === "ringed" ? 12 : 6),
     }));
-    const station = { angle: 0, orbit: 0.16, speed: 0.25, img: this.img(ASSET.station(sys.race)) };
+    // Stations hold station — they're parked, not in orbit. A fixed berth
+    // angle, seeded per system so no two sit the same way, out far enough that
+    // ships leaving the dock aren't swallowed by the star's glare.
+    const berth = window.Combat ? (Combat.seedFrom("berth:" + sys.id) % 628) / 100 : 0;
+    const station = { angle: berth, orbit: 0.36, speed: 0, img: this.img(ASSET.station(sys.race)) };
     const starImg = this.img(ASSET.star(sys.star));
     // Admin-uploaded (or git-committed default) per-system space background
     // takes precedence over the sector nebula.
@@ -1022,7 +1134,9 @@ const StarMap = {
 
     let last = performance.now();
     const draw = (now) => {
+      if (handle.stopped) return;
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      followCam();
       const w = W(), h = H(), cx = w / 2, cy = h / 2;
       // Cover on squat panes (mobile top strip): size orbits to the long axis so
       // the system isn't crushed into the short side. Desktop stays contain.
@@ -1065,8 +1179,7 @@ const StarMap = {
         if (pl.img.ok) ctx.drawImage(pl.img, px - pl.size, py - pl.size, pl.size * 2, pl.size * 2);
         else { ctx.fillStyle = "#7aa0d0"; ctx.beginPath(); ctx.arc(px, py, pl.size, 0, Math.PI * 2); ctx.fill(); }
       }
-      // station
-      if (!reduced) station.angle += station.speed * dt;
+      // station — fixed in space (speed 0); sx/sy stay put frame to frame
       const sx = cx + Math.cos(station.angle) * station.orbit * R, sy = cy + Math.sin(station.angle) * station.orbit * R;
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
@@ -1123,6 +1236,14 @@ const StarMap = {
         if (a <= 0) continue;
         const sc = sh.scale ?? 1;
         ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
+        // exhaust plume — every hull under thrust trails engine wash
+        if (sh.state !== "dock") {
+          const fl = (5 + Math.sin(now * 0.02 + sh.x * 0.7) * 2) * sc * (sh.state === "warpOut" ? 1.8 : 1);
+          const g2 = ctx.createLinearGradient(-9 * sc, 0, -9 * sc - fl * 2, 0);
+          g2.addColorStop(0, "rgba(140,195,255,.6)"); g2.addColorStop(1, "rgba(140,195,255,0)");
+          ctx.fillStyle = g2;
+          ctx.beginPath(); ctx.moveTo(-8 * sc, -1.8 * sc); ctx.lineTo(-8 * sc - fl * 2, 0); ctx.lineTo(-8 * sc, 1.8 * sc); ctx.closePath(); ctx.fill();
+        }
         if (sh.img && sh.img.ok) ctx.drawImage(sh.img, -10 * sc, -6 * sc, 20 * sc, 12 * sc);
         else { ctx.fillStyle = RACES[sh.race] ? RACES[sh.race].color : "#cdd6f5"; ctx.fillRect(-4 * sc, -2 * sc, 8 * sc, 4 * sc); }
         ctx.restore();
@@ -1139,13 +1260,31 @@ const StarMap = {
       // speech bubbles ride on top of everything
       for (const sh of ships) this._drawBubble(ctx, sh, w, h);
 
+      // purposeful ships (projections of real state): your flagship + other
+      // barons' flagships with the owner's name on top, mission convoys,
+      // couriers — crossing between the gates their route actually uses.
+      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy);
+
       ctx.restore();   // end camera transform
 
-      if (!reduced) this.raf = requestAnimationFrame(draw);
+      if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
+
+      if (!reduced) {
+        if (ext) handle.raf = requestAnimationFrame(draw);
+        else this.raf = requestAnimationFrame(draw);
+      }
     };
     if (reduced) { draw(performance.now()); }   // single static frame
+    else if (ext) handle.raf = requestAnimationFrame(draw);
     else this.raf = requestAnimationFrame(draw);
-    this.scene = { canvas };
+    if (!ext) this.scene = { canvas };
+    handle.stop = () => {
+      if (handle.stopped) return;
+      handle.stopped = true;
+      if (handle.raf) cancelAnimationFrame(handle.raf);
+      if (ext) cleanups.forEach(f => f());   // default scene cleans up via stopScene()
+    };
+    return handle;
   },
 
   // One ship's behaviour for a frame. States: warpIn → travel → (dock | land |
@@ -1155,10 +1294,18 @@ const StarMap = {
   // delayed replies tick down here too.
   _stepShip(sh, dt, env) {
     const { targetPos, pickTarget, explode, spark, say, warpFlash, sx, sy } = env;
+    // Inertial flight: the hull steers toward the target at a bounded turn
+    // rate and thrusts along its own heading, so course changes are flown as
+    // banking arcs instead of instant snaps.
     const moveTo = (tx, ty, slow) => {
       const dx = tx - sh.x, dy = ty - sh.y, d = Math.hypot(dx, dy) || 1;
+      const want = Math.atan2(dy, dx);
+      if (sh.ang == null) sh.ang = want;
+      let diff = Math.atan2(Math.sin(want - sh.ang), Math.cos(want - sh.ang));
+      const turn = 2.4 * dt;                       // rad/s — tight enough to never orbit
+      sh.ang += Util.clamp(diff, -turn, turn);
       const v = sh.spd * (slow ? 0.5 : 1) * dt;
-      sh.x += dx / d * v; sh.y += dy / d * v; sh.ang = Math.atan2(dy, dx);
+      sh.x += Math.cos(sh.ang) * v; sh.y += Math.sin(sh.ang) * v;
       return d;
     };
     // voice-line bubble lifetime + any pending reply
@@ -1233,6 +1380,139 @@ const StarMap = {
       }
     }
     if (sh._interfere != null) { sh._interfere -= dt; if (sh._interfere <= 0) sh._interfere = null; }
+  },
+
+  // Real fleets visible in this system (Voyages.inSystem). A docked flagship
+  // is berthed inside the station and not drawn; mission/survey fleets loiter
+  // on site "working". Transits fly station ↔ the correct gate for their
+  // route, holding at the gate while the hyperdrive spools (gateOut) or just
+  // after drop-out (gateIn) — with a warp burst on the jump itself. Headings
+  // are smoothed so course changes read as flown maneuvers. Names use
+  // fillText, so other barons' display names stay plain text.
+  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx, followId) {
+    if (!window.Voyages) return;
+    fx = fx || (this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} }));
+    fx.pos = fx.pos || {};
+    const now = Date.now();
+    // The berth↔gate corridor. Cruise legs run station ↔ holdPoint and the gate
+    // hold sits exactly ON holdPoint, so a ship never teleports between the two
+    // stages — it flies in, stops, spools, and jumps from where it stopped.
+    const holdOf = g => {
+      const a = Math.atan2(sy - g.y, sx - g.x);
+      return { x: g.x + Math.cos(a) * 26, y: g.y + Math.sin(a) * 26 };
+    };
+    const dt = Math.min(0.1, (now - (fx.last || now)) / 1000); fx.last = now;
+    let list;
+    try { list = Voyages.inSystem(sys.id, now); } catch (e) { return; }
+    const seen = new Set();
+    for (const v of list) {
+      seen.add(v.id);
+      let x, y, want, thrust = 1;
+      const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
+      if (v.mode === "working") {
+        const h = window.Combat ? Combat.seedFrom(v.id) : 1;
+        const rr = 34 + (h % 3) * 9;
+        const a = (h % 628) / 100 + now * 0.00012;
+        x = sx + Math.cos(a) * rr; y = sy + Math.sin(a) * rr;
+        want = a + Math.PI / 2; thrust = 0.3;
+        const pr = (now % 2400) / 2400;              // scan pulse — visibly at work
+        ctx.strokeStyle = `rgba(95,215,255,${((1 - pr) * 0.45).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(x, y, 8 + pr * 40, 0, 7); ctx.stroke();
+      } else if (v.mode === "gateOut" || v.mode === "gateIn") {
+        if (!gp) continue;
+        const hold = holdOf(gp);
+        x = hold.x; y = hold.y;
+        // outbound holds facing the gate it's about to enter; inbound has just
+        // come through and is already turning for the station
+        want = v.mode === "gateOut"
+          ? Math.atan2(gp.y - hold.y, gp.x - hold.x)
+          : Math.atan2(sy - hold.y, sx - hold.x);
+        thrust = 0.15;
+        if (v.mode === "gateOut") {                   // hyperdrive spooling — charge glow
+          const g = ctx.createRadialGradient(x, y, 2, x, y, 24 + v.f * 22);
+          g.addColorStop(0, `rgba(150,215,255,${(0.25 + v.f * 0.45).toFixed(2)})`);
+          g.addColorStop(1, "rgba(150,215,255,0)");
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, 24 + v.f * 22, 0, 7); ctx.fill();
+        }
+      } else {
+        if (!gp) continue;
+        const hold = holdOf(gp);                       // same endpoint the gate hold uses
+        const from = v.mode === "departing" ? { x: sx, y: sy } : hold;
+        const to = v.mode === "departing" ? hold : { x: sx, y: sy };
+        x = from.x + (to.x - from.x) * v.frac;
+        y = from.y + (to.y - from.y) * v.frac;
+        want = Math.atan2(to.y - from.y, to.x - from.x);
+        thrust = 0.4 + 2.4 * v.f * (1 - v.f);        // accelerate, then brake
+      }
+      // warp burst on drop-out (ship appears at the arrival gate from nowhere)
+      const prev = fx.mode[v.id];
+      if (gp && v.mode === "gateIn" && !prev) this._gateBurst(fx.parts, gp.x, gp.y);
+      fx.mode[v.id] = { mode: v.mode, gx: gp ? gp.x : x, gy: gp ? gp.y : y };
+      fx.pos[v.id] = { x, y };   // scene position — the Live View chase cam reads this
+      // flown turns: heading eases toward the wanted bearing
+      if (fx.hdg[v.id] == null) fx.hdg[v.id] = want;
+      const diff = Math.atan2(Math.sin(want - fx.hdg[v.id]), Math.cos(want - fx.hdg[v.id]));
+      fx.hdg[v.id] += Util.clamp(diff, -2.2 * dt, 2.2 * dt);
+      const ang = fx.hdg[v.id];
+
+      const [kind, id] = String(v.sprite || "ship:shuttle").split(":");
+      const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
+      const flag = v.kind === "flagship";
+      const followed = !!followId && v.id === followId;
+      const sz = (flag ? 15 : 11) * (followed ? 1.3 : 1);
+      // Tracking reticle on the ship the Live View is following, so it never
+      // gets lost among ambient traffic or washed out against the star.
+      if (followed) {
+        const rr = sz + 10 + Math.sin(now * 0.004) * 1.5;
+        ctx.save();
+        ctx.strokeStyle = "rgba(63,227,255,.85)"; ctx.lineWidth = 1.5;
+        for (let k = 0; k < 4; k++) {
+          const a0 = k * Math.PI / 2 + 0.35;
+          ctx.beginPath(); ctx.arc(x, y, rr, a0, a0 + 0.55); ctx.stroke();
+        }
+        ctx.restore();
+      }
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+      const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
+      const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
+      pg.addColorStop(0, "rgba(130,195,255,.65)"); pg.addColorStop(1, "rgba(130,195,255,0)");
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.moveTo(-sz * 0.75, -sz * 0.22); ctx.lineTo(-sz * 0.75 - fl * 2, 0); ctx.lineTo(-sz * 0.75, sz * 0.22); ctx.closePath(); ctx.fill();
+      if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
+      else {
+        ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "#7b8cff";
+        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.5); ctx.lineTo(-sz * 0.7, -sz * 0.5);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      const label = flag ? v.name : v.label;
+      if (!label) continue;
+      ctx.save();
+      ctx.font = flag ? "600 11px system-ui, sans-serif" : "10px system-ui, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      const ly = y - sz - (followed ? 16 : 8);   // clear of the reticle
+      ctx.strokeText(label, x, ly);
+      ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : (followed ? "#cfe3ff" : "rgba(170,185,220,.9)");
+      ctx.fillText(label, x, ly);
+      ctx.restore();
+    }
+    // ships that left the scene: a hull that was spooling at a gate just
+    // jumped — flash the burst it vanished with, then forget it
+    for (const id in fx.mode) if (!seen.has(id)) {
+      const m = fx.mode[id];
+      if (m && m.mode === "gateOut") this._gateBurst(fx.parts, m.gx, m.gy);
+      delete fx.mode[id]; delete fx.hdg[id]; delete fx.pos[id];
+    }
+    // warp-burst particles
+    for (let i = fx.parts.length - 1; i >= 0; i--) {
+      const p = fx.parts[i]; p.life -= dt;
+      if (p.life <= 0) { fx.parts.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      ctx.fillStyle = p.color + (p.life / p.max).toFixed(2) + ")";
+      ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    }
   },
 
   // ---- scene draw helpers (hyperspace gate + speech bubbles) ----
@@ -1400,7 +1680,7 @@ const StarMap = {
   // Pause the animation when the tab is backgrounded; rebuild it on return.
   suspend() {
     if (this.raf && this.current) { this._resumeScene = true; this.stopScene(); }
-    if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); }
+    if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); this._stopVoyageLayer(); }
     // The two intervals used to run straight through suspend. With a system
     // open, the 9–14s feed tick kept calling flavorPost + requestSave in a
     // hidden/idle tab — a localStorage write plus a debounced app_commit every
@@ -1412,7 +1692,7 @@ const StarMap = {
   resume() {
     if (this._resumeStars) {
       this._resumeStars = false;
-      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) this.startStars();
+      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this.startStars(); this._startVoyageLayer(); }
     }
     if (this._resumeGalaxy) {
       this._resumeGalaxy = false;
