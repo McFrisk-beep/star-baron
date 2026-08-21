@@ -996,6 +996,7 @@ body.reduced .tt-dot { animation: none; }
 .planet-tip .pt-go { color: var(--accent); font-size: 11px; margin-top: 4px; }
 
 #planet-modal,
+#confirm-modal,                  /* launch clearance opens straight off the map */
 #survey-modal { z-index: 80; }   /* above the star-map overlay (z-index 70) */
 .modal.planet-modal { max-width: min(920px, 96vw); width: 100%; padding: 0; overflow: hidden; }
 .pm-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); }
