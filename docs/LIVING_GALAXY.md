@@ -1,9 +1,19 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: Steps 1–2 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
+**Status: Steps 1–3 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
 galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
 combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
-rosters + replays. **Steps 3–4 (voyages, system-view vignettes) remain design.**
+rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
+lane graph, moving markers on the galaxy chart, flagship/convoy vignettes in
+the system view (a slice of §6.2 shipped early), the Hub's in-transit galaxy
+view + Active Missions cards, dispatch-seeded event schedules with comms
+entries and watchable skirmishes, and cross-player flagship presence
+(`docs/sql/voyage_presence.sql`, optional). Deviations from this document,
+v1: events are **non-decisive** for every voyage (the §4.4 dice-move to
+dispatch and the §4.3 online-choice modal remain future work — outcomes are
+still rolled at maturity exactly as before), and event catch-up after time
+away primes silently instead of posting missed comms entries in order (§4.5).
+**Step 4 (world-space camera + full vignettes) remains design.**
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.

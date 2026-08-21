@@ -61,7 +61,8 @@ const Combat = {
     if (!(typeof DMGCFG !== "undefined" && DMGCFG.types[this._type(r)])) return false;
     return !!((r.lost || []).length || (r.damaged || []).length
       || (r.impounded || []).length || !r.success
-      || r.type === "combat" || r.type === "assassinate");
+      || r.type === "combat" || r.type === "assassinate"
+      || r.skirmish);   // voyage.js mid-flight events: non-decisive, always watchable
   },
 
   // Danger → fight scale. Duration scales with stakes (§5.3): a low-band

@@ -62,6 +62,14 @@
         <div class="panel hub-transit hidden" id="hub-transit">
           <h2>In Transit <small>flagship en route</small></h2>
           <div id="hub-transit-body"></div>
+          <div class="hub-transit-view hidden" id="hub-transit-view">
+            <canvas id="hub-transit-canvas" aria-label="Live galaxy view — your flagship moving through space"></canvas>
+          </div>
+        </div>
+        <div class="panel hub-missions hidden" id="hub-missions-panel">
+          <h2><span data-i18n="fleet.missions">Active Missions</span>
+            <button class="btn btn-mini hub-live-btn" id="hub-live-transit" type="button">🛰 See Live Transit</button></h2>
+          <div id="hub-missions"></div>
         </div>
         <div class="panel hub-surveys hidden" id="hub-surveys">
           <h2>Surveys <small>ships on charting runs</small></h2>
@@ -127,10 +135,7 @@
         <div class="fleet-pane" data-fleet-pane="logistics">
           <section class="panel" id="fleet-main"></section>
 
-          <section class="panel">
-            <h2 data-i18n="fleet.missions">Active Missions</h2>
-            <div id="fleet-missions"></div>
-          </section>
+          <!-- Active Missions moved to the Hub (docs/LIVING_GALAXY.md step 3) -->
 
           <section class="panel hidden" id="fleet-reports-panel">
             <h2 data-i18n="fleet.reports">Mission Reports</h2>
@@ -794,6 +799,7 @@
   <script src="js/charters.js"></script>
   <script src="js/expeditions.js"></script>
   <script src="js/incidents.js"></script>
+  <script src="js/voyage.js"></script>
   <script src="js/orders.js"></script>
   <script src="js/extractors.js"></script>
   <script src="js/industries.js"></script>

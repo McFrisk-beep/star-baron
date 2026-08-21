@@ -228,6 +228,7 @@ const Charters = {
       cargoByShip,
       cargoTotal,
       faction: bandInfo.faction,
+      fromSys: s.currentSystem,   // voyage view origin (cosmetic)
       destroyChance: destroy,
       impoundChance: this.impoundChance(ships, band, durationMs),
       impound: (bandInfo.impound || 0) > 0,

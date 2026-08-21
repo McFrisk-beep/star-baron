@@ -76,6 +76,7 @@ const StarMap = {
     document.body.classList.remove("starmap-open");
     this.stopSystem();
     this.stopStars();
+    this._stopVoyageLayer();
     clearInterval(this.galaxyTimer); this.galaxyTimer = null;
     if (window.UI) UI.updateNavIndicator();        // restore glow to the underlying page tab
   },
@@ -89,8 +90,69 @@ const StarMap = {
     this.refs.btnClose.classList.add("hidden");
     this.renderGalaxy();
     this.startStars();
+    this._startVoyageLayer();
     clearInterval(this.galaxyTimer);
     this.galaxyTimer = setInterval(() => this.updateGalaxyNodes(), CONFIG.marketTickMs);
+  },
+
+  // ===== voyage markers on the chart (LIVING_GALAXY.md §3) =================
+  // Every active voyage renders as a moving marker on its lane polyline —
+  // flying is arithmetic on the clock, so this just repaints Voyages.markers().
+  // Flagships (yours + other barons') carry the owner's name.
+  _startVoyageLayer() {
+    this._stopVoyageLayer();
+    if (!window.Voyages) return;
+    void Voyages.refreshPresence();
+    const ns = "http://www.w3.org/2000/svg";
+    const layer = document.createElementNS(ns, "g");
+    layer.setAttribute("pointer-events", "none");
+    this.refs.svg.appendChild(layer);
+    this._voyLayer = layer; this._voyEls = {};
+    const reduced = !!(this.s().settings && this.s().settings.reduced);
+    const W = 1000, H = 620;
+    const tick = () => {
+      if (!this.open || this.refs.galaxyView.classList.contains("hidden")) { this._stopVoyageLayer(); return; }
+      const live = new Set();
+      for (const v of Voyages.markers()) {
+        live.add(v.id);
+        const el = this._voyEls[v.id] || (this._voyEls[v.id] = this._mkVoyEl(layer, v));
+        el.g.setAttribute("transform", `translate(${(v.at.x * W).toFixed(1)},${(v.at.y * H).toFixed(1)})`);
+        el.hull.setAttribute("transform", `rotate(${(v.at.heading * 180 / Math.PI).toFixed(1)})`);
+      }
+      for (const id in this._voyEls) if (!live.has(id)) { this._voyEls[id].g.remove(); delete this._voyEls[id]; }
+      // reduced motion: step once a second instead of every frame
+      this._voyRaf = reduced ? setTimeout(tick, 1000) : requestAnimationFrame(tick);
+      this._voyRafIsTimer = reduced;
+    };
+    tick();
+  },
+  _mkVoyEl(layer, v) {
+    const ns = "http://www.w3.org/2000/svg";
+    const g = document.createElementNS(ns, "g");
+    const hull = document.createElementNS(ns, "polygon");
+    if (v.kind === "flagship") {
+      hull.setAttribute("points", "9,0 -7,5.5 -3.5,0 -7,-5.5");
+      hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
+    } else {
+      hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
+      hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
+    }
+    g.appendChild(hull);
+    if (v.kind === "flagship" && v.name) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
+      t.setAttribute("y", -11);
+      t.textContent = v.name;   // textContent — other barons' names are untrusted text
+      g.appendChild(t);
+    }
+    layer.appendChild(g);
+    return { g, hull };
+  },
+  _stopVoyageLayer() {
+    if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
+    this._voyRaf = null;
+    if (this._voyLayer) { this._voyLayer.remove(); this._voyLayer = null; }
+    this._voyEls = {};
   },
 
   // ===== galaxy view (SVG) ================================================
@@ -340,6 +402,8 @@ const StarMap = {
     if (!sys) return;
     this.current = id;
     this.stopStars();
+    this._stopVoyageLayer();
+    if (window.Voyages) void Voyages.refreshPresence();
     this.refs.galaxyView.classList.add("hidden");
     this.refs.systemView.classList.remove("hidden");
     this.refs.btnClose.classList.remove("hidden");
@@ -1139,6 +1203,11 @@ const StarMap = {
       // speech bubbles ride on top of everything
       for (const sh of ships) this._drawBubble(ctx, sh, w, h);
 
+      // purposeful ships (projections of real state): your flagship + other
+      // barons' flagships with the owner's name on top, mission convoys,
+      // couriers — crossing between the gates their route actually uses.
+      this._drawVoyagers(ctx, sys, gates(), sx, sy);
+
       ctx.restore();   // end camera transform
 
       if (!reduced) this.raf = requestAnimationFrame(draw);
@@ -1233,6 +1302,57 @@ const StarMap = {
       }
     }
     if (sh._interfere != null) { sh._interfere -= dt; if (sh._interfere <= 0) sh._interfere = null; }
+  },
+
+  // Real fleets visible in this system (Voyages.inSystem): docked ones hold a
+  // slow parking orbit off the station; transits fly station ↔ the correct
+  // gate for their route, at the fraction the clock says. Names use fillText,
+  // so other barons' display names stay plain text.
+  _drawVoyagers(ctx, sys, gateAt, sx, sy) {
+    if (!window.Voyages) return;
+    const now = Date.now();
+    let list;
+    try { list = Voyages.inSystem(sys.id, now); } catch (e) { return; }
+    for (const v of list) {
+      let x, y, ang;
+      if (v.mode === "docked") {
+        const h = window.Combat ? Combat.seedFrom(v.id) : 1;
+        const rr = 34 + (h % 3) * 9;
+        const a = (h % 628) / 100 + now * 0.00012;
+        x = sx + Math.cos(a) * rr; y = sy + Math.sin(a) * rr;
+        ang = a + Math.PI / 2;
+      } else {
+        const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
+        if (!gp) continue;
+        const from = v.mode === "departing" ? { x: sx, y: sy } : gp;
+        const to = v.mode === "departing" ? gp : { x: sx, y: sy };
+        x = from.x + (to.x - from.x) * v.frac;
+        y = from.y + (to.y - from.y) * v.frac;
+        ang = Math.atan2(to.y - from.y, to.x - from.x);
+      }
+      const [kind, id] = String(v.sprite || "ship:shuttle").split(":");
+      const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
+      const flag = v.kind === "flagship";
+      const sz = flag ? 15 : 10;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+      if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
+      else {
+        ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "#7b8cff";
+        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.5); ctx.lineTo(-sz * 0.7, -sz * 0.5);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      const label = flag ? v.name : v.label;
+      if (!label) continue;
+      ctx.save();
+      ctx.font = flag ? "600 11px system-ui, sans-serif" : "10px system-ui, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.8)";
+      ctx.strokeText(label, x, y - sz - 4);
+      ctx.fillStyle = flag ? (v.you ? "#3fe3ff" : "#ffd9a0") : "rgba(170,185,220,.9)";
+      ctx.fillText(label, x, y - sz - 4);
+      ctx.restore();
+    }
   },
 
   // ---- scene draw helpers (hyperspace gate + speech bubbles) ----
@@ -1400,7 +1520,7 @@ const StarMap = {
   // Pause the animation when the tab is backgrounded; rebuild it on return.
   suspend() {
     if (this.raf && this.current) { this._resumeScene = true; this.stopScene(); }
-    if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); }
+    if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this._resumeStars = true; this.stopStars(); this._stopVoyageLayer(); }
     // The two intervals used to run straight through suspend. With a system
     // open, the 9–14s feed tick kept calling flavorPost + requestSave in a
     // hidden/idle tab — a localStorage write plus a debounced app_commit every
@@ -1412,7 +1532,7 @@ const StarMap = {
   resume() {
     if (this._resumeStars) {
       this._resumeStars = false;
-      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) this.startStars();
+      if (this.open && !this.refs.galaxyView.classList.contains("hidden")) { this.startStars(); this._startVoyageLayer(); }
     }
     if (this._resumeGalaxy) {
       this._resumeGalaxy = false;

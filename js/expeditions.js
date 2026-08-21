@@ -71,6 +71,7 @@ const Expeditions = {
       // Phase 3: seed at dispatch so server resolve is reproducible
       rngSeed: (now ^ (this.s().seq * 2654435761)) >>> 0,
       faction: fac,
+      fromSys: this.s().currentSystem,   // voyage view origin (cosmetic)
     };
     sh.status = "surveying";
     this.list().push(exp);

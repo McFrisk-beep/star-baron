@@ -45,7 +45,8 @@ const UI = {
       exchangeSub: $("exchange-sub"), marketBody: $("market-body"), transit: $("transit-overlay"), warBanner: $("war-banner"),
       tabs: $("tabs"), fleetBadge: $("tab-fleet-badge"),
       navTrack: $("floatnav-track"), navIndicator: $("floatnav-indicator"),
-      fleetMain: $("fleet-main"), fleetMissions: $("fleet-missions"),
+      fleetMain: $("fleet-main"),
+      hubMissions: $("hub-missions"), hubMissionsPanel: $("hub-missions-panel"),
       fleetCharters: $("fleet-charters"), chartersSub: $("charters-sub"),
       fleetReportsPanel: $("fleet-reports-panel"), fleetReports: $("fleet-reports"),
       fleetShips: $("fleet-ships"), fleetCount: $("fleet-count"),
@@ -103,6 +104,11 @@ const UI = {
       langToggle: $("settings-modal") && $("settings-modal").querySelector(".lang-toggle"),
     };
     if (window.I18n) I18n.init();
+    const live = $("hub-live-transit");
+    if (live) live.onclick = e => {   // literally watch your ships cross the chart
+      e.stopPropagation();
+      if (window.StarMap) StarMap.openGalaxy();
+    };
     this.buildExchange();
     this.buildOrders();
     this.wireControls();
@@ -151,7 +157,7 @@ const UI = {
     else if (name === "stations") this.renderStations();
     else if (name === "senate") this.renderSenate();
     else if (name === "exchange") this.renderOrders();
-    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
+    else if (name === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); this._missionSig = ""; this.renderMissions(); }
     else if (name === "comms") {
       this.clearCommsBadge();
       this.showCommsTab(this.commsTab || "dispatches");
@@ -223,12 +229,17 @@ const UI = {
     const panel = this.refs.hubTransit, body = this.refs.hubTransitBody;
     if (!panel || !body) return;
     const t = this.s().travel;
-    if (!t) { panel.classList.add("hidden"); body.innerHTML = ""; return; }
+    if (!t) {
+      panel.classList.add("hidden"); body.innerHTML = "";
+      if (window.Voyages) Voyages.hubSync();
+      return;
+    }
     panel.classList.remove("hidden");
     const leftMs = Math.max(0, t.departedAt + t.etaMs - Date.now());
     const pct = (Economy.travelProgress() * 100).toFixed(1);
     body.innerHTML = `<div class="haul-ship-line">${this.sysName(t.from)} → <b>${this.sysName(t.to)}</b> · ${Util.duration(leftMs)} remaining</div>
       <div class="bar hub-transit-bar"><span style="width:${pct}%"></span></div>`;
+    if (window.Voyages) Voyages.hubSync();   // live galaxy view, flagship centred
   },
 
   // Active survey expeditions — charting runs still out.
@@ -1781,24 +1792,30 @@ const UI = {
     this.flashCredits(); window.Game.requestSave(); this.renderFleet();
   },
 
-  // ---- missions -----------------------------------------------------------
+  // ---- missions (Hub panel — hidden when none are active) ------------------
   renderMissions() {
+    const el = this.refs.hubMissions, panel = this.refs.hubMissionsPanel;
+    if (!el) return;
     const ms = this.s().missions;
+    if (panel) panel.classList.toggle("hidden", !ms.length);
     const sig = ms.map(m => m.uid).join(",");
     if (sig === this._missionSig) { this.updateMissions(); return; }
     this._missionSig = sig;
-    if (!ms.length) { this.refs.fleetMissions.innerHTML = `<p class="muted-note">No active missions. Take a contract in the Bazaar.</p>`; return; }
-    this.refs.fleetMissions.innerHTML = ms.map(m => {
+    if (!ms.length) { el.innerHTML = ""; return; }
+    el.innerHTML = ms.map(m => {
       const icons = m.shipUids.map(u => { const sh = Fleet.ship(u); if (!sh) return ""; const sprite = ASSET.shipArt(sh.type, sh.uid); return `<img class="mi" src="${sprite}" alt="" title="${sh.name}" onerror="this.style.display='none'"/>`; }).join("");
       return `<div class="mission" data-m="${m.uid}">
         <div class="m-head"><b>${m.title}</b><span class="m-chance">${(m.successChance * 100).toFixed(0)}% success</span></div>
         <div class="m-ships">${icons}</div>
         <div class="mbar"><span class="mbar-fill"></span></div>
         <div class="m-foot"><span class="m-phase"></span><span class="m-eta"></span></div>
+        <div class="m-events" data-evn="0"></div>
         <div class="m-cancel">${this._missionCancelHtml(m)}</div>
       </div>`;
     }).join("");
-    this.refs.fleetMissions.onclick = e => {
+    el.onclick = e => {
+      const w = e.target.closest("[data-watch]");
+      if (w) { if (window.Voyages) Voyages.watch(w.dataset.watch); return; }
       const b = e.target.closest("[data-mission-cancel]");
       if (b) this.cancelMission(b.dataset.missionCancel);
     };
@@ -1806,8 +1823,9 @@ const UI = {
   },
 
   updateMissions() {
+    if (!this.refs.hubMissions) return;
     for (const m of this.s().missions) {
-      const node = this.refs.fleetMissions.querySelector(`[data-m="${m.uid}"]`); if (!node) continue;
+      const node = this.refs.hubMissions.querySelector(`[data-m="${m.uid}"]`); if (!node) continue;
       const ph = Missions.phaseAt(m);
       const fill = node.querySelector(".mbar-fill"), bar = node.querySelector(".mbar");
       bar.classList.toggle("work", ph.dir === "work");
@@ -1816,6 +1834,19 @@ const UI = {
       fill.style.width = w.toFixed(1) + "%";
       node.querySelector(".m-phase").textContent = (ph.dir === "out" ? "▸ " : ph.dir === "in" ? "◂ " : "● ") + ph.label;
       node.querySelector(".m-eta").textContent = "ETA " + Util.duration(ph.remaining);
+      // mid-flight events (LIVING_GALAXY.md §4.5) — fired ones appear as they happen
+      const evEl = node.querySelector(".m-events");
+      if (evEl && window.Voyages) {
+        const evs = Voyages.firedEventsFor(m.uid);
+        if (evEl.dataset.evn !== String(evs.length)) {
+          evEl.dataset.evn = String(evs.length);
+          evEl.innerHTML = evs.map(e => {
+            const meta = Voyages.EVENT_TEXT[e.kind] || { ico: "•" };
+            return `<span class="m-event">${meta.ico} ${e.kind}${e.watch
+              ? ` <button class="btn btn-mini" data-watch="${e.id}">▶ Watch</button>` : ""}</span>`;
+          }).join("");
+        }
+      }
     }
   },
 
@@ -4481,7 +4512,7 @@ const UI = {
     this.updateExchange();
     this.updateHeader();
     this.updateClock();
-    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); }
+    if (this.page === "hub") { this.renderBoostBar(); this.renderHubDock(); this.renderHubTransit(); this.renderHubSurveys(); this._renderHubCouriers(); this.renderMissions(); }
     if (this.page === "assets" && window.Shipments && Shipments.active().length) this.renderAssets();
     if (this.page === "workshop") this.renderWorkshop();
     // Skip while a stations control is focused so open dropdowns / draft inputs aren't nuked.
@@ -4492,7 +4523,7 @@ const UI = {
       if (!holding) this.renderStations();
     }
     if (this.page === "fleet") {
-      this.renderMissions(); this.renderCharters();
+      this.renderCharters();
       // Live survey countdown on the ship cards — skip while the sort <select>
       // is open so the dropdown isn't nuked mid-choice.
       if ((this.s().expeditions || []).some(e => !e.resolved)) {

@@ -66,6 +66,9 @@ const Missions = {
       successChance: this.successChance(contract, uids),
       reward: contract.reward, impound: !!contract.impound, danger: contract.danger,
       stakeTier: contract.stakeTier || 0,
+      // Launch system, for the voyage view (cosmetic; server slices may drop it
+      // and voyage.js falls back to the current system).
+      fromSys: s.currentSystem,
       faction: contract.faction, resolved: false,
       contractId: contract.id || null,
       // Station Contract Office haul (docs/STATIONS.md §11)
