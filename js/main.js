@@ -52,6 +52,8 @@ const Game = {
       story: { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} },
       settings: { muted: false, volume: 0.25, reduced: window.matchMedia("(prefers-reduced-motion: reduce)").matches, tutorialSeen: false, lang: "en", bgmOrder: [], bgmStart: "", bgmBackground: false },
       lastSeenAt: Date.now(),
+      voySeenT: 0,       // voyage comms watermark (LIVING_GALAXY.md §4.5)
+      voyChecks: {},     // applied voyage-check ledger, event id → 1 (§4.3)
       market: null,
       galaxy: null,
       stock: null,
@@ -82,6 +84,10 @@ const Game = {
     // server value overwrites this on the first commit anyway.)
     s.crime = window.Crime ? Crime.clamp(s.crime) : (Number.isFinite(+s.crime) ? +s.crime : def.crime);
     s.crimeSeenAt = Number.isFinite(+s.crimeSeenAt) && +s.crimeSeenAt > 0 ? +s.crimeSeenAt : Date.now();
+    // Voyage comms watermark + applied-check ledger (LIVING_GALAXY.md §4.3/§4.5)
+    // — untrusted save data: coerce to a finite time / a plain object.
+    s.voySeenT = Number.isFinite(+s.voySeenT) && +s.voySeenT > 0 ? +s.voySeenT : 0;
+    if (!s.voyChecks || typeof s.voyChecks !== "object" || Array.isArray(s.voyChecks)) s.voyChecks = {};
     s.stats = Object.assign({}, def.stats, loaded.stats);
     s.prestige = Object.assign({}, def.prestige, loaded.prestige);
     s.settings = Object.assign({}, def.settings, loaded.settings);

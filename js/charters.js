@@ -311,6 +311,33 @@ const Charters = {
     return window.Combat ? Combat._mk(Combat.seedFrom(id + ":outcome")) : Math.random;
   },
 
+  // §4.4: predict the settle mid-flight, read-only — true = every hull comes
+  // home. Signed-in charters mirror app_charter_resolve exactly: its seed —
+  // seed_hash('charter', id, startedAt) — is fixed at dispatch, market.u01 is
+  // mulberry32 (Market._u01 bit for bit), and each hull i draws destroy at
+  // i*4+1 and impound at i*4+2. Local charters replay the dispatch stream's
+  // leading draws in _resolveLocal's order. The wallet still lands at resolve.
+  predictClean(c) {
+    const uids = this.shipUids(c);
+    if (window.Cloud && Cloud.shipRpcReady && Cloud.shipRpcReady("app_charter_resolve") && window.Market) {
+      const seed = Market._seed(["charter", String(c.id), String(c.startedAt)]);
+      const dp = Util.clamp(c.destroyChance || 0, 0, 0.85);
+      const ip = c.impound ? Util.clamp(c.impoundChance || 0, 0, 0.85) : 0;
+      for (let i = 1; i <= uids.length; i++) {
+        if (Market._u01(seed, i * 4 + 1) < dp) return false;
+        if (ip && Market._u01(seed, i * 4 + 2) < ip) return false;
+      }
+      return true;
+    }
+    const roll = this._mkOutcomeRng(c.id);
+    for (const u of uids) {
+      if (!Fleet.ship(u)) continue;               // the resolver only rolls live hulls
+      if (roll() < (c.destroyChance || 0)) return false;
+      if (c.impound && roll() < (c.impoundChance || 0)) return false;
+    }
+    return true;
+  },
+
   _resolveLocal(now = Date.now()) {
     const s = this.s();
     const out = [];

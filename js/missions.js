@@ -159,7 +159,16 @@ const Missions = {
     return window.Combat ? Combat._mk(Combat.seedFrom(uid + ":outcome")) : Math.random;
   },
   // The success verdict is the stream's FIRST draw — _resolveLocal must keep it so.
-  rolledSuccess(m) { return this._mkOutcomeRng(m.uid)() < m.successChance; },
+  // Server-launched missions instead carry app_mission_launch's rngSeed: the
+  // resolver's verdict is market.u01(seed, 0), and u01 is mulberry32 — the
+  // same generator as Combat._mk — so the client mirrors the server's roll
+  // bit for bit and a signed-in run's mid-flight skirmish already knows the
+  // settle (§4.4). Nothing is applied here; the wallet still lands at resolve.
+  rolledSuccess(m) {
+    if (Number.isFinite(+m.rngSeed) && window.Combat)
+      return Combat._mk(+m.rngSeed)() < m.successChance;
+    return this._mkOutcomeRng(m.uid)() < m.successChance;
+  },
 
   phaseAt(m, now = Date.now()) {
     let elapsed = Util.clamp(now - m.startedAt, 0, m.totalMs);
@@ -313,6 +322,12 @@ const Missions = {
       let success = sharedHaul
         ? !!(pre && pre.ok && pre.outcome === "success")
         : roll() < m.successChance;
+      // A server-stamped seed wins (§4.4): a mission launched signed-in but
+      // resolved locally (signed out since) must land on the verdict the
+      // skirmishes already played. The stream draw above is still consumed,
+      // so the pick/damage draws that follow stay put either way.
+      if (!sharedHaul && Number.isFinite(+m.rngSeed) && window.Combat)
+        success = this.rolledSuccess(m);
       const sharedPaid = sharedHaul && success;
       if (sharedPaid && pre.credits != null) s.credits = +pre.credits;
 

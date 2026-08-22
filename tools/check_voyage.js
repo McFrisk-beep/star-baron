@@ -283,4 +283,112 @@ const mkMission = (uid, type, danger, startedAt, totalMs) => ({
   ctx.Game.state.missions = [];
 }
 
+// ---- §4.5 ordered catch-up: missed entries post once, in order -------------
+{
+  const c = boot();
+  const now = 88000000;
+  let m = null, fired = [];
+  for (let i = 0; i < 400 && !fired.length; i++) {
+    const cand = mkMission("cu" + i, "escort", "extreme", now - 1500000, 1000000);
+    fired = c.Voyages._missionEvents(cand).filter(e => e.t <= now);
+    if (fired.length) m = cand;
+  }
+  assert.ok(fired.length, "found a voyage with past events");
+  c.Game.state.missions = [m];
+  c.Game.state.voySeenT = now - 2000000;         // watermark before the events
+  const lines = [], order = [];
+  c.Feed = { emit: t => lines.push(t) };
+  const orig = c.Voyages.announceOutcome;
+  c.Voyages.announceOutcome = function (e, out) { order.push(e.t); return orig.call(this, e, out); };
+  c.Voyages._primed = false; c.Voyages._seen = new Set();
+  c.Voyages.tick(now);
+  assert.strictEqual(lines.length, Math.min(8, fired.length), "missed entries post on catch-up");
+  for (let i = 1; i < order.length; i++)
+    assert.ok(order[i] >= order[i - 1], "catch-up entries post in chronological order");
+  assert.ok(c.Game.state.voySeenT >= now, "watermark advances");
+  c.Voyages.tick(now + 1);
+  assert.strictEqual(lines.length, Math.min(8, fired.length), "catch-up posts exactly once");
+  c.Voyages.announceOutcome = orig;
+
+  // pre-watermark saves (voySeenT 0) still prime silently — no retro wall
+  const c0 = boot();
+  c0.Game.state.missions = [m];
+  const l0 = [];
+  c0.Feed = { emit: t => l0.push(t) };
+  c0.Voyages._primed = false;
+  c0.Voyages.tick(now);
+  assert.strictEqual(l0.length, 0, "no watermark → silent prime (old behavior)");
+}
+
+// ---- §4.3 checks: seeded auto-roll, applied exactly once -------------------
+{
+  const mkCtx = () => {
+    const c = boot();
+    c.Charters.fleetStats = () => ({ cargo: 0, firepower: 120, hull: 0, armor: 0, shields: 150 });
+    return c;
+  };
+  const c = mkCtx();
+  const now = 99000000;
+  let m = null, ev = null;
+  for (let i = 0; i < 600 && !ev; i++) {
+    const cand = mkMission("ck" + i, "smuggle", "extreme", now - 1500000, 1000000);
+    ev = c.Voyages._missionEvents(cand).find(e => e.kind === "toll" || e.kind === "customs");
+    if (ev) m = cand;
+  }
+  assert.ok(ev, "found a check event");
+  c.Game.state.missions = [m];
+  const applied = [];
+  c.Incidents = { apply: eff => { applied.push(eff); return "fx"; } };
+  const o1 = c.Voyages.applyCheck(ev);
+  assert.ok(o1, "check applies");
+  assert.strictEqual(c.Voyages.applyCheck(ev), null, "…exactly once (ledgered)");
+  assert.strictEqual(applied.length, 1, "one wallet application");
+  assert.strictEqual(c.Game.state.voyChecks[ev.id], 1, "ledger persisted in state");
+  const c2 = mkCtx();
+  c2.Game.state.missions = [mkMission(m.uid, m.type, m.danger, m.startedAt, m.totalMs)];
+  c2.Incidents = { apply: () => "" };
+  const o2 = c2.Voyages.applyCheck(c2.Voyages.allEvents().find(x => x.id === ev.id));
+  assert.strictEqual(o2.won, o1.won, "auto-roll verdict is deterministic across builds");
+  // signed-in play keeps announce-only events: checks are gated local
+  const c3 = mkCtx();
+  c3.Incidents = { apply: () => { throw new Error("wallet touched while authoritative"); } };
+  c3.Economy = { softIncomeLocal: () => false };
+  assert.strictEqual(c3.Voyages.isCheck(ev), false, "checks are guest/local-only");
+}
+
+// ---- §4.4: the server-seed mirrors — u01 IS Combat._mk ---------------------
+{
+  const c = vm.createContext({ console, Math, Date });
+  c.window = c;
+  for (const f of ["store.js", "data.js", "flavor.js", "market.js", "combat.js", "missions.js", "charters.js"])
+    vm.runInContext(fs.readFileSync(path.join(__dirname, "../js", f), "utf8"), c, { filename: f });
+  // market.u01(seed, n) (SQL, mirrored by Market._u01) is mulberry32 — the
+  // same generator as Combat._mk — so the client verdict mirrors are exact.
+  for (const seed of [1, 42, 0xDEADBEEF, 4294967295, 123456789]) {
+    assert.strictEqual(c.Market._u01(seed, 0), c.Combat._mk(seed)(), "u01(seed,0) == first _mk draw @" + seed);
+    const r = c.Combat._mk(seed); for (let i = 0; i < 7; i++) r();
+    assert.strictEqual(c.Market._u01(seed, 7), r(), "u01(seed,7) == 8th _mk draw @" + seed);
+  }
+  // a server-launched mission (rngSeed stamped by app_mission_launch)
+  // predicts app_mission_resolve's verdict: u01(rngSeed, 0) < successChance
+  const seed = c.Market._seed(["mission", "m1", "1700000000000"]);
+  const m = { uid: "m1", rngSeed: seed, successChance: 0.5 };
+  assert.strictEqual(c.Missions.rolledSuccess(m), c.Market._u01(seed, 0) < 0.5, "rolledSuccess mirrors u01(rngSeed, 0)");
+  assert.strictEqual(c.Missions.rolledSuccess(m), c.Missions.rolledSuccess(m), "…and is stable");
+  // signed-in charter mirror: app_charter_resolve's draws are indexed off the
+  // (id, startedAt) seed — destroy at i*4+1, impound at i*4+2 per hull
+  c.Cloud = { shipRpcReady: () => true };
+  c.Fleet = { ship: () => null };
+  const ch = { id: "ch9", startedAt: 1700000000000, shipUids: ["a", "b"],
+    destroyChance: 0.5, impoundChance: 0.5, impound: true };
+  const cseed = c.Market._seed(["charter", "ch9", "1700000000000"]);
+  let clean = true;
+  for (let i = 1; i <= 2 && clean; i++) {
+    if (c.Market._u01(cseed, i * 4 + 1) < 0.5) clean = false;
+    else if (c.Market._u01(cseed, i * 4 + 2) < 0.5) clean = false;
+  }
+  assert.strictEqual(c.Charters.predictClean(ch), clean, "predictClean mirrors the charter resolve draws");
+  assert.strictEqual(c.Charters.predictClean(ch), c.Charters.predictClean(ch), "…and is stable");
+}
+
 console.log("check_voyage: all good ✓");

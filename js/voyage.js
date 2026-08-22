@@ -20,11 +20,14 @@
      • Hub — the Live View chase cam (screen centred on the followed ship,
        with a mini chart inset), and the mission cards' "▶ watch" buttons.
 
-   §4.4: for client-local voyages (guests, charters' local loop) the dice roll
-   moved to dispatch — Missions/Charters draw outcomes from a stream seeded by
-   the voyage uid, so a mid-flight skirmish can already know the verdict.
-   Server-settled voyages keep the server verdict; their events stay
-   non-decisive. Nothing here ever touches the wallet.
+   §4.4: the dice roll lives at dispatch for every path now. Client-local
+   voyages draw outcomes from a stream seeded by the voyage uid; server-settled
+   ones are mirrored bit for bit (missions carry app_mission_launch's rngSeed,
+   charters derive app_charter_resolve's (id, startedAt) seed) — so any
+   mid-flight skirmish already knows the verdict. The wallet lands only at
+   resolve/settle, with one exception: §4.3 toll/customs CHECKS apply small
+   incidents.js-vocabulary effects — guest/local-only, exactly once, ledgered
+   in state.voyChecks.
 
    Cross-player flagships ride a tiny optional table (docs/sql/voyage_presence.sql):
    one row per player — from/to/departedAt/etaMs — and every client replays the
@@ -166,7 +169,7 @@ const Voyages = {
       if (!from) continue;
       const ph = Missions.phaseAt(m, now);
       const base = { id: "m:" + m.uid, kind: "mission", label: m.title, you: true,
-        sprite: this._fleetSprite(m.shipUids), mission: m };
+        sprite: this._fleetSprite(m.shipUids), uids: m.shipUids, mission: m };
       // A job in the system we launched from has no transit legs — the fleet
       // works local space the whole time. Still a voyage you can follow.
       if (from === dest.id) { out.push({ ...base, sysId: dest.id, phaseLabel: ph.label }); continue; }
@@ -191,7 +194,7 @@ const Voyages = {
       const p = Util.clamp((now - c.startedAt) / Math.max(1, c.durationMs), 0, 1);
       const base = { id: "c:" + c.id, kind: "charter", you: true,
         label: "Charter — " + ((DANGER.find(d => d.id === c.band) || {}).label || c.band),
-        sprite: this._fleetSprite(Charters.shipUids(c)), charter: c };
+        sprite: this._fleetSprite(Charters.shipUids(c)), uids: Charters.shipUids(c), charter: c };
       const half = c.durationMs / 2;
       const plan = p < 0.5
         ? this.plan(from, cand.id, c.startedAt, half)
@@ -404,17 +407,121 @@ const Voyages = {
     customs: { ico: "🛃", line: sys => `customs checkpoint off ${sys} — waved through after inspection` },
     engage:  { ico: "⚔", line: sys => `strike group engaging at ${sys}` },
   },
+  // The optimistic EVENT_TEXT line is the "clean" outcome; a check that went
+  // badly (§4.3) posts these instead.
+  FAIL_TEXT: {
+    toll:    sys => `a pirate wing collected its toll off ${sys}`,
+    customs: sys => `customs checkpoint off ${sys} — cited after inspection`,
+  },
 
-  // Called from Game.loop. First call primes: events already in the past are
-  // marked seen without announcing (no retro toast wall after time away).
-  // ponytail: §4.5 wants missed entries posted in order on catch-up; add that
-  // to the WYWA recap when journeys land in report cards.
+  // ---- §4.3 checks: toll / customs are choice encounters -------------------
+  // The auto-roll (timeout / offline / catch-up) is seeded by the event id, so
+  // walking away and watching produce the same distribution. Choosing is the
+  // online privilege: the modal (UI.showVoyCheck) fires only when the event
+  // lands with the tab open. Wallet effects ride Incidents.apply and are
+  // guest/local-only — the same gate (and the same app_incident_resolve
+  // upgrade path) as main.js fireIncident; signed-in play keeps today's
+  // announce-only events. Applied exactly once: s.voyChecks[id] = 1 persists
+  // (validated as untrusted save data in Game.migrate).
+  CHECK_TOLL: { safe: 300, low: 600, moderate: 1100, high: 1800, extreme: 2600 },
+  isCheck(e) { return (e.kind === "toll" || e.kind === "customs") && this._checksOn(); },
+  _checksOn() {
+    return !!(window.Incidents && window.Charters && Charters.fleetStats
+      && (!window.Economy || !Economy.softIncomeLocal || Economy.softIncomeLocal()));
+  },
+  // The encounter as data: incidents.js choice vocabulary + a default the
+  // timeout picks. Odds roll the event against Charters.fleetStats — shields
+  // help you run, firepower helps you fight (§4.3).
+  checkDef(e) {
+    const band = e.m ? e.m.danger : e.c.band;
+    const uids = e.m ? e.m.shipUids : Charters.shipUids(e.c);
+    const st = Charters.fleetStats((uids || []).map(u => Fleet.ship(u)).filter(Boolean));
+    const toll = this.CHECK_TOLL[band] || 1000;
+    const sysName = this._eventSys(e, Date.now());
+    const fleet = e.m ? "convoy" : "charter fleet";
+    const run = Util.clamp(0.45 + (st.shields / (st.shields + 250)) * 0.35, 0.3, 0.9);
+    const need = { safe: 40, low: 90, moderate: 170, high: 300, extreme: 480 }[band] || 170;
+    const fight = Util.clamp(0.2 + (st.firepower / (st.firepower + need)) * 0.65, 0.1, 0.92);
+    if (e.kind === "toll") return {
+      icon: "☠", title: "Pirate Toll",
+      text: `A pirate wing fans out ahead of your ${fleet} off ${sysName}. "Pay the toll, baron — or we take it in scrap."`,
+      defaultIdx: 1,
+      choices: [
+        { label: "Pay the toll", effects: { credits: -toll } },
+        { label: "Run the gate", chance: run, effects: {}, fail: { credits: -Math.round(toll * 1.5) } },
+        { label: "Fight through", chance: fight,
+          effects: { credits: [Math.round(toll * 0.5), toll], rep: [["free_trade", 2]] },
+          fail: { credits: -toll * 2, rep: [["free_trade", -1]] } },
+      ],
+    };
+    const fine = Math.round(toll * 0.8);
+    const illicit = e.m ? e.m.type === "smuggle" : !!e.c.impound;
+    return {
+      icon: "🛃", title: "Customs Checkpoint",
+      text: `A customs cutter off ${sysName} orders your ${fleet} to heave to for inspection.`,
+      defaultIdx: 0,
+      choices: [
+        illicit
+          ? { label: "Submit to inspection", chance: 0.5, effects: {}, fail: { credits: -fine, rep: [["free_trade", -1]] } }
+          : { label: "Submit to inspection", effects: {} },
+        { label: "Run the checkpoint", chance: run * 0.9, effects: {}, fail: { credits: -fine * 2, rep: [["free_trade", -2]] } },
+      ],
+    };
+  },
+  // Resolve a check exactly once. choiceIdx null = the auto-roll default.
+  // The gamble roll is seeded by the event id — deterministic; only the
+  // effect magnitudes (Incidents.apply's randInt ranges) jitter.
+  applyCheck(e, choiceIdx = null) {
+    const s = this.s();
+    const ledger = s.voyChecks && typeof s.voyChecks === "object" ? s.voyChecks : (s.voyChecks = {});
+    if (!this.isCheck(e) || ledger[e.id]) return null;
+    const def = this.checkDef(e);
+    const choice = def.choices[choiceIdx == null ? def.defaultIdx : choiceIdx] || def.choices[0];
+    const won = choice.chance == null || Combat._mk(Combat.seedFrom("chk:" + e.id))() < choice.chance;
+    const summary = Incidents.apply((won ? choice.effects : choice.fail) || {});
+    ledger[e.id] = 1;
+    if (window.Game && Game.requestSave) Game.requestSave();
+    return { won, summary, label: choice.label, gamble: choice.chance != null };
+  },
+  // The comms line for an event, outcome-aware. Posts to Feed, returns the line
+  // (the toast and the check modal reuse it).
+  announceOutcome(e, out) {
+    const meta = this.EVENT_TEXT[e.kind]; if (!meta) return "";
+    const sys = this._eventSys(e, e.t);
+    const line = (out && !out.won && this.FAIL_TEXT[e.kind] ? this.FAIL_TEXT[e.kind](sys) : meta.line(sys))
+      + (out && out.summary && out.summary !== "no effect" ? ` (${out.summary})` : "");
+    if (window.Feed) Feed.emit(`${meta.ico} ${line}`, { kind: "reaction" });
+    return line;
+  },
+
+  // Called from Game.loop. First call primes: §4.5 ordered catch-up — events
+  // missed since the save's voySeenT watermark post to comms in order
+  // (bounded), and missed checks auto-roll (§4.3). Everything before the
+  // watermark — including saves from before it existed (voySeenT 0) — primes
+  // silently, so there's still no retro toast wall.
   tick(now = Date.now()) {
-    if (!this.s() || !window.Lanes || !Object.keys(Lanes.adj).length) return;
+    const s = this.s();
+    if (!s || !window.Lanes || !Object.keys(Lanes.adj).length) return;
     const evs = this.allEvents();
     if (!this._primed) {
       this._primed = true;
-      for (const e of evs) if (e.t <= now) this._seen.add(e.id);
+      const seenT = Number.isFinite(+s.voySeenT) ? +s.voySeenT : 0;
+      const missed = seenT > 0 ? evs.filter(e => e.t <= now && e.t > seenT).sort((a, b) => a.t - b.t) : [];
+      const shown = new Set(missed.slice(-8));   // bound the wall; older entries collapse
+      for (const e of evs) {
+        if (e.t > now) continue;
+        this._seen.add(e.id);
+        // grandfather pre-watermark checks: seen in an earlier session as
+        // announce-only — never charge them retroactively
+        if (this.isCheck(e) && e.t <= seenT) (s.voyChecks || (s.voyChecks = {}))[e.id] = 1;
+      }
+      for (const e of missed) {
+        const out = this.isCheck(e) ? this.applyCheck(e) : null;
+        if (shown.has(e)) this.announceOutcome(e, out);
+      }
+      if (missed.length > shown.size && window.UI)
+        UI.toast(`📡 ${missed.length} en-route reports while you were away — see comms`, "info", 5000);
+      s.voySeenT = now;
       return;
     }
     for (const e of evs) {
@@ -422,28 +529,42 @@ const Voyages = {
       this._seen.add(e.id);
       this._announce(e, now);
     }
+    s.voySeenT = now;
     if (this._seen.size > 200) {
       const live = new Set(evs.map(e => e.id));
       this._seen = new Set([...this._seen].filter(id => live.has(id)));
+      // prune the persisted check ledger with the same liveness rule
+      if (s.voyChecks) for (const id in s.voyChecks) if (!live.has(id)) delete s.voyChecks[id];
     }
   },
 
   _announce(e, now) {
     const meta = this.EVENT_TEXT[e.kind]; if (!meta) return;
-    const sys = this._eventSys(e, now);
-    if (window.Feed) Feed.emit(`${meta.ico} ${meta.line(sys)}`, { kind: "reaction" });
+    // §4.3: a check landing with the tab open is a playable choice — the modal
+    // owns the announce (it applies + posts on resolve). Auto-roll when
+    // another modal is up or the tab is hidden.
+    if (this.isCheck(e) && window.UI && UI.showVoyCheck && typeof document !== "undefined"
+        && document.visibilityState === "visible"
+        && !document.querySelector(".modal-backdrop:not(.hidden)")) {
+      UI.showVoyCheck(e);
+      return;
+    }
+    const out = this.isCheck(e) ? this.applyCheck(e) : null;
+    const line = this.announceOutcome(e, out);
     if (window.UI) {
       const what = e.m ? e.m.title : "Charter fleet";
-      UI.toast(`${meta.ico} ${what} — ${meta.line(sys)}${e.watch ? " · ▶ watch on Hub" : ""}`,
+      UI.toast(`${meta.ico} ${what} — ${line}${e.watch ? " · ▶ watch on Hub" : ""}`,
         "warn", 6000);
       if (UI.page === "hub" && UI.updateMissions) UI.updateMissions();
     }
   },
 
   // ▶ watch: play the encounter, seeded by the event id — the same fight plays
-  // every time. Client-local voyages (§4.4) already know their verdict, so a
-  // skirmish on a doomed run reads as your line getting mauled; server-settled
-  // voyages stay non-decisive (the server verdict lands at settle).
+  // every time. Every voyage knows its verdict mid-flight now (§4.4):
+  // client-local ones from the dispatch stream, server-settled ones by
+  // mirroring the launch-stamped seed (missions) / the (id, startedAt) resolve
+  // seed (charters) — so a skirmish on a doomed run reads as your line getting
+  // mauled. The wallet still lands only at settle.
   watch(eventId) {
     const e = this.allEvents().find(x => x.id === eventId);
     if (!e || !window.BattleView || !window.Combat) return;
@@ -456,14 +577,15 @@ const Voyages = {
     if (!roster.length) return;
     const type = e.m ? (e.kind === "toll" || e.kind === "customs" ? "smuggle" : e.m.type)
       : (e.c.band === "high" || e.c.band === "extreme" ? "smuggle" : "transport");
-    const localVerdict = e.m && window.Missions && !Missions.authoritative()
-      ? Missions.rolledSuccess(e.m) : true;
+    const verdict = e.m
+      ? (window.Missions ? Missions.rolledSuccess(e.m) : true)
+      : (window.Charters && Charters.predictClean ? Charters.predictClean(e.c) : true);
     BattleView.open({
       uid: "sk:" + e.id, skirmish: true,
       title: (e.m ? e.m.title : "Charter fleet") + " — skirmish",
       type, danger: e.m ? e.m.danger : e.c.band,
       faction: src.faction || null, sysName: this._eventSys(e, Date.now()),
-      success: localVerdict, lost: [], damaged: [], impounded: [], items: [], roster,
+      success: verdict, lost: [], damaged: [], impounded: [], items: [], roster,
     });
   },
 

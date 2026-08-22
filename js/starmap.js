@@ -925,23 +925,41 @@ const StarMap = {
 
     const W = () => canvas.width, H = () => canvas.height;
 
+    // ---- §6.1 world space -------------------------------------------------
+    // The scene lives in FIXED world coordinates (WORLD × WORLD, star at the
+    // centre) — identical on every client, so shared positions no longer
+    // depend on per-client canvas size. The camera maps world → screen; only
+    // the nebula backdrop, starfield and Live View overlay stay in screen
+    // space (which is what gives the parallax as you pan).
+    const WORLD = 1000, wcx = WORLD / 2, wcy = WORLD / 2, R = WORLD * 0.42;
+
     // ---- pan / zoom camera: drag to pan, wheel / pinch to zoom -------------
-    // screen = world × zoom + (x,y). Applied only to the SCENE content (star,
-    // planets, station, ships), so the nebula backdrop + starfield stay put and
-    // give a little parallax as you pan. Reset per system (fresh closure).
-    const cam = { zoom: 1, x: 0, y: 0 };
-    const MINZ = 0.7, MAXZ = 4;
+    // screen = world × cam.zoom + (cam.x, cam.y). cam.zoom carries the canvas
+    // fit (cover on squat mobile panes so orbits crop, contain otherwise —
+    // the same rule the canvas-space scene used) × the user's pinch/wheel
+    // zoom. A re-fit (resize, rotate, panel change) re-centres the view.
+    const fitZoom = () => {
+      const cw = W(), ch = H();
+      return (ch < cw * 0.95 ? Math.max(cw, ch) : Math.min(cw, ch)) / WORLD;
+    };
+    const cam = { zoom: 1, x: 0, y: 0, _fit: 0 };
+    const refit = () => {
+      const f = fitZoom();
+      cam.zoom = f; cam._fit = f;
+      cam.x = W() / 2 - wcx * f; cam.y = H() / 2 - wcy * f;
+    };
+    refit();
     const clampCam = () => {
-      cam.zoom = Util.clamp(cam.zoom, MINZ, MAXZ);
-      const cxW = W() / 2, cyW = H() / 2;                 // keep the star (system centre) on-screen
-      cam.x = Util.clamp(cam.x, -cxW * cam.zoom, W() - cxW * cam.zoom);
-      cam.y = Util.clamp(cam.y, -cyW * cam.zoom, H() - cyW * cam.zoom);
+      const f = fitZoom();
+      cam.zoom = Util.clamp(cam.zoom, f * 0.7, f * 4);
+      cam.x = Util.clamp(cam.x, -wcx * cam.zoom, W() - wcx * cam.zoom);   // keep the star on-screen
+      cam.y = Util.clamp(cam.y, -wcy * cam.zoom, H() - wcy * cam.zoom);
     };
     // Chase cam (Hub Live View): glide the camera onto the followed voyage —
-    // its scene position is recorded by _drawVoyagers into voyFx.pos.
+    // its world position is recorded by _drawVoyagers into voyFx.pos.
     const followCam = () => {
       if (!opts.followVoy) return;
-      cam.zoom = opts.zoom || 1.7;
+      cam.zoom = (opts.zoom || 1.7) * fitZoom();
       const fp = voyFx.pos[opts.followVoy];
       if (!fp) return;
       const tx = W() / 2 - fp.x * cam.zoom, ty = H() / 2 - fp.y * cam.zoom;
@@ -949,27 +967,16 @@ const StarMap = {
       cam.y += (ty - cam.y) * (cam._snapped ? 0.08 : 1);
       cam._snapped = true;
     };
-    // Squat map panes (mobile stack: short top strip) used to crush the system
-    // into Math.min(w,h). Start cover-zoomed instead — same idea as galaxy
-    // _fitGalaxy — so outer orbits crop and the user pans / zooms out.
-    // Deferred one frame so canvas size matches the unhidden system-view.
-    if (!ext && !opts.followVoy) requestAnimationFrame(() => {
-      resize();
-      if (H() < W() * 0.95) {
-        cam.zoom = 1.35;
-        cam.x = W() / 2 * (1 - cam.zoom);
-        cam.y = H() / 2 * (1 - cam.zoom);
-        clampCam();
-        redraw();
-      }
-    });
+    // canvas can get its real size a frame after un-hiding — re-fit then
+    if (!ext) requestAnimationFrame(() => { resize(); redraw(); });
     // the live loop repaints itself; reduced-motion mode draws one frame so it needs a nudge
     const redraw = () => { if (reduced) draw(performance.now()); };
     let hintTimer = 0;
     const hideHint = () => { clearTimeout(hintTimer); if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); };
     const zoomAt = (fx, fy, factor) => {
       const wx = (fx - cam.x) / cam.zoom, wy = (fy - cam.y) / cam.zoom;
-      cam.zoom = Util.clamp(cam.zoom * factor, MINZ, MAXZ);
+      const f = fitZoom();
+      cam.zoom = Util.clamp(cam.zoom * factor, f * 0.7, f * 4);
       cam.x = fx - wx * cam.zoom; cam.y = fy - wy * cam.zoom;
       clampCam(); hideHint(); redraw();
     };
@@ -1040,23 +1047,22 @@ const StarMap = {
 
     // One hyperspace gate per lane, at the system's edge on the true bearing
     // toward the connected system (LIVING_GALAXY.md §2.4) — the gate to Navos
-    // points at Navos. Positions only depend on canvas size, so cache on it:
-    // the draw loop and every gate-bound ship call this each frame.
+    // points at Navos. World-space (§6.1): a pure function of the lane graph,
+    // identical on every client — computed once.
     let gateCache = null;
     const gates = () => {
-      const w = W(), h = H(), m = 64;
-      if (gateCache && gateCache.w === w && gateCache.h === h) return gateCache.at;
+      if (gateCache) return gateCache;
+      const m = 64;
       const gl = window.Lanes ? Lanes.gates(sys.id) : [];
-      const at = !gl.length ? [{ to: null, name: "", x: w - m, y: h * 0.3 }] : gl.map(g => {
+      gateCache = !gl.length ? [{ to: null, name: "", x: WORLD - m, y: WORLD * 0.3 }] : gl.map(g => {
         const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
-        // project the bearing from the center onto the inset canvas edge
-        const k = Math.min((w / 2 - m) / Math.max(Math.abs(dx), 1e-9),
-                           (h / 2 - m) / Math.max(Math.abs(dy), 1e-9));
+        // project the bearing from the centre onto the world's inset edge
+        const k = Math.min((wcx - m) / Math.max(Math.abs(dx), 1e-9),
+                           (wcy - m) / Math.max(Math.abs(dy), 1e-9));
         const dest = Galaxy.get(g.to);
-        return { to: g.to, name: dest ? dest.name : "", x: w / 2 + dx * k, y: h / 2 + dy * k };
+        return { to: g.to, name: dest ? dest.name : "", x: wcx + dx * k, y: wcy + dy * k };
       });
-      gateCache = { w, h, at };
-      return at;
+      return gateCache;
     };
 
     // ---- ambient ship traffic (with behaviour) ----
@@ -1082,14 +1088,14 @@ const StarMap = {
     };
 
     const dockPoints = () => {
-      const pts = planets.map((pl, i) => ({ x: pl._x ?? W() / 2, y: pl._y ?? H() / 2, kind: "planet", idx: i }));
-      pts.push({ x: station._x ?? W() / 2, y: station._y ?? H() / 2, kind: "station" });
+      const pts = planets.map((pl, i) => ({ x: pl._x ?? wcx, y: pl._y ?? wcy, kind: "planet", idx: i }));
+      pts.push({ x: station._x ?? wcx, y: station._y ?? wcy, kind: "station" });
       return pts;
     };
     const targetPos = t => {
-      if (!t) return { x: W() / 2, y: H() / 2 };
-      if (t.kind === "planet") { const pl = planets[t.idx]; return { x: pl?._x ?? W() / 2, y: pl?._y ?? H() / 2 }; }
-      if (t.kind === "station") return { x: station._x ?? W() / 2, y: station._y ?? H() / 2 };
+      if (!t) return { x: wcx, y: wcy };
+      if (t.kind === "planet") { const pl = planets[t.idx]; return { x: pl?._x ?? wcx, y: pl?._y ?? wcy }; }
+      if (t.kind === "station") return { x: station._x ?? wcx, y: station._y ?? wcy };
       if (t.kind === "gate") { const gl = gates(); return gl[(t.idx ?? 0) % gl.length]; }
       return { x: t.x, y: t.y };
     };
@@ -1108,7 +1114,7 @@ const StarMap = {
       const g = Util.pick(gates());   // ambient traffic warps in through any gate
       const r = Util.pick(raceKeys);
       ships.push({ x: g.x, y: g.y, race: r, img: raceImg(r), alpha: 0, scale: 0.3, state: "warpIn",
-        spd: shipSpeed(), ang: Math.atan2(H() / 2 - g.y, W() / 2 - g.x), target: null, dwell: 0 });
+        spd: shipSpeed(), ang: Math.atan2(wcy - g.y, wcx - g.x), target: null, dwell: 0 });
       warpFlash(g.x, g.y);
     };
     const explode = (x, y, color) => {
@@ -1123,7 +1129,7 @@ const StarMap = {
     };
     for (let i = 0; i < targetPop; i++) {   // start with traffic already underway
       const r = Util.pick(raceKeys);
-      ships.push({ x: Math.random() * W(), y: Math.random() * H(), race: r, img: raceImg(r), scale: 1,
+      ships.push({ x: Math.random() * WORLD, y: Math.random() * WORLD, race: r, img: raceImg(r), scale: 1,
         alpha: 1, state: "travel", spd: shipSpeed(), ang: Math.random() * 6.28, target: null, dwell: 0 });
     }
     let combatCooldown = 5;
@@ -1136,11 +1142,9 @@ const StarMap = {
     const draw = (now) => {
       if (handle.stopped) return;
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      if (cam._fit !== fitZoom()) refit();   // canvas re-sized → re-fit the view
       followCam();
-      const w = W(), h = H(), cx = w / 2, cy = h / 2;
-      // Cover on squat panes (mobile top strip): size orbits to the long axis so
-      // the system isn't crushed into the short side. Desktop stays contain.
-      const R = (h < w * 0.95 ? Math.max(w, h) : Math.min(w, h)) * 0.42;
+      const w = W(), h = H(), cx = wcx, cy = wcy;   // scene content draws in world space
       const ctx = canvas.getContext("2d");
       // background
       if (neb.ok) ctx.drawImage(neb, 0, 0, w, h); else { ctx.fillStyle = "#06080f"; ctx.fillRect(0, 0, w, h); }
@@ -1217,7 +1221,7 @@ const StarMap = {
               if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut" || o.state === "warpIn") continue;
               const dd = Math.hypot(o.x - a.x, o.y - a.y); if (dd < bd) { bd = dd; b = o; }
             }
-            if (b && bd < Math.min(w, h) * 0.7) lastChatterAt = startDialogue(a, b, now);  // multi-turn exchange
+            if (b && bd < WORLD * 0.7) lastChatterAt = startDialogue(a, b, now);  // multi-turn exchange
             else { say(a, "hail"); lastChatterAt = now; }                                   // solo radio call
           }
         }
@@ -1257,13 +1261,14 @@ const StarMap = {
         ctx.fillStyle = p.color + (p.life / p.max).toFixed(2) + ")";
         ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
       }
-      // speech bubbles ride on top of everything
-      for (const sh of ships) this._drawBubble(ctx, sh, w, h);
+      // speech bubbles ride on top of everything (clamped to world bounds)
+      for (const sh of ships) this._drawBubble(ctx, sh, WORLD, WORLD);
 
       // purposeful ships (projections of real state): your flagship + other
-      // barons' flagships with the owner's name on top, mission convoys,
-      // couriers — crossing between the gates their route actually uses.
-      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy);
+      // barons' flagships with the owner's name on top, mission convoys in
+      // formation, couriers — crossing between the gates their route actually
+      // uses — and survey hulls parked at their seeded work-site (§6.2).
+      this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy, { cx, cy, R });
 
       ctx.restore();   // end camera transform
 
@@ -1389,8 +1394,9 @@ const StarMap = {
   // after drop-out (gateIn) — with a warp burst on the jump itself. Headings
   // are smoothed so course changes read as flown maneuvers. Names use
   // fillText, so other barons' display names stay plain text.
-  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx, followId) {
+  _drawVoyagers(ctx, sys, gateAt, sx, sy, fx, followId, geom) {
     if (!window.Voyages) return;
+    geom = geom || { cx: 500, cy: 500, R: 420 };   // §6.1 world space defaults
     fx = fx || (this._voyFx || (this._voyFx = { hdg: {}, mode: {}, parts: [], last: 0, pos: {} }));
     fx.pos = fx.pos || {};
     const now = Date.now();
@@ -1409,7 +1415,23 @@ const StarMap = {
       seen.add(v.id);
       let x, y, want, thrust = 1;
       const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
-      if (v.mode === "working") {
+      if (v.mode === "working" && v.kind === "survey") {
+        // §6.2: the survey hull parks at a seeded work-site out in the system
+        // — derelict hulk, abandoned outpost or anomaly, hashed from system +
+        // survey uid — and sweeps it with the scan pulse.
+        const hs = window.Combat ? Combat.seedFrom("site:" + sys.id + ":" + v.id) : 1;
+        const sr = geom.R * (0.55 + (hs % 20) / 100);
+        const sa = ((hs >> 5) % 628) / 100;
+        const stx = geom.cx + Math.cos(sa) * sr, sty = geom.cy + Math.sin(sa) * sr;
+        this._drawSite(ctx, stx, sty, hs % 3, now);
+        const a = (hs % 628) / 100 + now * 0.00015;
+        x = stx + Math.cos(a) * 24; y = sty + Math.sin(a) * 24;
+        want = a + Math.PI / 2; thrust = 0.25;
+        const pr = (now % 2400) / 2400;              // scan pulse over the site
+        ctx.strokeStyle = `rgba(95,215,255,${((1 - pr) * 0.45).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(stx, sty, 8 + pr * 40, 0, 7); ctx.stroke();
+      } else if (v.mode === "working") {
         const h = window.Combat ? Combat.seedFrom(v.id) : 1;
         const rr = 34 + (h % 3) * 9;
         const a = (h % 628) / 100 + now * 0.00012;
@@ -1461,6 +1483,27 @@ const StarMap = {
       const flag = v.kind === "flagship";
       const followed = !!followId && v.id === followId;
       const sz = (flag ? 15 : 11) * (followed ? 1.3 : 1);
+      // §6.2: convoys fly in formation — up to three wingmen in trailing
+      // echelon behind the lead hull, each wearing its own sprite. Pure
+      // projection of the voyage's shipUids; nothing simulated.
+      if (v.uids && v.uids.length > 1) {
+        for (let i = 0; i < Math.min(3, v.uids.length - 1); i++) {
+          const side = i % 2 ? -1 : 1, rank = 1 + (i >> 1);
+          const wref = String(Voyages._fleetSprite([v.uids[i + 1]])).split(":");
+          const wim = this.img(wref[0] === "race" ? ASSET.raceship(wref[1]) : ASSET.ship(wref[1]));
+          const wx = x - Math.cos(ang) * sz * 1.7 * rank + Math.cos(ang + Math.PI / 2) * side * sz * 1.15;
+          const wy = y - Math.sin(ang) * sz * 1.7 * rank + Math.sin(ang + Math.PI / 2) * side * sz * 1.15;
+          const wsz = sz * 0.75;
+          ctx.save(); ctx.globalAlpha = 0.9; ctx.translate(wx, wy); ctx.rotate(ang);
+          if (wim.ok) ctx.drawImage(wim, -wsz, -wsz * 0.6, wsz * 2, wsz * 1.2);
+          else {
+            ctx.fillStyle = "#7b8cff";
+            ctx.beginPath(); ctx.moveTo(wsz, 0); ctx.lineTo(-wsz * 0.7, wsz * 0.5); ctx.lineTo(-wsz * 0.7, -wsz * 0.5);
+            ctx.closePath(); ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
       // Tracking reticle on the ship the Live View is following, so it never
       // gets lost among ambient traffic or washed out against the star.
       if (followed) {
@@ -1521,6 +1564,45 @@ const StarMap = {
       const a = (i / 14) * Math.PI * 2, s = Util.randFloat(40, 110);
       particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: Util.randFloat(.3, .7), max: .7, color: "rgba(130,200,255," });
     }
+  },
+
+  // §6.2 survey work-sites — canvas primitives, no sprites (LIVING_GALAXY.md
+  // §5.6): 0 = derelict hulk, 1 = abandoned outpost, 2 = anomaly.
+  _drawSite(ctx, x, y, type, now) {
+    ctx.save();
+    if (type === 0) {           // derelict hulk: dark broken hull + drifting debris
+      ctx.translate(x, y); ctx.rotate(0.6);
+      ctx.fillStyle = "rgba(90,100,120,.85)";
+      ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-6, -6); ctx.lineTo(-6, 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(70,78,95,.8)";
+      ctx.fillRect(-16, -3, 7, 6);                       // sheared-off stern
+      ctx.fillStyle = "rgba(120,130,150,.5)";
+      for (let i = 0; i < 4; i++) {
+        const a = i * 1.7 + now * 0.0002, r = 12 + i * 4;
+        ctx.fillRect(Math.cos(a) * r, Math.sin(a) * r, 1.6, 1.6);
+      }
+    } else if (type === 1) {    // abandoned outpost: module + panel + cold beacon
+      ctx.fillStyle = "rgba(110,120,140,.85)";
+      ctx.fillRect(x - 6, y - 6, 12, 12);
+      ctx.strokeStyle = "rgba(90,110,160,.7)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x - 14, y); ctx.lineTo(x - 6, y); ctx.moveTo(x + 6, y); ctx.lineTo(x + 14, y); ctx.stroke();
+      ctx.strokeStyle = "rgba(150,160,180,.6)"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x, y - 14); ctx.stroke();
+      const blink = (Math.sin(now * 0.004) + 1) / 2;
+      ctx.fillStyle = `rgba(255,120,90,${(0.25 + blink * 0.6).toFixed(2)})`;
+      ctx.beginPath(); ctx.arc(x, y - 15, 1.8, 0, 7); ctx.fill();
+    } else {                    // anomaly: slow violet swirl
+      const glow = ctx.createRadialGradient(x, y, 2, x, y, 26);
+      glow.addColorStop(0, "rgba(190,120,255,.5)"); glow.addColorStop(1, "rgba(190,120,255,0)");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(x, y, 26, 0, 7); ctx.fill();
+      ctx.lineWidth = 1.6;
+      for (let k = 0; k < 3; k++) {
+        ctx.strokeStyle = `rgba(210,160,255,${(0.7 - k * 0.18).toFixed(2)})`;
+        const r = 7 + k * 5;
+        ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.5, now * 0.0006 * (1 + k * 0.6), 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    ctx.restore();
   },
 
   _drawGate(ctx, gx, gy, t, destName) {
