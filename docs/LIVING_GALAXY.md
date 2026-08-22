@@ -1,6 +1,6 @@
 # Living Galaxy — lanes, visible voyages, watchable battles
 
-**Status: Steps 1–3 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
+**Status: Steps 1–4 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
 galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
 combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
 rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
@@ -35,15 +35,32 @@ Committing to a transfer (Star Systems list or star map) goes through a
 time — and on "go" hands the player to the Hub to watch the run. Arrival countdowns are gone
 from the travel/mission UI — the ship itself is the timer (mechanics are
 untouched: arrival still lands at `departedAt + etaMs`); only on-site work
-shows a clock. **§4.4 is in for client-local voyages**: mission and charter
-outcomes draw from a stream seeded by the voyage uid at dispatch
+shows a clock. **§4.4 is in for every path**: client-local voyages
+draw outcomes from a stream seeded by the voyage uid at dispatch
 (`Missions._mkOutcomeRng` / `Charters._mkOutcomeRng` — resolve applies, it
-doesn't roll), so a mid-flight skirmish already knows the verdict
-(`Missions.rolledSuccess`); server-settled voyages keep the server verdict
-and non-decisive events. Still future: the §4.3 online-choice modal, the
-§4.4 server-side outcome-seed column, and §4.5 ordered catch-up (past
-events prime silently). **Step 4 (world-space camera + full vignettes)
-remains design.**
+doesn't roll), and server-settled voyages are now mirrored bit for bit — no
+SQL change was needed, because `app_mission_launch` already stamps `rngSeed`
+and `app_charter_resolve`'s seed is `(id, startedAt)`, both fixed at
+dispatch; `market.u01` is mulberry32, the same generator as `Combat._mk`, so
+`Missions.rolledSuccess` / `Charters.predictClean` reproduce the SQL
+resolvers' draws and every mid-flight skirmish knows its verdict (the wallet
+still lands only at settle). **§4.3 is in**: toll/customs events are choice
+encounters — the incident-modal shell (`UI.showVoyCheck`) with a 15s
+countdown whose timeout fires the event-seeded auto-roll, so an unanswered
+(or offline, or caught-up) check costs exactly the same distribution;
+outcomes roll against `Charters.fleetStats` and apply through
+`Incidents.apply`, guest/local-only (the same gate and the same
+`app_incident_resolve` upgrade path as incidents), exactly once via the
+persisted `state.voyChecks` ledger. **§4.5 is in**: entries missed since the
+persisted `state.voySeenT` watermark post to comms in order on catch-up
+(bounded to the last 8 + a summary toast; pre-watermark saves still prime
+silently). **Step 4 is built**: the scene lives in §6.1 world space — a
+fixed 1000×1000 world with the star at the centre, the camera carrying the
+canvas fit — so gates, berths and work-sites are identical on every client
+and canvas size; and the §6.2 vignettes are complete: survey hulls park at a
+seeded work-site (derelict hulk / abandoned outpost / anomaly, hashed from
+system + survey uid) under the scan pulse, and multi-hull convoys fly in
+trailing-echelon formation, each wingman wearing its own hull's sprite.
 
 Companion to `REALTIME_SPACE.md` — this refines its Phases 1, 2 and 4 into one
 concrete plan after design review. Where the two differ, this document wins.
@@ -184,9 +201,14 @@ server at resolve. New rule:
 - **Server-settled voyages**: the server verdict still wins and still lands at
   settle. Mid-flight events before settle play as non-decisive skirmishes; the
   decisive engagement is choreographed once the report exists.
-- **Upgrade path (flagged, not v1):** dispatch RPCs stamp an outcome seed at
-  launch, closing the gap so shared voyages get playable mid-flight outcomes
-  too. One column + one line in `app_mission_launch` / `app_charter_*`.
+- **Upgrade path — shipped, and no SQL was needed:** the dispatch RPCs
+  already fix the outcome seed at launch (`app_mission_launch` stamps
+  `rngSeed`; `app_charter_resolve` seeds from `(id, startedAt)`, both set at
+  dispatch), so the client mirrors the resolvers instead —
+  `Missions.rolledSuccess` / `Charters.predictClean` reproduce
+  `market.u01`'s draws bit for bit (mulberry32 == `Combat._mk`; parity
+  asserted in `tools/check_voyage.js`). Shared voyages get playable
+  mid-flight outcomes with zero schema change.
 
 ### 4.5 Comms integration
 

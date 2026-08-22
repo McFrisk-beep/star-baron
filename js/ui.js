@@ -4101,6 +4101,44 @@ const UI = {
     this.updateHeader();
   },
 
+  // §4.3 voyage checks (LIVING_GALAXY.md) — the incident modal shell with a
+  // countdown: the seeded auto-roll fires as the default when the timer runs
+  // out, so an unanswered check costs exactly what an offline one does.
+  showVoyCheck(e) {
+    const def = Voyages.checkDef(e);
+    const r = this.refs;
+    clearInterval(this._voyCheckTimer);
+    r.incIcon.textContent = def.icon; r.incTitle.textContent = def.title;
+    r.incText.textContent = def.text;
+    r.incChoices.innerHTML = def.choices.map((c, i) =>
+      `<button class="btn inc-choice" data-choice="${i}">${c.label}${c.chance != null ? ` <span class="inc-odds">${Math.round(c.chance * 100)}%</span>` : ""}${i === def.defaultIdx ? ` <span class="inc-odds" data-count></span>` : ""}</button>`).join("");
+    r.incChoices.classList.remove("hidden");
+    r.incResult.classList.add("hidden"); r.incResult.innerHTML = "";
+    r.incClose.classList.add("hidden");
+    const cd = r.incChoices.querySelector("[data-count]");
+    let left = 15;
+    if (cd) cd.textContent = `auto ${left}s`;
+    const pick = i => {
+      clearInterval(this._voyCheckTimer);
+      const out = Voyages.applyCheck(e, i);
+      Voyages.announceOutcome(e, out);
+      r.incChoices.classList.add("hidden");
+      const head = out && out.gamble ? `<b class="${out.won ? "up" : "down"}">${out.won ? "Clear" : "Trouble"}</b> — ` : "";
+      r.incResult.innerHTML = head + ((out && out.summary) || "no effect");
+      r.incResult.classList.remove("hidden");
+      r.incClose.classList.remove("hidden");
+      this.flashCredits(); window.Game.requestSave();
+      this.updateHeader();
+    };
+    this._voyCheckTimer = setInterval(() => {
+      if (r.incident.classList.contains("hidden")) { clearInterval(this._voyCheckTimer); return; }
+      if (--left <= 0) pick(def.defaultIdx);
+      else if (cd) cd.textContent = `auto ${left}s`;
+    }, 1000);
+    r.incChoices.onclick = ev => { const b = ev.target.closest("[data-choice]"); if (b) pick(parseInt(b.dataset.choice, 10)); };
+    r.incident.classList.remove("hidden");
+  },
+
   // ===== while you were away ==============================================
   // Returns true if the modal was actually shown (so boot can sequence the
   // first-run tutorial after it).
