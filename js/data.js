@@ -890,17 +890,23 @@ const STOCKCFG = {
   offSpecialtyMult: 0.7,         // everything else
   tickMs: 60 * 60 * 1000,        // hourly consumption / NPC production
   trickleFrac: 0.02,             // surplus fraction moved into empty sectors
-  // NPC output /hour: tuned so zero-player galaxy equilibrates near baseline.
-  npcUnits: { common: 12, uncommon: 5, rare: 2 },
-  npcOutputBoost: 2.5,           // npcOutputMult = clamp(1+(1-ratio)*boost, 1, 3.5)
+  // Consumption pace: a full shelf drains to empty in this many hours if no
+  // cargo arrives (5 days). demand = baseline / drainHours × pop × cat mults.
+  drainHours: 120,
+  // NPC cargo units per delivery slot: tuned so zero-player galaxy hovers near
+  // baseline (see tools/check_traffic.js sim).
+  npcUnits: { common: 55, uncommon: 22, rare: 7 },
+  npcOutputBoost: 2.5,           // npcOutputMult = clamp(1+(1-ratio)*boost, min, max)
+  npcOutputMultMin: 0.25,        // glut brake — convoys throttle when shelves overflow
   npcOutputMultMax: 3.5,
+  npcSurgeRatio: 0.10,           // below 10% of baseline, relief convoys surge…
+  npcSurgeMult: 2.0,             // …carrying this much more per delivery
   seasonalAmp: 0.08,             // ± noise on consumption
   glutCapMult: 3.0,              // hard shelf ceiling vs baseline
 };
 
-// Per-commodity hourly demand at a "normal" sector, before sectorPop / cat mults.
+// Sector demand shaping on top of the baseline-derived per-commodity rate.
 const CONSUMPTION = {
-  defaultByRarity: { common: 8, uncommon: 3, rare: 1 },
   // Category × sector affinity (design §3). Applied on top of per-comm base.
   catSectorMult: {
     agri:    { _: 1 },
@@ -912,6 +918,19 @@ const CONSUMPTION = {
   },
   // Relative population pressure per sector (Core densest).
   sectorPop: { core: 1.35, belt: 1.0, tide: 0.95, green: 1.1, forge: 1.05, sprawl: 1.2 },
+};
+
+/* Visible NPC cargo traffic (js/traffic.js) — the ships that carry the hourly
+   NPC supply. Pure view of the clock; the stock lands in Stock.tickHour. */
+const TRAFFICCFG = {
+  freighterPeriodMs: 60 * 60 * 1000,  // one delivery loop per station per stock hour
+  freighterLegFrac: 0.35,             // fraction of the loop flying each way (rest docked)
+  tradersPerSector: 2,                // ambient small cargo ships per sector
+  tradersSurge: 3,                    // extra relief traders while a shelf < npcSurgeRatio
+  traderLoopMinMs: 25 * 60 * 1000,    // one trader hop + dwell
+  traderLoopMaxMs: 45 * 60 * 1000,
+  traderFlyFrac: 0.8,                 // fraction of the loop in flight
+  manifestSize: 3,                    // commodities per cargo ship (piracy loot later)
 };
 
 /* ---- SPACE STATIONS (docs/STATIONS.md) ------------------------------------
@@ -1610,6 +1629,7 @@ window.BLUEPRINTS = BLUEPRINTS;
 window.RECIPES = RECIPES;
 window.MARKETCFG = MARKETCFG;
 window.STOCKCFG = STOCKCFG;
+window.TRAFFICCFG = TRAFFICCFG;
 window.BLOCKCFG = BLOCKCFG;
 window.STATION_BAY_BASE = STATION_BAY_BASE;
 window.COURIERCFG = COURIERCFG;

@@ -1318,6 +1318,10 @@ body.reduced .floatnav-indicator { transition: none; }
 .voy-hull-flag.other { fill: #ffd9a0; }
 .voy-hull-fleet { fill: #7b8cff; opacity: .9; }
 .voy-hull-courier { fill: #9aa9c8; opacity: .8; }
+/* NPC cargo traffic (traffic.js): supply freighters + small traders */
+.voy-hull-npc { fill: #c9a86a; stroke: rgba(4,8,18,.8); stroke-width: .5; opacity: .95; }
+.voy-hull-trader { fill: #8fa3b8; opacity: .7; }
+.voy-name.npc { fill: #b8a67f; font-size: 8px; font-weight: 500; }
 .voy-plume { fill: rgba(130,195,255,.55); }
 .assets-list { list-style: none; padding: 0; margin: 8px 0 0; }
 .assets-row { border-bottom: 1px solid var(--line); }

@@ -466,8 +466,6 @@ declare
   have integer;
   demand integer;
   put_n integer;
-  rarity text;
-  npc_base integer;
   ratio double precision;
   mult double precision;
 begin
@@ -483,18 +481,18 @@ begin
       for rec in select sector_id, comm_id, units from public.sector_stock where sector_id = sec for update loop
         base := market.stock_baseline(sec, rec.comm_id);
         if base <= 0 then continue; end if;
-        select rarity into rarity from market.commodity_rarity(rec.comm_id);
-        demand := case rarity when 'common' then 8 when 'uncommon' then 3 when 'rare' then 1 else 0 end;
-        -- sector pop pressure (CONSUMPTION.sectorPop)
-        demand := greatest(0, round(demand * case sec
+        -- Baseline-derived demand (STOCKCFG.drainHours): a full shelf drains
+        -- to empty in ~5 days with no resupply. Pop pressure on top.
+        demand := greatest(1, round(base / 120.0 * case sec
           when 'core' then 1.35 when 'belt' then 1.0 when 'tide' then 0.95
           when 'green' then 1.1 when 'forge' then 1.05 when 'sprawl' then 1.2 else 1.0 end)::int);
         have := greatest(0, rec.units - demand);
-        -- NPC elastic backstop
-        npc_base := case rarity when 'common' then 12 when 'uncommon' then 5 when 'rare' then 2 else 0 end;
+        -- NPC convoys: demand × load factor. Scarcity boosts, glut brakes
+        -- below 1, and under 10% relief convoys run double (npcSurge*).
         ratio := have::float8 / base::float8;
-        mult := greatest(1.0, least(3.5, 1.0 + (1.0 - ratio) * 2.5));
-        put_n := greatest(1, round(npc_base * mult)::int);
+        mult := greatest(0.25, least(3.5, 1.0 + (1.0 - ratio) * 2.5));
+        if ratio < 0.10 then mult := mult * 2.0; end if;
+        put_n := greatest(0, round(demand * mult)::int);
         have := least(base * 3, have + put_n);
         update public.sector_stock set units = have, updated_at = now()
           where sector_id = sec and comm_id = rec.comm_id;

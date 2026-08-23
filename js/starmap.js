@@ -149,6 +149,15 @@ const StarMap = {
       hull.setAttribute("points", "9,0 -7,5.5 -3.5,0 -7,-5.5");
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
       tail = 6;
+    } else if (v.kind === "freighter") {
+      // NPC supply hauler — boxy hull, flavor name over the top
+      hull.setAttribute("points", "7,0 3,3.6 -6,3.6 -6,-3.6 3,-3.6");
+      hull.setAttribute("class", "voy-hull-npc");
+      tail = 5;
+    } else if (v.kind === "trader") {
+      hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
+      hull.setAttribute("class", "voy-hull-trader");
+      tail = 3;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
       hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
@@ -156,6 +165,13 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    if (v.kind === "freighter" && v.name) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name npc");
+      t.setAttribute("y", -9);
+      t.textContent = v.name;
+      g.appendChild(t);
+    }
     if (v.kind === "flagship" && v.name) {
       const t = document.createElementNS(ns, "text");
       t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));

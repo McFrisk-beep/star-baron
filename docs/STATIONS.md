@@ -101,10 +101,16 @@ This also resolves the concern raised against the earlier station-exchange propo
 Every sector eats, hourly. This is the demand that makes production meaningful.
 
 ```js
-consumed(sector, comm) = CONSUMPTION.base[comm]
+consumed(sector, comm) = baseline(sector, comm) / STOCKCFG.drainHours   // 120h = 5 days
                        × sectorPopFactor(sector)
+                       × catSectorMult(cat, sector)
                        × (1 + seasonalNoise)
 ```
+
+The rate is derived from the shelf's own baseline so the pace is a design
+constant: **with no resupply, a full shelf runs dry in ~5 days** (pop and
+category mults stretch that per sector — Sable Sprawl burns luxury much
+faster).
 
 | Category | Consumed where | Rationale |
 |---|---|---|
@@ -122,17 +128,34 @@ Consumption drains stock directly. If it would take stock below zero, it clamps 
 If galaxy-wide consumption ever exceeds production, everything trends to zero, prices pin at ×3.00, sentiment collapses everywhere, and mass revolts fire. That is a real failure mode and it needs a hard stabiliser:
 
 ```js
-npcOutputMult(ratio) = clamp(1 + (1 - min(ratio, 1)) × 2.5, 1, 3.5)
+npcOutputMult(ratio) = clamp(1 + (1 - ratio) × 2.5, 0.25, 3.5)
+                     × (ratio < 0.10 ? 2.0 : 1)      // relief-convoy surge
 ```
 
 | sector stock | NPC output |
 |---|---|
+| 200% (glut) | ×0.25 — convoys throttle, the glut drains |
 | 100% | ×1.00 |
 | 50% | ×2.25 |
 | 25% | ×2.88 |
-| 0% | ×3.50 |
+| 10% | ×3.25 → **×6.5 surged** |
+| 0% | ×3.50 → **×7.0 surged** |
 
-NPC production scales up as a region empties. Tune it so **NPC supply alone roughly balances consumption at equilibrium** — the galaxy survives with zero players online — and player production is the surplus that generates profit and pushes prices down. This is the same discipline applied to charter NPC traffic: the floor keeps the lights on, players earn the margin.
+NPC production scales up as a region empties — and **below 10% of baseline the
+relief convoys run double loads** until the shelf recovers. The brake below ×1
+on glut matters just as much: without it NPC supply ratchets shelves up to the
+glut cap and pins prices at the scarcity floor forever. Tune `npcUnits` so
+**NPC supply alone roughly balances consumption at equilibrium** — the galaxy
+survives with zero players online — and player production is the surplus that
+generates profit and pushes prices down. This is the same discipline applied
+to charter NPC traffic: the floor keeps the lights on, players earn the margin.
+
+All of this supply is **visible in space** (`js/traffic.js`): each NPC station
+runs a named freighter looping to its sector capital every stock hour (its
+manifest is the same ≤3-commodity basket `npcProduceHour` delivers), and small
+seeded traders hop between systems — with extra relief traders arriving from
+neighbouring capitals while a sector is under the surge ratio. Pure view of
+the clock, nothing persisted — and the future target list for piracy.
 
 ---
 
