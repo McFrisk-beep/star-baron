@@ -1148,6 +1148,27 @@ const StarMap = {
       ships.push({ x: Math.random() * WORLD, y: Math.random() * WORLD, race: r, img: raceImg(r), scale: 1,
         alpha: 1, state: "travel", spd: shipSpeed(), ang: Math.random() * 6.28, target: null, dwell: 0 });
     }
+    // ---- planet cargo shuttles: the in-system leg of NPC supply ----------
+    // One hauler per industry planet, looping planet ↔ station with the
+    // planet's REAL goods — its export out, its listed import back. Names are
+    // seeded like traffic.js; the station's freighter (traffic.js) then runs
+    // the capital leg, so the whole chain is visible: planet → station → exchange.
+    if (!reduced) {
+      const cargoImg = this.img(ASSET.ship("hauler"));
+      sys.planets.forEach((pl, idx) => {
+        const comm = (COMMODITIES.find(c => c.id === pl.commodity) || {}).name || "cargo";
+        const name = window.Traffic ? Traffic._name("p:" + sys.id + ":" + idx) : "Shuttle " + (idx + 1);
+        const fillCargo = t => t.replace(/\{NAME\}/g, name).replace(/\{PLANET\}/g, pl.name)
+          .replace(/\{COMM\}/g, comm).replace(/\{IMP\}/g, pl.importing);
+        ships.push({
+          x: wcx, y: wcy, img: cargoImg, alpha: 0, scale: 0.85, kind: "cargo",
+          state: "haulWait", dwell: Util.randFloat(1, 10), spd: shipSpeed() * 0.8,
+          ang: 0, target: null, haulIdx: idx,
+          sayOut: (window.CARGO_RADIO ? CARGO_RADIO.out : []).map(fillCargo),
+          sayBack: (window.CARGO_RADIO ? CARGO_RADIO.back : []).map(fillCargo),
+        });
+      });
+    }
     let combatCooldown = 5;
     let lastChatterAt = 0;
 
@@ -1210,7 +1231,8 @@ const StarMap = {
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
       if (!reduced) {
-        const alive = ships.reduce((n, s) => n + (s.state !== "dead" ? 1 : 0), 0);
+        // cargo shuttles are permanent residents — don't let them crowd out ambient spawns
+        const alive = ships.reduce((n, s) => n + (s.state !== "dead" && s.kind !== "cargo" ? 1 : 0), 0);
         if (alive < targetPop && Math.random() < dt * 2.5) spawnShip();
         // occasionally a dogfight breaks out between two cruising ships
         combatCooldown -= dt;
@@ -1257,7 +1279,7 @@ const StarMap = {
         const sc = sh.scale ?? 1;
         ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
         // exhaust plume — every hull under thrust trails engine wash
-        if (sh.state !== "dock") {
+        if (sh.state !== "dock" && sh.state !== "haulDock") {
           const fl = (5 + Math.sin(now * 0.02 + sh.x * 0.7) * 2) * sc * (sh.state === "warpOut" ? 1.8 : 1);
           const g2 = ctx.createLinearGradient(-9 * sc, 0, -9 * sc - fl * 2, 0);
           g2.addColorStop(0, "rgba(140,195,255,.6)"); g2.addColorStop(1, "rgba(140,195,255,0)");
@@ -1374,6 +1396,46 @@ const StarMap = {
         moveTo(p.x, p.y, true);
         sh.alpha -= dt * 0.9;
         if (sh.alpha <= 0) sh.state = "dead";
+        break;
+      }
+      // ---- planet cargo shuttles (kind "cargo"): planet ↔ station loop ----
+      case "haulWait": {   // parked on the pad, invisible, waiting out the turnaround
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        sh.x = p.x; sh.y = p.y; sh.alpha = 0;
+        sh.dwell -= dt;
+        if (sh.dwell <= 0) {
+          sh.state = "haulOut";
+          if (sh.sayOut.length && Math.random() < 0.5)
+            sh.bubble = { text: Util.pick(sh.sayOut), t: SYSTEMVIEW.bubbleMs / 1000 };
+        }
+        break;
+      }
+      case "haulOut": {    // lift off and run the export to the station
+        sh.alpha = Math.min(1, sh.alpha + dt * 1.6);
+        if (moveTo(sx, sy) < 10) { sh.state = "haulDock"; sh.dwell = Util.randFloat(2.5, 6); }
+        break;
+      }
+      case "haulDock": {   // unload at the docks (opposite berth from the idlers)
+        sh.x += ((sx - 16) - sh.x) * Math.min(1, dt * 3);
+        sh.y += ((sy - 16) - sh.y) * Math.min(1, dt * 3);
+        sh.dwell -= dt;
+        if (sh.dwell <= 0) {
+          sh.state = "haulBack";
+          if (sh.sayBack.length && Math.random() < 0.5)
+            sh.bubble = { text: Util.pick(sh.sayBack), t: SYSTEMVIEW.bubbleMs / 1000 };
+        }
+        break;
+      }
+      case "haulBack": {   // haul the planet's imports home
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        if (moveTo(p.x, p.y) < 8) sh.state = "haulLand";
+        break;
+      }
+      case "haulLand": {   // settle onto the pad and start the next turnaround
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        moveTo(p.x, p.y, true);
+        sh.alpha -= dt * 1.2;
+        if (sh.alpha <= 0) { sh.state = "haulWait"; sh.dwell = Util.randFloat(6, 14); }
         break;
       }
       case "combat": {   // orbit the fight, spit sparks, bark, then resolve
