@@ -490,7 +490,22 @@ const Cloud = {
   // Autosave / soft-economy sync. Returns the RPC result `{ ok, state }`.
   // Phase 1–2 interim: server accepts client credits/positions (+ bazaar board);
   // protects travel and (Phase 2) ships/missions/items/inventory.
+  //
+  // app_commit echoes the WHOLE merged save back — ~215KB, of which
+  // applyCommitState reads none of the world slices. app_commit_lite
+  // (docs/sql/commit_lite.sql) is a thin wrapper that returns the same result
+  // minus those slices. Latch on the first miss so a project running older SQL
+  // just keeps paying for the fat response instead of erroring every autosave.
+  commitLiteMissing: false,
   async commit(state) {
+    if (!this.commitLiteMissing) {
+      try { return await this.rpc("app_commit_lite", { p_state: state }); }
+      catch (e) {
+        if (!this._isMissingRpc(e)) throw e;
+        this.commitLiteMissing = true;
+        console.warn("[Cloud] app_commit_lite missing — full-size commits (docs/sql/commit_lite.sql)");
+      }
+    }
     return this.rpc("app_commit", { p_state: state });
   },
 
@@ -681,6 +696,19 @@ const Cloud = {
     if (error) throw error;
     return data ? data.data : null;
   },
+  // Save slices that stay in localStorage and never reach the cloud row: pure
+  // world flavour every client regenerates from the seed (galaxy.localLog is the
+  // per-system news log — ~47KB of rendered sentences that ensureSeeded refills).
+  // Store.carryLocalOnly hands them back across a cloud load so the same browser
+  // keeps its history; a new device just starts a fresh log.
+  localOnly: ["galaxy"],
+  wireState(state) {
+    if (!state || typeof state !== "object") return state;
+    const out = { ...state };
+    for (const k of this.localOnly) delete out[k];
+    return out;
+  },
+
   async saveRemote(state) {
     if (!this.signedIn()) return;
     // Cloud sync paused (dev/admin local-test): don't run app_commit — it echoes
@@ -689,7 +717,9 @@ const Cloud = {
     if (this._devLocal) return;
     // Prefer authoritative commit when Phase 1 is live.
     if (this.playersReady) {
-      const r = await this.commit(state);
+      // Strip here, not in the caller: `state` must stay the live object so the
+      // Game.state identity check below still recognises it.
+      const r = await this.commit(this.wireState(state));
       if (r && r.ok === false) throw new Error((r && r.error) || "app_commit failed");
       // Pull server-protected slices back into the live game state.
       if (r && r.state && window.Game && Game.state === state && window.Economy) {
@@ -703,7 +733,7 @@ const Cloud = {
       return;
     }
     const { error } = await this.client.from("saves").upsert({
-      user_id: this._user.id, data: state, updated_at: new Date().toISOString(),
+      user_id: this._user.id, data: this.wireState(state), updated_at: new Date().toISOString(),
     });
     if (error) throw error;
   },

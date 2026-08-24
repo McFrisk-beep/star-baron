@@ -57,10 +57,13 @@ const CONFIG = {
   maxOfflineMs: 7 * 24 * 60 * 60 * 1000, // 7 days
 
   // Autosave cadence.
-  autosaveMs: 10 * 1000,
+  // Local write is instant on every player action (Game.requestSave); this timer
+  // only catches ambient drift, and each tick can cost a cloud round trip — so it
+  // is deliberately slow. See Store._cloudMs / _queueCloud's dirty check.
+  autosaveMs: 30 * 1000,
 
   // Visible-but-idle: no input for this long → suspend like a hidden tab
-  // (stops cloud polls + the app_commit-every-10s autosave). Any input resumes
+  // (stops cloud polls + the autosave's cloud pushes). Any input resumes
   // instantly with the same catch-up path a tab-switch uses. 0 disables.
   idleAfterMs: 5 * 60 * 1000,
 

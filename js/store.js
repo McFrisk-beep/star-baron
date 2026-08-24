@@ -8,7 +8,7 @@ const SAVE_KEY = "starbaron";
 
 const Store = {
   _cloudTimer: null,
-  _cloudMs: 5000,         // debounce window for cloud pushes (local is instant)
+  _cloudMs: 15000,        // debounce window for cloud pushes (local is instant)
   // When signed in, refuse cloud writes until load() has successfully talked to
   // Supabase. Prevents a fresh defaultState (1,500c) from overwriting a good
   // cloud save during an offline / paused-project boot.
@@ -105,7 +105,7 @@ const Store = {
           // doesn't erase a paid-for box or an active buff.
           const uid = this._userId();
           const localMine = !!(local && uid && local.cloudUserId === uid);
-          if (localMine) this.mergeSoftItems(boot, local);
+          if (localMine) { this.mergeSoftItems(boot, local); this.carryLocalOnly(boot, local); }
           this.localSave(this._stampOwner(boot));
           console.log("[Store] loaded authoritative players state");
           return boot;
@@ -124,6 +124,7 @@ const Store = {
           const lt = localMine ? (local.lastSeenAt || 0) : 0;
           const rt = (remote && remote.lastSeenAt) || 0;
           if (localMine && lt > rt) { console.log("[Store] local save newer than cloud — keeping local"); return local; }
+          if (localMine) this.carryLocalOnly(remote, local);
           this.localSave(this._stampOwner(remote));
           console.log("[Store] loaded cloud save");
           return remote;
@@ -150,6 +151,25 @@ const Store = {
     return true;
   },
 
+  // Fingerprint of exactly what would go on the wire, so an autosave that
+  // changed nothing the server cares about costs nothing. Null means "couldn't
+  // tell" and always pushes: a missed save loses progress, a redundant one only
+  // costs bandwidth. Set optimistically and cleared on failure so a dropped
+  // push always retries.
+  _lastSig: null,
+  _cloudSig(state) {
+    // Fingerprint the wire shape when Cloud can tell us it; otherwise the whole
+    // save. Both are correct — the former just skips more redundant pushes.
+    try { return JSON.stringify(window.Cloud && Cloud.wireState ? Cloud.wireState(state) : state); }
+    catch (e) { return null; }
+  },
+  _sigClean(state) {
+    const sig = this._cloudSig(state);
+    if (sig !== null && sig === this._lastSig) return true;
+    this._lastSig = sig;
+    return false;
+  },
+
   // Coalesce frequent autosaves into one cloud write every _cloudMs.
   _queueCloud(state) {
     if (!this._cloudReady || this._stale) return;
@@ -160,7 +180,10 @@ const Store = {
       // but forces server positions, which is how Buy Max could debit without
       // stock. Re-arm rather than drop, so the row still catches up afterwards.
       if (window.Economy && Economy.busy()) return this._queueCloud(state);
-      Cloud.saveRemote(state).then(() => console.log("[Store] cloud save synced")).catch(e => this._cloudFail("save", e));
+      if (this._sigClean(state)) return;             // identical to the last synced push
+      Cloud.saveRemote(state)
+        .then(() => console.log("[Store] cloud save synced"))
+        .catch(e => { this._lastSig = null; this._cloudFail("save", e); });
     }, this._cloudMs);
   },
 
@@ -174,8 +197,11 @@ const Store = {
     // pre-trade positions — paid, no stock. The trade RPC owns the row anyway;
     // hand the push back to the debounce so it still lands once the trade ends.
     if (window.Economy && Economy.busy()) { if (state) { this._stampOwner(state); this._queueCloud(state); } return; }
-    try { if (state) { this._stampOwner(state); await Cloud.saveRemote(state); } }
-    catch (e) { this._cloudFail("flush", e); }
+    if (!state) return;
+    this._stampOwner(state);
+    if (this._sigClean(state)) return;   // the server already has this exact save
+    try { await Cloud.saveRemote(state); }
+    catch (e) { this._lastSig = null; this._cloudFail("flush", e); }
   },
 
   // Merge soft/local slices that app_commit overwrites from the server row.
@@ -213,6 +239,15 @@ const Store = {
       if (typeof id === "string" && (/^bb-/.test(id) || /^bp-/.test(id))) bought.add(id);
     }
     target.bazaarBought = [...bought];
+    return target;
+  },
+
+  // Slices that never leave this browser (Cloud.localOnly) are absent from the
+  // cloud row by design, so a cloud load would otherwise blank them on every
+  // boot. Carry the cached copy over — a new device just regenerates them.
+  carryLocalOnly(target, source) {
+    if (!target || !source || !window.Cloud) return target;
+    for (const k of (Cloud.localOnly || [])) if (target[k] === undefined && source[k] !== undefined) target[k] = source[k];
     return target;
   },
 
