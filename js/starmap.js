@@ -965,11 +965,17 @@ const StarMap = {
       cam.x = W() / 2 - wcx * f; cam.y = H() / 2 - wcy * f;
     };
     refit();
+    // Keep the VIEWPORT inside the world (the same rule the galaxy chart's
+    // _clampVB uses), not the world's centre inside the viewport — pinning the
+    // centre meant every zoomed-in view had to contain the star, so the station
+    // and the edge gates became unreachable (and eventually invisible) the
+    // further you zoomed in. An axis smaller than the viewport centres instead.
     const clampCam = () => {
       const f = fitZoom();
       cam.zoom = Util.clamp(cam.zoom, f * 0.7, f * 4);
-      cam.x = Util.clamp(cam.x, -wcx * cam.zoom, W() - wcx * cam.zoom);   // keep the star on-screen
-      cam.y = Util.clamp(cam.y, -wcy * cam.zoom, H() - wcy * cam.zoom);
+      const span = WORLD * cam.zoom;
+      cam.x = span <= W() ? (W() - span) / 2 : Util.clamp(cam.x, W() - span, 0);
+      cam.y = span <= H() ? (H() - span) / 2 : Util.clamp(cam.y, H() - span, 0);
     };
     // Chase cam (Hub Live View): glide the camera onto the followed voyage —
     // its world position is recorded by _drawVoyagers into voyFx.pos.
