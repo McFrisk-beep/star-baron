@@ -696,16 +696,56 @@ const Cloud = {
     if (error) throw error;
     return data ? data.data : null;
   },
-  // Save slices that stay in localStorage and never reach the cloud row: pure
-  // world flavour every client regenerates from the seed (galaxy.localLog is the
-  // per-system news log — ~47KB of rendered sentences that ensureSeeded refills).
-  // Store.carryLocalOnly hands them back across a cloud load so the same browser
-  // keeps its history; a new device just starts a fresh log.
-  localOnly: ["galaxy"],
+  // Save slices that stay in localStorage and never reach the cloud row: shared
+  // world state every client re-reads from the world tables, or regenerates from
+  // the seed. Store.carryLocalOnly hands them back across a cloud load so the
+  // same browser keeps its copy; a new device just rebuilds them.
+  //   galaxy   — per-system flavour log, ~47KB of rendered sentences (ensureSeeded)
+  //   senate   — shared agenda + outcomes (world_senate / world_senate_result)
+  //   newswire — shared events (world_news)
+  //   stock    — shared shelf (app_sector_stock)
+  //   market   — effects ride on world_news; prices/hist are recomputed
+  //   war      — the running faction war; Wars.tick regenerates one
+  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war"],
   wireState(state) {
     if (!state || typeof state !== "object") return state;
     const out = { ...state };
     for (const k of this.localOnly) delete out[k];
+    return out;
+  },
+
+  // What app_commit is allowed to receive. MUST stay identical to the allowlist
+  // in docs/sql/commit_allowlist.sql — the server drops anything else on arrival,
+  // so a key here that isn't there is silently discarded, and a key there that
+  // isn't here never gets saved. tools/check_cloud_egress.js pins them together.
+  //
+  // Everything omitted is server-owned: app_commit overwrites it from the stored
+  // row regardless, so shipping it up the wire only costs bandwidth. The first
+  // five ARE read off the client (credits ratchet, ship fitment, and the
+  // industry/expedition/extractor merges) — removing one breaks a merge.
+  WIRE_KEYS: [
+    "credits", "ships", "industries", "expeditions", "extractors",
+    "hold", "stationInv", "shipments", "_haulingMigrated",
+    "reports", "orders", "pendingHaulSettles", "seq",
+    "activeBoosts", "knownRecipes", "craftedOnce",
+    "shipVariants", "achievements", "stats",
+    "story", "settings", "rivals", "rivalsMeta",
+    "voySeenT", "voyChecks", "lastSeenAt",
+    "v", "appliedResetEpoch", "cloudUserId",
+    // Lazily created — absent from defaultState(), so easy to miss. surveyRetry
+    // holds survey debriefs whose RPC dropped mid-flight; losing it loses the
+    // payout. tools/check_cloud_egress.js enumerates the real top-level keys
+    // from source so a new one fails the build instead of vanishing in silence.
+    "surveyRetry",
+    "stations",
+  ],
+  // The app_commit payload. Distinct from wireState(): the legacy `saves` row has
+  // NO server-side merge behind it, so that path must keep sending the whole save
+  // or a pre-Phase-1 player loses every server-owned slice on their next load.
+  commitState(state) {
+    if (!state || typeof state !== "object") return state;
+    const out = {};
+    for (const k of this.WIRE_KEYS) if (state[k] !== undefined) out[k] = state[k];
     return out;
   },
 
@@ -719,7 +759,7 @@ const Cloud = {
     if (this.playersReady) {
       // Strip here, not in the caller: `state` must stay the live object so the
       // Game.state identity check below still recognises it.
-      const r = await this.commit(this.wireState(state));
+      const r = await this.commit(this.commitState(state));
       if (r && r.ok === false) throw new Error((r && r.error) || "app_commit failed");
       // Pull server-protected slices back into the live game state.
       if (r && r.state && window.Game && Game.state === state && window.Economy) {

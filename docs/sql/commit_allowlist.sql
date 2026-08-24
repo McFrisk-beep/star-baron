@@ -1,0 +1,109 @@
+-- commit_allowlist.sql — Tier 1 part A: make app_commit fail CLOSED.
+--
+-- THE PROBLEM
+-- app_commit's merge begins with `merged := p_state` — the client's blob — and
+-- then overwrites ~28 server-owned keys from the stored row. So the rule is
+-- "trusted unless it's on the list", and the list is one a human has to
+-- remember to extend. Every new save slice a feature adds is trusted by
+-- default until somebody notices. That is the wrong way round for a default to
+-- fail, and it is a bug of omission waiting to happen rather than a bug you can
+-- see in a diff.
+--
+-- THE FIX
+-- app._client_owned(p_state) reduces the upload to an explicit allowlist before
+-- app_commit ever sees it. A key the client invents — or one a future feature
+-- adds and nobody classifies — simply never arrives. Same protections as
+-- before for the keys already on the server-forced list; what changes is that
+-- the DEFAULT is now "dropped" instead of "accepted".
+--
+-- WHY A FILTER AND NOT A REWRITE
+-- app_commit reads exactly five keys off the client (credits, ships,
+-- industries, expeditions, extractors — verified against the live definition
+-- with a regexp over pg_get_functiondef); everything else it either overwrites
+-- from the server row or passes through untouched. So filtering the input is
+-- sufficient, and it leaves the 200-line merge/protection body alone: no risk
+-- of a transcription error in a function that owns everybody's save, and no
+-- copy that can drift when a later migration replaces app_commit again.
+--
+-- Prereq: docs/sql/phase1_players.sql (app_commit) and docs/sql/commit_lite.sql.
+-- Apply: paste into the Supabase SQL editor and run once. Idempotent.
+--
+-- Client: js/cloud.js sends exactly this list (Cloud.WIRE_KEYS) and
+-- tools/check_cloud_egress.js asserts the two never drift apart.
+
+-- The allowlist. Two groups, and the distinction matters when editing it:
+--
+--   1. MERGE INPUTS — app_commit genuinely reads these off the client to do its
+--      job: the credits ratchet (client wins only when LOWER), ship fitment,
+--      and the industry/expedition/extractor merges. Removing one from this
+--      list silently breaks a merge, so don't.
+--
+--   2. CLIENT-OWNED — no server-side representation today. The server stores
+--      them as a courtesy so the save survives a device change.
+--
+-- Anything absent from both groups is server-owned: app_commit overwrites it
+-- from the stored row regardless, so there is no reason to ship it up the wire
+-- and every reason not to.
+create or replace function app._client_owned(p_state jsonb)
+returns jsonb
+language sql
+immutable
+set search_path = public
+as $$
+  select coalesce(jsonb_object_agg(k, v), '{}'::jsonb)
+  from jsonb_each(coalesce(p_state, '{}'::jsonb)) as e(k, v)
+  where k in (
+    -- 1. merge inputs (app_commit reads these off p_state — verified)
+    'credits', 'ships', 'industries', 'expeditions', 'extractors',
+    -- 2. client-owned
+    'hold', 'stationInv', 'shipments', '_haulingMigrated',
+    'reports', 'orders', 'pendingHaulSettles', 'seq',
+    'activeBoosts', 'knownRecipes', 'craftedOnce',
+    'shipVariants', 'achievements', 'stats',
+    'story', 'settings', 'rivals', 'rivalsMeta',
+    'voySeenT', 'voyChecks', 'lastSeenAt',
+    'v', 'appliedResetEpoch', 'cloudUserId',
+    -- Lazily created, so absent from defaultState() and easy to miss:
+    -- surveyRetry holds survey debriefs whose RPC dropped mid-flight.
+    'surveyRetry',
+    -- Lazily created, so absent from defaultState() and easy to miss:
+    -- surveyRetry holds survey debriefs whose RPC dropped mid-flight.
+    -- stations carries player-local money-adjacent state (unclaimed payouts,
+    -- treasury ledger) with no verified server-side home yet. Stays on the wire
+    -- until each field is confirmed recoverable from the station tables.
+    'stations'
+  );
+$$;
+
+-- Same wrapper as commit_lite, now filtering the INPUT as well as trimming the
+-- OUTPUT. Kept as one function so there is a single place the client calls and
+-- a single place the two lists live.
+--
+-- SECURITY INVOKER (the default) on purpose: app_commit is itself SECURITY
+-- DEFINER and resolves auth.uid() from the request's JWT claims, which are a
+-- session setting and so still visible inside this call. Marking the wrapper
+-- DEFINER would add a privilege boundary that buys nothing.
+create or replace function public.app_commit_lite(p_state jsonb)
+returns jsonb
+language sql
+set search_path = public
+as $$
+  select case
+    when jsonb_typeof(r -> 'state') = 'object'
+      then jsonb_set(r, '{state}',
+        (r -> 'state')
+          - 'market'      -- prices/hist are pure functions of (seed, effects, now)
+          - 'galaxy'      -- per-system flavour log; client-only, never sent up
+          - 'stations'    -- shared, read via app_station_directory
+          - 'story'       -- client-owned narrative progress
+          - 'senate'      -- shared, read via world_senate / world_senate_result
+          - 'stock'       -- shared, read via app_sector_stock
+          - 'newswire')   -- shared, read via world_news
+    else r                -- {ok:false, error:…} passes straight through
+  end
+  from public.app_commit(app._client_owned(p_state)) as r;
+$$;
+
+revoke all on function app._client_owned(jsonb) from public, anon;
+revoke all on function public.app_commit_lite(jsonb) from public, anon;
+grant execute on function public.app_commit_lite(jsonb) to authenticated;

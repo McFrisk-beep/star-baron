@@ -168,6 +168,66 @@ const settle = async (timers) => {
     assert(/commitLiteMissing/.test(src("js/cloud.js")), "E7 …with a fallback when the SQL isn't applied");
   }
 
+  // ------------------------------------------------- E8: allowlist coverage
+  // app_commit_lite filters the upload down to an allowlist before app_commit
+  // sees it, and app_commit writes back whatever survives. So a top-level save
+  // key that is on NEITHER the allowlist NOR app_commit's server-forced list
+  // NOR Cloud.localOnly is silently dropped from the stored row — real progress
+  // gone, no error anywhere.
+  //
+  // defaultState() is not enough to catch that: surveyRetry, war and
+  // cloudUserId are all created lazily and would have been missed (surveyRetry
+  // existed on exactly one live save). So enumerate the keys the CODE actually
+  // touches, and fail on anything unclassified.
+  {
+    // app_commit's server-forced keys. Refresh with:
+    //   select distinct m[1] from pg_proc p, lateral regexp_matches(
+    //     pg_get_functiondef(p.oid), 'jsonb_set\(merged, ''\{([a-zA-Z_]+)\}''', 'g') m
+    //   where p.proname = 'app_commit';
+    const FORCED = new Set(("avgCost bazaar bazaarBought charters components credits crime "
+      + "crimeSeenAt currentSystem expeditions extractors industries inventory items listings "
+      + "mainShip missions pendingContracts positions prestige reputation routes ships surveyed "
+      + "travel unlockedSystems workshop workshopAdopt").split(" "));
+
+    const cloud = src("js/cloud.js");
+    const noComments = t => t.replace(/\/\/.*$/gm, "");
+    const wire = new Set([...noComments(cloud.match(/WIRE_KEYS: \[([\s\S]*?)\n  \]/)[1])
+      .matchAll(/"([a-zA-Z_]+)"/g)].map(m => m[1]));
+    const localOnly = new Set([...cloud.match(/localOnly: \[([^\]]*)\]/)[1]
+      .matchAll(/"([a-zA-Z_]+)"/g)].map(m => m[1]));
+
+    // The js/*.js modules whose s() IS the whole save (Story.s() returns
+    // state.story, so its this.s().inbox must not be mistaken for a save key).
+    const files = require("fs").readdirSync(path.join(root, "js")).filter(f => f.endsWith(".js"));
+    const keys = new Set();
+    const defSrc = src("js/main.js");
+    const def = defSrc.slice(defSrc.indexOf("defaultState() {"), defSrc.indexOf("  // Fill any missing keys"));
+    for (const m of def.matchAll(/^\s{6}([a-zA-Z_]+):/gm)) keys.add(m[1]);
+    for (const f of files) {
+      const body = src("js/" + f);
+      // ANY reference is evidence of a save key, not just an assignment:
+      // surveyRetry is only ever read as `this.s().surveyRetry || []`, and an
+      // assignment-only regex silently missed it — the exact bug this guards.
+      for (const m of body.matchAll(/Game\.state\.([a-zA-Z_]+)/g)) keys.add(m[1]);
+      if (!/\bs\(\)\s*\{\s*return window\.Game\.state;/.test(body)) continue;
+      for (const m of body.matchAll(/this\.s\(\)\.([a-zA-Z_]+)/g)) keys.add(m[1]);
+    }
+
+    const unclassified = [...keys].filter(k => !wire.has(k) && !FORCED.has(k) && !localOnly.has(k)).sort();
+    assert(unclassified.length === 0,
+      `E8 every top-level save key is classified (unclassified: ${unclassified.join(", ") || "none"})`);
+    // And the two halves of the allowlist must be the same list, or a key is
+    // either dropped on arrival or never sent.
+    const sql = src("docs/sql/commit_allowlist.sql");
+    const allow = new Set([...sql.match(/where k in \(([\s\S]*?)\n  \);/)[1]
+      .replace(/--.*$/gm, "").matchAll(/'([a-zA-Z_]+)'/g)].map(m => m[1]));
+    const a = [...wire].sort().join(","), b = [...allow].sort().join(",");
+    assert(a === b, `E8 js WIRE_KEYS === sql allowlist (${wire.size} vs ${allow.size})`);
+    // The five merge inputs app_commit reads off the client must never be cut.
+    for (const k of ["credits", "ships", "industries", "expeditions", "extractors"])
+      assert(wire.has(k), `E8 merge input '${k}' is still sent (app_commit reads it off the client)`);
+  }
+
   if (failed) { console.error(`\n${failed} check(s) failed.`); process.exit(1); }
   console.log("\nall cloud-egress checks passed.");
 })();
