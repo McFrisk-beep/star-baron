@@ -117,6 +117,10 @@ pattern.
   the world keeps "running" (and the free project stays awake) with nobody online.
   Missions are timestamped, so you can launch one, leave, and return to it
   completed or mid-flight depending on elapsed time. See `docs/WORLD_CRON_SETUP.md`.
+- **Data retention** — a daily sweep prunes the scheduler's own run log, aged
+  world history, settled station ledgers, and abandoned saves, so the database
+  stays inside the free tier without ever touching credits owed or goods still
+  held in custody. See `docs/RETENTION_SETUP.md`.
 - **New-player onboarding** — a skippable, eight-step **tutorial carousel** walks
   a fresh baron through the Exchange, travel, fleet, Bazaar, reading the
   feed/news, and the rival ladder. A **❔ Help** button reopens it anytime.
