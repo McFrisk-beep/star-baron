@@ -944,20 +944,33 @@ const StarMap = {
     // ---- §6.1 world space -------------------------------------------------
     // The scene lives in FIXED world coordinates (WORLD × WORLD, star at the
     // centre) — identical on every client, so shared positions no longer
-    // depend on per-client canvas size. The camera maps world → screen; only
+    // depend on per-client canvas size, and widening WORLD keeps every existing
+    // position valid. The camera maps world → screen; only
     // the nebula backdrop, starfield and Live View overlay stay in screen
     // space (which is what gives the parallax as you pan).
-    const WORLD = 1000, wcx = WORLD / 2, wcy = WORLD / 2, R = WORLD * 0.42;
+    // CORE is the inner system box; the star, planets, station and asteroid
+    // belt are laid out inside it and are NOT affected by WORLD. WORLD is the
+    // full playable box — the ring between CORE and WORLD is reserved open
+    // space (mission instances, surveys, pirate encounters) and is where the
+    // lane gates sit, so a run from the docks to a gate crosses it.
+    // R stays CORE-relative: widening WORLD must never resize the system.
+    const CORE = SYSTEMVIEW.coreSpan || 1000;
+    const WORLD = Math.max(CORE, SYSTEMVIEW.worldSpan || CORE);
+    const wcx = WORLD / 2, wcy = WORLD / 2, R = CORE * 0.42;
 
     // ---- pan / zoom camera: drag to pan, wheel / pinch to zoom -------------
     // screen = world × cam.zoom + (cam.x, cam.y). cam.zoom carries the canvas
     // fit (cover on squat mobile panes so orbits crop, contain otherwise —
     // the same rule the canvas-space scene used) × the user's pinch/wheel
     // zoom. A re-fit (resize, rotate, panel change) re-centres the view.
+    // Default framing fits the CORE, so opening a system looks exactly as it
+    // did before WORLD grew around it. Zooming out from there reveals the ring.
     const fitZoom = () => {
       const cw = W(), ch = H();
-      return (ch < cw * 0.95 ? Math.max(cw, ch) : Math.min(cw, ch)) / WORLD;
+      return (ch < cw * 0.95 ? Math.max(cw, ch) : Math.min(cw, ch)) / CORE;
     };
+    // Pull-back limit: far enough that the whole WORLD fits on the short axis.
+    const minZoom = () => Math.min(fitZoom(), Math.min(W(), H()) / WORLD);
     const cam = { zoom: 1, x: 0, y: 0, _fit: 0 };
     const refit = () => {
       const f = fitZoom();
@@ -971,8 +984,7 @@ const StarMap = {
     // and the edge gates became unreachable (and eventually invisible) the
     // further you zoomed in. An axis smaller than the viewport centres instead.
     const clampCam = () => {
-      const f = fitZoom();
-      cam.zoom = Util.clamp(cam.zoom, f * 0.7, f * 4);
+      cam.zoom = Util.clamp(cam.zoom, minZoom(), fitZoom() * 4);
       const span = WORLD * cam.zoom;
       cam.x = span <= W() ? (W() - span) / 2 : Util.clamp(cam.x, W() - span, 0);
       cam.y = span <= H() ? (H() - span) / 2 : Util.clamp(cam.y, H() - span, 0);
@@ -997,8 +1009,7 @@ const StarMap = {
     const hideHint = () => { clearTimeout(hintTimer); if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); };
     const zoomAt = (fx, fy, factor) => {
       const wx = (fx - cam.x) / cam.zoom, wy = (fy - cam.y) / cam.zoom;
-      const f = fitZoom();
-      cam.zoom = Util.clamp(cam.zoom * factor, f * 0.7, f * 4);
+      cam.zoom = Util.clamp(cam.zoom * factor, minZoom(), fitZoom() * 4);
       cam.x = fx - wx * cam.zoom; cam.y = fy - wy * cam.zoom;
       clampCam(); hideHint(); redraw();
     };
@@ -1076,7 +1087,7 @@ const StarMap = {
       if (gateCache) return gateCache;
       const m = 64;
       const gl = window.Lanes ? Lanes.gates(sys.id) : [];
-      gateCache = !gl.length ? [{ to: null, name: "", x: WORLD - m, y: WORLD * 0.3 }] : gl.map(g => {
+      gateCache = !gl.length ? [{ to: null, name: "", x: WORLD - m, y: wcy - CORE * 0.2 }] : gl.map(g => {
         const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
         // project the bearing from the centre onto the world's inset edge
         const k = Math.min((wcx - m) / Math.max(Math.abs(dx), 1e-9),
@@ -1151,7 +1162,10 @@ const StarMap = {
     };
     for (let i = 0; i < targetPop; i++) {   // start with traffic already underway
       const r = Util.pick(raceKeys);
-      ships.push({ x: Math.random() * WORLD, y: Math.random() * WORLD, race: r, img: raceImg(r), scale: 1,
+      // seeded inside the CORE — traffic already underway belongs at the docks,
+      // not scattered across the reserved ring
+      ships.push({ x: wcx + (Math.random() - 0.5) * CORE, y: wcy + (Math.random() - 0.5) * CORE,
+        race: r, img: raceImg(r), scale: 1,
         alpha: 1, state: "travel", spd: shipSpeed(), ang: Math.random() * 6.28, target: null, dwell: 0 });
     }
     // ---- planet cargo shuttles: the in-system leg of NPC supply ----------
@@ -1265,7 +1279,7 @@ const StarMap = {
               if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut" || o.state === "warpIn") continue;
               const dd = Math.hypot(o.x - a.x, o.y - a.y); if (dd < bd) { bd = dd; b = o; }
             }
-            if (b && bd < WORLD * 0.7) lastChatterAt = startDialogue(a, b, now);  // multi-turn exchange
+            if (b && bd < CORE * 0.7) lastChatterAt = startDialogue(a, b, now);   // multi-turn exchange
             else { say(a, "hail"); lastChatterAt = now; }                                   // solo radio call
           }
         }

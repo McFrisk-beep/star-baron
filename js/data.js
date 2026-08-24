@@ -1344,6 +1344,14 @@ const PLANET_TYPES = ["rocky", "terran", "ocean", "ice", "lava", "gas_giant", "b
    traffic, the hyperspace gate ships warp in/out through, and ship voice-lines.
    Lower ship speeds make the system feel vast.                                 */
 const SYSTEMVIEW = {
+  // World geometry (starmap.js §6.1). coreSpan is the INNER system box — star,
+  // planets, station and the belt are laid out inside it and never scale with
+  // worldSpan. worldSpan is the full playable box; the ring between the two is
+  // open space reserved for mission instances, surveys and pirate encounters,
+  // and is where the hyperspace gates sit. Widen worldSpan for more room
+  // without touching a single position in the inner system.
+  coreSpan: 1000,
+  worldSpan: 2000,
   shipSpeedMin: 13, shipSpeedMax: 28,   // px/s — was 24–52; slower still = bigger space
   gateLeaveChance: 0.22,                 // chance a ship picks the gate (jumps out) over a dock
   chatterMinGapMs: 3800,                 // min real gap between ambient hail/reply exchanges

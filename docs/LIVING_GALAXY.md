@@ -55,7 +55,8 @@ persisted `state.voyChecks` ledger. **§4.5 is in**: entries missed since the
 persisted `state.voySeenT` watermark post to comms in order on catch-up
 (bounded to the last 8 + a summary toast; pre-watermark saves still prime
 silently). **Step 4 is built**: the scene lives in §6.1 world space — a
-fixed 1000×1000 world with the star at the centre, the camera carrying the
+fixed world with the star at the centre (a 1000-unit inner CORE inside a
+2000-unit WORLD), the camera carrying the
 canvas fit — so gates, berths and work-sites are identical on every client
 and canvas size; and the §6.2 vignettes are complete: survey hulls park at a
 seeded work-site (derelict hulk / abandoned outpost / anomaly, hashed from
@@ -306,6 +307,24 @@ The scene gets fixed world coordinates with a camera (pan, modest zoom) instead
 of canvas-pixel space. This is the one real refactor in the plan — everything
 else rides on it. Bigger felt space, and shared positions stop depending on
 per-client canvas size.
+
+Two spans, both in `SYSTEMVIEW` (`js/data.js`):
+
+| | span | holds |
+|---|---|---|
+| `coreSpan` | 1000 | star (centre), planets, station, asteroid belt — orbit unit `R = coreSpan × 0.42` |
+| `worldSpan` | 2000 | the full playable box; hyperspace gates sit at its rim (inset 64) |
+
+The ring between the two is **reserved open space** — the intended home for
+mission instances, survey sites and pirate encounters, so they get room without
+cluttering the inner system. Because a run from the docks to a gate crosses
+that ring, traffic is interceptable there by construction.
+
+Layout inside the core is `coreSpan`-relative and never scales with
+`worldSpan`: widening the world adds room around the system without moving a
+single existing position. The camera's default fit frames the **core**, so
+opening a system looks the same however wide the world is; zooming out to the
+pull-back limit (`minZoom`) reveals the whole world.
 
 ### 6.2 Purposeful ships (projections of real state)
 
