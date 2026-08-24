@@ -1,4 +1,6 @@
--- commit_allowlist.sql — Tier 1 part A: make app_commit fail CLOSED.
+-- commit_allowlist.sql — Tier 1: make app_commit fail CLOSED.
+-- Supersedes the app_commit_lite in commit_lite.sql (now a stub) — apply THIS
+-- file last; it carries the only current definition of the wrapper.
 --
 -- THE PROBLEM
 -- app_commit's merge begins with `merged := p_state` — the client's blob — and
@@ -25,7 +27,7 @@
 -- of a transcription error in a function that owns everybody's save, and no
 -- copy that can drift when a later migration replaces app_commit again.
 --
--- Prereq: docs/sql/phase1_players.sql (app_commit) and docs/sql/commit_lite.sql.
+-- Prereq: docs/sql/phase1_players.sql (app_commit).
 -- Apply: paste into the Supabase SQL editor and run once. Idempotent.
 --
 -- Client: js/cloud.js sends exactly this list (Cloud.WIRE_KEYS) and
@@ -43,7 +45,10 @@
 --
 -- Anything absent from both groups is server-owned: app_commit overwrites it
 -- from the stored row regardless, so there is no reason to ship it up the wire
--- and every reason not to.
+-- and every reason not to. lastSeenAt is also deliberately absent — the client
+-- restamps it constantly (which made every payload unique and killed the
+-- client's redundant-push suppression) and app._write_state stamps the server
+-- clock over it on every commit anyway.
 create or replace function app._client_owned(p_state jsonb)
 returns jsonb
 language sql
@@ -58,22 +63,26 @@ as $$
     -- 2. client-owned
     'hold', 'stationInv', 'shipments', '_haulingMigrated',
     'reports', 'orders', 'pendingHaulSettles', 'seq',
-    -- craftedOnce is NOT here: it is server-owned (see app_commit_lite below).
+    -- craftedOnce passes the filter but app_commit_lite below SUBSTITUTES the
+    -- stored value whenever a row exists, so the upload can never clear a burn
+    -- mark. It stays on the wire so (a) a guest's locally-earned marks reach
+    -- the bootstrap on their very first commit, and (b) a project running
+    -- older SQL — where the row keeps whatever the client sends — does not
+    -- have its burn list wiped by a client that stopped sending it.
+    'craftedOnce',
     -- activeBoosts and knownRecipes stay client-owned — blackboxes and
     -- blueprints are minted client-side by the bazaar and the server has no
     -- record of them (js/economy.js _softSnap, js/bazaar.js:82), so forcing
     -- either from the server row would erase a paid-for box or a real unlock.
-    -- They can only follow craftedOnce once soft items reach the ledger.
+    -- They can only become server-owned once soft items reach the ledger.
     'activeBoosts', 'knownRecipes',
     'shipVariants', 'achievements', 'stats',
     'story', 'settings', 'rivals', 'rivalsMeta',
-    'voySeenT', 'voyChecks', 'lastSeenAt',
+    'voySeenT', 'voyChecks',
     'v', 'appliedResetEpoch', 'cloudUserId',
     -- Lazily created, so absent from defaultState() and easy to miss:
     -- surveyRetry holds survey debriefs whose RPC dropped mid-flight.
     'surveyRetry',
-    -- Lazily created, so absent from defaultState() and easy to miss:
-    -- surveyRetry holds survey debriefs whose RPC dropped mid-flight.
     -- stations carries player-local money-adjacent state (unclaimed payouts,
     -- treasury ledger) with no verified server-side home yet. Stays on the wire
     -- until each field is confirmed recoverable from the station tables.
@@ -81,32 +90,29 @@ as $$
   );
 $$;
 
--- Same wrapper as commit_lite, now filtering the INPUT as well as trimming the
--- OUTPUT. Kept as one function so there is a single place the client calls and
--- a single place the two lists live.
+-- The wrapper the client calls: filters the INPUT (allowlist above), enforces
+-- the server-owned slices, and trims the OUTPUT echo.
 --
--- SECURITY INVOKER (the default) on purpose: app_commit is itself SECURITY
--- DEFINER and resolves auth.uid() from the request's JWT claims, which are a
--- session setting and so still visible inside this call. Marking the wrapper
--- DEFINER would add a privilege boundary that buys nothing.
 -- SERVER-OWNED SLICES (Tier 1B)
 -- craftedOnce gates one-of-a-kind recipes: app_craft_start refuses a recipe
 -- already in the list, and app_craft_claim appends to it. While the client
 -- supplied the list, deleting an entry re-opened a unique for a second craft.
--- Substituting the stored value here makes removal impossible — the list only
--- ever grows, and only via a claim.
+-- Substituting the stored value here makes removal impossible once a row
+-- exists — the list only ever grows, and only via a claim. (First-ever commit
+-- has no row: the client's list passes through so a guest's locally-earned
+-- marks survive sign-up. Seeding marks there only handicaps the seeder.)
 --
 -- The row is locked BEFORE the substitution and held for the transaction, so a
 -- concurrent app_craft_claim cannot land between the read and app_commit's own
 -- lock and have its burn mark overwritten by a stale list. app_commit's
 -- app._lock_state re-acquires the same lock in the same transaction — a no-op.
 --
--- SECURITY DEFINER (unlike the earlier pure-SQL version) because `for update`
--- on public.players needs write privilege the authenticated role deliberately
--- does not have. The body touches exactly one row, addressed by auth.uid(),
--- and auth.uid() still resolves here: it reads the request's JWT claims, which
--- are a session setting that SECURITY DEFINER does not disturb — the same
--- reason app_commit itself can be DEFINER.
+-- SECURITY DEFINER because `for update` on public.players needs write
+-- privilege the authenticated role deliberately does not have. The body
+-- touches exactly one row, addressed by auth.uid(), and auth.uid() still
+-- resolves here: it reads the request's JWT claims, which are a session
+-- setting that SECURITY DEFINER does not disturb — the same reason app_commit
+-- itself can be DEFINER.
 create or replace function public.app_commit_lite(p_state jsonb)
 returns jsonb
 language plpgsql
@@ -126,8 +132,8 @@ begin
   select state into srv from public.players where user_id = uid for update;
 
   inp := app._client_owned(p_state);
-  -- No row yet (first commit of a brand-new account): nothing to preserve, and
-  -- app_commit bootstraps. Otherwise the stored list is the only authority.
+  -- No row yet (first commit of a brand-new account): the client's list passes
+  -- through to the bootstrap. Otherwise the stored list is the only authority.
   if srv is not null then
     inp := jsonb_set(inp, '{craftedOnce}', coalesce(srv -> 'craftedOnce', '[]'::jsonb));
   end if;

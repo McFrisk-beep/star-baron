@@ -706,11 +706,19 @@ const Cloud = {
   //   stock    — shared shelf (app_sector_stock)
   //   market   — effects ride on world_news; prices/hist are recomputed
   //   war      — the running faction war; Wars.tick regenerates one
+  // Cross-device recovery for these leans on the shared world tables; a
+  // project without that SQL regenerates them fresh on a new device. The same
+  // browser always keeps its copy via localStorage + carryLocalOnly.
   localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war"],
+  // The legacy `saves` strip is ONLY galaxy (cosmetic, regenerated): that row
+  // has no server-side merge and no guaranteed world tables behind it, so it
+  // must keep carrying the world slices or a device change loses them —
+  // including senate laws passed under the local fallback.
+  legacyStrip: ["galaxy"],
   wireState(state) {
     if (!state || typeof state !== "object") return state;
     const out = { ...state };
-    for (const k of this.localOnly) delete out[k];
+    for (const k of this.legacyStrip) delete out[k];
     return out;
   },
 
@@ -727,15 +735,25 @@ const Cloud = {
     "credits", "ships", "industries", "expeditions", "extractors",
     "hold", "stationInv", "shipments", "_haulingMigrated",
     "reports", "orders", "pendingHaulSettles", "seq",
-    // craftedOnce is absent on purpose: server-owned as of docs/sql/
-    // commit_allowlist.sql, so the client's copy is never uploaded. activeBoosts
-    // and knownRecipes stay here — blackboxes and blueprints are minted
-    // client-side by the bazaar (see Economy._softSnap), so the server has no
-    // record to force them from.
+    // craftedOnce IS sent even though the server owns it: on a project running
+    // older SQL (or the raw-app_commit fallback) the row keeps whatever the
+    // client sends, so omitting it would wipe the burn list there — and a
+    // guest's locally-earned marks must reach the bootstrap on first commit.
+    // Where the new wrapper IS applied, it substitutes the stored value under
+    // a row lock, so this upload can never CLEAR a mark once the row exists.
+    "craftedOnce",
+    // activeBoosts and knownRecipes stay client-owned — blackboxes and
+    // blueprints are minted client-side by the bazaar (see Economy._softSnap),
+    // so the server has no record to force them from.
     "activeBoosts", "knownRecipes",
     "shipVariants", "achievements", "stats",
     "story", "settings", "rivals", "rivalsMeta",
-    "voySeenT", "voyChecks", "lastSeenAt",
+    // lastSeenAt is deliberately absent: app._write_state stamps the server
+    // clock on every commit, and the client restamps it around every
+    // suspend/resume — keeping it here made every payload unique, which turned
+    // the dirty check into dead code on the commit path. The legacy saves path
+    // still sends it (wireState), where Store.load's freshness compare needs it.
+    "voySeenT", "voyChecks",
     "v", "appliedResetEpoch", "cloudUserId",
     // Lazily created — absent from defaultState(), so easy to miss. surveyRetry
     // holds survey debriefs whose RPC dropped mid-flight; losing it loses the

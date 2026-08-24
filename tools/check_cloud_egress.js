@@ -149,21 +149,26 @@ const settle = async (timers) => {
     assert(both.galaxy.localLog.sol[0] === "fresh", "E6 an existing slice is not overwritten");
   }
 
-  // ------------------------------------------------------ E7: commit_lite
+  // ------------------------------------------------------ E7: the echo strip
   // The SQL subtracts keys from app_commit's echo. If applyCommitState ever
   // starts reading one of them, the strip becomes silent data loss — so pin
-  // the two lists against each other.
+  // the two lists against each other. (commit_lite.sql is a superseded stub;
+  // the live wrapper is commit_allowlist.sql.)
   {
-    const sql = src("docs/sql/commit_lite.sql");
+    const sql = src("docs/sql/commit_allowlist.sql");
     const stripped = [...sql.matchAll(/^\s*- '([a-zA-Z]+)'/gm)].map(m => m[1]);
-    assert(stripped.length === 7, `E7 commit_lite strips 7 slices (found ${stripped.length})`);
+    assert(stripped.length === 7, `E7 the wrapper strips 7 slices (found ${stripped.length})`);
     const eco = src("js/economy.js");
     const apply = eco.slice(eco.indexOf("  applyCommitState(st) {"));
     const body = apply.slice(0, apply.indexOf("\n  },"));
     for (const k of stripped) {
       assert(!new RegExp(`st\\.${k}\\b`).test(body), `E7 applyCommitState never reads st.${k}`);
     }
-    // And the client must actually ask for the lite wrapper.
+    // The stub must stay a stub: a second definition of app_commit_lite is a
+    // downgrade footgun (pasting it after the allowlist file would silently
+    // remove the craftedOnce protection).
+    assert(!/create or replace function/i.test(src("docs/sql/commit_lite.sql")),
+      "E7 commit_lite.sql defines no functions (superseded stub)");
     assert(/app_commit_lite/.test(src("js/cloud.js")), "E7 Cloud.commit calls app_commit_lite");
     assert(/commitLiteMissing/.test(src("js/cloud.js")), "E7 …with a fallback when the SQL isn't applied");
   }
@@ -172,22 +177,30 @@ const settle = async (timers) => {
   // app_commit_lite filters the upload down to an allowlist before app_commit
   // sees it, and app_commit writes back whatever survives. So a top-level save
   // key that is on NEITHER the allowlist NOR app_commit's server-forced list
-  // NOR Cloud.localOnly is silently dropped from the stored row — real progress
-  // gone, no error anywhere.
+  // NOR Cloud.localOnly NOR the wrapper-owned list is silently dropped from
+  // the stored row — real progress gone, no error anywhere.
   //
   // defaultState() is not enough to catch that: surveyRetry, war and
-  // cloudUserId are all created lazily and would have been missed (surveyRetry
-  // existed on exactly one live save). So enumerate the keys the CODE actually
-  // touches, and fail on anything unclassified.
+  // cloudUserId are all created lazily and were missed by exactly that
+  // analysis. Nor is matching only `Game.state.X` / `this.s().X`: most modules
+  // write through a local alias (`const s = this.s(); s.key = …`, and
+  // survey-story.js writes surveyRetry via `st`). So this walks each file
+  // linearly, tracks which local names are currently bound to the WHOLE save
+  // (`= window.Game.state` always; `= this.s()` only in modules whose s()
+  // returns Game.state — story.js's returns the nested story slice), unbinds a
+  // name when it is rebound to anything else, and records every `alias.key =`
+  // write made while bound. Writes are what create save keys; a key never
+  // written holds nothing to lose.
   {
-    // app_commit's server-forced keys. Refresh with:
-    //   select distinct m[1] from pg_proc p, lateral regexp_matches(
-    //     pg_get_functiondef(p.oid), 'jsonb_set\(merged, ''\{([a-zA-Z_]+)\}''', 'g') m
-    //   where p.proname = 'app_commit';
+    // app_commit's server-forced keys. Refresh by regexp-matching
+    // jsonb_set(merged, '{<key>}' over pg_get_functiondef('app_commit').
     const FORCED = new Set(("avgCost bazaar bazaarBought charters components credits crime "
       + "crimeSeenAt currentSystem expeditions extractors industries inventory items listings "
       + "mainShip missions pendingContracts positions prestige reputation routes ships surveyed "
       + "travel unlockedSystems workshop workshopAdopt").split(" "));
+    // Stamped by the server itself on every commit (app._write_state), so the
+    // upload neither needs nor is allowed to carry it — see WIRE_KEYS' comment.
+    const STAMPED = new Set(["lastSeenAt"]);
 
     const cloud = src("js/cloud.js");
     const noComments = t => t.replace(/\/\/.*$/gm, "");
@@ -195,9 +208,9 @@ const settle = async (timers) => {
       .matchAll(/"([a-zA-Z_]+)"/g)].map(m => m[1]));
     const localOnly = new Set([...cloud.match(/localOnly: \[([^\]]*)\]/)[1]
       .matchAll(/"([a-zA-Z_]+)"/g)].map(m => m[1]));
+    const sqlSrc = src("docs/sql/commit_allowlist.sql");
+    const WRAPPED = new Set([...sqlSrc.matchAll(/jsonb_set\(inp, '\{([a-zA-Z_]+)\}'/g)].map(m => m[1]));
 
-    // The js/*.js modules whose s() IS the whole save (Story.s() returns
-    // state.story, so its this.s().inbox must not be mistaken for a save key).
     const files = require("fs").readdirSync(path.join(root, "js")).filter(f => f.endsWith(".js"));
     const keys = new Set();
     const defSrc = src("js/main.js");
@@ -205,47 +218,87 @@ const settle = async (timers) => {
     for (const m of def.matchAll(/^\s{6}([a-zA-Z_]+):/gm)) keys.add(m[1]);
     for (const f of files) {
       const body = src("js/" + f);
-      // ANY reference is evidence of a save key, not just an assignment:
-      // surveyRetry is only ever read as `this.s().surveyRetry || []`, and an
-      // assignment-only regex silently missed it — the exact bug this guards.
+      // Direct references (reads included — surveyRetry was read-only in one
+      // module and an assignment-only match silently missed it once already).
       for (const m of body.matchAll(/Game\.state\.([a-zA-Z_]+)/g)) keys.add(m[1]);
-      if (!/\bs\(\)\s*\{\s*return window\.Game\.state;/.test(body)) continue;
-      for (const m of body.matchAll(/this\.s\(\)\.([a-zA-Z_]+)/g)) keys.add(m[1]);
+      const wholeSave = /\bs\(\)\s*\{\s*return window\.Game\.state;/.test(body);
+      if (wholeSave) for (const m of body.matchAll(/this\.s\(\)\.([a-zA-Z_]+)/g)) keys.add(m[1]);
+      // Linear alias tracking: bind on `= Game.state` / `= this.s()` (the
+      // latter only when s() is the whole save), unbind on any other rebind.
+      const events = [];
+      for (const m of body.matchAll(/(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
+        const expr = m[2].trim();
+        const isSave = /^(?:window\.)?Game\.state$/.test(expr) || (wholeSave && /^this\.s\(\)$/.test(expr));
+        events.push({ at: m.index, kind: "bind", name: m[1], isSave });
+      }
+      // Shadowing forms that rebind a name to something that is NOT the save:
+      // `for (const s of ships)` and arrow params (`s => …`, `(s, i) => …`).
+      // Linear tracking is an approximation — an arrow's shadow lexically ends
+      // with its body, but here it lasts until the next `const s = this.s()`
+      // rebind. That direction can only under-report between an arrow and the
+      // next rebind (and modules re-alias at each function head), never
+      // misattribute a sprite write to the save.
+      for (const m of body.matchAll(/for\s*\(\s*(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s+(?:of|in)\b/g)) {
+        events.push({ at: m.index, kind: "bind", name: m[1], isSave: false });
+      }
+      for (const m of body.matchAll(/(?:\(\s*)?([a-zA-Z_$][\w$]*)(?:\s*,\s*[a-zA-Z_$][\w$]*)*\s*\)?\s*=>/g)) {
+        events.push({ at: m.index, kind: "bind", name: m[1], isSave: false });
+      }
+      for (const m of body.matchAll(/\b([a-zA-Z_$][\w$]*)\.([a-zA-Z_]+)\s*(?:\|\|)?=(?!=)/g)) {
+        events.push({ at: m.index, kind: "write", name: m[1], key: m[2] });
+      }
+      events.sort((a, b) => a.at - b.at);
+      const bound = new Map();
+      for (const e of events) {
+        if (e.kind === "bind") bound.set(e.name, e.isSave);
+        else if (bound.get(e.name)) keys.add(e.key);
+      }
     }
 
-    // Server-owned by the app_commit_lite wrapper rather than by app_commit's
-    // own forced list: the wrapper substitutes the stored value under the row
-    // lock, so the client's copy never reaches the merge.
-    const sqlSrc = src("docs/sql/commit_allowlist.sql");
-    const WRAPPED = new Set([...sqlSrc.matchAll(/jsonb_set\(inp, '\{([a-zA-Z_]+)\}'/g)].map(m => m[1]));
-    assert(WRAPPED.has("craftedOnce"), "E9 craftedOnce is server-owned in the wrapper");
-    assert(!wire.has("craftedOnce"), "E9 …and the client no longer uploads it");
-    assert(/if \(st\.craftedOnce\) s\.craftedOnce = st\.craftedOnce;/.test(src("js/economy.js")),
-      "E9 …and applyCommitState adopts the server's copy");
-    // The substitution must happen UNDER the lock, or a concurrent craft claim
-    // can have its burn mark overwritten by a stale list.
-    const lockAt = sqlSrc.indexOf("for update");
-    const subAt = sqlSrc.indexOf("jsonb_set(inp, '{craftedOnce}'");
-    assert(lockAt > 0 && subAt > lockAt, "E9 the row is locked before the substitution");
-    // Blocked, and deliberately so — pin the reason so it can't be quietly lost.
-    for (const k of ["activeBoosts", "knownRecipes"])
-      assert(wire.has(k) && !WRAPPED.has(k),
-        `E9 ${k} stays client-owned (soft-minted items have no server record)`);
-
     const unclassified = [...keys].filter(k =>
-      !wire.has(k) && !FORCED.has(k) && !localOnly.has(k) && !WRAPPED.has(k)).sort();
+      !wire.has(k) && !FORCED.has(k) && !localOnly.has(k) && !WRAPPED.has(k) && !STAMPED.has(k)).sort();
     assert(unclassified.length === 0,
       `E8 every top-level save key is classified (unclassified: ${unclassified.join(", ") || "none"})`);
     // And the two halves of the allowlist must be the same list, or a key is
     // either dropped on arrival or never sent.
-    const sql = src("docs/sql/commit_allowlist.sql");
-    const allow = new Set([...sql.match(/where k in \(([\s\S]*?)\n  \);/)[1]
+    const allow = new Set([...sqlSrc.match(/where k in \(([\s\S]*?)\n  \);/)[1]
       .replace(/--.*$/gm, "").matchAll(/'([a-zA-Z_]+)'/g)].map(m => m[1]));
     const a = [...wire].sort().join(","), b = [...allow].sort().join(",");
     assert(a === b, `E8 js WIRE_KEYS === sql allowlist (${wire.size} vs ${allow.size})`);
     // The five merge inputs app_commit reads off the client must never be cut.
     for (const k of ["credits", "ships", "industries", "expeditions", "extractors"])
       assert(wire.has(k), `E8 merge input '${k}' is still sent (app_commit reads it off the client)`);
+    // lastSeenAt must stay OFF the commit wire: the client restamps it around
+    // every suspend/resume, so carrying it makes every payload unique and the
+    // redundant-push suppression never fires.
+    assert(!wire.has("lastSeenAt") && !allow.has("lastSeenAt"),
+      "E8 lastSeenAt stays off the commit wire (it would defeat the dirty check)");
+
+    // ---------------------------------------------- E9: server-owned slices
+    assert(WRAPPED.has("craftedOnce"), "E9 craftedOnce is server-owned in the wrapper");
+    // It stays ON the wire on purpose: older-SQL deployments keep the row's
+    // copy alive only because the client still sends it, and a guest's
+    // locally-earned marks must reach the bootstrap on the first commit. The
+    // wrapper's substitution wins whenever a row exists.
+    assert(wire.has("craftedOnce"), "E9 craftedOnce is still sent (old-SQL + guest-bootstrap safety)");
+    assert(/if \(st\.craftedOnce\) s\.craftedOnce = st\.craftedOnce;/.test(src("js/economy.js")),
+      "E9 applyCommitState adopts the server's copy");
+    // The substitution must happen UNDER the lock, or a concurrent craft claim
+    // can have its burn mark overwritten by a stale list. Anchor on the SQL
+    // statement itself — the doc comment above the function also says
+    // "for update", and matching that made this check vacuous once.
+    const lockAt = sqlSrc.indexOf("where user_id = uid for update");
+    const subAt = sqlSrc.indexOf("jsonb_set(inp, '{craftedOnce}'");
+    assert(lockAt > 0 && subAt > lockAt, "E9 the row is locked (select … for update) before the substitution");
+    // Blocked, and deliberately so — pin the reason so it can't be quietly lost.
+    for (const k of ["activeBoosts", "knownRecipes"])
+      assert(wire.has(k) && !WRAPPED.has(k),
+        `E9 ${k} stays client-owned (soft-minted items have no server record)`);
+    // The two hand-audited full-state commit call sites must stay filtered.
+    assert(/Cloud\.commit\(Cloud\.commitState \? Cloud\.commitState\(snap0\) : snap0\)/.test(src("js/main.js")),
+      "E9 the pull-path pre-sync sends the allowlist payload");
+    assert(/Cloud\.commit\(Cloud\.commitState \? Cloud\.commitState\(payload\) : payload\)/.test(src("js/economy.js")),
+      "E9 _syncSoftEconomy sends the allowlist payload");
   }
 
   if (failed) { console.error(`\n${failed} check(s) failed.`); process.exit(1); }

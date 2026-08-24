@@ -430,7 +430,11 @@ const Economy = {
         stationInv: snap.stationInv,
         shipments: snap.shipments,
       });
-      const r = await Cloud.commit(payload);
+      // commitState: server-forced keys in `payload` never influenced the merge
+      // (app_commit overwrites them from the row); world slices were dead
+      // weight. What matters — credits, ships, seq, stats, hold, stationInv,
+      // shipments, industries, expeditions, extractors — all survive the filter.
+      const r = await Cloud.commit(Cloud.commitState ? Cloud.commitState(payload) : payload);
       if (r && r.ok === false) return false;
       // Don't apply fleet/board from commit here — optimistic mutation is live
       // and Phase 2 commit echoes pre-action ships. Topology only.
