@@ -312,13 +312,13 @@ Two spans, both in `SYSTEMVIEW` (`js/data.js`):
 
 | | span | holds |
 |---|---|---|
-| `coreSpan` | 1000 | star (centre), planets, station, asteroid belt — orbit unit `R = coreSpan × 0.42` |
-| `worldSpan` | 2000 | the full playable box; hyperspace gates sit at its rim (inset 64) |
+| `coreSpan` | 1000 | the whole civil system — star (centre), planets, station, belt, and the hyperspace gate ring on its inset edge (radius 436). Orbit unit `R = coreSpan × 0.42` |
+| `worldSpan` | 2000 | the full playable box |
 
-The ring between the two is **reserved open space** — the intended home for
-mission instances, survey sites and pirate encounters, so they get room without
-cluttering the inner system. Because a run from the docks to a gate crosses
-that ring, traffic is interceptable there by construction.
+The ring between the two is **reserved deep space** — outside the gates, beyond
+the system's traffic zone — and is the intended home for mission instances,
+survey sites and pirate encounters, so they get room without cluttering the
+inner system.
 
 Layout inside the core is `coreSpan`-relative and never scales with
 `worldSpan`: widening the world adds room around the system without moving a

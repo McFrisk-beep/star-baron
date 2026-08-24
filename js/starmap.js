@@ -1085,13 +1085,16 @@ const StarMap = {
     let gateCache = null;
     const gates = () => {
       if (gateCache) return gateCache;
-      const m = 64;
+      // The gate ring sits on the CORE's inset edge, NOT the world rim — it
+      // stays exactly where it was before WORLD grew, so the enlarged space is
+      // the open ring OUTSIDE the gates (deep space beyond the system's civil
+      // zone) rather than a gap opened up inside it.
+      const m = 64, half = CORE / 2 - m;
       const gl = window.Lanes ? Lanes.gates(sys.id) : [];
-      gateCache = !gl.length ? [{ to: null, name: "", x: WORLD - m, y: wcy - CORE * 0.2 }] : gl.map(g => {
+      gateCache = !gl.length ? [{ to: null, name: "", x: wcx + half, y: wcy - CORE * 0.2 }] : gl.map(g => {
         const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
-        // project the bearing from the centre onto the world's inset edge
-        const k = Math.min((wcx - m) / Math.max(Math.abs(dx), 1e-9),
-                           (wcy - m) / Math.max(Math.abs(dy), 1e-9));
+        // project the bearing from the centre onto that inset edge
+        const k = half / Math.max(Math.abs(dx), Math.abs(dy), 1e-9);
         const dest = Galaxy.get(g.to);
         return { to: g.to, name: dest ? dest.name : "", x: wcx + dx * k, y: wcy + dy * k };
       });

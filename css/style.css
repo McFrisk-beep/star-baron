@@ -25,6 +25,21 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+
+/* ---- game-feel input lockdown -------------------------------------------
+   Reads as an app, not a web page: no accidental text selection while dragging
+   the star map, no long-press image menu on touch, no drag-the-sprite-out.
+   Anything genuinely needing selection opts back in: form fields (so right-
+   click paste and the admin "Copy SQL" textarea still work) plus an explicit
+   .selectable escape hatch. NOT a real content protection — the images are
+   still plain files any devtools can read; it only removes the casual path. */
+body { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+input, textarea, select, [contenteditable="true"], .selectable {
+  user-select: text; -webkit-user-select: text; -webkit-touch-callout: default;
+}
+img, canvas, svg { -webkit-user-drag: none; user-drag: none; }
+/* …but the hub-editor palette and the haul tiles are real drag-and-drop */
+[draggable="true"], [draggable="true"] img { -webkit-user-drag: element; user-drag: element; }
 body {
   background:
     radial-gradient(1200px 700px at 80% -10%, rgba(63,227,255,.07) 0%, transparent 55%),
