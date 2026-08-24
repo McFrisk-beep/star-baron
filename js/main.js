@@ -207,7 +207,7 @@ const Game = {
     s.story ||= { prog: {}, inbox: [], unread: 0, lastArrivalAt: 0, taxBreakPct: 0, taxBreakUntil: 0, flags: {}, ephemeral: {} };
     s.story.prog ||= {}; s.story.inbox ||= []; s.story.flags ||= {}; s.story.ephemeral ||= {};
     // Save bloat: a finished thread kept its whole METRICS baseline forever, and
-    // it rides in every 10s commit. Nothing reads `base` off a non-active thread
+    // it rides in every commit. Nothing reads `base` off a non-active thread
     // (Story.card / _goalDone both gate on status), so shed it on load too —
     // Story._advance now drops it as threads finish.
     for (const id in s.story.prog) {
@@ -630,7 +630,7 @@ const Game = {
     });
 
     // Visible-but-idle uses the same suspend/resume: an AFK tab otherwise keeps
-    // polling Supabase and pushing an app_commit every ~10s forever. Music keeps
+    // polling Supabase and pushing an app_commit on every autosave. Music keeps
     // playing (it's a cached static file — costs nothing while idle).
     if (CONFIG.idleAfterMs > 0) {
       const arm = () => {

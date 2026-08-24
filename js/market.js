@@ -352,8 +352,11 @@ const Market = {
     return Util.clamp((sum / n) * 4, -1, 1);
   },
 
+  // Only the effects are real state. `prices` and `hist` are pure functions of
+  // (seed, effects, now) — hydrate() below recomputes both unconditionally, so
+  // persisting them was ~54KB of write-only payload on every cloud save.
   serialize() {
-    return { prices: this.prices, hist: this.hist, effects: this.effects, localEffects: this.localEffects };
+    return { effects: this.effects, localEffects: this.localEffects };
   },
   hydrate(snap) {
     if (!snap) return;

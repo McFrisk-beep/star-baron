@@ -68,6 +68,27 @@ If the Phase 1 SQL isn’t applied yet, the client falls back to the legacy
 `saves` upsert and toasts a pointer at this doc — logged-in play keeps
 working, just not authoritative.
 
+### Optional but recommended — cut the autosave's egress
+
+New query → paste [`docs/sql/commit_lite.sql`](sql/commit_lite.sql) → **Run**.
+
+`app_commit` returns the whole merged save, and on a developed player that is
+~215KB — of which `Economy.applyCommitState` reads **none** of the world slices
+(`market`, `galaxy`, `stations`, `story`, `senate`, `stock`, `newswire`): they
+are regenerated client-side from the seed, or read from the shared world tables.
+So every autosave was paying ~213KB of egress for something the client threw
+away. Measured on this project it was the single most expensive statement in the
+database (9,454 calls, 476s total, 50ms average).
+
+`app_commit_lite` is a thin **wrapper** — it calls `app_commit` and subtracts
+those keys from the result, so the commit's merge and protection logic is
+untouched and cannot drift. Measured against a real 219,422-char save, the
+response drops to 5,365 chars (**−97.6%**).
+
+Safe to skip: `Cloud.commit()` falls back to `app_commit` when the wrapper is
+missing and latches after one miss, so a project without this file just keeps
+paying for the full-size response.
+
 ---
 
 ## Trust model (honest)
