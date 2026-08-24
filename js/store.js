@@ -158,10 +158,18 @@ const Store = {
   // push always retries.
   _lastSig: null,
   _cloudSig(state) {
-    // Fingerprint the wire shape when Cloud can tell us it; otherwise the whole
-    // save. Both are correct — the former just skips more redundant pushes.
-    try { return JSON.stringify(window.Cloud && Cloud.wireState ? Cloud.wireState(state) : state); }
-    catch (e) { return null; }
+    // Fingerprint the payload that will ACTUALLY be sent, chosen the same way
+    // Cloud.saveRemote chooses it — the authoritative path sends the app_commit
+    // allowlist, the legacy `saves` path sends the whole (minus local-only) save.
+    // Fingerprinting a superset would only cost redundant pushes; fingerprinting
+    // a subset would miss real changes, so when in doubt this widens.
+    try {
+      const c = window.Cloud;
+      if (!c) return JSON.stringify(state);
+      const payload = (c.playersReady && c.commitState) ? c.commitState(state)
+        : (c.wireState ? c.wireState(state) : state);
+      return JSON.stringify(payload);
+    } catch (e) { return null; }
   },
   _sigClean(state) {
     const sig = this._cloudSig(state);

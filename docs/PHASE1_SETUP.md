@@ -70,7 +70,8 @@ working, just not authoritative.
 
 ### Optional but recommended — cut the autosave's egress
 
-New query → paste [`docs/sql/commit_lite.sql`](sql/commit_lite.sql) → **Run**.
+New query → paste [`docs/sql/commit_allowlist.sql`](sql/commit_allowlist.sql) → **Run**.
+(`commit_lite.sql` is superseded by this file and is now a no-op stub.)
 
 `app_commit` returns the whole merged save, and on a developed player that is
 ~215KB — of which `Economy.applyCommitState` reads **none** of the world slices
@@ -80,10 +81,13 @@ So every autosave was paying ~213KB of egress for something the client threw
 away. Measured on this project it was the single most expensive statement in the
 database (9,454 calls, 476s total, 50ms average).
 
-`app_commit_lite` is a thin **wrapper** — it calls `app_commit` and subtracts
-those keys from the result, so the commit's merge and protection logic is
-untouched and cannot drift. Measured against a real 219,422-char save, the
-response drops to 5,365 chars (**−97.6%**).
+`app_commit_lite` is a **wrapper** — it filters the upload down to an explicit
+allowlist (anything a future feature forgets to classify is dropped, not
+trusted), pins `craftedOnce` to the stored value so the one-of-a-kind burn
+list can never be cleared, then calls `app_commit` and subtracts the world
+slices from the echo. The merge/protection logic itself is untouched and
+cannot drift. Measured against a real 219,422-char save: upload 74,787 chars
+(−65.9%), response 5,365 chars (**−97.6%**).
 
 Safe to skip: `Cloud.commit()` falls back to `app_commit` when the wrapper is
 missing and latches after one miss, so a project without this file just keeps

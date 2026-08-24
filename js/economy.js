@@ -320,6 +320,9 @@ const Economy = {
       s.workshop = st.workshop;
       if (window.Workshop) Workshop.scrubQueue(s.workshop);
     }
+    // Server-owned (docs/sql/commit_allowlist.sql): the burn list for
+    // one-of-a-kind recipes only ever grows, and only via app_craft_claim.
+    if (st.craftedOnce) s.craftedOnce = st.craftedOnce;
     if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
     if (st.crime != null && window.Crime) Crime.applyServer(st.crime);
     if (st.crimeSeenAt != null) s.crimeSeenAt = st.crimeSeenAt;
@@ -427,7 +430,11 @@ const Economy = {
         stationInv: snap.stationInv,
         shipments: snap.shipments,
       });
-      const r = await Cloud.commit(payload);
+      // commitState: server-forced keys in `payload` never influenced the merge
+      // (app_commit overwrites them from the row); world slices were dead
+      // weight. What matters — credits, ships, seq, stats, hold, stationInv,
+      // shipments, industries, expeditions, extractors — all survive the filter.
+      const r = await Cloud.commit(Cloud.commitState ? Cloud.commitState(payload) : payload);
       if (r && r.ok === false) return false;
       // Don't apply fleet/board from commit here — optimistic mutation is live
       // and Phase 2 commit echoes pre-action ships. Topology only.

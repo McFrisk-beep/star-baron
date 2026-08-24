@@ -899,7 +899,10 @@ const Game = {
     try {
       // Soft-sync setup (new industries/expeditions) before pull so the
       // server sees them; credits only decrease (spends), never mint via commit.
-      await Cloud.commit(this.snapshot());
+      // commitState: the allowlist payload — the full snapshot's world slices
+      // would only be discarded server-side, at ~145KB of upload apiece.
+      const snap0 = this.snapshot();
+      await Cloud.commit(Cloud.commitState ? Cloud.commitState(snap0) : snap0);
       const r = await Cloud.pull();
       if (!r || r.ok === false) {
         console.warn("[Game] app_pull failed:", (r && r.error) || r);
