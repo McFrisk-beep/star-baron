@@ -114,12 +114,13 @@ const Stock = {
     return sid ? this.put(sid, commId, qty) : 0;
   },
 
-  // Consumption demand for one commodity in one sector this hour.
+  // Consumption demand for one commodity in one sector this hour. Derived from
+  // the shelf's own baseline so a full shelf drains to empty in ~drainHours
+  // (5 days) with no resupply — pop / category mults stretch that per sector.
   demand(sectorId, commId, hourIndex) {
     const c = COMMODITIES.find(x => x.id === commId);
     if (!c || c.craftOnly || c.rarity === "exotic") return 0;
-    const rarity = c.rarity || "common";
-    const base = CONSUMPTION.defaultByRarity[rarity] || 0;
+    const base = this.baseline(sectorId, commId) / (STOCKCFG.drainHours || 120);
     const pop = (CONSUMPTION.sectorPop && CONSUMPTION.sectorPop[sectorId]) || 1;
     const catMap = (CONSUMPTION.catSectorMult && CONSUMPTION.catSectorMult[c.cat]) || { _: 1 };
     const catMult = catMap[sectorId] != null ? catMap[sectorId] : (catMap._ != null ? catMap._ : 1);
@@ -151,9 +152,15 @@ const Stock = {
     return sid ? this.est24h(sid, commId, now) : 0;
   },
 
+  // Convoy load factor. Scarcity boosts it, glut brakes it below 1 (so an
+  // overfull shelf actually drains at the drainHours pace instead of
+  // ratcheting up forever), and under npcSurgeRatio relief convoys run heavy.
   npcOutputMult(sectorId, commId) {
-    const r = Math.min(this.ratio(sectorId, commId), 1);
-    return Util.clamp(1 + (1 - r) * STOCKCFG.npcOutputBoost, 1, STOCKCFG.npcOutputMultMax);
+    const r = this.ratio(sectorId, commId);
+    let m = Util.clamp(1 + (1 - r) * STOCKCFG.npcOutputBoost,
+      STOCKCFG.npcOutputMultMin ?? 1, STOCKCFG.npcOutputMultMax);
+    if (r < (STOCKCFG.npcSurgeRatio || 0)) m *= STOCKCFG.npcSurgeMult || 1;
+    return m;
   },
 
   init(now = Date.now()) {
@@ -205,13 +212,11 @@ const Stock = {
     if (window.Stations && Stations.npcProduceHour) {
       summary.produced += Stations.npcProduceHour(hourIndex);
     } else if (shelfLocal) {
-      // Fallback when Stations isn't loaded (harness): one virtual producer per sector.
+      // Fallback when Stations isn't loaded (harness): virtual convoys deliver
+      // demand × load factor per shelf — equilibrium at ratio 1 by construction.
       for (const sid of ids) {
         for (const c of tradeable) {
-          const rarity = c.rarity || "common";
-          const base = STOCKCFG.npcUnits[rarity] || 0;
-          const nStations = 12;
-          const out = Math.round(base * nStations * this.npcOutputMult(sid, c.id) * 0.15);
+          const out = Math.round(this.demand(sid, c.id, hourIndex) * this.npcOutputMult(sid, c.id));
           if (out > 0) { this.put(sid, c.id, out); summary.produced += out; }
         }
       }

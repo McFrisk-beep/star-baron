@@ -759,8 +759,27 @@ const SHIP_DIALOGUES = [
   ["Tell the {RACE} dockmaster I said hi.", "He'll pretend not to remember you.", "He always does.", "That's how you know he does."],
 ];
 
+/* Planet cargo-shuttle chatter (starmap system view, kind "cargo"). Filled
+   with the planet's REAL industry goods at spawn — {COMM} is what it exports,
+   {IMP} what it imports — unlike SHIP_RADIO's randomized {COMM}. */
+const CARGO_RADIO = {
+  out: [
+    "{NAME} lifting off {PLANET}, holds full of {COMM}.",
+    "{COMM} run to the station — regular as sunrise.",
+    "Fresh {COMM} out of {PLANET}. Somebody's buying.",
+    "Heavy load of {COMM} today. {PLANET} outdid itself.",
+  ],
+  back: [
+    "{NAME} inbound {PLANET} with the {IMP} they ordered.",
+    "Hauling {IMP} home — {PLANET} runs dry without it.",
+    "Docks were stacked. Got the {IMP} though.",
+    "One more {IMP} run and I'm due a refit.",
+  ],
+};
+
 window.SHIP_RADIO = SHIP_RADIO;
 window.SHIP_DIALOGUES = SHIP_DIALOGUES;
+window.CARGO_RADIO = CARGO_RADIO;
 
 /* ===========================================================================
    TUTORIAL — the new-player onboarding carousel (UI renders these steps).

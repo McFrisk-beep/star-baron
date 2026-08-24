@@ -301,7 +301,8 @@ const Voyages = {
 
   // Everything moving, for the galaxy chart. Parked entries are skipped there.
   markers(now = Date.now()) {
-    return this.active(now).concat(this.others(now)).filter(v => v.at);
+    const npc = window.Traffic ? Traffic.flights(now) : [];
+    return this.active(now).concat(this.others(now)).concat(npc).filter(v => v.at);
   },
 
   // What's visibly IN a system for the system view. Docked flagships are
@@ -311,7 +312,8 @@ const Voyages = {
   // gate it uses (§2.4); frac = eased station↔gate fraction.
   inSystem(sysId, now = Date.now()) {
     const out = [];
-    for (const v of this.active(now).concat(this.others(now))) {
+    const npc = window.Traffic ? Traffic.flights(now) : [];
+    for (const v of this.active(now).concat(this.others(now)).concat(npc)) {
       if (v.sysId === sysId) {
         if (v.kind !== "flagship") out.push({ ...v, mode: "working" });
         continue;

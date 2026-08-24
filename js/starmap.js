@@ -149,6 +149,15 @@ const StarMap = {
       hull.setAttribute("points", "9,0 -7,5.5 -3.5,0 -7,-5.5");
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
       tail = 6;
+    } else if (v.kind === "freighter") {
+      // NPC supply hauler — boxy hull, flavor name over the top
+      hull.setAttribute("points", "7,0 3,3.6 -6,3.6 -6,-3.6 3,-3.6");
+      hull.setAttribute("class", "voy-hull-npc");
+      tail = 5;
+    } else if (v.kind === "trader") {
+      hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
+      hull.setAttribute("class", "voy-hull-trader");
+      tail = 3;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
       hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
@@ -156,6 +165,13 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    if (v.kind === "freighter" && v.name) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name npc");
+      t.setAttribute("y", -9);
+      t.textContent = v.name;
+      g.appendChild(t);
+    }
     if (v.kind === "flagship" && v.name) {
       const t = document.createElementNS(ns, "text");
       t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
@@ -928,20 +944,33 @@ const StarMap = {
     // ---- §6.1 world space -------------------------------------------------
     // The scene lives in FIXED world coordinates (WORLD × WORLD, star at the
     // centre) — identical on every client, so shared positions no longer
-    // depend on per-client canvas size. The camera maps world → screen; only
+    // depend on per-client canvas size, and widening WORLD keeps every existing
+    // position valid. The camera maps world → screen; only
     // the nebula backdrop, starfield and Live View overlay stay in screen
     // space (which is what gives the parallax as you pan).
-    const WORLD = 1000, wcx = WORLD / 2, wcy = WORLD / 2, R = WORLD * 0.42;
+    // CORE is the inner system box; the star, planets, station and asteroid
+    // belt are laid out inside it and are NOT affected by WORLD. WORLD is the
+    // full playable box — the ring between CORE and WORLD is reserved open
+    // space (mission instances, surveys, pirate encounters) and is where the
+    // lane gates sit, so a run from the docks to a gate crosses it.
+    // R stays CORE-relative: widening WORLD must never resize the system.
+    const CORE = SYSTEMVIEW.coreSpan || 1000;
+    const WORLD = Math.max(CORE, SYSTEMVIEW.worldSpan || CORE);
+    const wcx = WORLD / 2, wcy = WORLD / 2, R = CORE * 0.42;
 
     // ---- pan / zoom camera: drag to pan, wheel / pinch to zoom -------------
     // screen = world × cam.zoom + (cam.x, cam.y). cam.zoom carries the canvas
     // fit (cover on squat mobile panes so orbits crop, contain otherwise —
     // the same rule the canvas-space scene used) × the user's pinch/wheel
     // zoom. A re-fit (resize, rotate, panel change) re-centres the view.
+    // Default framing fits the CORE, so opening a system looks exactly as it
+    // did before WORLD grew around it. Zooming out from there reveals the ring.
     const fitZoom = () => {
       const cw = W(), ch = H();
-      return (ch < cw * 0.95 ? Math.max(cw, ch) : Math.min(cw, ch)) / WORLD;
+      return (ch < cw * 0.95 ? Math.max(cw, ch) : Math.min(cw, ch)) / CORE;
     };
+    // Pull-back limit: far enough that the whole WORLD fits on the short axis.
+    const minZoom = () => Math.min(fitZoom(), Math.min(W(), H()) / WORLD);
     const cam = { zoom: 1, x: 0, y: 0, _fit: 0 };
     const refit = () => {
       const f = fitZoom();
@@ -949,11 +978,16 @@ const StarMap = {
       cam.x = W() / 2 - wcx * f; cam.y = H() / 2 - wcy * f;
     };
     refit();
+    // Keep the VIEWPORT inside the world (the same rule the galaxy chart's
+    // _clampVB uses), not the world's centre inside the viewport — pinning the
+    // centre meant every zoomed-in view had to contain the star, so the station
+    // and the edge gates became unreachable (and eventually invisible) the
+    // further you zoomed in. An axis smaller than the viewport centres instead.
     const clampCam = () => {
-      const f = fitZoom();
-      cam.zoom = Util.clamp(cam.zoom, f * 0.7, f * 4);
-      cam.x = Util.clamp(cam.x, -wcx * cam.zoom, W() - wcx * cam.zoom);   // keep the star on-screen
-      cam.y = Util.clamp(cam.y, -wcy * cam.zoom, H() - wcy * cam.zoom);
+      cam.zoom = Util.clamp(cam.zoom, minZoom(), fitZoom() * 4);
+      const span = WORLD * cam.zoom;
+      cam.x = span <= W() ? (W() - span) / 2 : Util.clamp(cam.x, W() - span, 0);
+      cam.y = span <= H() ? (H() - span) / 2 : Util.clamp(cam.y, H() - span, 0);
     };
     // Chase cam (Hub Live View): glide the camera onto the followed voyage —
     // its world position is recorded by _drawVoyagers into voyFx.pos.
@@ -975,8 +1009,7 @@ const StarMap = {
     const hideHint = () => { clearTimeout(hintTimer); if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); };
     const zoomAt = (fx, fy, factor) => {
       const wx = (fx - cam.x) / cam.zoom, wy = (fy - cam.y) / cam.zoom;
-      const f = fitZoom();
-      cam.zoom = Util.clamp(cam.zoom * factor, f * 0.7, f * 4);
+      cam.zoom = Util.clamp(cam.zoom * factor, minZoom(), fitZoom() * 4);
       cam.x = fx - wx * cam.zoom; cam.y = fy - wy * cam.zoom;
       clampCam(); hideHint(); redraw();
     };
@@ -1052,13 +1085,16 @@ const StarMap = {
     let gateCache = null;
     const gates = () => {
       if (gateCache) return gateCache;
-      const m = 64;
+      // The gate ring sits on the CORE's inset edge, NOT the world rim — it
+      // stays exactly where it was before WORLD grew, so the enlarged space is
+      // the open ring OUTSIDE the gates (deep space beyond the system's civil
+      // zone) rather than a gap opened up inside it.
+      const m = 64, half = CORE / 2 - m;
       const gl = window.Lanes ? Lanes.gates(sys.id) : [];
-      gateCache = !gl.length ? [{ to: null, name: "", x: WORLD - m, y: WORLD * 0.3 }] : gl.map(g => {
+      gateCache = !gl.length ? [{ to: null, name: "", x: wcx + half, y: wcy - CORE * 0.2 }] : gl.map(g => {
         const dx = Math.cos(g.angle), dy = Math.sin(g.angle);
-        // project the bearing from the centre onto the world's inset edge
-        const k = Math.min((wcx - m) / Math.max(Math.abs(dx), 1e-9),
-                           (wcy - m) / Math.max(Math.abs(dy), 1e-9));
+        // project the bearing from the centre onto that inset edge
+        const k = half / Math.max(Math.abs(dx), Math.abs(dy), 1e-9);
         const dest = Galaxy.get(g.to);
         return { to: g.to, name: dest ? dest.name : "", x: wcx + dx * k, y: wcy + dy * k };
       });
@@ -1129,8 +1165,32 @@ const StarMap = {
     };
     for (let i = 0; i < targetPop; i++) {   // start with traffic already underway
       const r = Util.pick(raceKeys);
-      ships.push({ x: Math.random() * WORLD, y: Math.random() * WORLD, race: r, img: raceImg(r), scale: 1,
+      // seeded inside the CORE — traffic already underway belongs at the docks,
+      // not scattered across the reserved ring
+      ships.push({ x: wcx + (Math.random() - 0.5) * CORE, y: wcy + (Math.random() - 0.5) * CORE,
+        race: r, img: raceImg(r), scale: 1,
         alpha: 1, state: "travel", spd: shipSpeed(), ang: Math.random() * 6.28, target: null, dwell: 0 });
+    }
+    // ---- planet cargo shuttles: the in-system leg of NPC supply ----------
+    // One hauler per industry planet, looping planet ↔ station with the
+    // planet's REAL goods — its export out, its listed import back. Names are
+    // seeded like traffic.js; the station's freighter (traffic.js) then runs
+    // the capital leg, so the whole chain is visible: planet → station → exchange.
+    if (!reduced) {
+      const cargoImg = this.img(ASSET.ship("hauler"));
+      sys.planets.forEach((pl, idx) => {
+        const comm = (COMMODITIES.find(c => c.id === pl.commodity) || {}).name || "cargo";
+        const name = window.Traffic ? Traffic._name("p:" + sys.id + ":" + idx) : "Shuttle " + (idx + 1);
+        const fillCargo = t => t.replace(/\{NAME\}/g, name).replace(/\{PLANET\}/g, pl.name)
+          .replace(/\{COMM\}/g, comm).replace(/\{IMP\}/g, pl.importing);
+        ships.push({
+          x: wcx, y: wcy, img: cargoImg, alpha: 0, scale: 0.85, kind: "cargo",
+          state: "haulWait", dwell: Util.randFloat(1, 10), spd: shipSpeed() * 0.8,
+          ang: 0, target: null, haulIdx: idx,
+          sayOut: (window.CARGO_RADIO ? CARGO_RADIO.out : []).map(fillCargo),
+          sayBack: (window.CARGO_RADIO ? CARGO_RADIO.back : []).map(fillCargo),
+        });
+      });
     }
     let combatCooldown = 5;
     let lastChatterAt = 0;
@@ -1194,7 +1254,8 @@ const StarMap = {
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
       if (!reduced) {
-        const alive = ships.reduce((n, s) => n + (s.state !== "dead" ? 1 : 0), 0);
+        // cargo shuttles are permanent residents — don't let them crowd out ambient spawns
+        const alive = ships.reduce((n, s) => n + (s.state !== "dead" && s.kind !== "cargo" ? 1 : 0), 0);
         if (alive < targetPop && Math.random() < dt * 2.5) spawnShip();
         // occasionally a dogfight breaks out between two cruising ships
         combatCooldown -= dt;
@@ -1221,7 +1282,7 @@ const StarMap = {
               if (o === a || o.bubble || o.state === "dead" || o.state === "warpOut" || o.state === "warpIn") continue;
               const dd = Math.hypot(o.x - a.x, o.y - a.y); if (dd < bd) { bd = dd; b = o; }
             }
-            if (b && bd < WORLD * 0.7) lastChatterAt = startDialogue(a, b, now);  // multi-turn exchange
+            if (b && bd < CORE * 0.7) lastChatterAt = startDialogue(a, b, now);   // multi-turn exchange
             else { say(a, "hail"); lastChatterAt = now; }                                   // solo radio call
           }
         }
@@ -1241,7 +1302,7 @@ const StarMap = {
         const sc = sh.scale ?? 1;
         ctx.save(); ctx.globalAlpha = a; ctx.translate(sh.x, sh.y); ctx.rotate(sh.ang || 0);
         // exhaust plume — every hull under thrust trails engine wash
-        if (sh.state !== "dock") {
+        if (sh.state !== "dock" && sh.state !== "haulDock") {
           const fl = (5 + Math.sin(now * 0.02 + sh.x * 0.7) * 2) * sc * (sh.state === "warpOut" ? 1.8 : 1);
           const g2 = ctx.createLinearGradient(-9 * sc, 0, -9 * sc - fl * 2, 0);
           g2.addColorStop(0, "rgba(140,195,255,.6)"); g2.addColorStop(1, "rgba(140,195,255,0)");
@@ -1358,6 +1419,46 @@ const StarMap = {
         moveTo(p.x, p.y, true);
         sh.alpha -= dt * 0.9;
         if (sh.alpha <= 0) sh.state = "dead";
+        break;
+      }
+      // ---- planet cargo shuttles (kind "cargo"): planet ↔ station loop ----
+      case "haulWait": {   // parked on the pad, invisible, waiting out the turnaround
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        sh.x = p.x; sh.y = p.y; sh.alpha = 0;
+        sh.dwell -= dt;
+        if (sh.dwell <= 0) {
+          sh.state = "haulOut";
+          if (sh.sayOut.length && Math.random() < 0.5)
+            sh.bubble = { text: Util.pick(sh.sayOut), t: SYSTEMVIEW.bubbleMs / 1000 };
+        }
+        break;
+      }
+      case "haulOut": {    // lift off and run the export to the station
+        sh.alpha = Math.min(1, sh.alpha + dt * 1.6);
+        if (moveTo(sx, sy) < 10) { sh.state = "haulDock"; sh.dwell = Util.randFloat(2.5, 6); }
+        break;
+      }
+      case "haulDock": {   // unload at the docks (opposite berth from the idlers)
+        sh.x += ((sx - 16) - sh.x) * Math.min(1, dt * 3);
+        sh.y += ((sy - 16) - sh.y) * Math.min(1, dt * 3);
+        sh.dwell -= dt;
+        if (sh.dwell <= 0) {
+          sh.state = "haulBack";
+          if (sh.sayBack.length && Math.random() < 0.5)
+            sh.bubble = { text: Util.pick(sh.sayBack), t: SYSTEMVIEW.bubbleMs / 1000 };
+        }
+        break;
+      }
+      case "haulBack": {   // haul the planet's imports home
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        if (moveTo(p.x, p.y) < 8) sh.state = "haulLand";
+        break;
+      }
+      case "haulLand": {   // settle onto the pad and start the next turnaround
+        const p = targetPos({ kind: "planet", idx: sh.haulIdx });
+        moveTo(p.x, p.y, true);
+        sh.alpha -= dt * 1.2;
+        if (sh.alpha <= 0) { sh.state = "haulWait"; sh.dwell = Util.randFloat(6, 14); }
         break;
       }
       case "combat": {   // orbit the fight, spit sparks, bark, then resolve

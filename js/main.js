@@ -615,6 +615,20 @@ const Game = {
     });
     window.addEventListener("beforeunload", () => this.save());
 
+    // Game-feel input lockdown (see the CSS block of the same name): suppress
+    // the browser context menu and sprite dragging so the app doesn't behave
+    // like a web page. Form fields keep their native menu — losing right-click
+    // paste on the password/username fields would be a real usability hit for
+    // no gain, since anyone reading images off the page isn't using a menu.
+    document.addEventListener("contextmenu", e => {
+      if (e.target.closest("input, textarea, select, [contenteditable='true'], .selectable")) return;
+      e.preventDefault();
+    });
+    document.addEventListener("dragstart", e => {
+      if (e.target.closest("[draggable='true']")) return;   // don't break real drag-and-drop
+      e.preventDefault();
+    });
+
     // Visible-but-idle uses the same suspend/resume: an AFK tab otherwise keeps
     // polling Supabase and pushing an app_commit every ~10s forever. Music keeps
     // playing (it's a cached static file — costs nothing while idle).
