@@ -727,7 +727,12 @@ const Cloud = {
     "credits", "ships", "industries", "expeditions", "extractors",
     "hold", "stationInv", "shipments", "_haulingMigrated",
     "reports", "orders", "pendingHaulSettles", "seq",
-    "activeBoosts", "knownRecipes", "craftedOnce",
+    // craftedOnce is absent on purpose: server-owned as of docs/sql/
+    // commit_allowlist.sql, so the client's copy is never uploaded. activeBoosts
+    // and knownRecipes stay here — blackboxes and blueprints are minted
+    // client-side by the bazaar (see Economy._softSnap), so the server has no
+    // record to force them from.
+    "activeBoosts", "knownRecipes",
     "shipVariants", "achievements", "stats",
     "story", "settings", "rivals", "rivalsMeta",
     "voySeenT", "voyChecks", "lastSeenAt",

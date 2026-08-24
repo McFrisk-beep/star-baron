@@ -213,7 +213,27 @@ const settle = async (timers) => {
       for (const m of body.matchAll(/this\.s\(\)\.([a-zA-Z_]+)/g)) keys.add(m[1]);
     }
 
-    const unclassified = [...keys].filter(k => !wire.has(k) && !FORCED.has(k) && !localOnly.has(k)).sort();
+    // Server-owned by the app_commit_lite wrapper rather than by app_commit's
+    // own forced list: the wrapper substitutes the stored value under the row
+    // lock, so the client's copy never reaches the merge.
+    const sqlSrc = src("docs/sql/commit_allowlist.sql");
+    const WRAPPED = new Set([...sqlSrc.matchAll(/jsonb_set\(inp, '\{([a-zA-Z_]+)\}'/g)].map(m => m[1]));
+    assert(WRAPPED.has("craftedOnce"), "E9 craftedOnce is server-owned in the wrapper");
+    assert(!wire.has("craftedOnce"), "E9 …and the client no longer uploads it");
+    assert(/if \(st\.craftedOnce\) s\.craftedOnce = st\.craftedOnce;/.test(src("js/economy.js")),
+      "E9 …and applyCommitState adopts the server's copy");
+    // The substitution must happen UNDER the lock, or a concurrent craft claim
+    // can have its burn mark overwritten by a stale list.
+    const lockAt = sqlSrc.indexOf("for update");
+    const subAt = sqlSrc.indexOf("jsonb_set(inp, '{craftedOnce}'");
+    assert(lockAt > 0 && subAt > lockAt, "E9 the row is locked before the substitution");
+    // Blocked, and deliberately so — pin the reason so it can't be quietly lost.
+    for (const k of ["activeBoosts", "knownRecipes"])
+      assert(wire.has(k) && !WRAPPED.has(k),
+        `E9 ${k} stays client-owned (soft-minted items have no server record)`);
+
+    const unclassified = [...keys].filter(k =>
+      !wire.has(k) && !FORCED.has(k) && !localOnly.has(k) && !WRAPPED.has(k)).sort();
     assert(unclassified.length === 0,
       `E8 every top-level save key is classified (unclassified: ${unclassified.join(", ") || "none"})`);
     // And the two halves of the allowlist must be the same list, or a key is

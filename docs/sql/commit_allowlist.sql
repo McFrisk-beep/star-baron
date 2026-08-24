@@ -58,7 +58,13 @@ as $$
     -- 2. client-owned
     'hold', 'stationInv', 'shipments', '_haulingMigrated',
     'reports', 'orders', 'pendingHaulSettles', 'seq',
-    'activeBoosts', 'knownRecipes', 'craftedOnce',
+    -- craftedOnce is NOT here: it is server-owned (see app_commit_lite below).
+    -- activeBoosts and knownRecipes stay client-owned — blackboxes and
+    -- blueprints are minted client-side by the bazaar and the server has no
+    -- record of them (js/economy.js _softSnap, js/bazaar.js:82), so forcing
+    -- either from the server row would erase a paid-for box or a real unlock.
+    -- They can only follow craftedOnce once soft items reach the ledger.
+    'activeBoosts', 'knownRecipes',
     'shipVariants', 'achievements', 'stats',
     'story', 'settings', 'rivals', 'rivalsMeta',
     'voySeenT', 'voyChecks', 'lastSeenAt',
@@ -83,25 +89,64 @@ $$;
 -- DEFINER and resolves auth.uid() from the request's JWT claims, which are a
 -- session setting and so still visible inside this call. Marking the wrapper
 -- DEFINER would add a privilege boundary that buys nothing.
+-- SERVER-OWNED SLICES (Tier 1B)
+-- craftedOnce gates one-of-a-kind recipes: app_craft_start refuses a recipe
+-- already in the list, and app_craft_claim appends to it. While the client
+-- supplied the list, deleting an entry re-opened a unique for a second craft.
+-- Substituting the stored value here makes removal impossible — the list only
+-- ever grows, and only via a claim.
+--
+-- The row is locked BEFORE the substitution and held for the transaction, so a
+-- concurrent app_craft_claim cannot land between the read and app_commit's own
+-- lock and have its burn mark overwritten by a stale list. app_commit's
+-- app._lock_state re-acquires the same lock in the same transaction — a no-op.
+--
+-- SECURITY DEFINER (unlike the earlier pure-SQL version) because `for update`
+-- on public.players needs write privilege the authenticated role deliberately
+-- does not have. The body touches exactly one row, addressed by auth.uid(),
+-- and auth.uid() still resolves here: it reads the request's JWT claims, which
+-- are a session setting that SECURITY DEFINER does not disturb — the same
+-- reason app_commit itself can be DEFINER.
 create or replace function public.app_commit_lite(p_state jsonb)
 returns jsonb
-language sql
+language plpgsql
+security definer
 set search_path = public
 as $$
-  select case
-    when jsonb_typeof(r -> 'state') = 'object'
-      then jsonb_set(r, '{state}',
-        (r -> 'state')
-          - 'market'      -- prices/hist are pure functions of (seed, effects, now)
-          - 'galaxy'      -- per-system flavour log; client-only, never sent up
-          - 'stations'    -- shared, read via app_station_directory
-          - 'story'       -- client-owned narrative progress
-          - 'senate'      -- shared, read via world_senate / world_senate_result
-          - 'stock'       -- shared, read via app_sector_stock
-          - 'newswire')   -- shared, read via world_news
-    else r                -- {ok:false, error:…} passes straight through
-  end
-  from public.app_commit(app._client_owned(p_state)) as r;
+declare
+  uid uuid := auth.uid();
+  srv jsonb;
+  inp jsonb;
+  r   jsonb;
+begin
+  if uid is null then
+    return jsonb_build_object('ok', false, 'error', 'not signed in');
+  end if;
+
+  select state into srv from public.players where user_id = uid for update;
+
+  inp := app._client_owned(p_state);
+  -- No row yet (first commit of a brand-new account): nothing to preserve, and
+  -- app_commit bootstraps. Otherwise the stored list is the only authority.
+  if srv is not null then
+    inp := jsonb_set(inp, '{craftedOnce}', coalesce(srv -> 'craftedOnce', '[]'::jsonb));
+  end if;
+
+  r := public.app_commit(inp);
+
+  if jsonb_typeof(r -> 'state') = 'object' then
+    return jsonb_set(r, '{state}',
+      (r -> 'state')
+        - 'market'      -- prices/hist are pure functions of (seed, effects, now)
+        - 'galaxy'      -- per-system flavour log; client-only, never sent up
+        - 'stations'    -- shared, read via app_station_directory
+        - 'story'       -- client-owned narrative progress
+        - 'senate'      -- shared, read via world_senate / world_senate_result
+        - 'stock'       -- shared, read via app_sector_stock
+        - 'newswire');  -- shared, read via world_news
+  end if;
+  return r;             -- {ok:false, error:…} passes straight through
+end;
 $$;
 
 revoke all on function app._client_owned(jsonb) from public, anon;

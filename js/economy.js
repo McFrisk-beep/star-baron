@@ -320,6 +320,9 @@ const Economy = {
       s.workshop = st.workshop;
       if (window.Workshop) Workshop.scrubQueue(s.workshop);
     }
+    // Server-owned (docs/sql/commit_allowlist.sql): the burn list for
+    // one-of-a-kind recipes only ever grows, and only via app_craft_claim.
+    if (st.craftedOnce) s.craftedOnce = st.craftedOnce;
     if (st.lastSeenAt != null) s.lastSeenAt = st.lastSeenAt;
     if (st.crime != null && window.Crime) Crime.applyServer(st.crime);
     if (st.crimeSeenAt != null) s.crimeSeenAt = st.crimeSeenAt;
