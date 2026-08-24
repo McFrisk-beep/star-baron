@@ -84,6 +84,13 @@ const Stations = {
       contractStats: { filled: 0, expired: 0 },
       impoundHold: {},          // Customs House seized cargo { commId: qty }
       impoundClaims: [],        // [{id, commId, qty, value, fromId, ransom}]
+      // hydrate() coerces both of these onto every stored station, so _fresh
+      // must produce them too — otherwise an entry rebuilt by ensure() differs
+      // from the same entry loaded from a save. Every read guards for absence
+      // today, but serialize() now prunes untouched entries and rebuilds them
+      // here, so "rebuilt == stored" is an invariant worth actually holding.
+      pendingCargo: {},         // haul payouts owed in goods { playerId: {commId: qty} }
+      pendingPayouts: {},       // hall/contract credits owed { playerId: amount }
       upkeepPaidThrough: 0,
       cooldownUntil: 0,
       refitUntil: 0,
@@ -3579,9 +3586,54 @@ const Stations = {
     if (this.ledger[id].length > 40) this.ledger[id].length = 40;
   },
 
+  // byId carries one entry per claimable system (78 on the stock galaxy), but
+  // _fresh(sys) is a pure function of the seed-stable system — so an untouched
+  // entry is write-only payload. On every live save that is ~43KB of the 45KB
+  // `stations` slice, re-sent and re-TOASTed on every 15s commit. hydrate()
+  // ends in ensure(), which rebuilds any missing entry from Galaxy.list, so the
+  // untouched ones never needed storing. Same trick as Market.serialize()
+  // dropping prices/hist (tools/check_cloud_egress.js E1).
+  //
+  // Fails CLOSED. An entry is dropped only when EVERY key it carries either
+  // equals what _fresh would rebuild or holds nothing at all, so a field some
+  // future feature adds keeps the entry the moment it has content — new state
+  // can never be pruned by a test that predates it.
+  _carriesNothing(v) {
+    if (v === null || v === undefined || v === false || v === 0 || v === "") return true;
+    if (Array.isArray(v)) return v.every(e => this._carriesNothing(e));
+    if (typeof v === "object") return Object.values(v).every(e => this._carriesNothing(e));
+    return false;
+  },
+
+  _isUntouched(st, sys) {
+    const fresh = this._fresh(sys);
+    for (const k of new Set([...Object.keys(st), ...Object.keys(fresh)])) {
+      // syncBays pads `bays` and hydrate adds empty pendingCargo/pendingPayouts,
+      // so a round-tripped fresh entry is never key-identical to a new one.
+      if (JSON.stringify(st[k]) === JSON.stringify(fresh[k])) continue;
+      if (this._carriesNothing(st[k]) && this._carriesNothing(fresh[k])) continue;
+      return false;
+    }
+    return true;
+  },
+
+  _prunedById() {
+    // Without Galaxy there is nothing to rebuild from, so persist everything.
+    if (!window.Galaxy || !Galaxy.list || !Galaxy.list.length) return this.byId;
+    const bySys = new Map(Galaxy.list.map(s => [s.id, s]));
+    const out = {};
+    for (const [id, st] of Object.entries(this.byId)) {
+      const sys = bySys.get(id);
+      // ensure() skips capitals and never invents a system it can't see, so an
+      // entry it would not rebuild is always kept regardless of its contents.
+      if (!sys || sys.capital || !this._isUntouched(st, sys)) out[id] = st;
+    }
+    return out;
+  },
+
   serialize() {
     return {
-      byId: this.byId,
+      byId: this._prunedById(),
       auctions: this.auctions,
       access: this.access,
       ledger: this.ledger,
