@@ -33,7 +33,7 @@ const StarMap = {
     this.refs = {
       overlay: $("starmap-overlay"), svg: $("galaxy-svg"), tip: $("galaxy-tip"),
       stars: $("galaxy-stars"),
-      galaxyView: $("galaxy-view"), keys: $("galaxy-keys"), systemView: $("system-view"),
+      galaxyView: $("galaxy-view"), hud: $("chart-hud"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
       poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
@@ -193,6 +193,9 @@ const StarMap = {
       t.textContent = v.name;   // textContent — other barons' names are untrusted text
       g.appendChild(t);
     }
+    // Layer class: TRAFFIC covers the NPC economy, FLEETS covers anything
+    // crewed by a baron. The CSS hides the whole group, names included.
+    g.setAttribute("class", "voy " + (v.npc ? "voy-traffic" : "voy-fleets"));
     layer.appendChild(g);
     return { g, hull: hullG, poly: hull, name: nameEl, plume, tail };
   },
@@ -204,6 +207,45 @@ const StarMap = {
   },
 
   // ===== galaxy view (SVG) ================================================
+  // ---- chart layers (player-controlled) ----------------------------------
+  // The galactic chart carries six independent readings at once and they used
+  // to all be on, always. Each is a layer the player can switch off, and the
+  // key for a layer lives ON its row — so the legend can only ever describe
+  // what is actually drawn. Everything hides through a class on the <svg>
+  // root, so toggling is a repaint, not a re-render.
+  LAYERS: [
+    { id: "lanes",      label: "Lanes",      hint: "hyperspace routes between systems" },
+    { id: "security",   label: "Security",   hint: "how much law a region carries (§5.3)" },
+    { id: "allegiance", label: "Allegiance", hint: "which faction a system's economy answers to" },
+    { id: "markets",    label: "Markets",    hint: "price direction, local events and trade hubs" },
+    { id: "traffic",    label: "Traffic",    hint: "NPC haulers, and the ones corsairs emptied" },
+    { id: "fleets",     label: "Fleets",     hint: "your ships, rival barons, survey sites" },
+  ],
+  // Saved per player. Anything absent defaults ON, so a new layer added later
+  // shows up rather than silently hiding for everyone with an older save.
+  // Pure read — updateGalaxyNodes calls this on a timer, so it must not write.
+  layers() {
+    const saved = ((this.s().settings || {}).mapLayers) || {};
+    const out = {};
+    for (const l of this.LAYERS) out[l.id] = saved[l.id] !== false;
+    return out;
+  },
+  setLayer(id, on) {
+    const s = this.s();
+    if (!s.settings) s.settings = {};
+    const m = s.settings.mapLayers || (s.settings.mapLayers = {});
+    m[id] = !!on;
+    window.Game.requestSave();
+    this._applyLayers();
+    this._renderHud();
+  },
+  _applyLayers() {
+    const svg = this.refs.svg; if (!svg) return;
+    const on = this.layers();
+    for (const l of this.LAYERS) svg.classList.toggle("lay-off-" + l.id, !on[l.id]);
+    this.updateGalaxyNodes();   // markets/fleets drive node rings in JS, not CSS
+  },
+
   renderGalaxy() {
     const svg = this.refs.svg;
     const W = 1000, H = 620;
@@ -295,29 +337,72 @@ const StarMap = {
       svg.appendChild(g);
       this._nodeEls[sys.id] = { ring, g };
     }
-    this._renderKeys();
+    this._renderHud();
+    this._applyLayers();
     this.updateGalaxyNodes();
     this._fitGalaxy();
     this._initPanZoom();
   },
 
-  // The map key, built from SECURITYCFG.bands and FACTIONS themselves — retune
-  // a band or add a faction and the legend follows, because there is no second
-  // copy of the colours to forget about.
-  _renderKeys() {
-    const el = this.refs.keys; if (!el) return;
-    const bands = ((window.SECURITYCFG || {}).bands || []).slice().reverse();
-    const row = (head, items) => !items.length ? "" :
-      `<div class="k-row"><span class="k-head">${head}</span>${items.join("")}</div>`;
+  // The chart HUD: one row per layer, carrying that layer's own key. Toggling a
+  // row hides the layer AND its key, so the legend can never describe something
+  // that isn't on screen. Every swatch is read from the data it labels
+  // (SECURITYCFG.bands, FACTIONS, the CSS traffic hues), so there is no second
+  // copy of a colour to forget about when one is retuned.
+  _layerKeys(id) {
+    const dot = (c, t, title) =>
+      `<span class="hud-key"${title ? ` title="${Util.esc(title)}"` : ""}><i style="--kc:${c}"></i>${Util.esc(t)}</span>`;
+    switch (id) {
+      case "lanes": return [
+        `<span class="hud-key"><i class="bar" style="--kc:rgba(130,200,255,.85)"></i>trunk</span>`,
+        `<span class="hud-key"><i class="bar thin" style="--kc:rgba(120,150,200,.5)"></i>local</span>`];
+      case "security":
+        return ((window.SECURITYCFG || {}).bands || []).slice().reverse()
+          .map(b => dot(b.color, b.label, b.blurb));
+      case "allegiance":
+        return Object.values(window.FACTIONS || {}).map(f => dot(f.color, f.name));
+      case "markets": return [
+        dot("var(--up)", "rising"), dot("var(--down)", "falling"),
+        dot("var(--warn)", "local event"), dot("var(--accent)", "trade hub")];
+      case "traffic": return [
+        dot("var(--voy-npc)", "hauler", "an NPC supply hauler with its cargo aboard"),
+        dot("var(--voy-raided)", "raided", "corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty")];
+      case "fleets": return [
+        dot("var(--accent)", "yours"), dot("#ffd9a0", "rivals"), dot("#5fd7ff", "survey")];
+      default: return [];
+    }
+  },
+
+  _renderHud() {
+    const el = this.refs.hud; if (!el) return;
+    const on = this.layers();
+    const collapsed = !!((this.s().settings || {}).mapHudShut);
+    el.classList.toggle("shut", collapsed);
+    const nOff = this.LAYERS.filter(l => !on[l.id]).length;
     el.innerHTML =
-      row("region security", bands.map(b =>
-        `<span title="${Util.esc(b.blurb || "")}"><i class="k-swatch" style="background:${b.color}"></i>${Util.esc(b.label)}</span>`))
-      + row("system allegiance", Object.values(window.FACTIONS || {}).map(f =>
-        `<span><i class="k-dot" style="background:${f.color}"></i>${Util.esc(f.name)}</span>`))
-      + row("traffic", [
-        `<span title="an NPC supply hauler with its cargo aboard"><i class="k-dot" style="background:var(--voy-npc)"></i>hauler</span>`,
-        `<span title="corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty"><i class="k-dot" style="background:var(--voy-raided)"></i>raided</span>`,
-      ]);
+      `<button class="hud-head" id="hud-toggle" aria-expanded="${!collapsed}">
+         <span class="hud-tick"></span>
+         <span class="hud-title">Chart layers</span>
+         <span class="hud-count">${nOff ? `${this.LAYERS.length - nOff}/${this.LAYERS.length}` : "all"}</span>
+       </button>
+       <div class="hud-rows">` +
+      this.LAYERS.map(l => `
+        <button class="hud-row${on[l.id] ? " on" : ""}" data-layer="${l.id}"
+                aria-pressed="${on[l.id]}" title="${Util.esc(l.hint)}">
+          <span class="hud-lamp"></span>
+          <span class="hud-label">${Util.esc(l.label)}</span>
+          <span class="hud-keys">${this._layerKeys(l.id).join("")}</span>
+        </button>`).join("") +
+      `</div>`;
+    el.querySelector("#hud-toggle").onclick = () => {
+      const st = this.s(); if (!st.settings) st.settings = {};
+      st.settings.mapHudShut = !st.settings.mapHudShut;
+      window.Game.requestSave();
+      this._renderHud();
+    };
+    for (const b of el.querySelectorAll(".hud-row")) {
+      b.onclick = () => this.setLayer(b.dataset.layer, !on[b.dataset.layer]);
+    }
   },
 
   // A closed blob hugging a sector's systems: convex hull, pushed out from the
@@ -484,14 +569,22 @@ const StarMap = {
   updateGalaxyNodes() {
     this._updateSectorBlobs();
     if (!this._nodeEls) return;
+    const on = this.layers();
     for (const id in this._nodeEls) {
       const idx = Galaxy.localIndex(id);
       const evt = Galaxy.hasEvent(id);
-      const surv = window.Expeditions && Expeditions.activeFor(id);
+      // A ring carries two readings from two different layers: your survey
+      // (FLEETS) and the market's mood (MARKETS). Neither is CSS-hideable —
+      // the stroke is set here — so the switch has to happen here too.
+      const surv = on.fleets && window.Expeditions && Expeditions.activeFor(id);
+      const mkt = on.markets;
       const ring = this._nodeEls[id].ring;
-      ring.setAttribute("stroke", surv ? "#5fd7ff" : evt ? "#ffc24b" : idx > 0.06 ? "#46d39a" : idx < -0.06 ? "#ff5d73" : "#3a4560");
-      ring.setAttribute("stroke-width", surv || evt ? 3 : 2);
-      ring.classList.toggle("pulse", !!(surv || evt));
+      ring.setAttribute("stroke", surv ? "#5fd7ff"
+        : mkt && evt ? "#ffc24b"
+        : mkt && idx > 0.06 ? "#46d39a"
+        : mkt && idx < -0.06 ? "#ff5d73" : "#3a4560");
+      ring.setAttribute("stroke-width", surv || (mkt && evt) ? 3 : 2);
+      ring.classList.toggle("pulse", !!(surv || (mkt && evt)));
       const docked = this.s().currentSystem === id;
       this._nodeEls[id].g.classList.toggle("docked", docked);
     }

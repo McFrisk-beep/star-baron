@@ -104,7 +104,7 @@ be **overridden live** (see §6 Content CMS).
 | `auth-ui.js` | `AuthUI` — account button + register/login modal + login save-sync. |
 | `admin-ui.js` | `AdminUI` — admin gate, content/image/mission/**crafting** CMS, and the **🧪 Dev view** (fast-news/fast-time toggles + a credits cheat — admin-only; moved out of Settings). |
 | `planetview.js` | `PlanetView` — the planet popup: animated canvas planet, **About** lore tab, **Industries** tab (permit/extractor/component UI). |
-| `starmap.js` | `StarMap` — galaxy SVG view + animated canvas system view; planet rows open `PlanetView`. |
+| `starmap.js` | `StarMap` — galaxy SVG view + animated canvas system view; planet rows open `PlanetView`. The galactic chart carries six independent readings (lanes, security blobs, faction auras, market rings, NPC traffic, fleets) and each is a layer the player can switch off from the chart HUD — `StarMap.LAYERS` / `layers()` / `setLayer()`, saved in `settings.mapLayers`. Layers hide via `lay-off-*` classes on the `<svg>` root (a repaint, not a re-render); the two the ring colour carries — MARKETS and FLEETS — switch in `updateGalaxyNodes` instead. Each HUD row carries that layer's own key, so the legend can only ever describe what is drawn. |
 | `main.js` | `Game` — boot, single in-memory `state`, the loop, schedulers, suspend/resume, offline catch-up, `awayRecap`, save. |
 
 ### State & the game loop
