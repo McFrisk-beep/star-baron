@@ -129,6 +129,16 @@ const StarMap = {
         const ph = Voyages.legPhase(v.at.legP);
         const fl = (ph.mode === "hyper" ? 16 : ph.mode === "gate" ? 3 : 7) + Math.sin(now * 0.02 + v.at.x * 40) * 2;
         el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
+        // Raid state is per-LOOP, the element is per-flight and outlives it, so
+        // repaint on change (and only on change — this runs every frame).
+        const robbed = !!v.raided;
+        if (el.robbed !== robbed) {
+          el.robbed = robbed;
+          el.poly.classList.toggle("raided", robbed);
+          // A glyph as well as a colour: the map must still read for someone
+          // who can't tell the red hull from the tan one.
+          if (el.name) el.name.textContent = (robbed ? "☠ " : "") + (v.name || "");
+        }
       }
       for (const id in this._voyEls) if (!live.has(id)) { this._voyEls[id].g.remove(); delete this._voyEls[id]; }
       // reduced motion: step once a second instead of every frame
@@ -151,14 +161,15 @@ const StarMap = {
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
       tail = 6;
     } else if (v.kind === "freighter") {
-      // NPC supply hauler — boxy hull, flavor name over the top. A hold the
-      // corsairs already emptied (Traffic.raided) flies home in red.
+      // NPC supply hauler — boxy hull, flavor name over the top. Whether the
+      // corsairs already emptied this run is set per-frame in the tick, not
+      // baked in here: elements are cached by flight id and outlive a loop.
       hull.setAttribute("points", "7,0 3,3.6 -6,3.6 -6,-3.6 3,-3.6");
-      hull.setAttribute("class", "voy-hull-npc" + (v.raided ? " raided" : ""));
+      hull.setAttribute("class", "voy-hull-npc");
       tail = 5;
     } else if (v.kind === "trader") {
       hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
-      hull.setAttribute("class", "voy-hull-trader" + (v.raided ? " raided" : ""));
+      hull.setAttribute("class", "voy-hull-trader");
       tail = 3;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
@@ -167,12 +178,13 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    let nameEl = null;
     if (v.kind === "freighter" && v.name) {
-      const t = document.createElementNS(ns, "text");
-      t.setAttribute("class", "voy-name npc");
-      t.setAttribute("y", -9);
-      t.textContent = v.name;
-      g.appendChild(t);
+      nameEl = document.createElementNS(ns, "text");
+      nameEl.setAttribute("class", "voy-name npc");
+      nameEl.setAttribute("y", -9);
+      nameEl.textContent = v.name;
+      g.appendChild(nameEl);
     }
     if (v.kind === "flagship" && v.name) {
       const t = document.createElementNS(ns, "text");
@@ -182,7 +194,7 @@ const StarMap = {
       g.appendChild(t);
     }
     layer.appendChild(g);
-    return { g, hull: hullG, plume, tail };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -301,7 +313,11 @@ const StarMap = {
       row("region security", bands.map(b =>
         `<span title="${Util.esc(b.blurb || "")}"><i class="k-swatch" style="background:${b.color}"></i>${Util.esc(b.label)}</span>`))
       + row("system allegiance", Object.values(window.FACTIONS || {}).map(f =>
-        `<span><i class="k-dot" style="background:${f.color}"></i>${Util.esc(f.name)}</span>`));
+        `<span><i class="k-dot" style="background:${f.color}"></i>${Util.esc(f.name)}</span>`))
+      + row("traffic", [
+        `<span title="an NPC supply hauler with its cargo aboard"><i class="k-dot" style="background:var(--voy-npc)"></i>hauler</span>`,
+        `<span title="corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty"><i class="k-dot" style="background:var(--voy-raided)"></i>raided</span>`,
+      ]);
   },
 
   // A closed blob hugging a sector's systems: convex hull, pushed out from the
