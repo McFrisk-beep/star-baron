@@ -543,6 +543,11 @@ const Cloud = {
   // does, so a project running older SQL falls back to the old local behaviour
   // instead of erroring on every click. shipRpcReady() is what the client checks
   // BEFORE the optimistic mutation, so a fallback never costs a round trip.
+  // Latched by Economy._applyServerSlice when app_pull/app_commit echoes a
+  // `mining` key — i.e. docs/sql/mining_rpcs.sql is applied and the server owns
+  // belt ops. There is no mining RPC to probe with _optional(): mining rides
+  // app_pull, so the echoed slice IS the capability check.
+  miningOwned: false,
   _rpcMissing: {},
   async _optional(name, args) {
     if (this._rpcMissing[name]) return null;
@@ -712,7 +717,7 @@ const Cloud = {
   // mining/beltPools: guest-local for now — dispatch is gated off the server
   // ledger (Mining.canStart) until the mining SQL phase adds its RPC surface,
   // at which point both move onto WIRE_KEYS + commit_allowlist together.
-  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war", "mining", "beltPools"],
+  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war"],
   // The legacy `saves` strip is ONLY galaxy (cosmetic, regenerated): that row
   // has no server-side merge and no guaranteed world tables behind it, so it
   // must keep carrying the world slices or a device change loses them —
@@ -738,6 +743,13 @@ const Cloud = {
     "credits", "ships", "industries", "expeditions", "extractors",
     "hold", "stationInv", "shipments", "_haulingMigrated",
     "reports", "orders", "pendingHaulSettles", "seq",
+    // Mining ops + what you took off each rock. Merge inputs once
+    // docs/sql/mining_rpcs.sql is applied: app._merge_mining accepts new
+    // dispatches and a recall, and owns every timer and counter after that;
+    // app._merge_belt_pools only ever lets a rock's `used` go UP within a
+    // generation. On a project without that SQL they ride as client-owned and
+    // mining stays local, exactly as it was.
+    "mining", "beltPools",
     // craftedOnce IS sent even though the server owns it: on a project running
     // older SQL (or the raw-app_commit fallback) the row keeps whatever the
     // client sends, so omitting it would wipe the burn list there — and a

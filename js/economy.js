@@ -185,6 +185,16 @@ const Economy = {
     if (r.components) s.components = r.components;
     // Server-owned once docs/sql/charter_rpcs.sql is applied (older SQL omits the key).
     if (r.charters) s.charters = r.charters;
+    // Mining: server-owned once docs/sql/mining_rpcs.sql is applied. The KEY's
+    // presence is the probe — result_slice only carries it on that SQL, and it
+    // arrives as [] for a baron with no ops, so test the shape, not the truth.
+    // Until it shows up, Mining.canStart keeps dispatch gated and the whole
+    // loop stays on the local ledger, exactly as it was.
+    if (Array.isArray(r.mining)) {
+      if (window.Cloud) Cloud.miningOwned = true;
+      s.mining = r.mining;
+      if (r.beltPools && typeof r.beltPools === "object") s.beltPools = r.beltPools;
+    }
     // Workshop queue/upgrades are server-owned once docs/sql/workshop_craft.sql
     // is applied; knownRecipes/craftedOnce still come back so a burned unique
     // blueprint sticks after a claim. Scrub ids already claimed this session so

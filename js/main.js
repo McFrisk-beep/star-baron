@@ -222,6 +222,23 @@ const Game = {
           !(s.expeditions || []).some(e => e.shipUid === sh.uid && !e.resolved))
         sh.status = "idle";
     }
+    // Mining ops are save data: a tampered or half-written row must not strand
+    // a hull in "mining"/"guarding" forever with no op to release it. Sanitise
+    // the guard wing, then free any hull no live op still claims.
+    if (!Array.isArray(s.mining)) s.mining = [];
+    const liveHulls = new Set(s.ships.map(sh => sh.uid));
+    for (const op of s.mining) {
+      op.guardUids = (Array.isArray(op.guardUids) ? op.guardUids : [])
+        .filter((u, i, a) => typeof u === "string" && u !== op.shipUid && liveHulls.has(u) && a.indexOf(u) === i)
+        .slice(0, (window.RAIDCFG || {}).guardMax || 0);
+      op.cycles = Math.max(0, op.cycles | 0);
+    }
+    const onClaim = uid => s.mining.some(op => op.shipUid === uid);
+    const onGuard = uid => s.mining.some(op => op.guardUids.includes(uid));
+    for (const sh of s.ships) {
+      if (sh.status === "mining" && !onClaim(sh.uid)) sh.status = "idle";
+      else if (sh.status === "guarding" && !onGuard(sh.uid)) sh.status = "idle";
+    }
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
     // Yard refits (state.shipVariants) are a CLIENT-owned slice — app_commit
@@ -455,6 +472,15 @@ const Game = {
         offlineCharters = window.Charters ? await Promise.resolve(Charters.resolve(now)) : [];
         offlineReports = offlineReports.concat(offlineCharters);
         offlineIndustry = pulled.industry || [];
+        // Belt batches and corsair raids banked by app._catchup_mining. The ore
+        // is already in the server's positions; park the matching bay blocks so
+        // the hauling ledger agrees, then let both ride the same recap the
+        // local resolver feeds.
+        for (const m of pulled.mining || []) {
+          if (window.Assets && m.sysId && m.qty > 0) Assets.parkBlocks(m.sysId, m.commodity, m.qty);
+        }
+        offlineIndustry = offlineIndustry.concat(pulled.mining || [])
+          .concat((pulled.miningRaids || []).map(raid => ({ raid })));
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
         if (window.Charters) Charters.reconcileShips();
@@ -941,6 +967,9 @@ const Game = {
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;
+    // A matured belt batch or a hull due home — without this, server-owned ore
+    // would only land on a reload.
+    if ((s.mining || []).some(o => (o.nextAt && now >= o.nextAt) || (o.returnAt && now >= o.returnAt))) return true;
     return false;
   },
 

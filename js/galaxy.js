@@ -119,6 +119,40 @@ const Galaxy = {
   modsFor(id) { const s = this.systems[id]; return s ? s.mods : {}; },
   sector(id) { return this.sectors.find(s => s.id === id); },
 
+  // Who a system's economy answers to (docs/SPACE_INTERACTIVITY.md — the
+  // galaxy chart colours nodes by this). Derived, never authored: tally the
+  // categories its planets actually work and map the winner through
+  // CATEGORY_FACTION. Ties break on the sector's own specialty, then on a
+  // fixed order, so every client paints the same map.
+  factionOf(sysOrId) {
+    const sys = typeof sysOrId === "string" ? this.get(sysOrId) : sysOrId;
+    if (!sys) return null;
+    if (sys._faction !== undefined) return sys._faction;
+    // The Syndics are the one race that IS a faction, and §5.4 is explicit: in
+    // their space you are not policed, you are TAXED — the Syndicate is the law
+    // there, whatever the local planets happen to dig up. Sector race carries
+    // 70% of the time (see build()), so this paints the Sable Sprawl and leaves
+    // scattered syndic footholds in everyone else's back yard.
+    if (sys.race === "syndics") return (sys._faction = "syndicate");
+    const tally = {};
+    for (const p of sys.planets || []) {
+      const f = CATEGORY_FACTION[p.cat];
+      if (f) tally[f] = (tally[f] || 0) + 1;
+    }
+    const sec = this.sector(sys.sectorId);
+    const home = (sec && sec.specialty && CATEGORY_FACTION[sec.specialty]) || null;
+    let best = null, bn = 0;
+    for (const f of Object.keys(FACTIONS)) {          // fixed order = deterministic ties
+      const n = tally[f] || 0;
+      if (n > bn || (n === bn && n > 0 && f === home)) { best = f; bn = n; }
+    }
+    return (sys._faction = best || home);
+  },
+  factionColor(sysOrId) {
+    const f = this.factionOf(sysOrId);
+    return (f && (FACTIONS[f] || {}).color) || "#9aa9c8";
+  },
+
   // The commodity whose category this system distorts the most (its "signature").
   signatureCommodity(sys) {
     let best = null, dev = -1;

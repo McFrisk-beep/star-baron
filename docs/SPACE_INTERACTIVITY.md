@@ -1,6 +1,7 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order steps 1–2 are built.**
+**Status: build order steps 1–3 are built, plus §5.3's security bands (the
+derivation half of step 5).**
 
 - **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
   renders them, makes them clickable and adds the minimap;
@@ -10,13 +11,41 @@
   `phase2_missions_bazaar.sql` and `equip_persist.sql`), seeded seams on belt
   POIs, `js/mining.js` runs the dispatch → park → untaxed batches → recall
   loop, NPC barges work the rich belts, and the belt's POI card carries the
-  controls. `tools/check_mining.js` is the check. Scope notes: **client /
-  local-ledger only** — signed-in dispatch is gated (`Mining.canStart`) until
-  a mining RPC surface exists, because `app_commit` owns positions and ship
-  status; §11 Q3 is answered conservatively for now (ore lands in
-  `state.positions` + the system bay, NOT the sector shelf, so the
-  `npcOutputMult` trap in §3.7 stays untriggered); claims (§3.6) and the
-  extra classes (§3.8) are still open.
+  controls. `tools/check_mining.js` is the check. **Now server-settled too:**
+  `docs/sql/mining_rpcs.sql` moves the whole loop — batches, raids, returning
+  hulls — into `app_pull`, so a signed-in baron can dispatch and close the tab;
+  the op row carries the three numbers the server cannot derive (`per`,
+  `threat`, `repel`), computed by the client and clamped server-side, and
+  `tools/check_mining_parity.js` pins the two implementations together. §11 Q3
+  is **settled: ore stays private** — it lands in `state.positions` + the system
+  bay, NOT the sector shelf, so the `npcOutputMult` trap in §3.7 stays
+  untriggered. Claims (§3.6) and the extra classes (§3.8) are still open.
+- **Step 3 (NPC piracy, §4):** `js/raiders.js` is the whole consequence layer.
+  Corsairs jump parked claims and rob NPC haulers; `tools/check_raiders.js` is
+  the check. Threat is derived from a number that already existed — the seam's
+  own richness, which already carries the sector (`MININGCFG.sectorRich`), so
+  "the rich seams sit in the worst neighbourhoods" needed no second table. A
+  pirate den in the system multiplies it, Senate lane patrols swing it, and in
+  the Sprawl Syndicate standing buys quiet (§5.4). Escort hulls now have the
+  standing job §3.5 asked for: guard the claim from the belt's own card, scored
+  with `Charters.defenseScore` so there was no second balance pass. Every roll
+  is a pure function of `(op, cycle index)`, so a night offline banks exactly
+  the raids a watched tab would have seen. **The anti-grief rules of §6.6 are
+  enforced against NPCs first, because this is where the player learns what
+  raiding costs:** a raid takes the batch that was in the hold and nothing else
+  — never banked ore, never the system bay, never a hull. A robbed miner takes
+  damage (a repair bill) and can be chased off its rock; it always flies home.
+- **§5.3 security bands (part of step 5):** `js/security.js` computes how much
+  law is present in a system — sector floor + sector capital + station modules
+  + Senate edicts + a running war — and the galaxy chart paints it: each region
+  is a blob hugging its own systems, tinted by its band, with system nodes
+  wearing their faction's colour (`Galaxy.factionOf`, tallied off the planets
+  each system actually works; Syndic space answers to the Syndicate per §5.4).
+  `tools/check_security.js` is the check. **Raiders reads the same number**, so
+  there is one answer to "how lawful is here" rather than two that drift — and
+  fitting a Customs House now measurably protects your own mining claims *and*
+  repaints the map for everyone. The other half of step 5 — police *response*
+  as a seeded flight plan (§5.2), and crime with teeth — is still design only.
 
 **Site churn (§1.3's epoch input) is also built.** A system's *slots* are
 permanent geography, but their *occupants* are not: belts, debris fields and
@@ -33,7 +62,8 @@ seam it was never sent to. Nothing new is stored: occupancy is
 what *you* took, and it dies with its generation. Mining's cadence dropped to
 30-minute batches (`MININGCFG.cycleMs`) so several land inside a site's life.
 
-Everything from §4 on is still design only. The document is the consolidated
+Everything from §5.1 on, apart from the §5.3 bands noted above, is still
+design only. The document is the consolidated
 output of two brainstorming rounds, written down so the decided parts can be
 separated from the open ones before anybody opens an editor.
 
@@ -176,7 +206,10 @@ A parked miner is a stationary target sitting in space for hours, and it is
 generates most of the social game:
 
 - The `escort` class finally has a *standing* job (guard the claim) rather than
-  only a contract-board job.
+  only a contract-board job. **Built in step 3:** idle escort hulls are picked
+  on the belt's card, ride the op out and home, and repel raids on a saturating
+  curve — a bare miner almost never repels, a heavy wing usually does, and
+  nothing is ever immune.
 - Player-to-player mercenary escort becomes a real service with a real price.
 - **The ore leg**: mined ore accumulates at the rock or in the miner's hold and
   must be hauled to a station to become tradeable. A second raidable leg, and the
@@ -219,6 +252,22 @@ Adding one class means touching class-handling code once. Candidates:
 
 The PvE half. It ships before anything player-facing and teaches the whole threat
 model in a sandbox where nobody can be griefed.
+
+**Half of this is built (build step 3, `js/raiders.js`): piracy *by* NPCs.**
+Corsairs raid parked mining claims and strip NPC haulers running out of a den
+system — the threat model, taught from the receiving end, where nobody can be
+griefed at all. The player-side verbs below (§4.1/§4.3 — rob, toll, escort a
+contact of your own) are step 4 and are still design only. Two decisions worth
+recording, because both were tempting to get wrong:
+
+- **A raided NPC hauler still arrives, with an empty hold.** Hull kept, cargo
+  gone — the same rule that protects a player's miner (§6.6.5), applied to the
+  NPCs so the world plays by one law.
+- **It is deliberately shelf-neutral.** Robbing a freighter here does *not*
+  subtract from `js/stock.js`. Suppressing NPC supply is the den's own job in
+  §7.1, and doing it in two places for one den is exactly the `npcOutputMult`
+  desync §3.7 warns about. The visible raids are the telegraph; the drain
+  arrives with the den.
 
 ### 4.1 The loop
 
@@ -284,6 +333,37 @@ it) + Senate edicts + whether `js/wars.js` has a war running. Every input exists
 The consequence is the good part: **players change the security map by playing.**
 Fitting a Customs House genuinely makes a lane safer for everyone, competitors
 included — a public good that is also individually profitable.
+
+**Built (`js/security.js`).** `Security.score(sysId)` is that sum, 0–1, clamped;
+`band()` buckets it into the five the galaxy chart draws. One number was
+authored — `SECURITYCFG.sectorBase`, exactly parallel to `MININGCFG.sectorRich`
+— and everything on top of it is read from the world. Two decisions worth
+recording:
+
+- **Pirate dens are deliberately not an input.** Security is the law's
+  *published* presence; a den is a local secret you find by flying out to it
+  (§7.1 keeps it hidden until found), and folding it in here would paint every
+  den on the galaxy chart. Den pressure stays in `RAIDCFG`, discovered.
+- **`Raiders` consumes this, it does not duplicate it.** `claimChance` was
+  growing its own Senate term; that is now `Security.raidMult()`. One truth for
+  "how lawful is here", so a Customs House protects a mining claim and repaints
+  the region for the same reason, and neither can drift from the other.
+
+The Sable Sprawl starts *below* the lawless line on purpose (§5.4): its capital
+scrapes into Frontier on the capital bonus, the rest is genuinely outside the
+law. Every band boundary is reachable by play in both directions — a Free Port
+or a Black Market drops a system, a Customs House or a Lane Buoy lifts it.
+
+**Faction allegiance** rides alongside it on the same chart, and is derived the
+same way: `Galaxy.factionOf(sys)` tallies the categories its planets actually
+work and maps the winner through `CATEGORY_FACTION`. The one stated rule is
+§5.4's — Syndic space answers to the Syndicate whatever it digs up — which is
+what makes the Sprawl read as Syndicate territory and scatters Syndicate
+footholds through everyone else's back yard.
+
+Civil unrest (`Stock.sentiment`) kept its place on the chart as a *separate*
+channel — a dashed region edge — rather than a second hue, so an angry but
+well-policed sector can never be misread as a lawless one.
 
 ### 5.4 Sable Sprawl is not lawless — it has a different law
 
@@ -472,9 +552,9 @@ Each step ships alone and is playable without the next one.
 |---|---|---|
 | 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
-| 3 | **NPC piracy against miners and traffic** | Teaches the threat model where nobody can grief anybody |
+| 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
 | 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
-| 5 | **Security bands, response, crime with teeth** | The rules now have something to govern |
+| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response and crime still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |
 
@@ -506,9 +586,13 @@ needs an escort — **because NPCs taught them.**
 2. **Do guests see contacts at all?** Consistent with the ranked/unranked split,
    probably own + NPC filler only. Same open question `LIVING_GALAXY.md` §10 raises
    for voyage markers.
-3. **Does mined tonnage land on the shelf or in `state.positions` first?** §3.7
-   argues the shelf, but that is the decision that determines whether mining is a
-   price lever or a private income stream.
+3. ~~**Does mined tonnage land on the shelf or in `state.positions` first?**~~ —
+   settled: **private.** Ore lands in `state.positions` + the system bay, and
+   `docs/sql/mining_rpcs.sql` does the same server-side. Mining is an income
+   stream and an ore-hauling leg, not a price lever. §3.7's argument for the
+   shelf still stands on its merits and the `npcOutputMult` trap it names is the
+   reason this is the conservative answer — revisit it as a deliberate change,
+   with player tonnage inside the ratio rather than beside it.
 4. ~~**Epoch length** for asteroid depletion and site regeneration~~ — settled:
    each churning site gets its own seeded 1–3h lifetime (`POICFG`), staggered so
    a system never reshuffles all at once, and depletion rides the same clock.
@@ -520,3 +604,11 @@ needs an escort — **because NPCs taught them.**
    space, but yellow is where most claims will actually be.
 7. **How many new ship classes at once?** §3.8 lists three more that are cheap
    *if* done while class handling is already open, and expensive later.
+8. **Does a raid on your claim earn a grudge?** Step 3 resolves raids as
+   weather: a seeded band name, no persistence, nothing to hunt. `js/rivals.js`
+   taunts and §5.5's bounty board are the obvious hook for turning a repeat
+   attacker into a *target*, but that is the bounty half of §5 and wants the
+   crime ladder underneath it first.
+9. **Should a guarded claim pay less?** Escorting is currently free counterplay
+   — an idle warship costs nothing to park. If escort hulls ever earn upkeep,
+   guarding becomes a priced decision instead of an obvious one.

@@ -33,7 +33,7 @@ const StarMap = {
     this.refs = {
       overlay: $("starmap-overlay"), svg: $("galaxy-svg"), tip: $("galaxy-tip"),
       stars: $("galaxy-stars"),
-      galaxyView: $("galaxy-view"), systemView: $("system-view"),
+      galaxyView: $("galaxy-view"), hud: $("chart-hud"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
       poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
@@ -129,6 +129,16 @@ const StarMap = {
         const ph = Voyages.legPhase(v.at.legP);
         const fl = (ph.mode === "hyper" ? 16 : ph.mode === "gate" ? 3 : 7) + Math.sin(now * 0.02 + v.at.x * 40) * 2;
         el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
+        // Raid state is per-LOOP, the element is per-flight and outlives it, so
+        // repaint on change (and only on change — this runs every frame).
+        const robbed = !!v.raided;
+        if (el.robbed !== robbed) {
+          el.robbed = robbed;
+          el.poly.classList.toggle("raided", robbed);
+          // A glyph as well as a colour: the map must still read for someone
+          // who can't tell the red hull from the tan one.
+          if (el.name) el.name.textContent = (robbed ? "☠ " : "") + (v.name || "");
+        }
       }
       for (const id in this._voyEls) if (!live.has(id)) { this._voyEls[id].g.remove(); delete this._voyEls[id]; }
       // reduced motion: step once a second instead of every frame
@@ -151,7 +161,9 @@ const StarMap = {
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
       tail = 6;
     } else if (v.kind === "freighter") {
-      // NPC supply hauler — boxy hull, flavor name over the top
+      // NPC supply hauler — boxy hull, flavor name over the top. Whether the
+      // corsairs already emptied this run is set per-frame in the tick, not
+      // baked in here: elements are cached by flight id and outlive a loop.
       hull.setAttribute("points", "7,0 3,3.6 -6,3.6 -6,-3.6 3,-3.6");
       hull.setAttribute("class", "voy-hull-npc");
       tail = 5;
@@ -166,12 +178,13 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    let nameEl = null;
     if (v.kind === "freighter" && v.name) {
-      const t = document.createElementNS(ns, "text");
-      t.setAttribute("class", "voy-name npc");
-      t.setAttribute("y", -9);
-      t.textContent = v.name;
-      g.appendChild(t);
+      nameEl = document.createElementNS(ns, "text");
+      nameEl.setAttribute("class", "voy-name npc");
+      nameEl.setAttribute("y", -9);
+      nameEl.textContent = v.name;
+      g.appendChild(nameEl);
     }
     if (v.kind === "flagship" && v.name) {
       const t = document.createElementNS(ns, "text");
@@ -180,8 +193,11 @@ const StarMap = {
       t.textContent = v.name;   // textContent — other barons' names are untrusted text
       g.appendChild(t);
     }
+    // Layer class: TRAFFIC covers the NPC economy, FLEETS covers anything
+    // crewed by a baron. The CSS hides the whole group, names included.
+    g.setAttribute("class", "voy " + (v.npc ? "voy-traffic" : "voy-fleets"));
     layer.appendChild(g);
-    return { g, hull: hullG, plume, tail };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -191,6 +207,45 @@ const StarMap = {
   },
 
   // ===== galaxy view (SVG) ================================================
+  // ---- chart layers (player-controlled) ----------------------------------
+  // The galactic chart carries six independent readings at once and they used
+  // to all be on, always. Each is a layer the player can switch off, and the
+  // key for a layer lives ON its row — so the legend can only ever describe
+  // what is actually drawn. Everything hides through a class on the <svg>
+  // root, so toggling is a repaint, not a re-render.
+  LAYERS: [
+    { id: "lanes",      label: "Lanes",      hint: "hyperspace routes between systems" },
+    { id: "security",   label: "Security",   hint: "how much law a region carries (§5.3)" },
+    { id: "allegiance", label: "Allegiance", hint: "which faction a system's economy answers to" },
+    { id: "markets",    label: "Markets",    hint: "price direction, local events and trade hubs" },
+    { id: "traffic",    label: "Traffic",    hint: "NPC haulers, and the ones corsairs emptied" },
+    { id: "fleets",     label: "Fleets",     hint: "your ships, rival barons, survey sites" },
+  ],
+  // Saved per player. Anything absent defaults ON, so a new layer added later
+  // shows up rather than silently hiding for everyone with an older save.
+  // Pure read — updateGalaxyNodes calls this on a timer, so it must not write.
+  layers() {
+    const saved = ((this.s().settings || {}).mapLayers) || {};
+    const out = {};
+    for (const l of this.LAYERS) out[l.id] = saved[l.id] !== false;
+    return out;
+  },
+  setLayer(id, on) {
+    const s = this.s();
+    if (!s.settings) s.settings = {};
+    const m = s.settings.mapLayers || (s.settings.mapLayers = {});
+    m[id] = !!on;
+    window.Game.requestSave();
+    this._applyLayers();
+    this._renderHud();
+  },
+  _applyLayers() {
+    const svg = this.refs.svg; if (!svg) return;
+    const on = this.layers();
+    for (const l of this.LAYERS) svg.classList.toggle("lay-off-" + l.id, !on[l.id]);
+    this.updateGalaxyNodes();   // markets/fleets drive node rings in JS, not CSS
+  },
+
   renderGalaxy() {
     const svg = this.refs.svg;
     const W = 1000, H = 620;
@@ -198,23 +253,27 @@ const StarMap = {
     svg.innerHTML = "";
     const X = x => x * W, Y = y => y * H;
 
-    // sector halos + labels + link lines to capital
+    // Region blobs: a hull drawn round the sector's actual systems, tinted by
+    // its SECURITY band (§5.3) rather than by race — the map's job is to tell
+    // you where the law is before you fly a fat hold there. Civil unrest
+    // (Stock.sentiment) rides a dashed edge, a separate channel so it can
+    // never be misread as a security colour.
+    this._blobEls = {};
     for (const sec of Galaxy.sectors) {
       const cx = X(sec.pos.x), cy = Y(sec.pos.y);
-      const halo = document.createElementNS(ns, "circle");
-      halo.setAttribute("cx", cx); halo.setAttribute("cy", cy); halo.setAttribute("r", 120);
-      halo.setAttribute("class", "sector-halo"); halo.setAttribute("fill", RACES[sec.race].color);
-      // Sentiment tint: coarse public band (exact figures stay in Stations tab).
-      if (window.Stock && Stock.sentiment[sec.id] != null) {
-        const s = Stock.sentiment[sec.id];
-        halo.setAttribute("opacity", s >= 60 ? "0.18" : s >= 40 ? "0.28" : s >= 20 ? "0.38" : "0.48");
-        if (s < 40) halo.setAttribute("fill", s < 20 ? "#ff5d73" : "#ffc24b");
-      }
-      svg.appendChild(halo);
+      const blob = document.createElementNS(ns, "path");
+      blob.setAttribute("class", "sector-blob");
+      blob.setAttribute("d", this._sectorBlobPath(sec, X, Y));
+      svg.appendChild(blob);
       const lbl = document.createElementNS(ns, "text");
       lbl.setAttribute("x", cx); lbl.setAttribute("y", cy - 96);
       lbl.setAttribute("class", "sector-label"); lbl.textContent = sec.name.toUpperCase();
       svg.appendChild(lbl);
+      const sub = document.createElementNS(ns, "text");
+      sub.setAttribute("x", cx); sub.setAttribute("y", cy - 80);
+      sub.setAttribute("class", "sector-band");
+      svg.appendChild(sub);
+      this._blobEls[sec.id] = { blob, sub };
     }
 
     // hyperspace lanes (Lanes.build from the same seed): bright trunk highways
@@ -239,6 +298,17 @@ const StarMap = {
       g.setAttribute("class", "node" + (sys.capital ? " cap" : "") + (owned ? " st-owned" : "") + (auction && auction.status === "open" ? " st-auction" : ""));
       g.setAttribute("transform", `translate(${X(sys.pos.x)},${Y(sys.pos.y)})`);
       g.style.cursor = "pointer";
+
+      // Faction aura: who this system's economy answers to (Galaxy.factionOf,
+      // tallied off its planets). Its own element, drawn behind, so the
+      // node-ring keeps carrying market direction / events / surveys — two
+      // signals, two channels, neither one clobbering the other.
+      const fac = document.createElementNS(ns, "circle");
+      const fcol = Galaxy.factionColor(sys);
+      fac.setAttribute("r", sys.capital ? 18 : 12);
+      fac.setAttribute("class", "node-faction");
+      fac.setAttribute("fill", fcol); fac.setAttribute("stroke", fcol);
+      g.appendChild(fac);
 
       const ring = document.createElementNS(ns, "circle");
       ring.setAttribute("r", sys.capital ? 13 : 8);
@@ -267,9 +337,131 @@ const StarMap = {
       svg.appendChild(g);
       this._nodeEls[sys.id] = { ring, g };
     }
+    this._renderHud();
+    this._applyLayers();
     this.updateGalaxyNodes();
     this._fitGalaxy();
     this._initPanZoom();
+  },
+
+  // The chart HUD: one row per layer, carrying that layer's own key. Toggling a
+  // row hides the layer AND its key, so the legend can never describe something
+  // that isn't on screen. Every swatch is read from the data it labels
+  // (SECURITYCFG.bands, FACTIONS, the CSS traffic hues), so there is no second
+  // copy of a colour to forget about when one is retuned.
+  _layerKeys(id) {
+    const dot = (c, t, title) =>
+      `<span class="hud-key"${title ? ` title="${Util.esc(title)}"` : ""}><i style="--kc:${c}"></i>${Util.esc(t)}</span>`;
+    switch (id) {
+      case "lanes": return [
+        `<span class="hud-key"><i class="bar" style="--kc:rgba(130,200,255,.85)"></i>trunk</span>`,
+        `<span class="hud-key"><i class="bar thin" style="--kc:rgba(120,150,200,.5)"></i>local</span>`];
+      case "security":
+        return ((window.SECURITYCFG || {}).bands || []).slice().reverse()
+          .map(b => dot(b.color, b.label, b.blurb));
+      case "allegiance":
+        return Object.values(window.FACTIONS || {}).map(f => dot(f.color, f.name));
+      case "markets": return [
+        dot("var(--up)", "rising"), dot("var(--down)", "falling"),
+        dot("var(--warn)", "local event"), dot("var(--accent)", "trade hub")];
+      case "traffic": return [
+        dot("var(--voy-npc)", "hauler", "an NPC supply hauler with its cargo aboard"),
+        dot("var(--voy-raided)", "raided", "corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty")];
+      case "fleets": return [
+        dot("var(--accent)", "yours"), dot("#ffd9a0", "rivals"), dot("#5fd7ff", "survey")];
+      default: return [];
+    }
+  },
+
+  _renderHud() {
+    const el = this.refs.hud; if (!el) return;
+    const on = this.layers();
+    const collapsed = !!((this.s().settings || {}).mapHudShut);
+    el.classList.toggle("shut", collapsed);
+    const nOff = this.LAYERS.filter(l => !on[l.id]).length;
+    el.innerHTML =
+      `<button class="hud-head" id="hud-toggle" aria-expanded="${!collapsed}">
+         <span class="hud-tick"></span>
+         <span class="hud-title">Chart layers</span>
+         <span class="hud-count">${nOff ? `${this.LAYERS.length - nOff}/${this.LAYERS.length}` : "all"}</span>
+       </button>
+       <div class="hud-rows">` +
+      this.LAYERS.map(l => `
+        <button class="hud-row${on[l.id] ? " on" : ""}" data-layer="${l.id}"
+                aria-pressed="${on[l.id]}" title="${Util.esc(l.hint)}">
+          <span class="hud-lamp"></span>
+          <span class="hud-label">${Util.esc(l.label)}</span>
+          <span class="hud-keys">${this._layerKeys(l.id).join("")}</span>
+        </button>`).join("") +
+      `</div>`;
+    el.querySelector("#hud-toggle").onclick = () => {
+      const st = this.s(); if (!st.settings) st.settings = {};
+      st.settings.mapHudShut = !st.settings.mapHudShut;
+      window.Game.requestSave();
+      this._renderHud();
+    };
+    for (const b of el.querySelectorAll(".hud-row")) {
+      b.onclick = () => this.setLayer(b.dataset.layer, !on[b.dataset.layer]);
+    }
+  },
+
+  // A closed blob hugging a sector's systems: convex hull, pushed out from the
+  // centroid so it clears the stars, then run through a closed Catmull-Rom
+  // spline so the territory reads as an organic region rather than a polygon.
+  // Pure geometry off seeded positions — same shape on every client, and it
+  // scales cleanly under the viewBox zoom (no filters, no raster).
+  _sectorBlobPath(sec, X, Y, pad = 38) {
+    const pts = sec.systems.map(id => Galaxy.get(id)).filter(Boolean)
+      .map(sys => ({ x: X(sys.pos.x), y: Y(sys.pos.y) }));
+    if (!pts.length) return "";
+    const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
+    const cy = pts.reduce((n, p) => n + p.y, 0) / pts.length;
+    // A sector too small to hull (or all-collinear) still deserves a blob.
+    let hull = pts.length >= 3 ? this._hull(pts) : [];
+    if (hull.length < 3) {
+      const r = pts.reduce((n, p) => Math.max(n, Math.hypot(p.x - cx, p.y - cy)), 0) + pad;
+      hull = [0, 1, 2, 3, 4, 5].map(i => {
+        const a = i / 6 * Math.PI * 2;
+        return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+      });
+    } else {
+      hull = hull.map(p => {
+        const d = Math.hypot(p.x - cx, p.y - cy) || 1;
+        return { x: p.x + (p.x - cx) / d * pad, y: p.y + (p.y - cy) / d * pad };
+      });
+    }
+    return this._closedSpline(hull);
+  },
+
+  // Andrew's monotone chain — counter-clockwise hull of a point set.
+  _hull(pts) {
+    const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const half = src => {
+      const out = [];
+      for (const q of src) {
+        while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], q) <= 0) out.pop();
+        out.push(q);
+      }
+      out.pop();
+      return out;
+    };
+    return half(p).concat(half(p.slice().reverse()));
+  },
+
+  // Closed Catmull-Rom → cubic beziers. The standard 1/6 tangent gives a curve
+  // that passes through every hull vertex, so the blob still contains its
+  // systems after smoothing.
+  _closedSpline(p) {
+    const n = p.length, at = i => p[(i % n + n) % n];
+    let d = `M${at(0).x.toFixed(1)},${at(0).y.toFixed(1)}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+      d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+    return d + "Z";
   },
 
   // ===== galaxy pan / zoom =================================================
@@ -306,7 +498,11 @@ const StarMap = {
       if (y < minY) minY = y; if (y > maxY) maxY = y;
     }
     if (!isFinite(minX)) { minX = 0; minY = 0; maxX = W; maxY = H; }
-    minX -= 60; maxX += 60; minY -= 90; maxY += 70;    // extra top pad for sector labels
+    // Pad past the outermost star far enough to clear the region blobs drawn
+    // round it (_sectorBlobPath's outward pad, plus the spline's overshoot);
+    // extra on top for the sector name and its band label.
+    const bp = 52;
+    minX -= bp; maxX += bp; minY -= 90; maxY += bp + 30;
     const cw = maxX - minX, ch = maxY - minY;
     const r = this.refs.galaxyView.getBoundingClientRect();
     const AR = (r.width > 0 && r.height > 0) ? r.width / r.height : cw / ch;
@@ -371,17 +567,46 @@ const StarMap = {
   },
 
   updateGalaxyNodes() {
+    this._updateSectorBlobs();
     if (!this._nodeEls) return;
+    const on = this.layers();
     for (const id in this._nodeEls) {
       const idx = Galaxy.localIndex(id);
       const evt = Galaxy.hasEvent(id);
-      const surv = window.Expeditions && Expeditions.activeFor(id);
+      // A ring carries two readings from two different layers: your survey
+      // (FLEETS) and the market's mood (MARKETS). Neither is CSS-hideable —
+      // the stroke is set here — so the switch has to happen here too.
+      const surv = on.fleets && window.Expeditions && Expeditions.activeFor(id);
+      const mkt = on.markets;
       const ring = this._nodeEls[id].ring;
-      ring.setAttribute("stroke", surv ? "#5fd7ff" : evt ? "#ffc24b" : idx > 0.06 ? "#46d39a" : idx < -0.06 ? "#ff5d73" : "#3a4560");
-      ring.setAttribute("stroke-width", surv || evt ? 3 : 2);
-      ring.classList.toggle("pulse", !!(surv || evt));
+      ring.setAttribute("stroke", surv ? "#5fd7ff"
+        : mkt && evt ? "#ffc24b"
+        : mkt && idx > 0.06 ? "#46d39a"
+        : mkt && idx < -0.06 ? "#ff5d73" : "#3a4560");
+      ring.setAttribute("stroke-width", surv || (mkt && evt) ? 3 : 2);
+      ring.classList.toggle("pulse", !!(surv || (mkt && evt)));
       const docked = this.s().currentSystem === id;
       this._nodeEls[id].g.classList.toggle("docked", docked);
+    }
+  },
+
+  // Security bands are derived (§5.3), so they move while you play: claim a
+  // station and fit a Customs House, pass an edict, start a war — the region
+  // repaints on the next tick without anything being stored.
+  _updateSectorBlobs() {
+    if (!this._blobEls || !window.Security) return;
+    for (const sec of Galaxy.sectors) {
+      const el = this._blobEls[sec.id]; if (!el) continue;
+      const band = Security.sectorBand(sec.id);
+      el.blob.setAttribute("fill", band.color);
+      el.blob.setAttribute("stroke", band.color);
+      // Civil unrest is a separate reading from lawfulness — a dashed edge, so
+      // an angry-but-policed sector can never be misread as a lawless one.
+      const sent = window.Stock ? Stock.sentiment[sec.id] : null;
+      el.blob.classList.toggle("unrest", sent != null && sent < 40);
+      el.sub.setAttribute("fill", band.color);
+      el.sub.textContent = band.label.toUpperCase()
+        + (sent != null && sent < 40 ? " · UNREST" : "");
     }
   },
 
@@ -421,10 +646,32 @@ const StarMap = {
     this.refs.tip.innerHTML =
       `<b>${sys.name}</b> ${sys.capital ? '<span class="tip-cap">trade hub</span>' : ""}<br>` +
       `<span class="tip-dim">${sec.name} · ${RACES[sys.race].name}</span><br>` +
+      this._tipFaction(sys) + this._tipSecurity(sys) +
       `market: ${dirTxt}` + (evt.length ? `<br><span class="warn">⚠ local event active</span>` : "") + extra;
     this.refs.tip.style.display = "block";
     this.moveTip(e);
   },
+  // Who the system answers to — the colour of its aura, named.
+  _tipFaction(sys) {
+    const f = window.Galaxy && Galaxy.factionOf(sys);
+    const def = f && (window.FACTIONS || {})[f];
+    if (!def) return "";
+    return `<span style="color:${def.color}">●</span> ${def.name}<br>`;
+  },
+
+  // The band, plus the derivation that produced it. Showing the working is the
+  // point of §5.3: a band is something the world did, not something authored,
+  // and a player who fits a Customs House should see their own line in it.
+  _tipSecurity(sys) {
+    if (!window.Security) return "";
+    const band = Security.bandOf(sys.id);
+    const parts = Security.factors(sys.id).filter(f => !f.base && Math.abs(f.v) >= 0.005)
+      .map(f => `${f.v > 0 ? "+" : "−"}${f.label}`);
+    return `<span style="color:${band.color}">◆</span> ${band.label}`
+      + (parts.length ? ` <span class="tip-dim">(${parts.join(", ")})</span>` : "")
+      + `<br><span class="tip-dim">${band.blurb || ""}</span><br>`;
+  },
+
   moveTip(e) {
     const r = this.refs.galaxyView.getBoundingClientRect();
     this.refs.tip.style.left = (e.clientX - r.left + 14) + "px";
@@ -1675,6 +1922,14 @@ const StarMap = {
         }
         ctx.restore();
       }
+      // Robbed by corsairs on this run (Traffic._robbed): a distress pulse, so
+      // NPC piracy is visible in space rather than a hidden subtraction.
+      if (v.raided) {
+        const pr = (now % 1600) / 1600;
+        ctx.strokeStyle = `rgba(255,93,115,${((1 - pr) * 0.5).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(x, y, sz + pr * 18, 0, 7); ctx.stroke();
+      }
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
       const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
       const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
@@ -1926,6 +2181,18 @@ const StarMap = {
       ctx.strokeStyle = `rgba(63,227,255,${((1 - pr) * 0.4).toFixed(2)})`;
       ctx.lineWidth = 1.3;
       ctx.beginPath(); ctx.arc(poi.x, poi.y, 8 + pr * poi.r, 0, 7); ctx.stroke();
+      // The guard wing flies a wider, slower ring than the hull it is sitting
+      // on — the escort's standing job, visible on the claim (§3.5).
+      Mining.guardsOf(op).forEach((g, gi) => {
+        const ga = a + Math.PI * (0.7 + gi * 0.8) - now * 0.00002;
+        const grr = poi.r + 42 + gi * 9;
+        const gx = poi.x + Math.cos(ga) * grr, gy = poi.y + Math.sin(ga) * grr;
+        const gim = this.img(ASSET.shipArt(g.type, g.uid));
+        ctx.save(); ctx.translate(gx, gy); ctx.rotate(ga + Math.PI / 2);
+        if (gim.ok) ctx.drawImage(gim, -8, -5, 16, 10);
+        else { ctx.fillStyle = "#9fd45e"; ctx.fillRect(-5, -3, 10, 6); }
+        ctx.restore();
+      });
       ctx.save();
       const k = 1 / (zoom || 1);
       ctx.font = `600 ${(10 * k).toFixed(1)}px system-ui, sans-serif`;
@@ -2006,6 +2273,7 @@ const StarMap = {
       + `<div class="pt-sub">${left <= 0
         ? `Worked out — the crews move on in ${Util.duration(rollIn)}, and a fresh rock takes the slot.`
         : `NPC crews are working it out — nothing left in ~${Util.duration(rollIn)}.`}</div>`;
+    html += this._poiThreatLine(poi);
     const op = Mining.opAt(poi.id);
     if (op) {
       const sh = Fleet.ship(op.shipUid);
@@ -2013,18 +2281,38 @@ const StarMap = {
       const stat = op.returnAt ? `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`
         : now < op.arriveAt ? `en route ~${Util.duration(op.arriveAt - now)}`
           : `mining · ${op.mined || 0} banked`;
-      return html + `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
+      html += `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
         + (op.returnAt ? "" : `<button class="btn btn-mini" id="poi-recall">Recall</button>`) + `</div>`;
+      const guards = Mining.guardsOf(op);
+      if (guards.length) {
+        html += `<div class="pt-sub">🛡 Guard: ${guards.map(g => Util.esc(g.name)).join(", ")}`
+          + ` <span class="tip-dim">— repels ${Math.round(Mining.repel(op.shipUid, Mining.guardUids(op)) * 100)}% of raids</span></div>`;
+      }
+      if (op.raids) {
+        html += `<div class="pt-sub down">☠ ${op.raids} raid${op.raids === 1 ? "" : "s"}`
+          + (op.lost ? ` · ${op.lost} ore taken` : " · all driven off") + `</div>`;
+      }
+      return html;
     }
-    if (window.Economy && !Economy.softIncomeLocal())
-      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch arrives with the server-side mining update.</div>`;
+    if (!Mining.serverOwned() && window.Economy && !Economy.softIncomeLocal())
+      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch needs <code>docs/sql/mining_rpcs.sql</code> applied to this project.</div>`;
     if (left <= 0) return html;
     const miners = Fleet.idle().filter(sh => (Fleet.shipDef(sh.type) || {}).cls === "miner" && !sh.mercenary);
     if (!miners.length)
       return html + `<div class="pt-sub">No idle miner — the Bazaar shipyard stocks Prospector-class hulls.</div>`;
     const ships = miners.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ⛏ ${Fleet.stats(sh).mine.toFixed(1)}</option>`).join("");
     const rigs = Mining.rigsFor(poi).map(ex => `<option value="${ex.uid}">${Util.esc(ex.name)}</option>`).join("");
-    return html + `<div class="st-hall-list" style="margin-top:6px">
+    // Escort hulls can sit the claim (§3.5). Native multi-select — the cap is
+    // enforced in Mining.canGuard, so nothing here has to police it.
+    const escorts = Mining.guardCandidates();
+    const gmax = (window.RAIDCFG || {}).guardMax || 0;
+    const guardPick = escorts.length && gmax
+      ? `<div class="pt-sub" style="margin-top:6px">🛡 Guard the claim <span class="tip-dim">(pick up to ${gmax}; ctrl-click for two)</span></div>
+         <select id="poi-mn-guard" multiple size="${Math.min(3, escorts.length)}">`
+        + escorts.map(g => `<option value="${g.uid}">${Util.esc(g.name)} · ✦ ${Fleet.stats(g).firepower}</option>`).join("")
+        + `</select>`
+      : `<div class="pt-sub tip-dim" style="margin-top:6px">🛡 No idle escort to guard the claim — a parked miner defends itself badly.</div>`;
+    return html + guardPick + `<div class="st-hall-list" style="margin-top:6px">
         <select id="poi-mn-ship">${ships}</select>
         <select id="poi-mn-rig"><option value="">No rig</option>${rigs}</select>
         <button class="btn btn-mini btn-go" id="poi-mn-go">Dispatch</button>
@@ -2032,13 +2320,27 @@ const StarMap = {
       <div class="pt-sub" id="poi-mn-est">${this._poiEstText(poi, miners[0].uid, null)}</div>`;
   },
 
+  // Corsair pressure on this rock, straight off Raiders.claimChance — the same
+  // number the resolver rolls against, so the card never flatters the odds.
+  _poiThreatLine(poi) {
+    if (!window.Raiders) return "";
+    const p = Raiders.claimChance(poi);
+    if (!(p > 0)) return "";
+    const band = Raiders.band(p);
+    const den = Raiders.hasDen(poi.sysId) ? " · a den works this system" : "";
+    return `<div class="pt-sub">☠ Corsair pressure <b style="color:${band.color}">${band.label}</b>`
+      + ` <span class="tip-dim">— ~${Math.round(p * 100)}% per batch${den}</span></div>`;
+  },
+
   // A specialized rig can lift the take by half again, so quoting the
   // bare-hull number while a rig is picked would just be wrong. _wirePoiTip
   // re-runs this on every change of either picker.
-  _poiEstText(poi, shipUid, rigUid) {
+  _poiEstText(poi, shipUid, rigUid, guardUids = []) {
     const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
+    const guard = window.Raiders && shipUid
+      ? ` · 🛡 repels ${Math.round(Mining.repel(shipUid, guardUids) * 100)}% of raids` : "";
     return `≈${Mining.batchQty(poi, shipUid, rigUid)} ${comm ? comm.name : poi.ore.commId}`
-      + ` / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay`;
+      + ` / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay${guard}`;
   },
 
   _wirePoiTip(poi) {
@@ -2050,20 +2352,25 @@ const StarMap = {
       if (UI.page === "fleet") UI.renderFleet();
     };
     const shipSel = tip.querySelector("#poi-mn-ship"), rigSel = tip.querySelector("#poi-mn-rig");
+    const guardSel = tip.querySelector("#poi-mn-guard");
+    const picked = () => guardSel ? [...guardSel.selectedOptions].map(o => o.value) : [];
     const est = tip.querySelector("#poi-mn-est");
     if (est && shipSel) {
-      const sync = () => { est.textContent = this._poiEstText(poi, shipSel.value, (rigSel && rigSel.value) || null); };
+      const sync = () => { est.textContent = this._poiEstText(poi, shipSel.value, (rigSel && rigSel.value) || null, picked()); };
       shipSel.onchange = sync;
       if (rigSel) rigSel.onchange = sync;
+      if (guardSel) guardSel.onchange = sync;
       sync();
     }
     const go = tip.querySelector("#poi-mn-go");
     if (go) go.onclick = () => {
       const shipU = (tip.querySelector("#poi-mn-ship") || {}).value;
       const rigU = (tip.querySelector("#poi-mn-rig") || {}).value || null;
-      const r = Mining.start(poi.id, shipU, rigU);
+      const r = Mining.start(poi.id, shipU, rigU, picked());
       if (!r.ok) return UI.toast(r.msg, "warn");
-      UI.toast(`Miner dispatched to ${poi.name} — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
+      const wing = Mining.guardsOf(r.op).length;
+      UI.toast(`Miner dispatched to ${poi.name}${wing ? ` with ${wing} escort${wing === 1 ? "" : "s"}` : ""}`
+        + ` — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
       refresh();
     };
     const rec = tip.querySelector("#poi-recall");

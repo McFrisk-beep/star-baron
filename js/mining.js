@@ -15,10 +15,19 @@
    rock replaces it and the row resets — so storage is capped at "rocks you
    worked this generation" and nobody has to store the world.
 
-   Trust: guest / local-ledger only for now. Signed-in play has server-owned
-   positions and ship status (app_commit protects both), so dispatch is gated
-   on Economy.softIncomeLocal() until the mining SQL phase adds the RPC
-   surface — minting locally would create ghost stock the ledger rejects.     */
+   Corsairs (raiders.js, step 3) are the price of that exposure: a parked claim
+   can be jumped, and the batch that was in the hold when they hit is the ENTIRE
+   blast radius — never banked ore, never the system bay, never the hull. Guard
+   the rock with escort hulls (§3.5's standing job) or work a leaner seam.
+
+   Trust: guests settle here; signed-in barons settle on the server. Ore is
+   minted into positions and app_commit forces that key from the server row, so
+   a local mint would evaporate on the next autosave. docs/sql/mining_rpcs.sql
+   moves the whole loop into app_pull — batches, raids, returning hulls — and
+   serverOwned() latches when its slice comes back. Until it does, dispatch
+   stays gated (canStart) rather than quietly minting stock the ledger rejects.
+   resolve() below self-gates minting the same way, so on a server-owned
+   project it only renders: the server does the banking.                      */
 
 const Mining = {
   s() { return window.Game.state; },
@@ -68,9 +77,27 @@ const Mining = {
     }
   },
 
+  // True once app_pull/app_commit has echoed a mining slice — the server owns
+  // the ops and banks the ore, so the local resolver stands down (see resolve).
+  serverOwned() { return !!(window.Cloud && Cloud.miningOwned); },
+
   opAt(poiId) { return this.list().find(o => o.poiId === poiId) || null; },
   atSystem(sysId) { return this.list().filter(o => o.sysId === sysId); },
   opFor(shipUid) { return this.list().find(o => o.shipUid === shipUid) || null; },
+
+  // ---- escorts: the standing job (§3.5) ----------------------------------
+  // Guard hulls ride the op — dispatched with it, home with it, and locked
+  // out of everything else in between, exactly like the miner.
+  guardUids(op) { return (op && op.guardUids) || []; },
+  guardsOf(op) { return this.guardUids(op).map(u => Fleet.ship(u)).filter(Boolean); },
+  opGuarding(shipUid) { return this.list().find(o => this.guardUids(o).includes(shipUid)) || null; },
+  // Idle escort-class hulls a claim could be handed to.
+  guardCandidates() {
+    return Fleet.idle().filter(sh => ((Fleet.shipDef(sh.type) || {}).cls || sh.cls) === "escort" && !sh.mercenary);
+  },
+  // Corsair pressure on a rock, and what a given wing would do about it.
+  threat(poi) { return window.Raiders ? Raiders.claimChance(poi) : 0; },
+  repel(shipUid, guardUids = []) { return window.Raiders ? Raiders.repelChance(shipUid, guardUids) : 0; },
 
   // One-way leg from the docked system, scaled by the hull's speed — the same
   // distance metric expeditions fly.
@@ -105,8 +132,8 @@ const Mining = {
   },
 
   canStart(poiId, shipUid, now = Date.now()) {
-    if (window.Economy && !Economy.softIncomeLocal())
-      return { ok: false, msg: "Mining settles on the local ledger for now — the server-side mining update unlocks dispatch for signed-in barons." };
+    if (!this.serverOwned() && window.Economy && !Economy.softIncomeLocal())
+      return { ok: false, msg: "Mining settles on the local ledger for now — ask the project owner to apply docs/sql/mining_rpcs.sql to unlock dispatch for signed-in barons." };
     const poi = window.POIs ? POIs.get(poiId, now) : null;
     if (!poi || !poi.ore) return { ok: false, msg: "Nothing minable there." };
     if (this.opAt(poiId)) return { ok: false, msg: "You already have a miner working this rock." };
@@ -119,9 +146,29 @@ const Mining = {
     return { ok: true, poi };
   },
 
-  start(poiId, shipUid, extractorUid = null, now = Date.now()) {
+  // Guards are validated separately so the dispatch button can quote a wing
+  // before it is committed.
+  canGuard(shipUid, guardUids = []) {
+    const max = (window.RAIDCFG || {}).guardMax || 0;
+    if (guardUids.length > max) return { ok: false, msg: `A claim takes at most ${max} escort${max === 1 ? "" : "s"}.` };
+    if (guardUids.includes(shipUid)) return { ok: false, msg: "The miner can't escort itself." };
+    if (new Set(guardUids).size !== guardUids.length) return { ok: false, msg: "That escort is listed twice." };
+    for (const uid of guardUids) {
+      const g = Fleet.ship(uid);
+      if (!g || g.status !== "idle") return { ok: false, msg: "Pick idle escorts." };
+      if (((Fleet.shipDef(g.type) || {}).cls || g.cls) !== "escort") return { ok: false, msg: "Only escort-class hulls stand guard." };
+      if (g.mercenary) return { ok: false, msg: "Mercenaries won't sit a claim." };
+    }
+    return { ok: true };
+  },
+
+  start(poiId, shipUid, extractorUid = null, guardUids = [], now = Date.now()) {
+    // Legacy 4-arg call (…, extractorUid, now) — keep it working.
+    if (typeof guardUids === "number") { now = guardUids; guardUids = []; }
     const can = this.canStart(poiId, shipUid, now);
     if (!can.ok) return can;
+    const canG = this.canGuard(shipUid, guardUids);
+    if (!canG.ok) return canG;
     if (extractorUid) {
       const ex = Extractors.get(extractorUid);
       if (!ex) return { ok: false, msg: "Rig not found." };
@@ -134,11 +181,25 @@ const Mining = {
       id: "mn" + (++s.seq), poiId, sysId: can.poi.sysId, shipUid,
       extractorUid: extractorUid || null, commId: can.poi.ore.commId,
       gen: can.poi.gen | 0,   // the rock it was sent to; a roll-over ends the op
+      guardUids: guardUids.slice(),
+      // The corsair odds you accepted, quoted on the card and locked in here.
+      // Raiders.rollClaim rolls against these, and mining_rpcs.sql clamps and
+      // re-rolls the very same numbers server-side — so the op row is the whole
+      // input to a raid and the two sides cannot disagree.
+      threat: this.threat(can.poi), repel: this.repel(shipUid, guardUids),
+      // Per-batch take, quoted on the card and locked in with the odds. It does
+      // NOT drift down as the hull takes raid damage: you committed a hull at a
+      // known rate, and the server clamps this same number against its own
+      // catalog ceiling rather than recomputing a rate it cannot see.
+      per: this.batchQty(can.poi, shipUid, extractorUid),
+      poiName: can.poi.name,
       startedAt: now, travelMs: travel, arriveAt: now + travel,
       nextAt: now + travel + this.cycleMsFor(extractorUid),
-      mined: 0, returnAt: null, fromSys: s.currentSystem,
+      mined: 0, cycles: 0, raids: 0, lost: 0,
+      returnAt: null, fromSys: s.currentSystem,
     };
     Fleet.ship(shipUid).status = "mining";
+    for (const g of this.guardsOf(op)) g.status = "guarding";
     this.list().push(op);
     if (window.Bus) Bus.emit("miningStart", op);
     return { ok: true, op };
@@ -155,45 +216,77 @@ const Mining = {
     return { ok: true, op };
   },
 
+  // Everything the op was holding goes back to the yard: the miner, the guard
+  // wing, and (via Extractors.installedSet) the rig.
+  _land(op) {
+    const sh = Fleet.ship(op.shipUid);
+    if (sh) sh.status = "idle";
+    for (const g of this.guardsOf(op)) g.status = "idle";
+    op._dead = true;
+  },
+
+  // A raid resolved by Raiders.rollClaim, applied to the fleet. The stolen ore
+  // is simply never banked — positions and the system bay are untouchable, and
+  // no hull is ever destroyed or impounded here (§6.6).
+  _applyRaid(op, raid) {
+    const sh = Fleet.ship(op.shipUid);
+    if (sh && raid.minerDmg > 0) Fleet.addDamage(sh, raid.minerDmg);
+    if (raid.guardDmg > 0) for (const g of this.guardsOf(op)) Fleet.addDamage(g, raid.guardDmg);
+    op.raids = (op.raids || 0) + 1;
+    op.lost = (op.lost || 0) + raid.stolen;
+  },
+
   // Bank matured batches (clock math, offline-capped), land returning hulls.
   // Returns made[] entries for the WYWA recap. Minting is gated exactly like
   // Industries.resolve — never grow positions the server ledger won't honour.
   resolve(now = Date.now()) {
     const s = this.s();
     if (!this.list().length) { this.prunePools(now); return []; }
-    const made = [], rolled = [];
+    const made = [], rolled = [], raided = [];
     const local = !window.Economy || Economy.softIncomeLocal();
     for (const op of this.list()) {
       const sh = Fleet.ship(op.shipUid);
       const poi = window.POIs ? POIs.get(op.poiId, now) : null;
-      if (!sh || !poi || !poi.ore) { op._dead = true; continue; }   // hull gone / bad row — close out
+      if (!sh || !poi || !poi.ore) { this._land(op); continue; }   // hull gone / bad row — close out
       // The rock it was working got cleared out and replaced: send the hull
       // home rather than silently mining a seam nobody dispatched it to.
       if (!op.returnAt && (poi.gen | 0) !== (op.gen | 0)) {
         op.returnAt = now + op.travelMs;
         rolled.push({ ship: sh.name, sysId: op.sysId });
       }
-      if (op.returnAt && now >= op.returnAt) {
-        sh.status = "idle";
-        op._dead = true;
-        continue;
-      }
+      if (op.returnAt && now >= op.returnAt) { this._land(op); continue; }
       if (sh.status === "idle") sh.status = "mining";   // self-heal after a merge reset
+      for (const g of this.guardsOf(op)) if (g.status === "idle") g.status = "guarding";
       if (op.returnAt || now < op.arriveAt || !local || now < op.nextAt) continue;
       const cycleMs = this.cycleMsFor(op.extractorUid);
-      const per = this.batchQty(poi, op.shipUid, op.extractorUid);
+      const per = op.per > 0 ? op.per : this.batchQty(poi, op.shipUid, op.extractorUid);
       const row = this.poolRow(poi);
       let cycles = Math.min(Math.floor((now - op.nextAt) / cycleMs) + 1, MININGCFG.maxCyclesPerResolve);
-      let qty = 0;
+      let qty = 0, chased = false;
       // Race the NPC crews: poolLeft() already nets off what they have taken.
       let left = this.poolLeft(poi, now);
       while (cycles-- > 0 && left > 0) {
         const take = Math.min(per, left);
-        qty += take; row.used += take; left -= take;
+        row.used += take; left -= take;
+        // The rock gives up the ore either way — the question is whether it
+        // reaches the bay. Seeded on (op, cycle index), so banking a night's
+        // worth in one go lands exactly the raids a watched tab would have.
+        const k = op.cycles = (op.cycles || 0) + 1;
+        const raid = window.Raiders ? Raiders.rollClaim(op, k, poi, take) : null;
+        qty += take - (raid ? raid.stolen : 0);
+        if (raid) {
+          raid.ship = sh.name;
+          this._applyRaid(op, raid);
+          raided.push(raid);
+          if (raid.driveOff) { chased = true; break; }
+        }
       }
       // A worked-out rock idles the batch clock; the hull stays parked until
       // the crews move on (which ends the op) or you recall it.
       op.nextAt = now + cycleMs;
+      // Chased off the claim: the hull flies home. That is the worst a raid is
+      // ever allowed to do to it (§6.6.5).
+      if (chased && !op.returnAt) op.returnAt = now + op.travelMs;
       if (qty <= 0) continue;
       op.mined = (op.mined || 0) + qty;
       const held = s.positions[op.commId] || 0, prev = s.avgCost[op.commId] || 0;
@@ -206,6 +299,13 @@ const Mining = {
     if (this.list().some(o => o._dead)) s.mining = this.list().filter(o => !o._dead);
     this.prunePools(now);
     for (const r of rolled) if (window.Bus) Bus.emit("miningRolled", r);
+    // Raids ride the same made[] the recap already reads, so a raid suffered
+    // while the tab was shut is in the "while you were away" panel rather than
+    // silently missing ore. Live play gets the toast off the bus.
+    for (const r of raided) {
+      made.push({ raid: r });
+      if (window.Bus) Bus.emit("miningRaid", r);
+    }
     if (made.length && window.Economy) { Economy.refreshNetWorth(); Economy.checkAchievements(); }
     return made;
   },
