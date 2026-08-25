@@ -158,6 +158,16 @@ const StarMap = {
         el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
         // Raid state is per-LOOP, the element is per-flight and outlives it, so
         // repaint on change (and only on change — this runs every frame).
+        // Patrol strobes: alternate red/blue on the same 320ms beat the scene
+        // uses, and only write on the flip — this runs every frame.
+        if (el.lights) {
+          const on = Math.floor(now / 320) % 2 === 0;
+          if (el.lit !== on) {
+            el.lit = on;
+            el.lights[0].setAttribute("opacity", on ? 1 : 0.25);
+            el.lights[1].setAttribute("opacity", on ? 0.25 : 1);
+          }
+        }
         const robbed = !!v.raided;
         if (el.robbed !== robbed) {
           el.robbed = robbed;
@@ -198,6 +208,19 @@ const StarMap = {
       hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
       hull.setAttribute("class", "voy-hull-trader");
       tail = 3;
+    } else if (v.police) {
+      // A Senate patrol reads as a PAIR on the chart, the way it does in the
+      // scene: lead hull plus a wingman in trailing echelon, with the strobes
+      // over the lead. Both ride the rotating group, so the formation turns
+      // with the patrol instead of sliding around it.
+      hull.setAttribute("points", "6,0 -4,3 -1.5,0 -4,-3");
+      hull.setAttribute("class", "voy-hull-police");
+      const wing = document.createElementNS(ns, "polygon");
+      wing.setAttribute("points", "6,0 -4,3 -1.5,0 -4,-3");
+      wing.setAttribute("class", "voy-hull-police wing");
+      wing.setAttribute("transform", "translate(-7,5) scale(.8)");
+      hullG.appendChild(wing);
+      tail = 4;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
       hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
@@ -205,7 +228,28 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    // Strobes ride OUTSIDE the rotating group — a light doesn't bank with the
+    // hull, and this keeps them legible at any heading. The tick alternates
+    // them; `lights` is the handle it toggles.
+    let lights = null;
+    if (v.police) {
+      lights = [];
+      for (const [dx, cls] of [[-3.5, "pc-red"], [3.5, "pc-blue"]]) {
+        const d = document.createElementNS(ns, "circle");
+        d.setAttribute("cx", dx); d.setAttribute("cy", -7); d.setAttribute("r", 1.9);
+        d.setAttribute("class", cls);
+        g.appendChild(d);
+        lights.push(d);
+      }
+    }
     let nameEl = null;
+    if (v.police && v.name) {
+      nameEl = document.createElementNS(ns, "text");
+      nameEl.setAttribute("class", "voy-name police");
+      nameEl.setAttribute("y", -12);
+      nameEl.textContent = v.name;
+      g.appendChild(nameEl);
+    }
     if (v.kind === "freighter" && v.name) {
       nameEl = document.createElementNS(ns, "text");
       nameEl.setAttribute("class", "voy-name npc");
@@ -220,11 +264,12 @@ const StarMap = {
       t.textContent = v.name;   // textContent — other barons' names are untrusted text
       g.appendChild(t);
     }
-    // Layer class: TRAFFIC covers the NPC economy, FLEETS covers anything
-    // crewed by a baron. The CSS hides the whole group, names included.
-    g.setAttribute("class", "voy " + (v.npc ? "voy-traffic" : "voy-fleets"));
+    // Layer class: LAW covers the Senate's own hulls, TRAFFIC the NPC economy,
+    // FLEETS anything crewed by a baron. The CSS hides the whole group, names
+    // and strobes included.
+    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets"));
     layer.appendChild(g);
-    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -246,6 +291,7 @@ const StarMap = {
     { id: "allegiance", label: "Allegiance", hint: "which faction a system's economy answers to" },
     { id: "markets",    label: "Markets",    hint: "price direction, local events and trade hubs" },
     { id: "traffic",    label: "Traffic",    hint: "NPC haulers, and the ones corsairs emptied" },
+    { id: "law",        label: "Law",        hint: "Senate precincts and the patrol pairs they fly" },
     { id: "fleets",     label: "Fleets",     hint: "your ships, rival barons, survey sites" },
   ],
   // Saved per player. Anything absent defaults ON, so a new layer added later
@@ -350,6 +396,22 @@ const StarMap = {
       img.setAttribute("width", sz); img.setAttribute("height", sz);
       g.appendChild(img);
 
+      // Precinct badge: the seat of this sector's law (police.js). Its own
+      // element under the Law layer, so switching the layer off takes the
+      // stations and their patrols together.
+      if (window.Police && Police.hasPrecinct(sys.id)) {
+        const p = document.createElementNS(ns, "g");
+        p.setAttribute("class", "node-precinct");
+        p.setAttribute("transform", "translate(0,-16)");
+        for (const [dx, cls] of [[-3, "pc-red"], [3, "pc-blue"]]) {
+          const d = document.createElementNS(ns, "circle");
+          d.setAttribute("cx", dx); d.setAttribute("cy", 0); d.setAttribute("r", 2);
+          d.setAttribute("class", cls);
+          p.appendChild(d);
+        }
+        g.appendChild(p);
+      }
+
       if (sys.capital) {
         const t = document.createElementNS(ns, "text");
         t.setAttribute("y", 26); t.setAttribute("class", "node-label");
@@ -394,6 +456,9 @@ const StarMap = {
       case "traffic": return [
         dot("var(--voy-npc)", "hauler", "an NPC supply hauler with its cargo aboard"),
         dot("var(--voy-raided)", "raided", "corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty")];
+      case "law": return [
+        dot("#8fb4ff", "patrol pair", "a Senate patrol — always two hulls, sweeping its sector out of the capital"),
+        dot("#ff4d5e", "precinct", "the seat of a sector's law: a police station at the capital, where the patrols fly from")];
       case "fleets": return [
         dot("var(--accent)", "yours"), dot("#ffd9a0", "rivals"), dot("#5fd7ff", "survey")];
       default: return [];

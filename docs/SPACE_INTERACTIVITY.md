@@ -72,7 +72,11 @@
   a seeded loop, riding the same Voyages pipeline as all traffic, strobing
   red/blue in the scene. `pairsPerSector` is the density knob: at 1 that is 5
   pairs — 10 hulls — galaxy-wide, ~4 of them in flight at any moment and the
-  rest docked between sweeps. **The
+  rest docked between sweeps. They are drawn on the **galaxy chart** too, the
+  way NPC haulers are: a lead hull with its wingman in echelon under strobing
+  red/blue, named, with the same two lamps badging every capital that seats a
+  precinct — and both ride a **Law** chart layer with its own legend key, so
+  switching it off takes the stations and their patrols together. **The
   chase** is §5.1's response made concrete: a successful robbery can draw
   pursuit on the way home, odds scaled by the law stamped on the op at
   dispatch, resolving *exactly like a mission* — the outcome is a pure seeded

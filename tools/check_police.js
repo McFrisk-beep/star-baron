@@ -90,6 +90,34 @@ const boot = () => {
   assert.strictEqual(c.Piracy.verbs(v, lawless.id).length, 0, "no verbs on the law");
 }
 
+// ---- patrols reach the galaxy chart, and the Law layer can hide them -------
+// The chart is SVG + CSS, so what this can pin without a DOM is the contract
+// between them: patrols ride the same markers() pipeline the haulers do, and
+// the layer id the CSS keys on exists in both files.
+{
+  const c = boot();
+  let t = T0, marks = [];
+  for (let m = 0; m < 60 && !marks.some(v => v.police); m++) {
+    t = T0 + m * 60000;
+    marks = c.Voyages.markers(t);
+  }
+  const pol = marks.filter(v => v.police);
+  assert.ok(pol.length > 0, "patrols are drawn on the galaxy chart, like the haulers");
+  for (const v of pol) {
+    assert.ok(v.at && Number.isFinite(v.at.x) && Number.isFinite(v.at.y), "…with a real chart position");
+    assert.ok(v.name, "…and a name over the hull");
+  }
+  const sm = fs.readFileSync(path.join(__dirname, "../js/starmap.js"), "utf8");
+  const css = fs.readFileSync(path.join(__dirname, "../css/style.css"), "utf8");
+  assert.ok(/\{ id: "law"/.test(sm), "the chart offers a Law layer");
+  assert.ok(/case "law": return/.test(sm), "…which carries its own legend key");
+  assert.ok(/v\.police \? "voy-law"/.test(sm), "patrol markers are tagged for that layer");
+  assert.ok(/"node-precinct"/.test(sm) && /Police\.hasPrecinct\(sys\.id\)/.test(sm),
+    "…and a precinct badge is drawn on the systems that seat one");
+  assert.ok(/\.lay-off-law \.voy-law/.test(css) && /\.lay-off-law[^{]*\.node-precinct/.test(css),
+    "switching the layer off hides patrols AND precincts");
+}
+
 // ---- the response gate scales with the law ---------------------------------
 {
   const c = boot();
