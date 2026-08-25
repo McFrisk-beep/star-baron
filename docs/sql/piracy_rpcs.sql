@@ -334,7 +334,13 @@ begin
         op := jsonb_set(op, '{loot}', loot);
         hits := hits || jsonb_build_array(jsonb_build_object(
           'f', op->>'flightId', 'k', coalesce((op->>'loop')::bigint, 0), 'at', p_now_ms::bigint));
-        sector := market.sector_of_system(op->>'toSys');
+        -- The shelf drain needs phase4_sector_stock.sql. Guard it: on a
+        -- project without that file a successful rob would otherwise throw and
+        -- take the WHOLE of app_pull down with it — mining, missions and every
+        -- other catch-up included. Piracy still works there, just without the
+        -- §4.2 price effect.
+        sector := case when to_regclass('public.sector_stock') is not null
+                  then market.sector_of_system(op->>'toSys') else null end;
         if sector is not null then
           for e in select key as k, (value#>>'{}')::int as q from jsonb_each(loot) loop
             perform market.ensure_stock_row(sector, e.k);
