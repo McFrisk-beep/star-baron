@@ -587,6 +587,45 @@ const MININGCFG = {
   sectorRich: { core: 0.7, green: 0.9, belt: 1.05, tide: 1.0, forge: 1.2, sprawl: 1.5 },
 };
 
+/* ---- NPC PIRACY (docs/SPACE_INTERACTIVITY.md §4, build step 3) ------------
+   Corsairs jump parked mining claims and rob NPC haulers. Threat is DERIVED,
+   never authored: the seam's own richness already carries the sector (rich
+   seams sit in the worst neighbourhoods, MININGCFG.sectorRich), so richness IS
+   the pressure and there is no second table to keep in step. A pirate den in
+   the system multiplies it; Senate lane patrols and — in the Sprawl only —
+   Syndicate standing pull it back down.
+
+   The anti-grief rules (§6.6) are the reason the numbers look mild: a raid
+   costs one 30-minute batch plus a repair bill, never a hull, never banked
+   ore. High variance, not high expected value.                               */
+const RAIDCFG = {
+  base: 0.07,                 // attempt odds per mining cycle on an average rock
+  // …times this with a pirate den in the same system. Kept modest on purpose:
+  // roughly half the galaxy's systems hold a den (POI slot weights), so this
+  // is a common multiplier, not a rare one.
+  denMult: 1.8,
+  senateClamp: [0.2, 2.5],    // Convoy Escort Mandate (−) / Lane Patrol Cuts (+)
+  syndicateShield: 0.35,      // Sable Sprawl only: +100 Syndicate buys this much quiet (§5.4)
+  chanceClamp: [0.01, 0.6],
+  repelSoft: 240,             // guard score at which a raid is repelled half the time
+  minerSelfDef: 0.15,         // the miner's own guns, as a fraction of a real escort's
+  repelClamp: [0, 0.9],       // nothing is ever immune
+  guardMax: 2,                // escort hulls per claim
+  stealFrac: [0.6, 1],        // of the interrupted batch — the whole blast radius
+  minerDmg: [0.05, 0.15],     // hull damage when the claim is robbed (a repair bill, not a loss)
+  guardDmg: [0.02, 0.07],
+  driveOff: 0.35,             // chance a robbed miner is chased off the rock (×0.4 with guards)
+  trafficChance: 0.12,        // NPC hauls through a den system that lose their manifest
+  // Readable bands for the belt card, off the same chance number.
+  bands: [
+    { at: 0,    id: "quiet",   label: "quiet",     color: "#3ad6a0" },
+    { at: 0.06, id: "watched", label: "watched",   color: "#9fd45e" },
+    { at: 0.11, id: "raided",  label: "raided",    color: "#ffc24b" },
+    { at: 0.2,  id: "hunted",  label: "hunted",    color: "#ff9146" },
+    { at: 0.33, id: "lawless", label: "corsair country", color: "#ff5d73" },
+  ],
+};
+
 /* ---- BLACKBOX EFFECTS -----------------------------------------------------
    Consumable inventory items. Use → entry on state.activeBoosts until expiresAt.
    See docs/CRAFTING_AND_MATERIALS.md §2.                                       */
@@ -1684,6 +1723,7 @@ window.CUSTOMS = CUSTOMS;
 window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
+window.RAIDCFG = RAIDCFG;
 window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.WORKSHOPCFG = WORKSHOPCFG;

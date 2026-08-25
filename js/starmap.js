@@ -151,13 +151,14 @@ const StarMap = {
       hull.setAttribute("class", "voy-hull-flag" + (v.you ? "" : " other"));
       tail = 6;
     } else if (v.kind === "freighter") {
-      // NPC supply hauler — boxy hull, flavor name over the top
+      // NPC supply hauler — boxy hull, flavor name over the top. A hold the
+      // corsairs already emptied (Traffic.raided) flies home in red.
       hull.setAttribute("points", "7,0 3,3.6 -6,3.6 -6,-3.6 3,-3.6");
-      hull.setAttribute("class", "voy-hull-npc");
+      hull.setAttribute("class", "voy-hull-npc" + (v.raided ? " raided" : ""));
       tail = 5;
     } else if (v.kind === "trader") {
       hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
-      hull.setAttribute("class", "voy-hull-trader");
+      hull.setAttribute("class", "voy-hull-trader" + (v.raided ? " raided" : ""));
       tail = 3;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
@@ -1675,6 +1676,14 @@ const StarMap = {
         }
         ctx.restore();
       }
+      // Robbed by corsairs on this run (Traffic._robbed): a distress pulse, so
+      // NPC piracy is visible in space rather than a hidden subtraction.
+      if (v.raided) {
+        const pr = (now % 1600) / 1600;
+        ctx.strokeStyle = `rgba(255,93,115,${((1 - pr) * 0.5).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.arc(x, y, sz + pr * 18, 0, 7); ctx.stroke();
+      }
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
       const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
       const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
@@ -1926,6 +1935,18 @@ const StarMap = {
       ctx.strokeStyle = `rgba(63,227,255,${((1 - pr) * 0.4).toFixed(2)})`;
       ctx.lineWidth = 1.3;
       ctx.beginPath(); ctx.arc(poi.x, poi.y, 8 + pr * poi.r, 0, 7); ctx.stroke();
+      // The guard wing flies a wider, slower ring than the hull it is sitting
+      // on — the escort's standing job, visible on the claim (§3.5).
+      Mining.guardsOf(op).forEach((g, gi) => {
+        const ga = a + Math.PI * (0.7 + gi * 0.8) - now * 0.00002;
+        const grr = poi.r + 42 + gi * 9;
+        const gx = poi.x + Math.cos(ga) * grr, gy = poi.y + Math.sin(ga) * grr;
+        const gim = this.img(ASSET.shipArt(g.type, g.uid));
+        ctx.save(); ctx.translate(gx, gy); ctx.rotate(ga + Math.PI / 2);
+        if (gim.ok) ctx.drawImage(gim, -8, -5, 16, 10);
+        else { ctx.fillStyle = "#9fd45e"; ctx.fillRect(-5, -3, 10, 6); }
+        ctx.restore();
+      });
       ctx.save();
       const k = 1 / (zoom || 1);
       ctx.font = `600 ${(10 * k).toFixed(1)}px system-ui, sans-serif`;
@@ -2006,6 +2027,7 @@ const StarMap = {
       + `<div class="pt-sub">${left <= 0
         ? `Worked out — the crews move on in ${Util.duration(rollIn)}, and a fresh rock takes the slot.`
         : `NPC crews are working it out — nothing left in ~${Util.duration(rollIn)}.`}</div>`;
+    html += this._poiThreatLine(poi);
     const op = Mining.opAt(poi.id);
     if (op) {
       const sh = Fleet.ship(op.shipUid);
@@ -2013,8 +2035,18 @@ const StarMap = {
       const stat = op.returnAt ? `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`
         : now < op.arriveAt ? `en route ~${Util.duration(op.arriveAt - now)}`
           : `mining · ${op.mined || 0} banked`;
-      return html + `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
+      html += `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
         + (op.returnAt ? "" : `<button class="btn btn-mini" id="poi-recall">Recall</button>`) + `</div>`;
+      const guards = Mining.guardsOf(op);
+      if (guards.length) {
+        html += `<div class="pt-sub">🛡 Guard: ${guards.map(g => Util.esc(g.name)).join(", ")}`
+          + ` <span class="tip-dim">— repels ${Math.round(Mining.repel(op.shipUid, Mining.guardUids(op)) * 100)}% of raids</span></div>`;
+      }
+      if (op.raids) {
+        html += `<div class="pt-sub down">☠ ${op.raids} raid${op.raids === 1 ? "" : "s"}`
+          + (op.lost ? ` · ${op.lost} ore taken` : " · all driven off") + `</div>`;
+      }
+      return html;
     }
     if (window.Economy && !Economy.softIncomeLocal())
       return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch arrives with the server-side mining update.</div>`;
@@ -2024,7 +2056,17 @@ const StarMap = {
       return html + `<div class="pt-sub">No idle miner — the Bazaar shipyard stocks Prospector-class hulls.</div>`;
     const ships = miners.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ⛏ ${Fleet.stats(sh).mine.toFixed(1)}</option>`).join("");
     const rigs = Mining.rigsFor(poi).map(ex => `<option value="${ex.uid}">${Util.esc(ex.name)}</option>`).join("");
-    return html + `<div class="st-hall-list" style="margin-top:6px">
+    // Escort hulls can sit the claim (§3.5). Native multi-select — the cap is
+    // enforced in Mining.canGuard, so nothing here has to police it.
+    const escorts = Mining.guardCandidates();
+    const gmax = (window.RAIDCFG || {}).guardMax || 0;
+    const guardPick = escorts.length && gmax
+      ? `<div class="pt-sub" style="margin-top:6px">🛡 Guard the claim <span class="tip-dim">(pick up to ${gmax}; ctrl-click for two)</span></div>
+         <select id="poi-mn-guard" multiple size="${Math.min(3, escorts.length)}">`
+        + escorts.map(g => `<option value="${g.uid}">${Util.esc(g.name)} · ✦ ${Fleet.stats(g).firepower}</option>`).join("")
+        + `</select>`
+      : `<div class="pt-sub tip-dim" style="margin-top:6px">🛡 No idle escort to guard the claim — a parked miner defends itself badly.</div>`;
+    return html + guardPick + `<div class="st-hall-list" style="margin-top:6px">
         <select id="poi-mn-ship">${ships}</select>
         <select id="poi-mn-rig"><option value="">No rig</option>${rigs}</select>
         <button class="btn btn-mini btn-go" id="poi-mn-go">Dispatch</button>
@@ -2032,13 +2074,27 @@ const StarMap = {
       <div class="pt-sub" id="poi-mn-est">${this._poiEstText(poi, miners[0].uid, null)}</div>`;
   },
 
+  // Corsair pressure on this rock, straight off Raiders.claimChance — the same
+  // number the resolver rolls against, so the card never flatters the odds.
+  _poiThreatLine(poi) {
+    if (!window.Raiders) return "";
+    const p = Raiders.claimChance(poi);
+    if (!(p > 0)) return "";
+    const band = Raiders.band(p);
+    const den = Raiders.hasDen(poi.sysId) ? " · a den works this system" : "";
+    return `<div class="pt-sub">☠ Corsair pressure <b style="color:${band.color}">${band.label}</b>`
+      + ` <span class="tip-dim">— ~${Math.round(p * 100)}% per batch${den}</span></div>`;
+  },
+
   // A specialized rig can lift the take by half again, so quoting the
   // bare-hull number while a rig is picked would just be wrong. _wirePoiTip
   // re-runs this on every change of either picker.
-  _poiEstText(poi, shipUid, rigUid) {
+  _poiEstText(poi, shipUid, rigUid, guardUids = []) {
     const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
+    const guard = window.Raiders && shipUid
+      ? ` · 🛡 repels ${Math.round(Mining.repel(shipUid, guardUids) * 100)}% of raids` : "";
     return `≈${Mining.batchQty(poi, shipUid, rigUid)} ${comm ? comm.name : poi.ore.commId}`
-      + ` / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay`;
+      + ` / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay${guard}`;
   },
 
   _wirePoiTip(poi) {
@@ -2050,20 +2106,25 @@ const StarMap = {
       if (UI.page === "fleet") UI.renderFleet();
     };
     const shipSel = tip.querySelector("#poi-mn-ship"), rigSel = tip.querySelector("#poi-mn-rig");
+    const guardSel = tip.querySelector("#poi-mn-guard");
+    const picked = () => guardSel ? [...guardSel.selectedOptions].map(o => o.value) : [];
     const est = tip.querySelector("#poi-mn-est");
     if (est && shipSel) {
-      const sync = () => { est.textContent = this._poiEstText(poi, shipSel.value, (rigSel && rigSel.value) || null); };
+      const sync = () => { est.textContent = this._poiEstText(poi, shipSel.value, (rigSel && rigSel.value) || null, picked()); };
       shipSel.onchange = sync;
       if (rigSel) rigSel.onchange = sync;
+      if (guardSel) guardSel.onchange = sync;
       sync();
     }
     const go = tip.querySelector("#poi-mn-go");
     if (go) go.onclick = () => {
       const shipU = (tip.querySelector("#poi-mn-ship") || {}).value;
       const rigU = (tip.querySelector("#poi-mn-rig") || {}).value || null;
-      const r = Mining.start(poi.id, shipU, rigU);
+      const r = Mining.start(poi.id, shipU, rigU, picked());
       if (!r.ok) return UI.toast(r.msg, "warn");
-      UI.toast(`Miner dispatched to ${poi.name} — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
+      const wing = Mining.guardsOf(r.op).length;
+      UI.toast(`Miner dispatched to ${poi.name}${wing ? ` with ${wing} escort${wing === 1 ? "" : "s"}` : ""}`
+        + ` — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
       refresh();
     };
     const rec = tip.querySelector("#poi-recall");

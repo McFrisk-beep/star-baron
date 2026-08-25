@@ -12,6 +12,12 @@
      traders run in from a neighbouring sector capital — the visible face of
      the npcSurgeMult supply surge.
 
+   • Raided hauls: a run in or out of a system with a pirate den can be taken
+     (raiders.js, §4). The hauler still limps to its destination — hull kept,
+     hold empty — which is the same rule that protects a player's miner. It is
+     deliberately shelf-neutral: suppressing NPC supply is the den's own job in
+     §7.1, and doing it here would drain stock.js twice for one den.
+
    Consumers: Voyages.markers() (galaxy view) and Voyages.inSystem() (system
    view) concat Traffic.flights(now); starmap draws them like any voyage.     */
 
@@ -70,11 +76,14 @@ const Traffic = {
       if (!plan) continue;             // docked, or no lane route
       const at = Voyages.pos(plan, now);
       if (!at) continue;
+      const id = "npc:f:" + st.systemId;
+      // Same phased loop index tau rides, so a run keeps one status end to end.
+      const robbed = this._robbed(id, Math.floor((now + phase * P) / P), st.systemId, sec.capital);
       out.push({
-        id: "npc:f:" + st.systemId, kind: "freighter", npc: true,
+        id, kind: "freighter", npc: true, raided: robbed,
         name: this._name("f:" + st.systemId),
         label: this._name("f:" + st.systemId),
-        sprite: "ship:freighter", manifest: this.manifest(st, now),
+        sprite: "ship:freighter", manifest: robbed ? [] : this.manifest(st, now),
         plan, at,
       });
     }
@@ -125,10 +134,12 @@ const Traffic = {
         if (!plan) continue;
         const at = Voyages.pos(plan, now);
         if (!at || at.p >= 1) continue;      // dwell tail of the loop — parked
+        const id = `npc:t:${sec.id}:${i}`;
+        const robbed = this._robbed(id, k, from, to);
         out.push({
-          id: `npc:t:${sec.id}:${i}`, kind: "trader", npc: true, relief,
+          id, kind: "trader", npc: true, relief, raided: robbed,
           name: this._name(`t:${sec.id}:${i}`),
-          sprite: "ship:shuttle", manifest: this._traderManifest(sec.id, i, k),
+          sprite: "ship:shuttle", manifest: robbed ? [] : this._traderManifest(sec.id, i, k),
           plan, at,
         });
       }
@@ -152,6 +163,12 @@ const Traffic = {
       m = this._tm[key] = { k, ids };
     }
     return m.ids;
+  },
+
+  // Corsairs out of a den take this run's manifest (raiders.js §4). Pure
+  // function of the flight and its loop index — no storage, same for everyone.
+  _robbed(id, loopIndex, fromSys, toSys) {
+    return !!(window.Raiders && Raiders.tookManifest(id, loopIndex, fromSys, toSys));
   },
 
   // Everything currently flying. Never throws — a render layer must not take

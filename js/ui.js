@@ -1266,6 +1266,19 @@ const UI = {
     return `<span class="badge" title="parked at the rock — ore lands in your stock at ${sys ? sys.name : "the system"}'s bay; recall it from the belt's card on the Star Map">mining ${where} · ${op.mined || 0} banked</span>`;
   },
 
+  // "guarding Vexos Drift · repels 49%" — an escort sitting a mining claim
+  // (SPACE_INTERACTIVITY §3.5). Released when the op is recalled or driven off.
+  _guardBadge(sh) {
+    const op = window.Mining ? Mining.opGuarding(sh.uid) : null;
+    if (!op) return `<span class="badge">guarding</span>`;
+    const poi = window.POIs ? POIs.list(op.sysId).find(p => p.id === op.poiId) : null;
+    const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
+    const where = poi ? poi.name : sys ? sys.name : "a claim";
+    if (op.returnAt) return `<span class="badge" title="the claim was struck or recalled — the wing is flying home">guarding · returning ~${Util.duration(Math.max(0, op.returnAt - Date.now()))}</span>`;
+    const pct = Math.round(Mining.repel(op.shipUid, Mining.guardUids(op)) * 100);
+    return `<span class="badge" title="sitting a mining claim — recall it from the belt's card on the Star Map">🛡 guarding ${where} · repels ${pct}%</span>`;
+  },
+
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
@@ -1283,6 +1296,7 @@ const UI = {
     else if (sh.status === "charter") status = `<span class="badge trade">on charter</span>`;
     else if (sh.status === "surveying") status = this._surveyBadge(sh);
     else if (sh.status === "mining") status = this._miningBadge(sh);
+    else if (sh.status === "guarding") status = this._guardBadge(sh);
     else if (sh.status === "debrief") status = `<span class="badge trade" title="the survey is back — finish the debrief in Comms → Dispatches">survey debrief waiting</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
@@ -4196,6 +4210,21 @@ const UI = {
     }
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
     if (made.length) {
+      // Corsair raids on parked claims (Mining.resolve → Raiders). Never
+      // silent: ore that didn't reach the bay has to be visible here, or the
+      // player just sees a smaller number and distrusts the game.
+      const hits = made.filter(m => m.raid).map(m => m.raid);
+      if (hits.length) {
+        const took = hits.reduce((n, r) => n + (r.stolen || 0), 0);
+        const off = hits.filter(r => r.repelled).length;
+        html += `<p class="down">☠ ${hits.length} corsair raid${hits.length === 1 ? "" : "s"} on your claims`
+          + (took ? ` — ${took} ore taken before it reached the bay` : "")
+          + (off ? ` · ${off} driven off by your escort` : "")
+          + ` <span class="muted-note">(hulls came home; banked ore was never at risk)</span></p>`;
+      }
+      made = made.filter(m => !m.raid);
+    }
+    if (made.length) {
       // Belt mining entries (untaxed, Mining.resolve) get their own line —
       // "Industries produced" would misattribute the ore.
       const mined = made.filter(m => m.mining);
@@ -4611,6 +4640,21 @@ const UI = {
       this.toast(`Survey launched — ${ship} → ${name} · ETA ${Util.duration(exp.etaMs)}`, "good");
       this.renderHubSurveys();
       if (this.page === "fleet") this.renderFleet();
+    });
+    Bus.on("miningRaid", r => {
+      if (window.Game._booting) return;   // offline raids land in the "while you were away" recap
+      const where = r.poiName || this.sysName(r.sysId);
+      if (r.repelled) {
+        this.toast(`🛡 ${r.band} jumped your claim at ${where} — your escort drove them off.`, "good", 6000);
+      } else {
+        const comm = (COMMODITIES.find(c => c.id === r.commId) || {}).name || "ore";
+        this.toast(`☠ ${r.band} raided ${r.ship || "your miner"} at ${where} — ${r.stolen} ${comm} taken`
+          + (r.driveOff ? ", the hull was chased off the rock." : "."), "bad", 7000);
+        if (window.Feed) Feed.emit(`corsairs hit a baron's claim at ${where.toLowerCase()} — ${r.stolen} ${comm.toLowerCase()} gone ☠`, { kind: "reaction" });
+      }
+      this.audioSafe("news");
+      if (this.page === "fleet") this.renderFleet();
+      if (window.StarMap) StarMap.refreshInfo();
     });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap
