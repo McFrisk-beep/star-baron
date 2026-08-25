@@ -35,15 +35,32 @@ const boot = () => {
   return ctx;
 };
 
-// ---- precincts are derived from the published bands ------------------------
+// ---- precincts sit at the capitals, and only where the law runs ------------
 {
   const c = boot();
-  const policed = c.Galaxy.list.filter(s => c.Security.bandOf(s.id).id === "policed");
-  assert.ok(policed.length > 0, "somewhere the Senate writ runs");
-  for (const s of policed) assert.ok(c.Police.hasPrecinct(s.id), `${s.id} hosts a precinct`);
+  const seats = c.Galaxy.list.filter(s => c.Police.hasPrecinct(s.id));
+  assert.ok(seats.length > 0, "somewhere the Senate writ runs");
+  for (const s of seats) {
+    assert.ok(s.capital, `${s.id} is a sector capital`);
+    assert.ok(c.Security.score(s.id) >= c.POLICECFG.precinctMinScore, "…where the law actually runs");
+  }
+  // One per sector at most — the seat of that sector's law, not a scattering.
+  const bySector = {};
+  for (const s of seats) bySector[s.sectorId] = (bySector[s.sectorId] || 0) + 1;
+  for (const [sid, n] of Object.entries(bySector)) assert.strictEqual(n, 1, `${sid} has one seat`);
+  // Every sector but the Sprawl polices itself — the coverage the band rule
+  // never gave (it put 12 of 13 precincts in the Core alone).
+  const covered = c.Galaxy.sectors.filter(sec => c.Police.hasPrecinct(sec.capital));
+  assert.ok(covered.length >= c.Galaxy.sectors.length - 1,
+    `every sector but the Sprawl has a seat (${covered.length}/${c.Galaxy.sectors.length})`);
+  // §5.4: the Syndicate is the law in the Sprawl — no Senate station there.
   const sprawl = c.Galaxy.sector("sprawl");
   for (const id of sprawl.systems)
     assert.ok(!c.Police.hasPrecinct(id), "no precinct anywhere in the Sprawl");
+  // A plain high-scoring system is NOT a seat — that was the old rule's bug.
+  const inner = c.Galaxy.list.find(s => !s.capital && c.Security.bandOf(s.id).id === "policed");
+  assert.ok(inner && !c.Police.hasPrecinct(inner.id),
+    "a policed non-capital system hosts no precinct of its own");
 }
 
 // ---- patrols: seeded pairs, only where the law lives -----------------------

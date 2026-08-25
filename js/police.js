@@ -39,8 +39,16 @@ const Police = {
   },
 
   // ---- precincts: derived, never authored ---------------------------------
+  // The seat of a sector's law is its CAPITAL — one precinct per sector, not
+  // one per high-scoring system (which piled every station into the Core and
+  // left four sectors unpoliced). Still derived: a capital must also be
+  // somewhere the law runs at all, which is what keeps Senate stations out of
+  // the Sable Sprawl (§5.4 — the Syndicate is the law there). Lift the
+  // Sprawl's capital above the floor by playing and a precinct opens there.
   hasPrecinct(sysId) {
-    return !!window.Security && Security.bandOf(sysId).id === (this.cfg().stationBand || "policed");
+    const sys = window.Galaxy ? Galaxy.get(sysId) : null;
+    if (!sys || !sys.capital || !window.Security) return false;
+    return Security.score(sysId) >= (this.cfg().precinctMinScore || 0);
   },
   // Per-sector precinct lists, cached per minute — Security reads station
   // tables, and patrols() runs per frame.

@@ -680,7 +680,14 @@ const PIRACYCFG = {
    books, and the next response comes heavier — but break every wave and you
    fly home with the loot, maybe with a piece of their kit.                   */
 const POLICECFG = {
-  stationBand: "policed",          // systems in this security band host a precinct
+  // Precincts sit at the SECTOR CAPITALS — the seats of the law, one per
+  // sector, rather than scattered across whichever systems happen to score
+  // highest (which put every station in the Core and left four sectors with
+  // no police at all). Still derived, never authored: a capital also has to
+  // be somewhere the law actually runs, so the Sable Sprawl's capital is
+  // excluded on the same §5.4 grounds that make it Syndicate ground — and if
+  // players ever lift it above this floor, a precinct opens there too.
+  precinctMinScore: 0.42,          // the Contested boundary in SECURITYCFG.bands
   pairsPerSector: 1,               // standing patrol pairs per sector with a precinct
   patrolLoopMinMs: 20 * 60 * 1000, // one patrol hop + dwell
   patrolLoopMaxMs: 35 * 60 * 1000,

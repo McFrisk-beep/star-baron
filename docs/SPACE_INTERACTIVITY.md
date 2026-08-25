@@ -56,14 +56,23 @@
   check. A robbed run limps on with an empty hold — the same distress pulse as
   a corsair hit, one law for the whole world.
 - **§5.2 police response (the other half of step 5):** `js/police.js`. Three
-  pieces, still no AI anywhere. **Precincts** are derived geography: any
-  system whose security band reaches `POLICECFG.stationBand` hosts a police
-  station, drawn in the scene with a rotating red/blue beacon — lift a system
-  into the band with a Customs House and a precinct opens; a Free Port closes
-  it. **Patrols** are §5.2's seeded flight plans given hulls and lights: each
+  pieces, still no AI anywhere. **Precincts** sit at the **sector capitals** —
+  the seats of the law, one per sector — drawn in the scene with a rotating
+  red/blue beacon. Still derived rather than authored: a capital also has to
+  be somewhere the law actually runs (`POLICECFG.precinctMinScore`, the
+  Contested boundary), which is what keeps Senate stations out of the Sable
+  Sprawl on §5.4's own grounds — the Syndicate is the law there — and means
+  lifting Sable Reach above the floor by playing would open one. That is 5 of
+  6 sectors today. (An earlier build keyed precincts to the top security band
+  instead; it put 12 of 13 stations inside the Core and left four sectors with
+  no police at all, which is the failure mode the capital rule exists to
+  avoid.) **Patrols** are §5.2's seeded flight plans given hulls and lights: each
   sector with a precinct flies a standing patrol, always in a **pair**,
-  sweeping between that sector's systems on a seeded loop, riding the same
-  Voyages pipeline as all traffic, strobing red/blue in the scene. **The
+  launching from the capital and sweeping out across that sector's systems on
+  a seeded loop, riding the same Voyages pipeline as all traffic, strobing
+  red/blue in the scene. `pairsPerSector` is the density knob: at 1 that is 5
+  pairs — 10 hulls — galaxy-wide, ~4 of them in flight at any moment and the
+  rest docked between sweeps. **The
   chase** is §5.1's response made concrete: a successful robbery can draw
   pursuit on the way home, odds scaled by the law stamped on the op at
   dispatch, resolving *exactly like a mission* — the outcome is a pure seeded
