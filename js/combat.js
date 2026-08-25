@@ -87,7 +87,7 @@ const Combat = {
   // Role from existing stats (§5.4) — no new data.
   _role(def) {
     if (def.id === "carrier") return "carrier";
-    if (def.cls === "transport" || def.cls === "survey") return "convoy";
+    if (def.cls === "transport" || def.cls === "survey" || def.cls === "miner") return "convoy";
     if ((def.firepower || 0) >= 120 && (def.speed || 1) <= 1.2) return "capital";
     if ((def.speed || 1) >= 1.8 && (def.hull || 100) < 150) return "screen";
     return "line";

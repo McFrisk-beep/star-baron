@@ -65,7 +65,7 @@ assert.ok(SHIP_VARIANTS.some(v => v.id === "stock"), "a stock refit exists as th
 console.log(`ok: all ${SHIP_VARIANTS.length} refits are trade-offs, none strictly better than stock`);
 
 // ---- 2) the shelf: stock, price, class-appropriate refits -------------------
-const sellable = new Map([...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...SHIP_CATALOG.survey]
+const sellable = new Map([...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...SHIP_CATALOG.survey, ...(SHIP_CATALOG.miner || [])]
   .filter(d => !d.craftOnly && d.price > 0).map(d => [d.id, d]));
 let seenHulls = new Set(), seenVariants = new Set();
 for (let epoch = 0; epoch < 400; epoch++) {

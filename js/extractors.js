@@ -34,6 +34,11 @@ const Extractors = {
         if (this.pool()[uid]) set.add(uid);
       }
     }
+    // Mining rigs: an extractor riding a dispatched miner is out in the belt,
+    // not on the shelf (docs/SPACE_INTERACTIVITY.md §3.4).
+    if (window.Mining) {
+      for (const op of Mining.list()) if (op.extractorUid && this.pool()[op.extractorUid]) set.add(op.extractorUid);
+    }
     return set;
   },
   unequipped() { const used = this.installedSet(); return Object.values(this.pool()).filter(e => !used.has(e.uid)); },

@@ -1118,6 +1118,7 @@ const UI = {
     speed:     { sym: "»", label: "Speed",     cls: "sc-sp" },
     scan:      { sym: "🔭", label: "Scan",      cls: "sc-sp" },
     endure:    { sym: "⚙", label: "Endure",    cls: "sc-ar" },
+    mine:      { sym: "⛏", label: "Yield",     cls: "sc-cg" },
   },
   statChips(obj, keys = ["firepower", "hull", "armor", "shields", "cargo", "speed"]) {
     return keys.map(k => { const m = this.STAT_META[k]; if (!m || obj[k] == null) return "";
@@ -1251,6 +1252,20 @@ const UI = {
     return `<span class="badge" title="dispatched on an anomaly survey — the ship is locked until the debrief closes">surveying${where} · ${when}</span>`;
   },
 
+  // "mining Vexos Drift · 3 batches banked" — where the hull is parked and what
+  // it has pulled so far (recall from the belt's POI card on the Star Map).
+  _miningBadge(sh) {
+    const op = window.Mining
+      ? Mining.list().find(o => o.shipUid === sh.uid) : null;
+    if (!op) return `<span class="badge">mining</span>`;
+    const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
+    const poi = window.POIs ? POIs.list(op.sysId).find(p => p.id === op.poiId) : null;
+    const where = poi ? poi.name : sys ? sys.name : "a belt";
+    if (op.returnAt) return `<span class="badge" title="recalled — the hull is flying home">mining · returning ~${Util.duration(Math.max(0, op.returnAt - Date.now()))}</span>`;
+    if (Date.now() < op.arriveAt) return `<span class="badge" title="en route to the claim">mining · en route ~${Util.duration(op.arriveAt - Date.now())}</span>`;
+    return `<span class="badge" title="parked at the rock — ore lands in your stock at ${sys ? sys.name : "the system"}'s bay; recall it from the belt's card on the Star Map">mining ${where} · ${op.mined || 0} banked</span>`;
+  },
+
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
@@ -1267,6 +1282,7 @@ const UI = {
     else if (impounded) status = `<span class="badge bad">⛔ impounded</span>`;
     else if (sh.status === "charter") status = `<span class="badge trade">on charter</span>`;
     else if (sh.status === "surveying") status = this._surveyBadge(sh);
+    else if (sh.status === "mining") status = this._miningBadge(sh);
     else if (sh.status === "debrief") status = `<span class="badge trade" title="the survey is back — finish the debrief in Comms → Dispatches">survey debrief waiting</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
@@ -1297,7 +1313,8 @@ const UI = {
       <div class="ship-info">
         <div class="ship-name">${sh.name} ${status} ${merc}</div>
         <div class="ship-route">${def.name} · <span class="cls-tag">${def.cls}</span> · slots ${used}/${slots}${refit}</div>
-        <div class="statline">${this.statChips(st, def.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo", "firepower"] : undefined)}</div>
+        <div class="statline">${this.statChips(st, def.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo", "firepower"]
+          : def.cls === "miner" ? ["mine", "cargo", "speed", "hull", "firepower"] : undefined)}</div>
         <div class="acc-row">${acc}${equipBtn}${repairBtn}${sellBtn}</div>
         ${impoundBlock}
       </div></div>`;
@@ -2087,14 +2104,16 @@ const UI = {
       const d = Fleet.shipDef(o.shipType); if (!d) return "";
       const v = Fleet.variantDef(o.variantId);
       const sprite = ASSET.shipArt(o.shipType, o.id);
-      const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"] : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
+      const keys = d.cls === "survey" ? ["scan", "endure", "speed", "hull", "cargo"]
+        : d.cls === "miner" ? ["mine", "cargo", "speed", "hull", "firepower"]
+        : ["firepower", "hull", "armor", "shields", "cargo", "speed"];
       // Preview the refitted numbers, not the catalog ones — otherwise the card
       // advertises stats the ship won't have once it's in the fleet.
       const st = {};
       for (const k of keys.concat(["slots"])) {
         const base = d[k] || 0, mod = (v && v.mods[k]) || 0;
         st[k] = k === "speed" ? +(base * (1 + mod)).toFixed(2)
-          : k === "scan" || k === "endure" ? +(base * (1 + mod)).toFixed(1)
+          : k === "scan" || k === "endure" || k === "mine" ? +(base * (1 + mod)).toFixed(1)
             : Math.round(base * (1 + mod));
       }
       const cost = Math.round((d.price || 0) * (1 - Rep.discount()));
@@ -4144,7 +4163,8 @@ const UI = {
   // first-run tutorial after it).
   showWYWA({ elapsedMs, reports, sold, chartered, orders, industry, mercs, recap }) {
     const fills = (orders || []).filter(e => e.type === "filled");
-    const made = industry || [], merced = mercs || [], rc = recap || {};
+    let made = industry || [];
+    const merced = mercs || [], rc = recap || {};
     const seized = rc.seized || [], movers = rc.movers || [];
     const senateChanged = rc.senate && (rc.senate.passed.length || rc.senate.repealed.length);
     const anything = reports.length || sold.length || fills.length || made.length
@@ -4175,6 +4195,19 @@ const UI = {
       }).join("") + `</ul>`;
     }
     if (fills.length) html += `<p>Standing orders filled: ${fills.map(f => `${f.side} ${f.qty} ${f.comm.name}`).join(", ")}.</p>`;
+    if (made.length) {
+      // Belt mining entries (untaxed, Mining.resolve) get their own line —
+      // "Industries produced" would misattribute the ore.
+      const mined = made.filter(m => m.mining);
+      if (mined.length) {
+        const magg = {};
+        for (const m of mined) magg[m.commodity] = (magg[m.commodity] || 0) + m.qty;
+        const mbits = Object.entries(magg).map(([id, q]) =>
+          `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`);
+        html += `<p>⛏ Mining fleets pulled: ${mbits.join(", ")} <span class="muted-note">(untaxed — parked at the belt's system bay)</span></p>`;
+      }
+      made = made.filter(m => !m.mining);
+    }
     if (made.length) {
       const agg = {}, taxAgg = {}, edictTitles = new Set();
       for (const m of made) {

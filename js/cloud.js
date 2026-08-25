@@ -709,7 +709,10 @@ const Cloud = {
   // Cross-device recovery for these leans on the shared world tables; a
   // project without that SQL regenerates them fresh on a new device. The same
   // browser always keeps its copy via localStorage + carryLocalOnly.
-  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war"],
+  // mining/beltPools: guest-local for now — dispatch is gated off the server
+  // ledger (Mining.canStart) until the mining SQL phase adds its RPC surface,
+  // at which point both move onto WIRE_KEYS + commit_allowlist together.
+  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war", "mining", "beltPools"],
   // The legacy `saves` strip is ONLY galaxy (cosmetic, regenerated): that row
   // has no server-side merge and no guaranteed world tables behind it, so it
   // must keep carrying the world slices or a device change loses them —

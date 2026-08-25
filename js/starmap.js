@@ -35,6 +35,7 @@ const StarMap = {
       stars: $("galaxy-stars"),
       galaxyView: $("galaxy-view"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
+      poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
       btnOpen: $("btn-starmap"), btnClose: $("sm-close"), toGalaxy: $("sm-to-galaxy"),
     };
@@ -1007,13 +1008,14 @@ const StarMap = {
     const redraw = () => { if (reduced) draw(performance.now()); };
     let hintTimer = 0;
     const hideHint = () => { clearTimeout(hintTimer); if (this.refs.sceneHint) this.refs.sceneHint.classList.add("faded"); };
+    const hidePoiTip = () => { if (this.refs.poiTip) this.refs.poiTip.style.display = "none"; };
     const zoomAt = (fx, fy, factor) => {
       const wx = (fx - cam.x) / cam.zoom, wy = (fy - cam.y) / cam.zoom;
       cam.zoom = Util.clamp(cam.zoom * factor, minZoom(), fitZoom() * 4);
       cam.x = fx - wx * cam.zoom; cam.y = fy - wy * cam.zoom;
-      clampCam(); hideHint(); redraw();
+      clampCam(); hideHint(); hidePoiTip(); redraw();
     };
-    const panBy = (dx, dy) => { cam.x += dx; cam.y += dy; clampCam(); hideHint(); redraw(); };
+    const panBy = (dx, dy) => { cam.x += dx; cam.y += dy; clampCam(); hideHint(); hidePoiTip(); redraw(); };
 
     // show the drag/zoom hint fresh each time a system opens; fade after a moment
     if (!ext && this.refs.sceneHint) {
@@ -1027,11 +1029,21 @@ const StarMap = {
     if (!ext) {
       const ptrs = new Map();
       let pinchPrev = null;
+      let dragAcc = 0;   // pixels moved since pointerdown — >4 suppresses the click
       const rectOf = () => canvas.getBoundingClientRect();
-      const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; };
+      const inMini = (mx, my) => mini && mx >= mini.x && mx <= mini.x + mini.s && my >= mini.y && my <= mini.y + mini.s;
+      const onDown = e => { ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); pinchPrev = null; dragAcc = 0; };
       const onMove = e => {
-        const p = ptrs.get(e.pointerId); if (!p) return;
+        const p = ptrs.get(e.pointerId);
+        if (!p) {   // no button down: POI / minimap hover cursor
+          const r = rectOf(), mx = e.clientX - r.left, my = e.clientY - r.top;
+          const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
+          const hot = inMini(mx, my) || (window.POIs && POIs.at(sys.id, wx, wy, 12 / cam.zoom));
+          canvas.style.cursor = hot ? "pointer" : "";
+          return;
+        }
         const px = p.x, py = p.y; p.x = e.clientX; p.y = e.clientY;
+        dragAcc += Math.abs(e.clientX - px) + Math.abs(e.clientY - py);
         if (ptrs.size >= 2) {                                // pinch: zoom around the midpoint, pan with it
           const pts = [...ptrs.values()], r = rectOf();
           const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -1044,17 +1056,35 @@ const StarMap = {
       };
       const onUp = e => { ptrs.delete(e.pointerId); pinchPrev = null; };
       const onWheel = e => { e.preventDefault(); const r = rectOf(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY > 0 ? 1 / 1.12 : 1.12); };
+      // Tap (not drag): minimap jumps the camera; a POI opens its info card.
+      const onClick = e => {
+        if (dragAcc > 4) return;
+        const r = rectOf(), mx = e.clientX - r.left, my = e.clientY - r.top;
+        if (inMini(mx, my)) {
+          cam.x = W() / 2 - ((mx - mini.x) / mini.scale) * cam.zoom;
+          cam.y = H() / 2 - ((my - mini.y) / mini.scale) * cam.zoom;
+          clampCam(); hidePoiTip(); redraw();
+          return;
+        }
+        const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
+        const hit = window.POIs && POIs.at(sys.id, wx, wy, 16 / cam.zoom);
+        if (hit) this._showPoiTip(hit, mx, my); else hidePoiTip();
+      };
       canvas.addEventListener("pointerdown", onDown);
       canvas.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
       window.addEventListener("pointercancel", onUp);
       canvas.addEventListener("wheel", onWheel, { passive: false });
+      canvas.addEventListener("click", onClick);
       cleanups.push(() => {
         canvas.removeEventListener("pointerdown", onDown);
         canvas.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onUp);
         canvas.removeEventListener("wheel", onWheel);
+        canvas.removeEventListener("click", onClick);
+        canvas.style.cursor = "";
+        hidePoiTip();
         clearTimeout(hintTimer);
       });
       this._sceneCtrlCleanup = () => cleanups.forEach(f => f());
@@ -1100,6 +1130,19 @@ const StarMap = {
       });
       return gateCache;
     };
+
+    // Deep-space POIs (docs/SPACE_INTERACTIVITY.md §2, step 1): seeded places
+    // in the reserved ring — no state, identical on every client. Art comes
+    // from ASSET.poi when an admin uploaded some; otherwise _drawPOI falls
+    // back to canvas primitives, the same pattern planets and stations use.
+    const pois = window.POIs ? POIs.list(sys.id) : [];
+    const poiImgs = {};
+    for (const p of pois) {
+      if (poiImgs[p.type] !== undefined) continue;
+      const u = ASSET.poi(p.type);
+      poiImgs[p.type] = u ? this.img(u) : null;
+    }
+    let mini = null;   // minimap rect, refreshed each frame — click jumps the cam
 
     // ---- ambient ship traffic (with behaviour) ----
     const raceKeys = Object.keys(RACES);
@@ -1251,6 +1294,13 @@ const StarMap = {
       // hyperspace gates at the system edge — one per lane, ships warp in/out
       for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name);
 
+      // deep-space POIs — out in the ring beyond the gates (§2 step 1)
+      for (const p of pois) this._drawPOI(ctx, p, poiImgs[p.type], now);
+      // seeded NPC barges working the richer seams (§3 — belts look worked
+      // before players arrive), then your own parked mining ops
+      for (const p of pois) if (p.ore) this._drawBeltWork(ctx, p, now);
+      if (window.Mining && window.Fleet) this._drawMiningOps(ctx, sys, now);
+
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
       if (!reduced) {
@@ -1332,6 +1382,10 @@ const StarMap = {
       this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy, { cx, cy, R });
 
       ctx.restore();   // end camera transform
+
+      // minimap (screen space): the widened world stays navigable — §2 step 1.
+      // Chase-cam (Hub Live View) scenes skip it; their camera isn't yours.
+      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois });
 
       if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
 
@@ -1724,6 +1778,261 @@ const StarMap = {
     const label = destName ? destName.toUpperCase().replace(/ GATE$/, "") + " GATE" : "HYPERSPACE GATE";
     ctx.fillText("⇋ " + label, gx, gy + 30);
     ctx.restore();
+  },
+
+  // Deep-space POI (docs/SPACE_INTERACTIVITY.md §2 step 1): admin art when
+  // uploaded (ASSET.poi), else a seeded canvas primitive per type — the same
+  // image-or-fallback pattern as planets and stations. Derelicts and
+  // listening posts reuse the survey work-site shapes.
+  _drawPOI(ctx, poi, img, now) {
+    const { x, y, r, seed } = poi;
+    ctx.save();
+    if (img && img.ok) {
+      ctx.drawImage(img, x - r, y - r, r * 2, r * 2);
+    } else switch (poi.type) {
+      case "belt": {      // tumbling rock cluster — seeded scatter, slow drift
+        const rot = now * 0.00004;
+        for (let k = 0; k < 9; k++) {
+          const h = (seed ^ Math.imul(k + 1, 0x9E3779B1)) >>> 0;
+          const a = (h % 628) / 100 + rot, rr = r * (0.25 + ((h >> 9) % 80) / 100);
+          const s = 2 + ((h >> 17) % 5);
+          ctx.fillStyle = `rgba(${150 + (h % 40)},${125 + (h % 30)},95,.85)`;
+          ctx.fillRect(x + Math.cos(a) * rr - s / 2, y + Math.sin(a) * rr - s / 2, s, s);
+        }
+        break;
+      }
+      case "debris": {    // slowly turning hull shards
+        for (let k = 0; k < 8; k++) {
+          const h = (seed ^ Math.imul(k + 1, 0x85EBCA6B)) >>> 0;
+          const a = (h % 628) / 100, rr = r * (0.2 + ((h >> 8) % 75) / 100);
+          ctx.save();
+          ctx.translate(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+          ctx.rotate(((h >> 16) % 628) / 100 + now * 0.0001);
+          ctx.fillStyle = "rgba(140,150,170,.7)";
+          ctx.fillRect(-3, -1, 6, 2);
+          ctx.restore();
+        }
+        break;
+      }
+      case "gas": {       // sensor-shadow nebula puff with drifting wisps
+        const puls = 0.85 + Math.sin(now * 0.0006 + seed) * 0.15;
+        const g = ctx.createRadialGradient(x, y, 2, x, y, r * puls);
+        g.addColorStop(0, "rgba(104,214,178,.3)"); g.addColorStop(1, "rgba(104,214,178,0)");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * puls, 0, 7); ctx.fill();
+        ctx.strokeStyle = "rgba(140,230,200,.25)"; ctx.lineWidth = 1.2;
+        for (let k = 0; k < 3; k++) {
+          ctx.beginPath();
+          ctx.ellipse(x, y, r * (0.4 + k * 0.2), r * (0.2 + k * 0.12), (seed % 314) / 100 + k + now * 0.00008, 0, 7);
+          ctx.stroke();
+        }
+        break;
+      }
+      case "derelict": this._drawSite(ctx, x, y, 0, now); break;
+      case "post": this._drawSite(ctx, x, y, 1, now); break;
+      case "rig": {       // gantry hull, drill boom, blinking work light
+        ctx.fillStyle = "rgba(120,110,90,.9)";
+        ctx.fillRect(x - 8, y - 5, 16, 10);
+        ctx.strokeStyle = "rgba(150,140,110,.8)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, y + 5); ctx.lineTo(x, y + 14); ctx.stroke();
+        ctx.fillStyle = Math.sin(now * 0.003 + seed) > 0 ? "rgba(255,194,75,.9)" : "rgba(255,194,75,.25)";
+        ctx.beginPath(); ctx.arc(x + 5, y - 7, 1.6, 0, 7); ctx.fill();
+        break;
+      }
+      case "buoy": {      // nav diamond with a strobing lane light
+        ctx.strokeStyle = "rgba(120,180,230,.8)"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x, y - 6); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.stroke();
+        const blink = (now * 0.001 + (seed % 10)) % 1.6 < 0.12;
+        ctx.fillStyle = blink ? "rgba(95,215,255,.95)" : "rgba(95,215,255,.3)";
+        ctx.beginPath(); ctx.arc(x, y, 1.8, 0, 7); ctx.fill();
+        break;
+      }
+      case "den": {       // dark angular hab with flickering red windows
+        ctx.save();
+        ctx.translate(x, y); ctx.rotate((seed % 628) / 100);
+        ctx.fillStyle = "rgba(52,48,66,.95)";
+        ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(2, -9); ctx.lineTo(-12, -5); ctx.lineTo(-12, 5); ctx.lineTo(2, 9); ctx.closePath(); ctx.fill();
+        const flick = Math.sin(now * 0.005 + seed) * 0.5 + 0.5;
+        ctx.fillStyle = `rgba(255,93,115,${(0.35 + flick * 0.45).toFixed(2)})`;
+        ctx.fillRect(-7, -2, 2, 2); ctx.fillRect(-2, -1, 2, 2); ctx.fillRect(4, -3, 2, 2);
+        ctx.restore();
+        break;
+      }
+    }
+    // label under it, the same idiom as the gates but dimmer
+    ctx.fillStyle = "rgba(170,195,235,.55)"; ctx.font = "9px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+    ctx.fillText(poi.name.toUpperCase(), x, y + r + 12);
+    ctx.restore();
+  },
+
+  // Seeded NPC mining barges orbiting a belt with ore — no state, pure
+  // dressing so belts look worked before players arrive (§3, step 2).
+  _drawBeltWork(ctx, poi, now) {
+    const n = poi.ore.rich >= 1 ? 1 + (poi.seed % 2) : (poi.seed >> 3) % 2;
+    if (!n) return;
+    const img = this.img(ASSET.ship("hauler"));
+    for (let k = 0; k < n; k++) {
+      const h = (poi.seed ^ Math.imul(k + 1, 0xC2B2AE35)) >>> 0;
+      const a = (h % 628) / 100 + now * 0.00003 * ((h & 1) ? 1 : -1);
+      const rr = poi.r * 0.8 + 12 + (h % 9);
+      const x = poi.x + Math.cos(a) * rr, y = poi.y + Math.sin(a) * rr;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2); ctx.globalAlpha = 0.9;
+      if (img.ok) ctx.drawImage(img, -7, -4, 14, 8);
+      else { ctx.fillStyle = "#b9a27a"; ctx.fillRect(-5, -2.5, 10, 5); }
+      ctx.restore();
+      if (Math.sin(now * 0.004 + h) > 0.3) {   // drill flare, strobing
+        const tx = poi.x + Math.cos(a) * poi.r * 0.4, ty = poi.y + Math.sin(a) * poi.r * 0.4;
+        ctx.strokeStyle = "rgba(255,200,120,.55)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+        ctx.fillStyle = "rgba(255,220,150,.8)"; ctx.fillRect(tx - 1, ty - 1, 2, 2);
+      }
+    }
+  },
+
+  // Your parked mining ops in this system: the hull at its rock with a work
+  // pulse and its name — the stationary target, visibly yours. Transits keep
+  // to the fleet badge for now (chart markers are a later step).
+  _drawMiningOps(ctx, sys, now) {
+    const wall = Date.now();
+    for (const op of Mining.atSystem(sys.id)) {
+      if (op.returnAt || wall < op.arriveAt) continue;
+      const poi = window.POIs ? POIs.get(op.poiId) : null;
+      const sh = Fleet.ship(op.shipUid);
+      if (!poi || !sh) continue;
+      const h = (poi.seed ^ 0x5bd1) >>> 0;
+      const a = (h % 628) / 100 + now * 0.00005;
+      const rr = poi.r + 22;
+      const x = poi.x + Math.cos(a) * rr, y = poi.y + Math.sin(a) * rr;
+      const img = this.img(ASSET.shipArt(sh.type, sh.uid));
+      ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2);
+      if (img.ok) ctx.drawImage(img, -9, -5.5, 18, 11);
+      else { ctx.fillStyle = "#3fe3ff"; ctx.fillRect(-6, -3, 12, 6); }
+      ctx.restore();
+      const pr = (now % 2600) / 2600;   // work pulse, same idiom as survey sites
+      ctx.strokeStyle = `rgba(63,227,255,${((1 - pr) * 0.4).toFixed(2)})`;
+      ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.arc(poi.x, poi.y, 8 + pr * poi.r, 0, 7); ctx.stroke();
+      ctx.save();
+      ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      ctx.strokeText(sh.name, x, y - 14);
+      ctx.fillStyle = "#3fe3ff"; ctx.fillText(sh.name, x, y - 14);
+      ctx.restore();
+    }
+  },
+
+  // Minimap inset (screen space, bottom-right): world box, core outline,
+  // star, gates and POI dots, plus the current viewport rectangle. Returns
+  // its rect so the scene's click handler can jump the camera.
+  _drawMinimap(ctx, w, h, cam, g) {
+    const s = Util.clamp(Math.round(Math.min(w, h) * 0.24), 90, 150);
+    const x = w - s - 10, y = h - s - 10, k = s / g.WORLD;
+    ctx.save();
+    ctx.fillStyle = "rgba(6,10,20,.72)";
+    this._roundRect(ctx, x, y, s, s, 6); ctx.fill();
+    ctx.strokeStyle = "rgba(120,150,200,.35)"; ctx.lineWidth = 1; ctx.stroke();
+    this._roundRect(ctx, x, y, s, s, 6); ctx.clip();
+    const off = ((g.WORLD - g.CORE) / 2) * k;             // core box, centred
+    ctx.strokeStyle = "rgba(120,150,200,.25)";
+    ctx.strokeRect(x + off, y + off, g.CORE * k, g.CORE * k);
+    ctx.fillStyle = "#ffd86a";
+    ctx.beginPath(); ctx.arc(x + g.wcx * k, y + g.wcy * k, 2, 0, 7); ctx.fill();
+    ctx.fillStyle = "rgba(150,210,255,.9)";
+    for (const gp of g.gates) ctx.fillRect(x + gp.x * k - 1, y + gp.y * k - 1, 2, 2);
+    for (const p of g.pois) {
+      const def = (window.POI_TYPES || {})[p.type];
+      ctx.fillStyle = (def && def.color) || "#9aa4b8";
+      ctx.fillRect(x + p.x * k - 1.2, y + p.y * k - 1.2, 2.4, 2.4);
+    }
+    ctx.strokeStyle = "rgba(63,227,255,.8)";              // current viewport
+    ctx.strokeRect(x + (-cam.x / cam.zoom) * k, y + (-cam.y / cam.zoom) * k,
+      (w / cam.zoom) * k, (h / cam.zoom) * k);
+    ctx.restore();
+    return { x, y, s, scale: k };
+  },
+
+  // POI info card — reuses the planet-tip styling; canvas-relative click
+  // coordinates are mapped into the system-view box the tip is absolute in.
+  // Belts grow a mining block (§3): the seam, your op, and dispatch/recall
+  // controls — so the whole mining loop lives on the rock itself.
+  _showPoiTip(poi, mx, my) {
+    const tip = this.refs.poiTip;
+    if (!tip) return;
+    this._poiTipAt = { mx, my };
+    const def = POI_TYPES[poi.type] || {};
+    let html = `<b>${poi.name}</b>
+      <div class="pt-sub"><span style="color:${def.color || "var(--ink-dim)"}">●</span> ${def.label || poi.type} · deep-space ring</div>
+      <div class="pt-sub">${def.blurb || ""}</div>`;
+    if (poi.ore && window.Mining && window.Fleet) html += this._poiOreBlock(poi);
+    tip.innerHTML = html;
+    tip.style.pointerEvents = "auto";   // the belt card has buttons; planet-tip CSS says none
+    const cr = this.refs.canvas.getBoundingClientRect();
+    const vr = this.refs.systemView.getBoundingClientRect();
+    tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - 250)) + "px";
+    tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - 90)) + "px";
+    tip.style.display = "block";
+    this._wirePoiTip(poi);
+  },
+
+  _poiOreBlock(poi) {
+    const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
+    const commName = comm ? comm.name : poi.ore.commId;
+    const left = Mining.poolLeft(poi);
+    const richLbl = poi.ore.rich >= 1.3 ? "prime" : poi.ore.rich >= 1.0 ? "rich" : poi.ore.rich >= 0.8 ? "fair" : "lean";
+    let html = `<div class="pt-sub">⛏ <b>${commName}</b> seam · ${richLbl} (${poi.ore.rich}×) · ${left}/${poi.ore.pool} this cycle`
+      + (left <= 0 ? ` · regenerates in ${Util.duration(Mining.epochLeft())}` : "") + `</div>`;
+    const op = Mining.opAt(poi.id);
+    if (op) {
+      const sh = Fleet.ship(op.shipUid);
+      const now = Date.now();
+      const stat = op.returnAt ? `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`
+        : now < op.arriveAt ? `en route ~${Util.duration(op.arriveAt - now)}`
+          : `mining · ${op.mined || 0} banked`;
+      return html + `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
+        + (op.returnAt ? "" : `<button class="btn btn-mini" id="poi-recall">Recall</button>`) + `</div>`;
+    }
+    if (window.Economy && !Economy.softIncomeLocal())
+      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch arrives with the server-side mining update.</div>`;
+    if (left <= 0) return html;
+    const miners = Fleet.idle().filter(sh => (Fleet.shipDef(sh.type) || {}).cls === "miner" && !sh.mercenary);
+    if (!miners.length)
+      return html + `<div class="pt-sub">No idle miner — the Bazaar shipyard stocks Prospector-class hulls.</div>`;
+    const ships = miners.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ⛏ ${Fleet.stats(sh).mine.toFixed(1)}</option>`).join("");
+    const rigs = Mining.rigsFor(poi).map(ex => `<option value="${ex.uid}">${Util.esc(ex.name)}</option>`).join("");
+    return html + `<div class="st-hall-list" style="margin-top:6px">
+        <select id="poi-mn-ship">${ships}</select>
+        <select id="poi-mn-rig"><option value="">No rig</option>${rigs}</select>
+        <button class="btn btn-mini btn-go" id="poi-mn-go">Dispatch</button>
+      </div>
+      <div class="pt-sub">≈${Mining.batchQty(poi, miners[0].uid, null)} ${commName} / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay</div>`;
+  },
+
+  _wirePoiTip(poi) {
+    const tip = this.refs.poiTip;
+    const refresh = () => {
+      window.Game.requestSave();
+      const at = this._poiTipAt || { mx: 20, my: 20 };
+      this._showPoiTip(poi, at.mx, at.my);
+      if (UI.page === "fleet") UI.renderFleet();
+    };
+    const go = tip.querySelector("#poi-mn-go");
+    if (go) go.onclick = () => {
+      const shipU = (tip.querySelector("#poi-mn-ship") || {}).value;
+      const rigU = (tip.querySelector("#poi-mn-rig") || {}).value || null;
+      const r = Mining.start(poi.id, shipU, rigU);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Miner dispatched to ${poi.name} — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
+      refresh();
+    };
+    const rec = tip.querySelector("#poi-recall");
+    if (rec) rec.onclick = () => {
+      const op = Mining.opAt(poi.id);
+      if (!op) return;
+      const r = Mining.recall(op.id);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Recalled — home in ~${Util.duration(op.travelMs)}.`, "info");
+      refresh();
+    };
   },
 
   _roundRect(ctx, x, y, w, h, r) {
