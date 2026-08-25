@@ -1419,6 +1419,10 @@ const ASSET = {
   raceship: race => _asset(`raceship:${race}`, `assets/raceships/${race}.png`),
   nebula: name => _asset(`nebula:${name}`, `assets/nebula/${name}.png`),
   asteroids: () => _asset(`asteroids:_`, `assets/space/asteroids.png`),
+  // Deep-space POI art (docs/SPACE_INTERACTIVITY.md §2), keyed `poi:<type>`.
+  // Only the belt ships a default (the asteroid art); an empty default means
+  // starmap.js draws its canvas primitive until an admin uploads something.
+  poi: type => _asset(`poi:${type}`, type === "belt" ? `assets/space/asteroids.png` : ""),
   hub: id => _asset(`hub:${id}`, `assets/hub/${id}.png`),   // prop/NPC sprites for the station hub
   hubBg: () => _asset(`hub:_bg`, `assets/hub/bg.png`),      // optional room backdrop (falls back to the CSS starscape)
   // Per-tab page backgrounds (admin Images → Page backgrounds). Empty default = no image.

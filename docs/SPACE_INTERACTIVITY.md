@@ -1,8 +1,11 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: design only. Nothing in this document is built.** It is the consolidated
-output of two brainstorming rounds, written down so the decided parts can be
-separated from the open ones before anybody opens an editor.
+**Status: build order step 1 (the POI layer, §2) is built** — `js/pois.js` seeds
+the places, `js/starmap.js` renders them, makes them clickable and adds the
+minimap, `tools/check_pois.js` is the determinism check. Everything from §3 on
+is still design only. The document is the consolidated output of two
+brainstorming rounds, written down so the decided parts can be separated from
+the open ones before anybody opens an editor.
 
 Companion to `REALTIME_SPACE.md` and `LIVING_GALAXY.md`:
 
@@ -437,7 +440,7 @@ Each step ships alone and is playable without the next one.
 
 | Step | What | Why here |
 |---|---|---|
-| 1 | **POI layer** in the deep-space ring | Everything needs a destination inside a system |
+| 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
 | 2 | **Mining + the `miner` class** (NPC miners first) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** | Teaches the threat model where nobody can grief anybody |
 | 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
