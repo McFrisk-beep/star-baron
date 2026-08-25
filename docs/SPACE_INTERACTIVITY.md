@@ -1,6 +1,7 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order steps 1–3 are built.**
+**Status: build order steps 1–3 are built, plus §5.3's security bands (the
+derivation half of step 5).**
 
 - **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
   renders them, makes them clickable and adds the minimap;
@@ -32,6 +33,17 @@
   raiding costs:** a raid takes the batch that was in the hold and nothing else
   — never banked ore, never the system bay, never a hull. A robbed miner takes
   damage (a repair bill) and can be chased off its rock; it always flies home.
+- **§5.3 security bands (part of step 5):** `js/security.js` computes how much
+  law is present in a system — sector floor + sector capital + station modules
+  + Senate edicts + a running war — and the galaxy chart paints it: each region
+  is a blob hugging its own systems, tinted by its band, with system nodes
+  wearing their faction's colour (`Galaxy.factionOf`, tallied off the planets
+  each system actually works; Syndic space answers to the Syndicate per §5.4).
+  `tools/check_security.js` is the check. **Raiders reads the same number**, so
+  there is one answer to "how lawful is here" rather than two that drift — and
+  fitting a Customs House now measurably protects your own mining claims *and*
+  repaints the map for everyone. The other half of step 5 — police *response*
+  as a seeded flight plan (§5.2), and crime with teeth — is still design only.
 
 **Site churn (§1.3's epoch input) is also built.** A system's *slots* are
 permanent geography, but their *occupants* are not: belts, debris fields and
@@ -48,7 +60,8 @@ seam it was never sent to. Nothing new is stored: occupancy is
 what *you* took, and it dies with its generation. Mining's cadence dropped to
 30-minute batches (`MININGCFG.cycleMs`) so several land inside a site's life.
 
-Everything from §5 on is still design only. The document is the consolidated
+Everything from §5.1 on, apart from the §5.3 bands noted above, is still
+design only. The document is the consolidated
 output of two brainstorming rounds, written down so the decided parts can be
 separated from the open ones before anybody opens an editor.
 
@@ -319,6 +332,37 @@ The consequence is the good part: **players change the security map by playing.*
 Fitting a Customs House genuinely makes a lane safer for everyone, competitors
 included — a public good that is also individually profitable.
 
+**Built (`js/security.js`).** `Security.score(sysId)` is that sum, 0–1, clamped;
+`band()` buckets it into the five the galaxy chart draws. One number was
+authored — `SECURITYCFG.sectorBase`, exactly parallel to `MININGCFG.sectorRich`
+— and everything on top of it is read from the world. Two decisions worth
+recording:
+
+- **Pirate dens are deliberately not an input.** Security is the law's
+  *published* presence; a den is a local secret you find by flying out to it
+  (§7.1 keeps it hidden until found), and folding it in here would paint every
+  den on the galaxy chart. Den pressure stays in `RAIDCFG`, discovered.
+- **`Raiders` consumes this, it does not duplicate it.** `claimChance` was
+  growing its own Senate term; that is now `Security.raidMult()`. One truth for
+  "how lawful is here", so a Customs House protects a mining claim and repaints
+  the region for the same reason, and neither can drift from the other.
+
+The Sable Sprawl starts *below* the lawless line on purpose (§5.4): its capital
+scrapes into Frontier on the capital bonus, the rest is genuinely outside the
+law. Every band boundary is reachable by play in both directions — a Free Port
+or a Black Market drops a system, a Customs House or a Lane Buoy lifts it.
+
+**Faction allegiance** rides alongside it on the same chart, and is derived the
+same way: `Galaxy.factionOf(sys)` tallies the categories its planets actually
+work and maps the winner through `CATEGORY_FACTION`. The one stated rule is
+§5.4's — Syndic space answers to the Syndicate whatever it digs up — which is
+what makes the Sprawl read as Syndicate territory and scatters Syndicate
+footholds through everyone else's back yard.
+
+Civil unrest (`Stock.sentiment`) kept its place on the chart as a *separate*
+channel — a dashed region edge — rather than a second hue, so an angry but
+well-policed sector can never be misread as a lawless one.
+
 ### 5.4 Sable Sprawl is not lawless — it has a different law
 
 "Free-for-all" is a bad design space because it has no dials. **Protection racket**
@@ -508,7 +552,7 @@ Each step ships alone and is playable without the next one.
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
 | 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
-| 5 | **Security bands, response, crime with teeth** | The rules now have something to govern |
+| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response and crime still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |
 

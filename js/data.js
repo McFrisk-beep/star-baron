@@ -599,12 +599,14 @@ const MININGCFG = {
    costs one 30-minute batch plus a repair bill, never a hull, never banked
    ore. High variance, not high expected value.                               */
 const RAIDCFG = {
-  base: 0.07,                 // attempt odds per mining cycle on an average rock
+  // Attempt odds per mining cycle on an average rock in average space. The law
+  // present in the system (SECURITYCFG.raidMult) scales this, so a policed
+  // system all but shuts corsairs off and the Sprawl multiplies them.
+  base: 0.05,
   // …times this with a pirate den in the same system. Kept modest on purpose:
   // roughly half the galaxy's systems hold a den (POI slot weights), so this
   // is a common multiplier, not a rare one.
   denMult: 1.8,
-  senateClamp: [0.2, 2.5],    // Convoy Escort Mandate (−) / Lane Patrol Cuts (+)
   syndicateShield: 0.35,      // Sable Sprawl only: +100 Syndicate buys this much quiet (§5.4)
   chanceClamp: [0.01, 0.6],
   repelSoft: 240,             // guard score at which a raid is repelled half the time
@@ -623,6 +625,43 @@ const RAIDCFG = {
     { at: 0.11, id: "raided",  label: "raided",    color: "#ffc24b" },
     { at: 0.2,  id: "hunted",  label: "hunted",    color: "#ff9146" },
     { at: 0.33, id: "lawless", label: "corsair country", color: "#ff5d73" },
+  ],
+};
+
+/* ---- SECURITY BANDS (docs/SPACE_INTERACTIVITY.md §5.3) ---------------------
+   How much law is present in a system, 0 (none) to 1 (policed). Every input
+   but the sector floor already exists, and that is the point: a band is
+   COMPUTED from the world, so **players change the security map by playing**.
+   Fitting a Customs House genuinely makes a lane safer for everyone through
+   it, competitors included — a public good that is also individually
+   profitable.
+
+   Deliberately NOT an input: pirate dens. Security is the law's published
+   presence; a den is a local secret you find by flying there (§7.1 keeps it
+   hidden until found), and folding it in here would broadcast every den on
+   the galaxy chart. Den pressure stays in RAIDCFG where it is discovered.    */
+const SECURITYCFG = {
+  // The one authored number, exactly parallel to MININGCFG.sectorRich: how much
+  // law a sector starts with before anything anyone does.
+  // The Sable Sprawl starts BELOW the lawless line on purpose (§5.4): its
+  // capital scrapes into Frontier on the capital bonus, everything else is
+  // genuinely outside the law. Every other band boundary is reachable by play
+  // — a Free Port drops a system, a Customs House lifts it.
+  sectorBase: { core: 0.92, green: 0.78, tide: 0.70, belt: 0.66, forge: 0.55, sprawl: 0.19 },
+  capital: 0.10,          // a sector capital is the seat of its law
+  // Station modules in the system (docs/STATIONS.md). Signed, per level.
+  modules: { customs_house: 0.14, lane_buoy: 0.05, free_port: -0.12, black_market: -0.16 },
+  senate: 0.30,           // × Senate.routeSafetyAdd() — Convoy Escort Mandate / Lane Patrol Cuts
+  war: -0.10,             // a faction war is running in this sector's domain
+  // Raid pressure scales with how little law there is: a fully policed system
+  // multiplies corsair odds by raidMult[0], a lawless one by raidMult[1].
+  raidMult: [0.35, 2.2],
+  bands: [
+    { at: 0,    id: "lawless",   label: "Lawless",   color: "#ff5d73", blurb: "No law worth the name. What you fly out with is what you kept." },
+    { at: 0.22, id: "frontier",  label: "Frontier",  color: "#ff9146", blurb: "Patrols are a rumour. Losses here are nobody's problem but yours." },
+    { at: 0.42, id: "contested", label: "Contested", color: "#ffc24b", blurb: "The law shows up eventually. Corsairs work the gaps." },
+    { at: 0.62, id: "guarded",   label: "Guarded",   color: "#9fd45e", blurb: "Regular patrols. Trouble here is unusual enough to be news." },
+    { at: 0.80, id: "policed",   label: "Policed",   color: "#3ad6a0", blurb: "Senate writ runs. Raiding is not so much risky as pointless." },
   ],
 };
 
@@ -1724,6 +1763,7 @@ window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
 window.RAIDCFG = RAIDCFG;
+window.SECURITYCFG = SECURITYCFG;
 window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.WORKSHOPCFG = WORKSHOPCFG;

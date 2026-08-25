@@ -12,7 +12,7 @@
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
 
 const FILES = ["store.js", "data.js", "flavor.js", "market.js", "galaxy.js", "pois.js",
-  "reputation.js", "fleet.js", "extractors.js", "charters.js", "raiders.js", "mining.js"];
+  "reputation.js", "fleet.js", "extractors.js", "charters.js", "security.js", "raiders.js", "mining.js"];
 const boot = () => {
   const ctx = vm.createContext({ console, Math, Date });
   ctx.window = ctx;

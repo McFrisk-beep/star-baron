@@ -33,7 +33,7 @@ const StarMap = {
     this.refs = {
       overlay: $("starmap-overlay"), svg: $("galaxy-svg"), tip: $("galaxy-tip"),
       stars: $("galaxy-stars"),
-      galaxyView: $("galaxy-view"), systemView: $("system-view"),
+      galaxyView: $("galaxy-view"), keys: $("galaxy-keys"), systemView: $("system-view"),
       canvas: $("system-canvas"), info: $("system-info"), planetTip: $("planet-tip"),
       poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
@@ -199,23 +199,27 @@ const StarMap = {
     svg.innerHTML = "";
     const X = x => x * W, Y = y => y * H;
 
-    // sector halos + labels + link lines to capital
+    // Region blobs: a hull drawn round the sector's actual systems, tinted by
+    // its SECURITY band (§5.3) rather than by race — the map's job is to tell
+    // you where the law is before you fly a fat hold there. Civil unrest
+    // (Stock.sentiment) rides a dashed edge, a separate channel so it can
+    // never be misread as a security colour.
+    this._blobEls = {};
     for (const sec of Galaxy.sectors) {
       const cx = X(sec.pos.x), cy = Y(sec.pos.y);
-      const halo = document.createElementNS(ns, "circle");
-      halo.setAttribute("cx", cx); halo.setAttribute("cy", cy); halo.setAttribute("r", 120);
-      halo.setAttribute("class", "sector-halo"); halo.setAttribute("fill", RACES[sec.race].color);
-      // Sentiment tint: coarse public band (exact figures stay in Stations tab).
-      if (window.Stock && Stock.sentiment[sec.id] != null) {
-        const s = Stock.sentiment[sec.id];
-        halo.setAttribute("opacity", s >= 60 ? "0.18" : s >= 40 ? "0.28" : s >= 20 ? "0.38" : "0.48");
-        if (s < 40) halo.setAttribute("fill", s < 20 ? "#ff5d73" : "#ffc24b");
-      }
-      svg.appendChild(halo);
+      const blob = document.createElementNS(ns, "path");
+      blob.setAttribute("class", "sector-blob");
+      blob.setAttribute("d", this._sectorBlobPath(sec, X, Y));
+      svg.appendChild(blob);
       const lbl = document.createElementNS(ns, "text");
       lbl.setAttribute("x", cx); lbl.setAttribute("y", cy - 96);
       lbl.setAttribute("class", "sector-label"); lbl.textContent = sec.name.toUpperCase();
       svg.appendChild(lbl);
+      const sub = document.createElementNS(ns, "text");
+      sub.setAttribute("x", cx); sub.setAttribute("y", cy - 80);
+      sub.setAttribute("class", "sector-band");
+      svg.appendChild(sub);
+      this._blobEls[sec.id] = { blob, sub };
     }
 
     // hyperspace lanes (Lanes.build from the same seed): bright trunk highways
@@ -240,6 +244,17 @@ const StarMap = {
       g.setAttribute("class", "node" + (sys.capital ? " cap" : "") + (owned ? " st-owned" : "") + (auction && auction.status === "open" ? " st-auction" : ""));
       g.setAttribute("transform", `translate(${X(sys.pos.x)},${Y(sys.pos.y)})`);
       g.style.cursor = "pointer";
+
+      // Faction aura: who this system's economy answers to (Galaxy.factionOf,
+      // tallied off its planets). Its own element, drawn behind, so the
+      // node-ring keeps carrying market direction / events / surveys — two
+      // signals, two channels, neither one clobbering the other.
+      const fac = document.createElementNS(ns, "circle");
+      const fcol = Galaxy.factionColor(sys);
+      fac.setAttribute("r", sys.capital ? 18 : 12);
+      fac.setAttribute("class", "node-faction");
+      fac.setAttribute("fill", fcol); fac.setAttribute("stroke", fcol);
+      g.appendChild(fac);
 
       const ring = document.createElementNS(ns, "circle");
       ring.setAttribute("r", sys.capital ? 13 : 8);
@@ -268,9 +283,84 @@ const StarMap = {
       svg.appendChild(g);
       this._nodeEls[sys.id] = { ring, g };
     }
+    this._renderKeys();
     this.updateGalaxyNodes();
     this._fitGalaxy();
     this._initPanZoom();
+  },
+
+  // The map key, built from SECURITYCFG.bands and FACTIONS themselves — retune
+  // a band or add a faction and the legend follows, because there is no second
+  // copy of the colours to forget about.
+  _renderKeys() {
+    const el = this.refs.keys; if (!el) return;
+    const bands = ((window.SECURITYCFG || {}).bands || []).slice().reverse();
+    const row = (head, items) => !items.length ? "" :
+      `<div class="k-row"><span class="k-head">${head}</span>${items.join("")}</div>`;
+    el.innerHTML =
+      row("region security", bands.map(b =>
+        `<span title="${Util.esc(b.blurb || "")}"><i class="k-swatch" style="background:${b.color}"></i>${Util.esc(b.label)}</span>`))
+      + row("system allegiance", Object.values(window.FACTIONS || {}).map(f =>
+        `<span><i class="k-dot" style="background:${f.color}"></i>${Util.esc(f.name)}</span>`));
+  },
+
+  // A closed blob hugging a sector's systems: convex hull, pushed out from the
+  // centroid so it clears the stars, then run through a closed Catmull-Rom
+  // spline so the territory reads as an organic region rather than a polygon.
+  // Pure geometry off seeded positions — same shape on every client, and it
+  // scales cleanly under the viewBox zoom (no filters, no raster).
+  _sectorBlobPath(sec, X, Y, pad = 38) {
+    const pts = sec.systems.map(id => Galaxy.get(id)).filter(Boolean)
+      .map(sys => ({ x: X(sys.pos.x), y: Y(sys.pos.y) }));
+    if (!pts.length) return "";
+    const cx = pts.reduce((n, p) => n + p.x, 0) / pts.length;
+    const cy = pts.reduce((n, p) => n + p.y, 0) / pts.length;
+    // A sector too small to hull (or all-collinear) still deserves a blob.
+    let hull = pts.length >= 3 ? this._hull(pts) : [];
+    if (hull.length < 3) {
+      const r = pts.reduce((n, p) => Math.max(n, Math.hypot(p.x - cx, p.y - cy)), 0) + pad;
+      hull = [0, 1, 2, 3, 4, 5].map(i => {
+        const a = i / 6 * Math.PI * 2;
+        return { x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r };
+      });
+    } else {
+      hull = hull.map(p => {
+        const d = Math.hypot(p.x - cx, p.y - cy) || 1;
+        return { x: p.x + (p.x - cx) / d * pad, y: p.y + (p.y - cy) / d * pad };
+      });
+    }
+    return this._closedSpline(hull);
+  },
+
+  // Andrew's monotone chain — counter-clockwise hull of a point set.
+  _hull(pts) {
+    const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const half = src => {
+      const out = [];
+      for (const q of src) {
+        while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], q) <= 0) out.pop();
+        out.push(q);
+      }
+      out.pop();
+      return out;
+    };
+    return half(p).concat(half(p.slice().reverse()));
+  },
+
+  // Closed Catmull-Rom → cubic beziers. The standard 1/6 tangent gives a curve
+  // that passes through every hull vertex, so the blob still contains its
+  // systems after smoothing.
+  _closedSpline(p) {
+    const n = p.length, at = i => p[(i % n + n) % n];
+    let d = `M${at(0).x.toFixed(1)},${at(0).y.toFixed(1)}`;
+    for (let i = 0; i < n; i++) {
+      const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+      const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6;
+      d += `C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+    }
+    return d + "Z";
   },
 
   // ===== galaxy pan / zoom =================================================
@@ -307,7 +397,11 @@ const StarMap = {
       if (y < minY) minY = y; if (y > maxY) maxY = y;
     }
     if (!isFinite(minX)) { minX = 0; minY = 0; maxX = W; maxY = H; }
-    minX -= 60; maxX += 60; minY -= 90; maxY += 70;    // extra top pad for sector labels
+    // Pad past the outermost star far enough to clear the region blobs drawn
+    // round it (_sectorBlobPath's outward pad, plus the spline's overshoot);
+    // extra on top for the sector name and its band label.
+    const bp = 52;
+    minX -= bp; maxX += bp; minY -= 90; maxY += bp + 30;
     const cw = maxX - minX, ch = maxY - minY;
     const r = this.refs.galaxyView.getBoundingClientRect();
     const AR = (r.width > 0 && r.height > 0) ? r.width / r.height : cw / ch;
@@ -372,6 +466,7 @@ const StarMap = {
   },
 
   updateGalaxyNodes() {
+    this._updateSectorBlobs();
     if (!this._nodeEls) return;
     for (const id in this._nodeEls) {
       const idx = Galaxy.localIndex(id);
@@ -383,6 +478,26 @@ const StarMap = {
       ring.classList.toggle("pulse", !!(surv || evt));
       const docked = this.s().currentSystem === id;
       this._nodeEls[id].g.classList.toggle("docked", docked);
+    }
+  },
+
+  // Security bands are derived (§5.3), so they move while you play: claim a
+  // station and fit a Customs House, pass an edict, start a war — the region
+  // repaints on the next tick without anything being stored.
+  _updateSectorBlobs() {
+    if (!this._blobEls || !window.Security) return;
+    for (const sec of Galaxy.sectors) {
+      const el = this._blobEls[sec.id]; if (!el) continue;
+      const band = Security.sectorBand(sec.id);
+      el.blob.setAttribute("fill", band.color);
+      el.blob.setAttribute("stroke", band.color);
+      // Civil unrest is a separate reading from lawfulness — a dashed edge, so
+      // an angry-but-policed sector can never be misread as a lawless one.
+      const sent = window.Stock ? Stock.sentiment[sec.id] : null;
+      el.blob.classList.toggle("unrest", sent != null && sent < 40);
+      el.sub.setAttribute("fill", band.color);
+      el.sub.textContent = band.label.toUpperCase()
+        + (sent != null && sent < 40 ? " · UNREST" : "");
     }
   },
 
@@ -422,10 +537,32 @@ const StarMap = {
     this.refs.tip.innerHTML =
       `<b>${sys.name}</b> ${sys.capital ? '<span class="tip-cap">trade hub</span>' : ""}<br>` +
       `<span class="tip-dim">${sec.name} · ${RACES[sys.race].name}</span><br>` +
+      this._tipFaction(sys) + this._tipSecurity(sys) +
       `market: ${dirTxt}` + (evt.length ? `<br><span class="warn">⚠ local event active</span>` : "") + extra;
     this.refs.tip.style.display = "block";
     this.moveTip(e);
   },
+  // Who the system answers to — the colour of its aura, named.
+  _tipFaction(sys) {
+    const f = window.Galaxy && Galaxy.factionOf(sys);
+    const def = f && (window.FACTIONS || {})[f];
+    if (!def) return "";
+    return `<span style="color:${def.color}">●</span> ${def.name}<br>`;
+  },
+
+  // The band, plus the derivation that produced it. Showing the working is the
+  // point of §5.3: a band is something the world did, not something authored,
+  // and a player who fits a Customs House should see their own line in it.
+  _tipSecurity(sys) {
+    if (!window.Security) return "";
+    const band = Security.bandOf(sys.id);
+    const parts = Security.factors(sys.id).filter(f => !f.base && Math.abs(f.v) >= 0.005)
+      .map(f => `${f.v > 0 ? "+" : "−"}${f.label}`);
+    return `<span style="color:${band.color}">◆</span> ${band.label}`
+      + (parts.length ? ` <span class="tip-dim">(${parts.join(", ")})</span>` : "")
+      + `<br><span class="tip-dim">${band.blurb || ""}</span><br>`;
+  },
+
   moveTip(e) {
     const r = this.refs.galaxyView.getBoundingClientRect();
     this.refs.tip.style.left = (e.clientX - r.left + 14) + "px";

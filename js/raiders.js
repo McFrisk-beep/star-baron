@@ -43,13 +43,14 @@ const Raiders = {
   hasDen(sysId) { return this.denSystems().has(sysId); },
 
   // ---- pressure: derived, never authored (§1.4) ---------------------------
-  // Senate lane patrols swing raid odds exactly as they swing charter losses.
-  _senateMult() {
-    if (!window.Senate || !Senate.routeSafetyAdd) return 1;
-    const safety = Senate.routeSafetyAdd();
-    if (!safety) return 1;
-    const cl = this.cfg().senateClamp || [0.2, 2.5];
-    return Util.clamp(1 - safety, cl[0], cl[1]);
+  // How much law is present here. security.js folds the sector floor, sector
+  // capitals, station modules, Senate edicts and any running war into one
+  // number, and the galaxy chart paints the same one — so a player's Customs
+  // House protects their own claims and shows up on the map for the same
+  // reason. Dens stay out of it on purpose (they are the local unknown) and
+  // are multiplied in separately below.
+  _lawMult(sysId) {
+    return window.Security ? Security.raidMult(sysId) : 1;
   },
   // §5.4: in the Sable Sprawl you are not policed, you are taxed — and
   // Syndicate standing is what keeps the local crews off your claim. The same
@@ -67,7 +68,7 @@ const Raiders = {
     const den = this.hasDen(poi.sysId) ? (c.denMult || 1) : 1;
     const cl = c.chanceClamp || [0, 1];
     return Util.clamp((c.base || 0) * poi.ore.rich * den
-      * this._senateMult() * this._syndicateMult(sys && sys.sectorId), cl[0], cl[1]);
+      * this._lawMult(poi.sysId) * this._syndicateMult(sys && sys.sectorId), cl[0], cl[1]);
   },
 
   // Five readable bands for the belt card, off the same number.
