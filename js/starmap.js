@@ -1292,14 +1292,14 @@ const StarMap = {
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
 
       // hyperspace gates at the system edge — one per lane, ships warp in/out
-      for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name);
+      for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name, cam.zoom);
 
       // deep-space POIs — out in the ring beyond the gates (§2 step 1)
-      for (const p of pois) this._drawPOI(ctx, p, poiImgs[p.type], now);
+      for (const p of pois) this._drawPOI(ctx, p, poiImgs[p.type], now, cam.zoom);
       // seeded NPC barges working the richer seams (§3 — belts look worked
       // before players arrive), then your own parked mining ops
       for (const p of pois) if (p.ore) this._drawBeltWork(ctx, p, now);
-      if (window.Mining && window.Fleet) this._drawMiningOps(ctx, sys, now);
+      if (window.Mining && window.Fleet) this._drawMiningOps(ctx, sys, now, cam.zoom);
 
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
@@ -1714,6 +1714,13 @@ const StarMap = {
   },
 
   // ---- scene draw helpers (hyperspace gate + speech bubbles) ----
+  // Text drawn inside the camera transform shrinks with it, so a name that
+  // reads at the default framing is an unreadable smudge once you pull back
+  // to see the deep-space ring. Scaling the glyphs by 1/zoom keeps every
+  // world label the same size on screen at any zoom; the anchor stays in
+  // world units so the label still hugs the thing it names.
+  _labelFont(zoom) { return `${(9 / (zoom || 1)).toFixed(1)}px ui-monospace, monospace`; },
+
   _gateBurst(particles, x, y) {
     for (let i = 0; i < 14; i++) {
       const a = (i / 14) * Math.PI * 2, s = Util.randFloat(40, 110);
@@ -1760,7 +1767,7 @@ const StarMap = {
     ctx.restore();
   },
 
-  _drawGate(ctx, gx, gy, t, destName) {
+  _drawGate(ctx, gx, gy, t, destName, zoom) {
     ctx.save();
     const glow = ctx.createRadialGradient(gx, gy, 2, gx, gy, 34);
     glow.addColorStop(0, "rgba(130,200,255,.5)"); glow.addColorStop(1, "rgba(130,200,255,0)");
@@ -1772,7 +1779,7 @@ const StarMap = {
       ctx.beginPath(); ctx.ellipse(gx, gy, r, r * 0.42, t * (1.1 + k * 0.5), 0, Math.PI * 2); ctx.stroke();
     }
     ctx.fillStyle = "rgba(210,238,255,.95)"; ctx.beginPath(); ctx.arc(gx, gy, 3.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "rgba(170,210,255,.75)"; ctx.font = "9px ui-monospace, monospace";
+    ctx.fillStyle = "rgba(170,210,255,.75)"; ctx.font = this._labelFont(zoom);
     ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
     // generated names can already end in "Gate" (Daxor Gate) — don't double it
     const label = destName ? destName.toUpperCase().replace(/ GATE$/, "") + " GATE" : "HYPERSPACE GATE";
@@ -1784,7 +1791,7 @@ const StarMap = {
   // uploaded (ASSET.poi), else a seeded canvas primitive per type — the same
   // image-or-fallback pattern as planets and stations. Derelicts and
   // listening posts reuse the survey work-site shapes.
-  _drawPOI(ctx, poi, img, now) {
+  _drawPOI(ctx, poi, img, now, zoom) {
     const { x, y, r, seed } = poi;
     ctx.save();
     if (img && img.ok) {
@@ -1859,7 +1866,7 @@ const StarMap = {
       }
     }
     // label under it, the same idiom as the gates but dimmer
-    ctx.fillStyle = "rgba(170,195,235,.55)"; ctx.font = "9px ui-monospace, monospace";
+    ctx.fillStyle = "rgba(170,195,235,.55)"; ctx.font = this._labelFont(zoom);
     ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
     ctx.fillText(poi.name.toUpperCase(), x, y + r + 12);
     ctx.restore();
@@ -1892,7 +1899,7 @@ const StarMap = {
   // Your parked mining ops in this system: the hull at its rock with a work
   // pulse and its name — the stationary target, visibly yours. Transits keep
   // to the fleet badge for now (chart markers are a later step).
-  _drawMiningOps(ctx, sys, now) {
+  _drawMiningOps(ctx, sys, now, zoom) {
     const wall = Date.now();
     for (const op of Mining.atSystem(sys.id)) {
       if (op.returnAt || wall < op.arriveAt) continue;
@@ -1913,10 +1920,12 @@ const StarMap = {
       ctx.lineWidth = 1.3;
       ctx.beginPath(); ctx.arc(poi.x, poi.y, 8 + pr * poi.r, 0, 7); ctx.stroke();
       ctx.save();
-      ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
-      ctx.strokeText(sh.name, x, y - 14);
-      ctx.fillStyle = "#3fe3ff"; ctx.fillText(sh.name, x, y - 14);
+      const k = 1 / (zoom || 1);
+      ctx.font = `600 ${(10 * k).toFixed(1)}px system-ui, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3 * k; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      ctx.strokeText(sh.name, x, y - 14 * k);
+      ctx.fillStyle = "#3fe3ff"; ctx.fillText(sh.name, x, y - 14 * k);
       ctx.restore();
     }
   },
@@ -2004,7 +2013,16 @@ const StarMap = {
         <select id="poi-mn-rig"><option value="">No rig</option>${rigs}</select>
         <button class="btn btn-mini btn-go" id="poi-mn-go">Dispatch</button>
       </div>
-      <div class="pt-sub">≈${Mining.batchQty(poi, miners[0].uid, null)} ${commName} / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay</div>`;
+      <div class="pt-sub" id="poi-mn-est">${this._poiEstText(poi, miners[0].uid, null)}</div>`;
+  },
+
+  // A specialized rig can lift the take by half again, so quoting the
+  // bare-hull number while a rig is picked would just be wrong. _wirePoiTip
+  // re-runs this on every change of either picker.
+  _poiEstText(poi, shipUid, rigUid) {
+    const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
+    return `≈${Mining.batchQty(poi, shipUid, rigUid)} ${comm ? comm.name : poi.ore.commId}`
+      + ` / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay`;
   },
 
   _wirePoiTip(poi) {
@@ -2015,6 +2033,14 @@ const StarMap = {
       this._showPoiTip(poi, at.mx, at.my);
       if (UI.page === "fleet") UI.renderFleet();
     };
+    const shipSel = tip.querySelector("#poi-mn-ship"), rigSel = tip.querySelector("#poi-mn-rig");
+    const est = tip.querySelector("#poi-mn-est");
+    if (est && shipSel) {
+      const sync = () => { est.textContent = this._poiEstText(poi, shipSel.value, (rigSel && rigSel.value) || null); };
+      shipSel.onchange = sync;
+      if (rigSel) rigSel.onchange = sync;
+      sync();
+    }
     const go = tip.querySelector("#poi-mn-go");
     if (go) go.onclick = () => {
       const shipU = (tip.querySelector("#poi-mn-ship") || {}).value;
