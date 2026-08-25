@@ -50,10 +50,14 @@
   system the verb is simply not offered (`Piracy.verbs` reads
   `Security.bandOf`); *response* is still design. A failed run costs a repair
   bill and `CRIMECFG.gain.piracyFail` — §6.7's "high variance, never free"
-  rule, enforced from day one. Client-local like mining before its SQL:
-  signed-in dispatch is gated until a piracy SQL surface lands
-  (`Piracy.local`, keys on `Cloud.localOnly`). `tools/check_piracy.js` is the
-  check. A robbed run limps on with an empty hold — the same distress pulse as
+  rule, enforced from day one. **Server-settled too:**
+  `docs/sql/piracy_rpcs.sql` moves the whole loop — the fight, the loot, the
+  §4.2 shelf drain, the police chase, the hot flags and the hull landing home
+  — into `app_pull`, so a signed-in baron can dispatch and close the tab. The
+  op row carries the four numbers the server cannot derive (`chance`, `value`,
+  `atk`, `law`), computed by the client and clamped server-side, and
+  `tools/check_piracy_parity.js` pins the two implementations together.
+  `tools/check_piracy.js` is the client check. A robbed run limps on with an empty hold — the same distress pulse as
   a corsair hit, one law for the whole world.
 - **§5.2 police response (the other half of step 5):** `js/police.js`. Three
   pieces, still no AI anywhere. **Precincts** sit at the **sector capitals** —
@@ -615,7 +619,7 @@ Each step ships alone and is playable without the next one.
 | 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
-| 4 | **Player piracy on NPC traffic** — ✅ shipped client-side (`js/piracy.js`; signed-in dispatch waits on a piracy SQL surface) | The loot → scarcity → spike loop, still entirely PvE |
+| 4 | **Player piracy on NPC traffic** — ✅ shipped (`js/piracy.js`, server-settled by `docs/sql/piracy_rpcs.sql`) | The loot → scarcity → spike loop, still entirely PvE |
 | 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response ✅ shipped (`js/police.js`, §5.2 built form); §5.5 bounties still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |
