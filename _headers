@@ -1,0 +1,32 @@
+# Netlify response headers for the static site (no build step, so this file is
+# the only place caching can be set).
+#
+# THE PROBLEM THIS SOLVES
+# index.html and js/*.js are the application itself and change on every deploy,
+# but they ship under stable names — there is no bundler to fingerprint them.
+# With Netlify's default caching a returning player keeps running whatever
+# JavaScript their browser cached, sometimes for days, with no way to tell:
+# the game looks fine, it is just old. That cost a real debugging session — a
+# server-side feature had shipped and applied correctly, and the player still
+# saw the gate message from the version before it, because the browser never
+# re-fetched js/piracy.js.
+#
+# `no-cache` does NOT mean "don't store". It means "store it, but revalidate
+# before using it", so an unchanged file costs a 304 and nothing more, while a
+# deploy is picked up on the very next load. For files this small that is the
+# right trade.
+#
+# assets/ is deliberately left alone: sprites, backgrounds and audio are large,
+# effectively immutable, and should stay cached hard.
+
+/
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+/js/*
+  Cache-Control: no-cache
+
+/css/*
+  Cache-Control: no-cache
