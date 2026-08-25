@@ -474,6 +474,9 @@ const Game = {
       offlineOrders = await Orders.process();
       offlineIndustry = Industries.resolve(now);
     }
+    // Mining ops bank belt batches / land returning hulls (guest-local; the
+    // resolver self-gates minting on the server ledger).
+    if (window.Mining) offlineIndustry = offlineIndustry.concat(Mining.resolve(now));
     // Workshop is client-local (not on the Phase-3 ledger yet).
     if (window.Workshop) Workshop.resolve(now);
     // Courier manifests use absolute timestamps — bank arrivals while away.
@@ -708,13 +711,14 @@ const Game = {
       }).catch(e => console.warn("[Charters] resolve failed:", e));
       if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
-        const made = Industries.resolve(now);
+        const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : []);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         if (surveyed.length || made.length || crafted.length || shipped.length) this.requestSave();
       } else {
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
+        if (window.Mining) Mining.resolve(now);   // lands returning hulls; minting is gated
         if (shipped.length || crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
@@ -739,7 +743,7 @@ const Game = {
         for (const ev of orderEv) Bus.emit("order", ev);
         if (orderEv.length) this.requestSave();
       }).catch(e => console.warn("[Orders] process failed:", e));
-      const made = Industries.resolve(now);
+      const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : []);
       const crafted = window.Workshop ? Workshop.resolve(now) : [];
       const shipped = window.Shipments ? Shipments.resolve(now) : [];
       if (surveyed.length || chartered.length || made.length || crafted.length || shipped.length || senateBills.length) this.requestSave();
@@ -829,6 +833,7 @@ const Game = {
             void Orders.process();
             Industries.resolve(now);
           }
+          if (window.Mining) Mining.resolve(now);
           // Bank matured charters (async server settle when charter_rpcs.sql is live).
           if (window.Charters) void Promise.resolve(Charters.resolve(now));
           if (window.Workshop) Workshop.resolve(now);
@@ -843,6 +848,7 @@ const Game = {
       Charters.resolve(now);
       void Orders.process();
       Industries.resolve(now);
+      if (window.Mining) Mining.resolve(now);
       if (window.Workshop) Workshop.resolve(now);
       finish();
       return;

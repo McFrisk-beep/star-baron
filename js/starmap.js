@@ -1296,6 +1296,10 @@ const StarMap = {
 
       // deep-space POIs — out in the ring beyond the gates (§2 step 1)
       for (const p of pois) this._drawPOI(ctx, p, poiImgs[p.type], now);
+      // seeded NPC barges working the richer seams (§3 — belts look worked
+      // before players arrive), then your own parked mining ops
+      for (const p of pois) if (p.ore) this._drawBeltWork(ctx, p, now);
+      if (window.Mining && window.Fleet) this._drawMiningOps(ctx, sys, now);
 
       // ---- ships: behaviour + render ----
       station._x = sx; station._y = sy;
@@ -1861,6 +1865,62 @@ const StarMap = {
     ctx.restore();
   },
 
+  // Seeded NPC mining barges orbiting a belt with ore — no state, pure
+  // dressing so belts look worked before players arrive (§3, step 2).
+  _drawBeltWork(ctx, poi, now) {
+    const n = poi.ore.rich >= 1 ? 1 + (poi.seed % 2) : (poi.seed >> 3) % 2;
+    if (!n) return;
+    const img = this.img(ASSET.ship("hauler"));
+    for (let k = 0; k < n; k++) {
+      const h = (poi.seed ^ Math.imul(k + 1, 0xC2B2AE35)) >>> 0;
+      const a = (h % 628) / 100 + now * 0.00003 * ((h & 1) ? 1 : -1);
+      const rr = poi.r * 0.8 + 12 + (h % 9);
+      const x = poi.x + Math.cos(a) * rr, y = poi.y + Math.sin(a) * rr;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2); ctx.globalAlpha = 0.9;
+      if (img.ok) ctx.drawImage(img, -7, -4, 14, 8);
+      else { ctx.fillStyle = "#b9a27a"; ctx.fillRect(-5, -2.5, 10, 5); }
+      ctx.restore();
+      if (Math.sin(now * 0.004 + h) > 0.3) {   // drill flare, strobing
+        const tx = poi.x + Math.cos(a) * poi.r * 0.4, ty = poi.y + Math.sin(a) * poi.r * 0.4;
+        ctx.strokeStyle = "rgba(255,200,120,.55)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+        ctx.fillStyle = "rgba(255,220,150,.8)"; ctx.fillRect(tx - 1, ty - 1, 2, 2);
+      }
+    }
+  },
+
+  // Your parked mining ops in this system: the hull at its rock with a work
+  // pulse and its name — the stationary target, visibly yours. Transits keep
+  // to the fleet badge for now (chart markers are a later step).
+  _drawMiningOps(ctx, sys, now) {
+    const wall = Date.now();
+    for (const op of Mining.atSystem(sys.id)) {
+      if (op.returnAt || wall < op.arriveAt) continue;
+      const poi = window.POIs ? POIs.get(op.poiId) : null;
+      const sh = Fleet.ship(op.shipUid);
+      if (!poi || !sh) continue;
+      const h = (poi.seed ^ 0x5bd1) >>> 0;
+      const a = (h % 628) / 100 + now * 0.00005;
+      const rr = poi.r + 22;
+      const x = poi.x + Math.cos(a) * rr, y = poi.y + Math.sin(a) * rr;
+      const img = this.img(ASSET.shipArt(sh.type, sh.uid));
+      ctx.save(); ctx.translate(x, y); ctx.rotate(a + Math.PI / 2);
+      if (img.ok) ctx.drawImage(img, -9, -5.5, 18, 11);
+      else { ctx.fillStyle = "#3fe3ff"; ctx.fillRect(-6, -3, 12, 6); }
+      ctx.restore();
+      const pr = (now % 2600) / 2600;   // work pulse, same idiom as survey sites
+      ctx.strokeStyle = `rgba(63,227,255,${((1 - pr) * 0.4).toFixed(2)})`;
+      ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.arc(poi.x, poi.y, 8 + pr * poi.r, 0, 7); ctx.stroke();
+      ctx.save();
+      ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      ctx.strokeText(sh.name, x, y - 14);
+      ctx.fillStyle = "#3fe3ff"; ctx.fillText(sh.name, x, y - 14);
+      ctx.restore();
+    }
+  },
+
   // Minimap inset (screen space, bottom-right): world box, core outline,
   // star, gates and POI dots, plus the current viewport rectangle. Returns
   // its rect so the scene's click handler can jump the camera.
@@ -1893,18 +1953,86 @@ const StarMap = {
 
   // POI info card — reuses the planet-tip styling; canvas-relative click
   // coordinates are mapped into the system-view box the tip is absolute in.
+  // Belts grow a mining block (§3): the seam, your op, and dispatch/recall
+  // controls — so the whole mining loop lives on the rock itself.
   _showPoiTip(poi, mx, my) {
     const tip = this.refs.poiTip;
     if (!tip) return;
+    this._poiTipAt = { mx, my };
     const def = POI_TYPES[poi.type] || {};
-    tip.innerHTML = `<b>${poi.name}</b>
+    let html = `<b>${poi.name}</b>
       <div class="pt-sub"><span style="color:${def.color || "var(--ink-dim)"}">●</span> ${def.label || poi.type} · deep-space ring</div>
       <div class="pt-sub">${def.blurb || ""}</div>`;
+    if (poi.ore && window.Mining && window.Fleet) html += this._poiOreBlock(poi);
+    tip.innerHTML = html;
+    tip.style.pointerEvents = "auto";   // the belt card has buttons; planet-tip CSS says none
     const cr = this.refs.canvas.getBoundingClientRect();
     const vr = this.refs.systemView.getBoundingClientRect();
     tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - 250)) + "px";
     tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - 90)) + "px";
     tip.style.display = "block";
+    this._wirePoiTip(poi);
+  },
+
+  _poiOreBlock(poi) {
+    const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
+    const commName = comm ? comm.name : poi.ore.commId;
+    const left = Mining.poolLeft(poi);
+    const richLbl = poi.ore.rich >= 1.3 ? "prime" : poi.ore.rich >= 1.0 ? "rich" : poi.ore.rich >= 0.8 ? "fair" : "lean";
+    let html = `<div class="pt-sub">⛏ <b>${commName}</b> seam · ${richLbl} (${poi.ore.rich}×) · ${left}/${poi.ore.pool} this cycle`
+      + (left <= 0 ? ` · regenerates in ${Util.duration(Mining.epochLeft())}` : "") + `</div>`;
+    const op = Mining.opAt(poi.id);
+    if (op) {
+      const sh = Fleet.ship(op.shipUid);
+      const now = Date.now();
+      const stat = op.returnAt ? `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`
+        : now < op.arriveAt ? `en route ~${Util.duration(op.arriveAt - now)}`
+          : `mining · ${op.mined || 0} banked`;
+      return html + `<div class="pt-sub">🛰 ${Util.esc(sh ? sh.name : "Your miner")} — ${stat} `
+        + (op.returnAt ? "" : `<button class="btn btn-mini" id="poi-recall">Recall</button>`) + `</div>`;
+    }
+    if (window.Economy && !Economy.softIncomeLocal())
+      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch arrives with the server-side mining update.</div>`;
+    if (left <= 0) return html;
+    const miners = Fleet.idle().filter(sh => (Fleet.shipDef(sh.type) || {}).cls === "miner" && !sh.mercenary);
+    if (!miners.length)
+      return html + `<div class="pt-sub">No idle miner — the Bazaar shipyard stocks Prospector-class hulls.</div>`;
+    const ships = miners.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ⛏ ${Fleet.stats(sh).mine.toFixed(1)}</option>`).join("");
+    const rigs = Mining.rigsFor(poi).map(ex => `<option value="${ex.uid}">${Util.esc(ex.name)}</option>`).join("");
+    return html + `<div class="st-hall-list" style="margin-top:6px">
+        <select id="poi-mn-ship">${ships}</select>
+        <select id="poi-mn-rig"><option value="">No rig</option>${rigs}</select>
+        <button class="btn btn-mini btn-go" id="poi-mn-go">Dispatch</button>
+      </div>
+      <div class="pt-sub">≈${Mining.batchQty(poi, miners[0].uid, null)} ${commName} / ${Util.duration(MININGCFG.cycleMs)} · untaxed · lands at this system's bay</div>`;
+  },
+
+  _wirePoiTip(poi) {
+    const tip = this.refs.poiTip;
+    const refresh = () => {
+      window.Game.requestSave();
+      const at = this._poiTipAt || { mx: 20, my: 20 };
+      this._showPoiTip(poi, at.mx, at.my);
+      if (UI.page === "fleet") UI.renderFleet();
+    };
+    const go = tip.querySelector("#poi-mn-go");
+    if (go) go.onclick = () => {
+      const shipU = (tip.querySelector("#poi-mn-ship") || {}).value;
+      const rigU = (tip.querySelector("#poi-mn-rig") || {}).value || null;
+      const r = Mining.start(poi.id, shipU, rigU);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Miner dispatched to ${poi.name} — first ore in ~${Util.duration(Math.max(0, r.op.nextAt - Date.now()))}.`, "good");
+      refresh();
+    };
+    const rec = tip.querySelector("#poi-recall");
+    if (rec) rec.onclick = () => {
+      const op = Mining.opAt(poi.id);
+      if (!op) return;
+      const r = Mining.recall(op.id);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      UI.toast(`Recalled — home in ~${Util.duration(op.travelMs)}.`, "info");
+      refresh();
+    };
   },
 
   _roundRect(ctx, x, y, w, h, r) {

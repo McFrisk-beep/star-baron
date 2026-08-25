@@ -134,7 +134,7 @@ const Fleet = {
     const def = this.shipDef(ship.type) || {};
     const out = { cargo: def.cargo || 0, firepower: def.firepower || 0, hull: def.hull || 0,
       armor: def.armor || 0, shields: def.shields || 0, speed: def.speed || 1, slots: def.slots || 2,
-      scan: def.scan || 0, endure: def.endure || 0 };
+      scan: def.scan || 0, endure: def.endure || 0, mine: def.mine || 0 };
     if (def.cls === "survey") out.scan += 1; // survey hulls always read a little clearer
     const flat = {}, pct = {};
     // The yard refit is just another percentage source, summed with accessory and
@@ -167,11 +167,13 @@ const Fleet = {
       out.firepower *= 1 - dmg * DMGCFG.statPenalty;
       out.speed *= 1 - dmg * DMGCFG.statPenalty;
       out.scan *= 1 - dmg * DMGCFG.statPenalty * 0.5;
+      out.mine *= 1 - dmg * DMGCFG.statPenalty * 0.5;
     }
     for (const k of ["firepower", "hull", "armor", "shields", "cargo"]) out[k] = Math.round(out[k]);
     out.speed = +out.speed.toFixed(2);
     out.scan = +out.scan.toFixed(1);
     out.endure = +out.endure.toFixed(1);
+    out.mine = +out.mine.toFixed(1);
     return out;
   },
 

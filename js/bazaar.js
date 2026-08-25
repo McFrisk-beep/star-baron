@@ -135,7 +135,7 @@ const Bazaar = {
   yardRestockMs(now = Date.now()) { return (this.yardEpoch(now) + 1) * this.yardEpochMs() - now; },
   // Hulls the yard may stock: everything sellable that isn't blueprint-gated.
   yardPool() {
-    return [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || [])]
+    return [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...(SHIP_CATALOG.miner || [])]
       .filter(d => !d.craftOnly && d.price > 0);
   },
   genSeededYardShip(epoch, slot) {

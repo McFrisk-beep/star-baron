@@ -195,6 +195,16 @@ const SHIP_CATALOG = {
     { id: "craft_pathfinder", name: "Pathfinder Cutter",cls: "survey", cargo: 6,  firepower: 4, hull: 150, armor: 20, shields: 30, speed: 1.7, slots: 4, price: 0, sprite: "hauler",    scan: 6,  endure: 4, craftOnly: true },
     { id: "oracle_lens",      name: "The Oracle Lens",  cls: "survey", cargo: 10, firepower: 7, hull: 250, armor: 36, shields: 52, speed: 1.6, slots: 5, price: 0, sprite: "leviathan", scan: 11, endure: 7, craftOnly: true, unique: true },
   ],
+  // Miner hulls (docs/SPACE_INTERACTIVITY.md §3.4): slow, lightly armed, decent
+  // hull, a modest ore hold (cargo) and one new stat — `mine`, the yield rate.
+  // They work seeded belt POIs in the deep-space ring; rigs (extractors) boost
+  // the take. Parked at a rock they are the stationary target later steps need.
+  miner: [
+    { id: "prospector",     name: "Prospector",     cls: "miner", cargo: 20, firepower: 2, hull: 90,  armor: 14, shields: 6,  speed: 0.95, slots: 2, price: 5200,  sprite: "hauler",    mine: 2 },
+    { id: "rock_hopper",    name: "Rock Hopper",    cls: "miner", cargo: 35, firepower: 3, hull: 130, armor: 20, shields: 10, speed: 0.9,  slots: 3, price: 13000, sprite: "hauler",    mine: 4 },
+    { id: "core_driller",   name: "Core Driller",   cls: "miner", cargo: 55, firepower: 4, hull: 190, armor: 30, shields: 14, speed: 0.85, slots: 3, price: 30000, sprite: "freighter", mine: 6 },
+    { id: "belt_leviathan", name: "Belt Leviathan", cls: "miner", cargo: 90, firepower: 5, hull: 280, armor: 42, shields: 20, speed: 0.75, slots: 4, price: 66000, sprite: "leviathan", mine: 9 },
+  ],
   // Main/flagship: travelSpeed + effects[]. rarity tier ⇒ effect count (common=1 … legendary=5).
   main: [
     // common — 1 effect. `cargo` = flagship hold slots (docs/HAULING.md §3).
@@ -219,7 +229,7 @@ const SHIP_CATALOG = {
     { id: "cosmocrat_seat", name: "Cosmocrat Seat",    cls: "main", rarity: "legendary", travelSpeed: 3.2, cargo: 32, effects: [{ type: "all", pct: 0.08 }, { type: "industry", pct: 0.12 }, { type: "taxRelief", pct: 0.08 }, { type: "routeSafe", pct: 0.12 }, { type: "survey", pct: 0.12 }], hull: 1400, price: 800000, sprite: "leviathan" },
   ],
 };
-const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...SHIP_CATALOG.main];
+const ALL_SHIPS = [...SHIP_CATALOG.transport, ...SHIP_CATALOG.escort, ...(SHIP_CATALOG.survey || []), ...(SHIP_CATALOG.miner || []), ...SHIP_CATALOG.main];
 
 /* ---- SHIP VARIANTS --------------------------------------------------------
    Every hull the Bazaar shipyard puts on the shelf is a specific, pre-named
@@ -247,6 +257,9 @@ const SHIP_VARIANTS = [
   // survey-only refits
   { id: "farsight",  name: "Farsight",    tag: "sensor refit",    cls: ["survey"], mods: { scan: 0.35, hull: -0.15 } },
   { id: "hardened",  name: "Hardened",    tag: "deep-void refit", cls: ["survey"], mods: { endure: 0.40, speed: -0.15 } },
+  // miner-only refits (docs/SPACE_INTERACTIVITY.md §3.4 — "Deep Core")
+  { id: "deepcore",  name: "Deep Core",   tag: "yield refit",     cls: ["miner"], mods: { mine: 0.35, speed: -0.20 } },
+  { id: "skimmer",   name: "Skimmer",     tag: "relocator refit", cls: ["miner"], mods: { speed: 0.25, mine: -0.20 } },
 ];
 
 // Labels for flagship effect types (UI + tooltips).
@@ -540,6 +553,26 @@ const EXPEDCFG = {
     near: { gear: 3, seam: 3, credits: 3, faction: 2, hazard: 1, dry: 2, signal: 2, derelict: 2, ruin: 1 },
     far:  { gear: 3, seam: 3, credits: 2, faction: 2, hazard: 3, dry: 1, signal: 3, derelict: 3, ruin: 2 },
   },
+};
+
+/* ---- ASTEROID MINING ------------------------------------------------------
+   The untaxed twin of INDUSTRYCFG (docs/SPACE_INTERACTIVITY.md §3): park a
+   miner-class hull at a seeded belt POI in the deep-space ring and it drops
+   small, frequent, UNTAXED ore batches — no permit, no faction — while the
+   rock's finite epoch pool lasts. The trade is exposure: the parked hull is
+   the stationary target later build steps point piracy at.                    */
+const MININGCFG = {
+  cycleMs: 2 * 60 * 60 * 1000,   // small untaxed batches every ~2h (industry: 50/12h taxed)
+  baseYield: 6,                  // units per batch before richness / mine stat / rig
+  poolBase: 260,                 // ore units per rock per epoch (× seeded size jitter)
+  epochMs: 24 * 60 * 60 * 1000,  // depletion regenerates daily (open question §11.4 — matches the 24h restock gate)
+  maxCyclesPerResolve: 24,       // offline batch cap per op (24 × 2h ≈ 2 days)
+  maxOps: 4,                     // parked mining ops at once
+  legSecondsPerDist: 220,        // one-way seconds per map-distance unit, before ship speed (mirrors EXPEDCFG)
+  minLegMs: 15 * 1000,           // travel floor for a local belt
+  // Rich seams sit in the worst neighbourhoods (§3.3): sector risk scales
+  // richness, so core space mines thin and the Sprawl mines fat.
+  sectorRich: { core: 0.7, green: 0.9, belt: 1.05, tide: 1.0, forge: 1.2, sprawl: 1.5 },
 };
 
 /* ---- BLACKBOX EFFECTS -----------------------------------------------------
@@ -1638,6 +1671,7 @@ window.ENEMY_CATALOG = ENEMY_CATALOG;
 window.CUSTOMS = CUSTOMS;
 window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
+window.MININGCFG = MININGCFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.WORKSHOPCFG = WORKSHOPCFG;
 window.BLUEPRINTS = BLUEPRINTS;

@@ -1,11 +1,26 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order step 1 (the POI layer, §2) is built** — `js/pois.js` seeds
-the places, `js/starmap.js` renders them, makes them clickable and adds the
-minimap, `tools/check_pois.js` is the determinism check. Everything from §3 on
-is still design only. The document is the consolidated output of two
-brainstorming rounds, written down so the decided parts can be separated from
-the open ones before anybody opens an editor.
+**Status: build order steps 1–2 are built.**
+
+- **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
+  renders them, makes them clickable and adds the minimap;
+  `tools/check_pois.js` is the determinism check.
+- **Step 2 (mining + the miner class, §3):** miner hulls in `SHIP_CATALOG`
+  (+ `app.ship_def` / `app._ship_slots` rows — re-paste
+  `phase2_missions_bazaar.sql` and `equip_persist.sql`), seeded seams on belt
+  POIs, `js/mining.js` runs the dispatch → park → untaxed batches → recall
+  loop, NPC barges work the rich belts, and the belt's POI card carries the
+  controls. `tools/check_mining.js` is the check. Scope notes: **client /
+  local-ledger only** — signed-in dispatch is gated (`Mining.canStart`) until
+  a mining RPC surface exists, because `app_commit` owns positions and ship
+  status; §11 Q3 is answered conservatively for now (ore lands in
+  `state.positions` + the system bay, NOT the sector shelf, so the
+  `npcOutputMult` trap in §3.7 stays untriggered); claims (§3.6) and the
+  extra classes (§3.8) are still open.
+
+Everything from §4 on is still design only. The document is the consolidated
+output of two brainstorming rounds, written down so the decided parts can be
+separated from the open ones before anybody opens an editor.
 
 Companion to `REALTIME_SPACE.md` and `LIVING_GALAXY.md`:
 
@@ -441,7 +456,7 @@ Each step ships alone and is playable without the next one.
 | Step | What | Why here |
 |---|---|---|
 | 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
-| 2 | **Mining + the `miner` class** (NPC miners first) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
+| 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** | Teaches the threat model where nobody can grief anybody |
 | 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
 | 5 | **Security bands, response, crime with teeth** | The rules now have something to govern |

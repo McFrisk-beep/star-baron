@@ -1033,7 +1033,7 @@ const AdminUI = {
   // ("main") isn't a fleet ship.
   _craftShipOpts() {
     const sc = window.SHIP_CATALOG || {};
-    return [].concat(sc.transport || [], sc.escort || [], sc.survey || [])
+    return [].concat(sc.transport || [], sc.escort || [], sc.survey || [], sc.miner || [])
       .map(s => [s.id, `${s.name} (${s.cls}${s.craftOnly ? ", craft-only" : ""})`]);
   },
   _commodityOpts() { return (window.COMMODITIES || []).map(c => [c.id, `${c.name} (${c.cat})`]); },
@@ -1404,7 +1404,7 @@ const AdminUI = {
       + `'stat',${this._sqs(e.stat)},'mag',${+e.mag || 0},'durationMs',${Math.round(e.durationMs || 0)}::bigint))`
     ).join(",\n");
     const sc = window.SHIP_CATALOG || {};
-    const fleet = [].concat(...["transport", "escort", "survey"].map(k => sc[k] || []));
+    const fleet = [].concat(...["transport", "escort", "survey", "miner"].map(k => sc[k] || []));
     const all = fleet.concat(sc.main || []);
     // Fitment table — mains never carry accessories, so fleet hulls only.
     const slotRows = [];

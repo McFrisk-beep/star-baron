@@ -71,14 +71,34 @@ const POIs = {
       }
       const def = POI_TYPES[type];
       const base = pick(GALAXY_NAMES.pre) + pick(GALAXY_NAMES.suf);
-      out.push({
+      const poi = {
         id: sysId + ":" + i, sysId, type,
         name: pick(def.names).replace("{BASE}", base),
         x, y, r: Math.round(def.r * (0.85 + rng() * 0.3)),
         seed: Math.floor(rng() * 0xffffffff),   // per-POI variant/animation phase
-      });
+      };
+      // Belt composition (docs/SPACE_INTERACTIVITY.md §3.3): which commodity,
+      // how rich, and a finite per-epoch pool. Rich seams sit in the worst
+      // neighbourhoods — sector risk scales richness, no balancing pass needed.
+      if (type === "belt" && typeof MININGCFG !== "undefined") {
+        const seam = COMMODITIES.filter(c => !c.craftOnly && (c.cat === "mineral" || c.cat === "gas"));
+        const minerals = seam.filter(c => c.cat === "mineral");
+        const commPool = rng() < 0.67 && minerals.length ? minerals : seam;
+        const sRich = MININGCFG.sectorRich[sys.sectorId] ?? 1;
+        poi.ore = {
+          commId: pick(commPool).id,
+          rich: +((0.7 + rng() * 0.6) * sRich).toFixed(2),
+          pool: Math.round(MININGCFG.poolBase * (0.8 + rng() * 0.6)),
+        };
+      }
+      out.push(poi);
     }
     return (this._cache[sysId] = out);
+  },
+
+  get(poiId) {
+    const sysId = String(poiId).split(":")[0];
+    return this.list(sysId).find(p => p.id === poiId) || null;
   },
 
   // Hit-test in world coordinates; `slack` widens small targets (pass a few

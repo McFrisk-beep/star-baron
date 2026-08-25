@@ -35,7 +35,8 @@ language sql immutable as $$
       ('argent_ark', 5), ('gunboat', 2), ('corvette', 2), ('destroyer', 3), ('frigate', 3),
       ('cruiser', 4), ('carrier', 4), ('battleship', 4), ('craft_corvette', 3), ('craft_frigate', 3),
       ('craft_cruiser', 4), ('last_aegis', 5), ('probe_skiff', 3), ('survey_cutter', 3), ('deep_mapper', 4),
-      ('void_cartograph', 4), ('craft_probe', 3), ('craft_pathfinder', 4), ('oracle_lens', 5)
+      ('void_cartograph', 4), ('craft_probe', 3), ('craft_pathfinder', 4), ('oracle_lens', 5),
+      ('prospector', 2), ('rock_hopper', 3), ('core_driller', 3), ('belt_leviathan', 4)
     ) as t(id, slots) where t.id = p_type
   ), 2);
 $$;
