@@ -20,10 +20,14 @@
    blast radius — never banked ore, never the system bay, never the hull. Guard
    the rock with escort hulls (§3.5's standing job) or work a leaner seam.
 
-   Trust: guest / local-ledger only for now. Signed-in play has server-owned
-   positions and ship status (app_commit protects both), so dispatch is gated
-   on Economy.softIncomeLocal() until the mining SQL phase adds the RPC
-   surface — minting locally would create ghost stock the ledger rejects.     */
+   Trust: guests settle here; signed-in barons settle on the server. Ore is
+   minted into positions and app_commit forces that key from the server row, so
+   a local mint would evaporate on the next autosave. docs/sql/mining_rpcs.sql
+   moves the whole loop into app_pull — batches, raids, returning hulls — and
+   serverOwned() latches when its slice comes back. Until it does, dispatch
+   stays gated (canStart) rather than quietly minting stock the ledger rejects.
+   resolve() below self-gates minting the same way, so on a server-owned
+   project it only renders: the server does the banking.                      */
 
 const Mining = {
   s() { return window.Game.state; },
@@ -72,6 +76,10 @@ const Mining = {
       if (!poi || !poi.ore || rows[id].gen !== (poi.gen | 0)) delete rows[id];
     }
   },
+
+  // True once app_pull/app_commit has echoed a mining slice — the server owns
+  // the ops and banks the ore, so the local resolver stands down (see resolve).
+  serverOwned() { return !!(window.Cloud && Cloud.miningOwned); },
 
   opAt(poiId) { return this.list().find(o => o.poiId === poiId) || null; },
   atSystem(sysId) { return this.list().filter(o => o.sysId === sysId); },
@@ -124,8 +132,8 @@ const Mining = {
   },
 
   canStart(poiId, shipUid, now = Date.now()) {
-    if (window.Economy && !Economy.softIncomeLocal())
-      return { ok: false, msg: "Mining settles on the local ledger for now — the server-side mining update unlocks dispatch for signed-in barons." };
+    if (!this.serverOwned() && window.Economy && !Economy.softIncomeLocal())
+      return { ok: false, msg: "Mining settles on the local ledger for now — ask the project owner to apply docs/sql/mining_rpcs.sql to unlock dispatch for signed-in barons." };
     const poi = window.POIs ? POIs.get(poiId, now) : null;
     if (!poi || !poi.ore) return { ok: false, msg: "Nothing minable there." };
     if (this.opAt(poiId)) return { ok: false, msg: "You already have a miner working this rock." };
@@ -174,6 +182,17 @@ const Mining = {
       extractorUid: extractorUid || null, commId: can.poi.ore.commId,
       gen: can.poi.gen | 0,   // the rock it was sent to; a roll-over ends the op
       guardUids: guardUids.slice(),
+      // The corsair odds you accepted, quoted on the card and locked in here.
+      // Raiders.rollClaim rolls against these, and mining_rpcs.sql clamps and
+      // re-rolls the very same numbers server-side — so the op row is the whole
+      // input to a raid and the two sides cannot disagree.
+      threat: this.threat(can.poi), repel: this.repel(shipUid, guardUids),
+      // Per-batch take, quoted on the card and locked in with the odds. It does
+      // NOT drift down as the hull takes raid damage: you committed a hull at a
+      // known rate, and the server clamps this same number against its own
+      // catalog ceiling rather than recomputing a rate it cannot see.
+      per: this.batchQty(can.poi, shipUid, extractorUid),
+      poiName: can.poi.name,
       startedAt: now, travelMs: travel, arriveAt: now + travel,
       nextAt: now + travel + this.cycleMsFor(extractorUid),
       mined: 0, cycles: 0, raids: 0, lost: 0,
@@ -240,7 +259,7 @@ const Mining = {
       for (const g of this.guardsOf(op)) if (g.status === "idle") g.status = "guarding";
       if (op.returnAt || now < op.arriveAt || !local || now < op.nextAt) continue;
       const cycleMs = this.cycleMsFor(op.extractorUid);
-      const per = this.batchQty(poi, op.shipUid, op.extractorUid);
+      const per = op.per > 0 ? op.per : this.batchQty(poi, op.shipUid, op.extractorUid);
       const row = this.poolRow(poi);
       let cycles = Math.min(Math.floor((now - op.nextAt) / cycleMs) + 1, MININGCFG.maxCyclesPerResolve);
       let qty = 0, chased = false;

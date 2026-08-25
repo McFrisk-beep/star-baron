@@ -118,13 +118,24 @@ const Raiders = {
   //
   // `qty` is the batch that was in the hold when they arrived; that batch is
   // the entire blast radius.
+  // The odds ride ON THE OP, stamped at dispatch (Mining.start) rather than
+  // recomputed here. Two reasons, and the second is the load-bearing one:
+  //   1. You accepted a quoted risk when you dispatched. An edict passed an
+  //      hour later doesn't retroactively re-roll batches already in the hold.
+  //   2. It makes the roll a pure function of the op row, which is the only
+  //      reason docs/sql/mining_rpcs.sql can reproduce it server-side for a
+  //      signed-in baron. Anything that needed the seeded POI or the live
+  //      station tables would have to be ported to SQL and would then drift.
   rollClaim(op, cycle, poi, qty) {
     if (!op || !poi || !poi.ore || !(qty > 0)) return null;
     const c = this.cfg();
+    const cl = c.chanceClamp || [0, 1], rl = c.repelClamp || [0, 0.9];
+    const threat = Util.clamp(op.threat != null ? op.threat : this.claimChance(poi), cl[0], cl[1]);
+    const repel = Util.clamp(op.repel != null ? op.repel : this.repelChance(op.shipUid, op.guardUids || []), rl[0], rl[1]);
     const s = Market._seed(["raid", op.id, String(cycle)]);
-    if (Market._u01(s, 0) >= this.claimChance(poi)) return null;
+    if (Market._u01(s, 0) >= threat) return null;
     const guards = op.guardUids || [];
-    const repelled = Market._u01(s, 1) < this.repelChance(op.shipUid, guards);
+    const repelled = Market._u01(s, 1) < repel;
     const roll = (range, n) => {
       const r = range || [0, 0];
       return r[0] + Market._u01(s, n) * (r[1] - r[0]);

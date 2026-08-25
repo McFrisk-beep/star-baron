@@ -63,6 +63,12 @@ as $$
     -- 2. client-owned
     'hold', 'stationInv', 'shipments', '_haulingMigrated',
     'reports', 'orders', 'pendingHaulSettles', 'seq',
+    -- Mining ops and the worked-out pool per rock. Group 1 (merge inputs) once
+    -- docs/sql/mining_rpcs.sql is applied: app._merge_mining takes a new
+    -- dispatch or a recall off the client and owns every timer and counter
+    -- after that, and app._merge_belt_pools only ever lets a rock's `used` go
+    -- up within a generation, so a worked-out seam can't be reset and re-mined.
+    'mining', 'beltPools',
     -- craftedOnce passes the filter but app_commit_lite below SUBSTITUTES the
     -- stored value whenever a row exists, so the upload can never clear a burn
     -- mark. It stays on the wire so (a) a guest's locally-earned marks reach

@@ -11,13 +11,15 @@ derivation half of step 5).**
   `phase2_missions_bazaar.sql` and `equip_persist.sql`), seeded seams on belt
   POIs, `js/mining.js` runs the dispatch → park → untaxed batches → recall
   loop, NPC barges work the rich belts, and the belt's POI card carries the
-  controls. `tools/check_mining.js` is the check. Scope notes: **client /
-  local-ledger only** — signed-in dispatch is gated (`Mining.canStart`) until
-  a mining RPC surface exists, because `app_commit` owns positions and ship
-  status; §11 Q3 is answered conservatively for now (ore lands in
-  `state.positions` + the system bay, NOT the sector shelf, so the
-  `npcOutputMult` trap in §3.7 stays untriggered); claims (§3.6) and the
-  extra classes (§3.8) are still open.
+  controls. `tools/check_mining.js` is the check. **Now server-settled too:**
+  `docs/sql/mining_rpcs.sql` moves the whole loop — batches, raids, returning
+  hulls — into `app_pull`, so a signed-in baron can dispatch and close the tab;
+  the op row carries the three numbers the server cannot derive (`per`,
+  `threat`, `repel`), computed by the client and clamped server-side, and
+  `tools/check_mining_parity.js` pins the two implementations together. §11 Q3
+  is **settled: ore stays private** — it lands in `state.positions` + the system
+  bay, NOT the sector shelf, so the `npcOutputMult` trap in §3.7 stays
+  untriggered. Claims (§3.6) and the extra classes (§3.8) are still open.
 - **Step 3 (NPC piracy, §4):** `js/raiders.js` is the whole consequence layer.
   Corsairs jump parked claims and rob NPC haulers; `tools/check_raiders.js` is
   the check. Threat is derived from a number that already existed — the seam's
@@ -584,9 +586,13 @@ needs an escort — **because NPCs taught them.**
 2. **Do guests see contacts at all?** Consistent with the ranked/unranked split,
    probably own + NPC filler only. Same open question `LIVING_GALAXY.md` §10 raises
    for voyage markers.
-3. **Does mined tonnage land on the shelf or in `state.positions` first?** §3.7
-   argues the shelf, but that is the decision that determines whether mining is a
-   price lever or a private income stream.
+3. ~~**Does mined tonnage land on the shelf or in `state.positions` first?**~~ —
+   settled: **private.** Ore lands in `state.positions` + the system bay, and
+   `docs/sql/mining_rpcs.sql` does the same server-side. Mining is an income
+   stream and an ore-hauling leg, not a price lever. §3.7's argument for the
+   shelf still stands on its merits and the `npcOutputMult` trap it names is the
+   reason this is the conservative answer — revisit it as a deliberate change,
+   with player tonnage inside the ratio rather than beside it.
 4. ~~**Epoch length** for asteroid depletion and site regeneration~~ — settled:
    each churning site gets its own seeded 1–3h lifetime (`POICFG`), staggered so
    a system never reshuffles all at once, and depletion rides the same clock.

@@ -472,6 +472,15 @@ const Game = {
         offlineCharters = window.Charters ? await Promise.resolve(Charters.resolve(now)) : [];
         offlineReports = offlineReports.concat(offlineCharters);
         offlineIndustry = pulled.industry || [];
+        // Belt batches and corsair raids banked by app._catchup_mining. The ore
+        // is already in the server's positions; park the matching bay blocks so
+        // the hauling ledger agrees, then let both ride the same recap the
+        // local resolver feeds.
+        for (const m of pulled.mining || []) {
+          if (window.Assets && m.sysId && m.qty > 0) Assets.parkBlocks(m.sysId, m.commodity, m.qty);
+        }
+        offlineIndustry = offlineIndustry.concat(pulled.mining || [])
+          .concat((pulled.miningRaids || []).map(raid => ({ raid })));
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
         if (window.Charters) Charters.reconcileShips();
@@ -958,6 +967,9 @@ const Game = {
     if ((s.industries || []).some(i => i.nextAt && now >= i.nextAt)) return true;
     if ((s.expeditions || []).some(e => !e.resolved && !e.debrief && now >= e.startedAt + e.etaMs)) return true;
     if ((s.listings || []).some(l => now >= l.sellAt)) return true;
+    // A matured belt batch or a hull due home — without this, server-owned ore
+    // would only land on a reload.
+    if ((s.mining || []).some(o => (o.nextAt && now >= o.nextAt) || (o.returnAt && now >= o.returnAt))) return true;
     return false;
   },
 

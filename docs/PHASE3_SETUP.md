@@ -90,6 +90,18 @@ Requires Phase 0 + Phase 1 + Phase 2 already applied.
     pruned instead of riding in every 10s commit forever. Also re-declares
     `app_buy_accessory` and `app_craft_start`. Checked by
     `tools/check_low_priority.js`.
+16. **`docs/sql/mining_rpcs.sql`** ← required for belt mining
+    (docs/SPACE_INTERACTIVITY.md §3), and must come **LAST** — after every step
+    above that replaces `app_commit` (currently step 15). It carries that
+    body forward and adds the mining merge; a file pasted after it would have to
+    copy *its* body instead. Adds `app._catchup_mining` to `app_pull` so belt
+    batches, corsair raids and returning hulls settle on the server clock, plus
+    `app._merge_mining` / `app._merge_belt_pools`. Without it `Mining.canStart`
+    refuses to dispatch for signed-in barons at all — ore minted client-side is
+    rejected by `app_commit`, so §3 mining and the §4 piracy built on it are
+    guest-only content. Re-run **`docs/sql/commit_allowlist.sql`** afterwards if
+    you keep it applied last; its allowlist now carries `mining` and
+    `beltPools`. Checked by `tools/check_mining_parity.js`.
 
 ## Trust model
 

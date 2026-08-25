@@ -2201,8 +2201,8 @@ const StarMap = {
       }
       return html;
     }
-    if (window.Economy && !Economy.softIncomeLocal())
-      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch arrives with the server-side mining update.</div>`;
+    if (!Mining.serverOwned() && window.Economy && !Economy.softIncomeLocal())
+      return html + `<div class="pt-sub">Mining settles on the local ledger for now — signed-in dispatch needs <code>docs/sql/mining_rpcs.sql</code> applied to this project.</div>`;
     if (left <= 0) return html;
     const miners = Fleet.idle().filter(sh => (Fleet.shipDef(sh.type) || {}).cls === "miner" && !sh.mercenary);
     if (!miners.length)
