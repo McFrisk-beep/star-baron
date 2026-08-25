@@ -45,10 +45,13 @@ const APPLY_ORDER = [
   "phase2c_launch_claim.sql", "phase3_pull_prestige.sql", "equip_persist.sql",
   "workshop_craft.sql", "repair_equip.sql", "charter_rpcs.sql", "survey_custody.sql",
   "merc_expiry.sql", "crime_coefficient.sql", "save_hygiene.sql",
-  // Applied last: it copies save_hygiene's app_commit body (the previous
-  // tail) and adds the mining merge, so it must stay at the end — a file
-  // pasted after it would need to copy THIS body instead.
+  // It copies save_hygiene's app_commit body (the tail at the time) and adds
+  // the mining merge.
   "mining_rpcs.sql",
+  // Applied last: it copies mining_rpcs' app_commit body (the current tail) and
+  // adds the piracy merges, so it must stay at the end — a file pasted after it
+  // would need to copy THIS body instead.
+  "piracy_rpcs.sql",
 ];
 const COMMIT_RE = /create or replace function public\.app_commit\b[\s\S]*?\n\$\$;/g;
 const declaresCommit = f => COMMIT_RE.test(fs.readFileSync(path.join(root, "docs/sql", f), "utf8"));

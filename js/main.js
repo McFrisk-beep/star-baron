@@ -495,6 +495,19 @@ const Game = {
         }
         offlineIndustry = offlineIndustry.concat(pulled.mining || [])
           .concat((pulled.miningRaids || []).map(raid => ({ raid })));
+        // Piracy settled by app._catchup_piracy: the fight, the loot, the
+        // police chase. Positions already carry the take; park the matching
+        // bay blocks so the hauling ledger agrees, then let it ride the same
+        // recap the local resolver feeds.
+        for (const p of pulled.piracy || []) {
+          if (window.Assets && p.fromSys && p.loot) {
+            for (const [id, qty] of Object.entries(p.loot)) {
+              if (qty > 0) Assets.parkBlocks(p.fromSys, id, qty);
+            }
+          }
+        }
+        offlineIndustry = offlineIndustry.concat(
+          (pulled.piracy || []).map(piracy => ({ piracy })));
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
         if (window.Charters) Charters.reconcileShips();

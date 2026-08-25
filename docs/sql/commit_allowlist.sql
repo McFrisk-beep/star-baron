@@ -69,6 +69,12 @@ as $$
     -- after that, and app._merge_belt_pools only ever lets a rock's `used` go
     -- up within a generation, so a worked-out seam can't be reset and re-mined.
     'mining', 'beltPools',
+    -- Piracy ops, the robbed-run marks and the stolen-goods flags. Group 1
+    -- once docs/sql/piracy_rpcs.sql is applied: app._merge_piracy takes a new
+    -- dispatch off the client and owns every outcome after that, and
+    -- app._merge_hot only ever lets a hot flag go DOWN from the client — so a
+    -- save edit can neither mint stolen goods nor launder them clean.
+    'piracy', 'piracyHits', 'hot',
     -- craftedOnce passes the filter but app_commit_lite below SUBSTITUTES the
     -- stored value whenever a row exists, so the upload can never clear a burn
     -- mark. It stays on the wire so (a) a guest's locally-earned marks reach

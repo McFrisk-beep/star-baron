@@ -195,6 +195,16 @@ const Economy = {
       s.mining = r.mining;
       if (r.beltPools && typeof r.beltPools === "object") s.beltPools = r.beltPools;
     }
+    // Piracy: server-owned once docs/sql/piracy_rpcs.sql is applied. Same probe
+    // — the key's presence, not its truth, since it arrives as [] for a baron
+    // who has never raided. Until it shows up, Piracy.canStart keeps dispatch
+    // gated and the loop stays on the local ledger.
+    if (Array.isArray(r.piracy)) {
+      if (window.Cloud) Cloud.piracyOwned = true;
+      s.piracy = r.piracy;
+      if (Array.isArray(r.piracyHits)) s.piracyHits = r.piracyHits;
+      if (r.hot && typeof r.hot === "object") s.hot = r.hot;
+    }
     // Workshop queue/upgrades are server-owned once docs/sql/workshop_craft.sql
     // is applied; knownRecipes/craftedOnce still come back so a burned unique
     // blueprint sticks after a claim. Scrub ids already claimed this session so

@@ -37,9 +37,16 @@ const Piracy = {
   // Runs already emptied by a player this session-or-so, for the scene: the
   // robbed hauler limps on with a bare hold (traffic.js asks tookManifest).
   hits() { return this.s().piracyHits || (this.s().piracyHits = []); },
-  // Local ledger only for now — a local mint would evaporate under app_commit,
-  // exactly the trap mining.js documents. Same gate, same upgrade path.
+  // Server-settled once docs/sql/piracy_rpcs.sql is applied: app_pull resolves
+  // the fight, the loot, the chase and the landing on the server clock, and
+  // serverOwned() latches when its slice comes back. Until it does, a local
+  // mint would evaporate under app_commit — the trap mining.js documents — so
+  // dispatch stays gated for a signed-in baron and guests keep the local loop.
+  serverOwned() { return !!(window.Cloud && Cloud.piracyOwned); },
   local() { return !window.Economy || Economy.softIncomeLocal(); },
+  // Can this baron dispatch at all? Guests always; signed-in only once the
+  // server owns the settle.
+  canSettle() { return this.local() || this.serverOwned(); },
 
   opFor(shipUid) { return this.list().find(o => o.shipUid === shipUid) || null; },
   opOnFlight(flightId, loop) {
@@ -112,8 +119,8 @@ const Piracy = {
 
   // ---- dispatch ------------------------------------------------------------
   canStart(v, verb, shipUid, sysId, now = Date.now()) {
-    if (!this.local())
-      return { ok: false, msg: "Piracy settles on the local ledger for now — signed-in dispatch waits on a piracy SQL surface, like mining before it." };
+    if (!this.canSettle())
+      return { ok: false, msg: "Piracy needs docs/sql/piracy_rpcs.sql applied to this project before a signed-in baron can dispatch — otherwise the take would evaporate on the next save." };
     if (!v || !v.npc) return { ok: false, msg: "No contact there." };
     if (!this.verbs(v, sysId).includes(verb)) {
       if (v.raided) return { ok: false, msg: "Their hold is already empty — someone beat you to it." };
@@ -145,6 +152,10 @@ const Piracy = {
       flightId: v.id, loop: v.loop, kind: v.kind, name: v.name,
       manifest: v.manifest.slice(), toSys: this.toSysOf(v),
       chance: this.chance(shipUid, v, sysId, verb),
+      // The hull's attack score, stamped at dispatch: the server cannot derive
+      // it (it doesn't model accessories or yard refits) and the police chase
+      // rolls against it. Clamped server-side against the ship catalog.
+      atk: window.Charters ? Charters.defenseScore(Charters.fleetStats([Fleet.ship(shipUid)])) : 0,
       // The law present where you struck, locked in with the odds: the police
       // response (police.js) rolls against this, not against whatever the map
       // says by the time the hull is flying home.
@@ -166,21 +177,28 @@ const Piracy = {
   rollOutcome(op) {
     const c = this.cfg();
     const s = Market._seed(["piracy", op.id]);
+    // Clamp on READ, exactly as raiders.js does with threat/repel: the server
+    // resolver (docs/sql/piracy_rpcs.sql) clamps the same way, so a tampered
+    // save can never make the optimistic client view disagree with the settle.
+    const cl = c.chanceClamp || [0, 1];
+    const chance = Util.clamp(+op.chance || 0, cl[0], cl[1]);
+    const value = Math.max(0, +op.value || 0);
+    const cargo = Math.max(0, +op.cargo || 0);
     const roll = (range, n) => { const r = range || [0, 0]; return r[0] + Market._u01(s, n) * (r[1] - r[0]); };
     const out = { verb: op.verb, won: true, loot: null, credits: 0, dmg: 0 };
     if (op.verb === "escort") {
-      out.credits = Math.round(roll(c.escortPayFrac, 1) * op.value);
+      out.credits = Math.round(roll(c.escortPayFrac, 1) * value);
       return out;
     }
-    out.won = Market._u01(s, 0) < op.chance;
+    out.won = Market._u01(s, 0) < chance;
     if (!out.won) { out.dmg = roll(c.atkDmg, 1); return out; }
-    if (op.verb === "toll") { out.credits = Math.round(roll(c.tollFrac, 1) * op.value); return out; }
+    if (op.verb === "toll") { out.credits = Math.round(roll(c.tollFrac, 1) * value); return out; }
     // Rob: a seeded load per manifest commodity, capped by the hold you flew.
     const range = (c.lootQty || {})[op.kind] || [5, 10];
     let want = op.manifest.map((id, i) => ({ id, qty: Math.max(1, Math.round(roll(range, 2 + i))) }));
     let total = want.reduce((n, w) => n + w.qty, 0);
-    if (op.cargo > 0 && total > op.cargo) {
-      const k = op.cargo / total;
+    if (cargo > 0 && total > cargo) {
+      const k = cargo / total;
       want = want.map(w => ({ id: w.id, qty: Math.max(1, Math.floor(w.qty * k)) }));
     }
     out.loot = {};
