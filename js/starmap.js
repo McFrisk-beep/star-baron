@@ -38,7 +38,20 @@ const StarMap = {
       poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
       btnOpen: $("btn-starmap"), btnClose: $("sm-close"), toGalaxy: $("sm-to-galaxy"),
+      infoToggle: $("sm-info-toggle"),
     };
+    // Collapse the info panel so the scene gets the whole overlay — worth a
+    // real toggle on a phone, where the panel takes over half the screen. The
+    // choice rides settings (client-owned, already on the wire), and the
+    // scene's draw loop re-fits the camera on the resize by itself.
+    if (this.refs.infoToggle) {
+      this.refs.infoToggle.onclick = () => {
+        const s = this.s().settings;
+        s.sysInfoHidden = !s.sysInfoHidden;
+        this.applyInfoHidden();
+        window.Game.requestSave();
+      };
+    }
     if (this.refs.btnOpen) this.refs.btnOpen.onclick = () => this.openGalaxy();   // legacy header button (now the nav "Star Map" tab)
     // Close / Escape: system → galaxy first; only leave the overlay from the chart.
     this.refs.btnClose.onclick = () => this.backOrClose();
@@ -50,6 +63,20 @@ const StarMap = {
       this.backOrClose();
     });
     if (window.PlanetView) PlanetView.init();
+  },
+
+  // Paint the collapsed/expanded state onto the view + button. Safe before a
+  // save exists (init runs early), and idempotent.
+  applyInfoHidden() {
+    const { systemView, infoToggle } = this.refs;
+    if (!systemView || !infoToggle) return;
+    const st = (window.Game && Game.state && Game.state.settings) || null;
+    const hidden = !!(st && st.sysInfoHidden);
+    systemView.classList.toggle("info-hidden", hidden);
+    infoToggle.textContent = hidden ? "Show info" : "Hide info";
+    infoToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    infoToggle.title = hidden
+      ? "Show this system's details" : "Collapse the panel and give the scene the full screen";
   },
 
   backOrClose() {
@@ -691,6 +718,7 @@ const StarMap = {
     this.refs.btnClose.classList.remove("hidden");
     this.refs.crumbSys.textContent = " ▸ " + sys.name;
     this.refs.title.textContent = sys.name.toUpperCase();
+    this.applyInfoHidden();      // restore the panel's collapsed state
     this.renderInfo(sys);
     this.startScene(sys);
     this.startLocalFeed(sys);
@@ -1171,11 +1199,25 @@ const StarMap = {
     const handle = { sysId: sys.id, stopped: false, raf: null, stop: null };
     const cleanups = [];
     const reduced = this.s().settings.reduced;
+    // How much of the canvas's bottom edge the floating command dock covers.
+    // Measured rather than assumed — the dock is fixed-position and its height
+    // varies with the device — and only ever non-zero when the scene runs to
+    // the foot of the screen (info panel collapsed on a phone).
+    let dockInset = 0;
+    const measureDock = () => {
+      dockInset = 0;
+      const nav = document.getElementById("tabs");
+      if (!nav || ext) return;
+      const nr = nav.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      if (!nr.height || !cr.height) return;
+      dockInset = Util.clamp(cr.bottom - nr.top + 8, 0, cr.height * 0.4);
+    };
     const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect();
       const w = Math.max(320, Math.floor(r.width)), h = Math.max(260, Math.floor(r.height));
-      if (canvas.width === w && canvas.height === h) return;
+      if (canvas.width === w && canvas.height === h) return measureDock();
       canvas.width = w; canvas.height = h;
+      measureDock();
     };
     resize();
     window.addEventListener("resize", resize);
@@ -1647,7 +1689,7 @@ const StarMap = {
 
       // minimap (screen space): the widened world stays navigable — §2 step 1.
       // Chase-cam (Hub Live View) scenes skip it; their camera isn't yours.
-      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois: poiList() });
+      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois: poiList() }, dockInset);
 
       if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
 
@@ -2295,9 +2337,12 @@ const StarMap = {
   // Minimap inset (screen space, bottom-right): world box, core outline,
   // star, gates and POI dots, plus the current viewport rectangle. Returns
   // its rect so the scene's click handler can jump the camera.
-  _drawMinimap(ctx, w, h, cam, g) {
+  // bottomInset: px of the canvas's bottom edge covered by the floating
+  // command dock. With the info panel collapsed the scene runs to the foot of
+  // the screen, and without this the minimap's corner hides under the dock.
+  _drawMinimap(ctx, w, h, cam, g, bottomInset = 0) {
     const s = Util.clamp(Math.round(Math.min(w, h) * 0.24), 90, 150);
-    const x = w - s - 10, y = h - s - 10, k = s / g.WORLD;
+    const x = w - s - 10, y = h - s - 10 - Math.max(0, bottomInset), k = s / g.WORLD;
     ctx.save();
     ctx.fillStyle = "rgba(6,10,20,.72)";
     this._roundRect(ctx, x, y, s, s, 6); ctx.fill();

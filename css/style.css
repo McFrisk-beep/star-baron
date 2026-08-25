@@ -1061,6 +1061,19 @@ body.reduced .hud-rows { transition: none; }
   backdrop-filter: blur(4px); transition: opacity .5s ease; }
 .scene-hint.faded { opacity: 0; }
 .system-info { border-left: 1px solid var(--line); background: #0a0e1a; overflow-y: auto; min-height: 0; padding: 16px 16px 92px; }
+/* Collapse the info panel to give the scene the whole overlay. The scene's own
+   draw loop re-fits the camera when the canvas resizes, so this is pure CSS
+   plus one class. The toggle rides the panel's edge — right edge on desktop,
+   the seam between scene and panel on mobile. */
+.system-view.info-hidden { grid-template-columns: 1fr; }
+.system-view.info-hidden .system-info { display: none; }
+.info-toggle { position: absolute; z-index: 5; right: 372px; top: 12px;
+  font: 600 11px/1 var(--sans, system-ui, sans-serif); letter-spacing: .3px;
+  color: var(--ink-dim); background: rgba(8,13,24,.82); border: 1px solid rgba(63,227,255,.22);
+  border-radius: 999px; padding: 7px 12px; cursor: pointer; backdrop-filter: blur(4px);
+  transition: color .12s, border-color .12s; }
+.info-toggle:hover { color: var(--accent); border-color: rgba(63,227,255,.5); }
+.system-view.info-hidden .info-toggle { right: 12px; }
 .si-head h3 { margin: 0; font-size: 22px; }
 .si-sub { font-size: 12px; font-weight: 600; margin: 2px 0 10px; }
 .si-trade { margin-bottom: 8px; }
@@ -1101,6 +1114,11 @@ body.reduced .hud-rows { transition: none; }
   .system-view { grid-template-columns: 1fr; grid-template-rows: 45% 55%; }
   .system-info { border-left: none; border-top: 1px solid var(--line); }
   .starmap-title { display: none; }
+  /* Stacked: collapsing hands the scene the whole pane — the point on a phone.
+     The toggle stays at the scene's top-right in both states; the bottom of
+     the scene belongs to the minimap and the pan/zoom hint. */
+  .info-toggle, .system-view.info-hidden .info-toggle { right: 10px; top: 10px; bottom: auto; }
+  .system-view.info-hidden { grid-template-rows: 1fr; }
 }
 
 /* ===== planet popup ===== */
