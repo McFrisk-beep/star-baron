@@ -9,10 +9,11 @@
    Idle-first: everything below is a pure function of the clock. Dispatch,
    close the tab, come back — resolve() banks the batches that accrued.
 
-   State: state.mining = [op], state.beltPools = { poiId: { epoch, used } } —
-   depletion is the only stored field per worked rock (§1.3); rows reset
-   lazily when the epoch rolls, so the rock regenerates and storage is capped
-   at "rocks you worked this epoch".
+   State: state.mining = [op], state.beltPools = { poiId: { gen, used } } —
+   what YOU took is the only stored field per worked rock (§1.3). NPC crews
+   take the rest on a clock, and when the site rolls over (POICFG) a fresh
+   rock replaces it and the row resets — so storage is capped at "rocks you
+   worked this generation" and nobody has to store the world.
 
    Trust: guest / local-ledger only for now. Signed-in play has server-owned
    positions and ship status (app_commit protects both), so dispatch is gated
@@ -24,23 +25,47 @@ const Mining = {
   list() { return this.s().mining || (this.s().mining = []); },
   pools() { return this.s().beltPools || (this.s().beltPools = {}); },
 
-  epoch(now = Date.now()) { return Math.floor(now / MININGCFG.epochMs); },
-  epochLeft(now = Date.now()) { return (this.epoch(now) + 1) * MININGCFG.epochMs - now; },
-  // The one stored row per worked rock. An older epoch's row IS the
-  // regenerated rock — reset lazily on first touch.
-  poolRow(poiId, now = Date.now()) {
-    const rows = this.pools(), ep = this.epoch(now);
-    let row = rows[poiId];
-    if (!row || row.epoch !== ep) row = rows[poiId] = { epoch: ep, used: 0 };
+  // How long until NPC crews finish this rock and a fresh one takes the slot.
+  rollsIn(poi, now = Date.now()) {
+    const slot = window.POIs && POIs.slot(poi.id);
+    return slot ? Math.max(0, POIs.rollsAt(slot, now) - now) : Infinity;
+  },
+  // NPC barges work the seam out over the site's life, so a rock nobody
+  // touches is still empty by the time the crews move on — get there early or
+  // race them for what's left. Pure clock maths; nothing stored.
+  npcTaken(poi, now = Date.now()) {
+    const slot = window.POIs && POIs.slot(poi.id);
+    if (!poi || !poi.ore || !slot || !POIs.churns(slot)) return 0;
+    const life = POIs.lifeMs(slot);
+    if (!isFinite(life) || life <= 0) return 0;
+    const frac = Util.clamp(1 - this.rollsIn(poi, now) / life, 0, 1);
+    return Math.floor(poi.ore.pool * (MININGCFG.npcShare ?? 1) * frac);
+  },
+  // What YOU took from this rock, read-only. The scene asks every frame, so
+  // this must never lazily create the row — that would write a save row for
+  // every belt on screen (and mark the save dirty) just by looking at it.
+  poolUsed(poi) {
+    const row = this.pools()[poi.id];
+    return row && row.gen === (poi.gen | 0) ? row.used : 0;
+  },
+  // The one stored row per worked rock, for the write path. A row from an
+  // older generation belonged to the rock this one replaced.
+  poolRow(poi) {
+    const rows = this.pools(), gen = poi.gen | 0;
+    let row = rows[poi.id];
+    if (!row || row.gen !== gen) row = rows[poi.id] = { gen, used: 0 };
     return row;
   },
   poolLeft(poi, now = Date.now()) {
     if (!poi || !poi.ore) return 0;
-    return Math.max(0, poi.ore.pool - this.poolRow(poi.id, now).used);
+    return Math.max(0, poi.ore.pool - this.npcTaken(poi, now) - this.poolUsed(poi));
   },
   prunePools(now = Date.now()) {
-    const rows = this.pools(), ep = this.epoch(now);
-    for (const id of Object.keys(rows)) if (rows[id].epoch !== ep) delete rows[id];
+    const rows = this.pools();
+    for (const id of Object.keys(rows)) {
+      const poi = window.POIs && POIs.get(id, now);
+      if (!poi || !poi.ore || rows[id].gen !== (poi.gen | 0)) delete rows[id];
+    }
   },
 
   opAt(poiId) { return this.list().find(o => o.poiId === poiId) || null; },
@@ -82,11 +107,11 @@ const Mining = {
   canStart(poiId, shipUid, now = Date.now()) {
     if (window.Economy && !Economy.softIncomeLocal())
       return { ok: false, msg: "Mining settles on the local ledger for now — the server-side mining update unlocks dispatch for signed-in barons." };
-    const poi = window.POIs ? POIs.get(poiId) : null;
+    const poi = window.POIs ? POIs.get(poiId, now) : null;
     if (!poi || !poi.ore) return { ok: false, msg: "Nothing minable there." };
     if (this.opAt(poiId)) return { ok: false, msg: "You already have a miner working this rock." };
     if (this.list().length >= MININGCFG.maxOps) return { ok: false, msg: `Mining ops at capacity (${MININGCFG.maxOps}).` };
-    if (this.poolLeft(poi, now) <= 0) return { ok: false, msg: `Seam worked out — regenerates in ${Util.duration(this.epochLeft(now))}.` };
+    if (this.poolLeft(poi, now) <= 0) return { ok: false, msg: `Seam worked out — the crews move on in ${Util.duration(this.rollsIn(poi, now))} and a fresh rock takes its place.` };
     const sh = Fleet.ship(shipUid);
     if (!sh || sh.status !== "idle") return { ok: false, msg: "Pick an idle ship." };
     if (((Fleet.shipDef(sh.type) || {}).cls || sh.cls) !== "miner") return { ok: false, msg: "Only miner-class hulls carry the rig mounts for belt work." };
@@ -108,6 +133,7 @@ const Mining = {
     const op = {
       id: "mn" + (++s.seq), poiId, sysId: can.poi.sysId, shipUid,
       extractorUid: extractorUid || null, commId: can.poi.ore.commId,
+      gen: can.poi.gen | 0,   // the rock it was sent to; a roll-over ends the op
       startedAt: now, travelMs: travel, arriveAt: now + travel,
       nextAt: now + travel + this.cycleMsFor(extractorUid),
       mined: 0, returnAt: null, fromSys: s.currentSystem,
@@ -135,12 +161,18 @@ const Mining = {
   resolve(now = Date.now()) {
     const s = this.s();
     if (!this.list().length) { this.prunePools(now); return []; }
-    const made = [];
+    const made = [], rolled = [];
     const local = !window.Economy || Economy.softIncomeLocal();
     for (const op of this.list()) {
       const sh = Fleet.ship(op.shipUid);
-      const poi = window.POIs ? POIs.get(op.poiId) : null;
+      const poi = window.POIs ? POIs.get(op.poiId, now) : null;
       if (!sh || !poi || !poi.ore) { op._dead = true; continue; }   // hull gone / bad row — close out
+      // The rock it was working got cleared out and replaced: send the hull
+      // home rather than silently mining a seam nobody dispatched it to.
+      if (!op.returnAt && (poi.gen | 0) !== (op.gen | 0)) {
+        op.returnAt = now + op.travelMs;
+        rolled.push({ ship: sh.name, sysId: op.sysId });
+      }
       if (op.returnAt && now >= op.returnAt) {
         sh.status = "idle";
         op._dead = true;
@@ -150,15 +182,17 @@ const Mining = {
       if (op.returnAt || now < op.arriveAt || !local || now < op.nextAt) continue;
       const cycleMs = this.cycleMsFor(op.extractorUid);
       const per = this.batchQty(poi, op.shipUid, op.extractorUid);
-      const row = this.poolRow(op.poiId, now);
+      const row = this.poolRow(poi);
       let cycles = Math.min(Math.floor((now - op.nextAt) / cycleMs) + 1, MININGCFG.maxCyclesPerResolve);
       let qty = 0;
-      while (cycles-- > 0 && row.used < poi.ore.pool) {
-        qty += Math.min(per, poi.ore.pool - row.used);
-        row.used = Math.min(poi.ore.pool, row.used + per);
+      // Race the NPC crews: poolLeft() already nets off what they have taken.
+      let left = this.poolLeft(poi, now);
+      while (cycles-- > 0 && left > 0) {
+        const take = Math.min(per, left);
+        qty += take; row.used += take; left -= take;
       }
-      // A worked-out rock idles the batch clock; the hull stays parked and the
-      // seam regenerates on the epoch (§3.3) — recall it when you want it home.
+      // A worked-out rock idles the batch clock; the hull stays parked until
+      // the crews move on (which ends the op) or you recall it.
       op.nextAt = now + cycleMs;
       if (qty <= 0) continue;
       op.mined = (op.mined || 0) + qty;
@@ -171,6 +205,7 @@ const Mining = {
     }
     if (this.list().some(o => o._dead)) s.mining = this.list().filter(o => !o._dead);
     this.prunePools(now);
+    for (const r of rolled) if (window.Bus) Bus.emit("miningRolled", r);
     if (made.length && window.Economy) { Economy.refreshNetWorth(); Economy.checkAchievements(); }
     return made;
   },

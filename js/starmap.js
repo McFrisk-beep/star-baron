@@ -1135,9 +1135,12 @@ const StarMap = {
     // in the reserved ring — no state, identical on every client. Art comes
     // from ASSET.poi when an admin uploaded some; otherwise _drawPOI falls
     // back to canvas primitives, the same pattern planets and stations use.
-    const pois = window.POIs ? POIs.list(sys.id) : [];
+    // Sites churn on the clock (POICFG), so the list is read every frame —
+    // POIs.list() is cached and only rebuilds when a slot actually rolls.
+    // Art is keyed by type, and a slot's type never changes.
+    const poiList = () => (window.POIs ? POIs.list(sys.id) : []);
     const poiImgs = {};
-    for (const p of pois) {
+    for (const p of (window.POIs ? POIs.slots(sys.id) : [])) {
       if (poiImgs[p.type] !== undefined) continue;
       const u = ASSET.poi(p.type);
       poiImgs[p.type] = u ? this.img(u) : null;
@@ -1295,6 +1298,7 @@ const StarMap = {
       for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name, cam.zoom);
 
       // deep-space POIs — out in the ring beyond the gates (§2 step 1)
+      const pois = poiList();
       for (const p of pois) this._drawPOI(ctx, p, poiImgs[p.type], now, cam.zoom);
       // seeded NPC barges working the richer seams (§3 — belts look worked
       // before players arrive), then your own parked mining ops
@@ -1385,7 +1389,7 @@ const StarMap = {
 
       // minimap (screen space): the widened world stays navigable — §2 step 1.
       // Chase-cam (Hub Live View) scenes skip it; their camera isn't yours.
-      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois });
+      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois: poiList() });
 
       if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
 
@@ -1875,6 +1879,9 @@ const StarMap = {
   // Seeded NPC mining barges orbiting a belt with ore — no state, pure
   // dressing so belts look worked before players arrive (§3, step 2).
   _drawBeltWork(ctx, poi, now) {
+    // Once the seam is worked out the crews have moved on — an empty rock
+    // should look empty until it rolls over into a fresh one.
+    if (window.Mining && Mining.poolLeft(poi) <= 0) return;
     const n = poi.ore.rich >= 1 ? 1 + (poi.seed % 2) : (poi.seed >> 3) % 2;
     if (!n) return;
     const img = this.img(ASSET.ship("hauler"));
@@ -1972,24 +1979,33 @@ const StarMap = {
     let html = `<b>${poi.name}</b>
       <div class="pt-sub"><span style="color:${def.color || "var(--ink-dim)"}">●</span> ${def.label || poi.type} · deep-space ring</div>
       <div class="pt-sub">${def.blurb || ""}</div>`;
+    // Wrecks and scrap get hauled away; geography and dens stay put.
+    if (def.churn && !poi.ore && window.Mining) {
+      html += `<div class="pt-sub tip-dim">Salvage crews clear this in ~${Util.duration(Mining.rollsIn(poi))}.</div>`;
+    }
     if (poi.ore && window.Mining && window.Fleet) html += this._poiOreBlock(poi);
     tip.innerHTML = html;
     tip.style.pointerEvents = "auto";   // the belt card has buttons; planet-tip CSS says none
+    tip.style.display = "block";        // lay it out first — a belt card's height varies a lot
     const cr = this.refs.canvas.getBoundingClientRect();
     const vr = this.refs.systemView.getBoundingClientRect();
-    tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - 250)) + "px";
-    tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - 90)) + "px";
-    tip.style.display = "block";
+    const tw = tip.offsetWidth || 240, th = tip.offsetHeight || 90;
+    tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - tw - 6)) + "px";
+    tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - th - 6)) + "px";
     this._wirePoiTip(poi);
   },
 
   _poiOreBlock(poi) {
     const comm = COMMODITIES.find(c => c.id === poi.ore.commId);
     const commName = comm ? comm.name : poi.ore.commId;
-    const left = Mining.poolLeft(poi);
+    const left = Mining.poolLeft(poi), npc = Mining.npcTaken(poi);
+    const rollIn = Mining.rollsIn(poi);
     const richLbl = poi.ore.rich >= 1.3 ? "prime" : poi.ore.rich >= 1.0 ? "rich" : poi.ore.rich >= 0.8 ? "fair" : "lean";
-    let html = `<div class="pt-sub">⛏ <b>${commName}</b> seam · ${richLbl} (${poi.ore.rich}×) · ${left}/${poi.ore.pool} this cycle`
-      + (left <= 0 ? ` · regenerates in ${Util.duration(Mining.epochLeft())}` : "") + `</div>`;
+    let html = `<div class="pt-sub">⛏ <b>${commName}</b> seam · ${richLbl} (${poi.ore.rich}×) · <b>${left}</b>/${poi.ore.pool} left`
+      + (npc > 0 ? ` <span class="tip-dim">(crews took ${npc})</span>` : "") + `</div>`
+      + `<div class="pt-sub">${left <= 0
+        ? `Worked out — the crews move on in ${Util.duration(rollIn)}, and a fresh rock takes the slot.`
+        : `NPC crews are working it out — nothing left in ~${Util.duration(rollIn)}.`}</div>`;
     const op = Mining.opAt(poi.id);
     if (op) {
       const sh = Fleet.ship(op.shipUid);

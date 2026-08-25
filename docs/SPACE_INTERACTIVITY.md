@@ -18,6 +18,21 @@
   `npcOutputMult` trap in §3.7 stays untriggered); claims (§3.6) and the
   extra classes (§3.8) are still open.
 
+**Site churn (§1.3's epoch input) is also built.** A system's *slots* are
+permanent geography, but their *occupants* are not: belts, debris fields and
+derelicts are worked out by NPC crews over a seeded 1–3h lifetime (`POICFG`,
+staggered per site) and a fresh site takes the slot — new name, new
+composition, a short drift within the slot. Gas clouds, jump buoys, listening
+posts, rigs and **pirate dens stay put** — a den leaves only when someone
+clears it (§7.1). For belts this is what makes the NPC barges mean something:
+they drain the same finite pool you do, so a rock nobody touches is empty by
+the time the crews move on, and getting there early is the whole game. A
+parked miner whose rock is cleared flies home rather than silently working a
+seam it was never sent to. Nothing new is stored: occupancy is
+`f(slot, generation)` and the generation is `f(clock)`; the only row is still
+what *you* took, and it dies with its generation. Mining's cadence dropped to
+30-minute batches (`MININGCFG.cycleMs`) so several land inside a site's life.
+
 Everything from §4 on is still design only. The document is the consolidated
 output of two brainstorming rounds, written down so the decided parts can be
 separated from the open ones before anybody opens an editor.
@@ -494,9 +509,11 @@ needs an escort — **because NPCs taught them.**
 3. **Does mined tonnage land on the shelf or in `state.positions` first?** §3.7
    argues the shelf, but that is the decision that determines whether mining is a
    price lever or a private income stream.
-4. **Epoch length** for asteroid depletion, den escalation and site regeneration.
-   `state.surveyed`'s per-system cooldown is a cruder version of the same idea and
-   should probably be folded in rather than run alongside.
+4. ~~**Epoch length** for asteroid depletion and site regeneration~~ — settled:
+   each churning site gets its own seeded 1–3h lifetime (`POICFG`), staggered so
+   a system never reshuffles all at once, and depletion rides the same clock.
+   **Den escalation** is still open, and `state.surveyed`'s per-system cooldown is
+   still a cruder version of the same idea that should probably be folded in.
 5. **Is insurance a station module, a Senate product, or a flat service?** It is
    load-bearing for anti-grief (§6.6.6) but has no obvious owner yet.
 6. **Claim jumping in yellow space** — crime, or free? §3.6 says crime in policed

@@ -79,8 +79,8 @@ be **overridden live** (see §6 Content CMS).
 | `content.js` | `Content` — admin overrides overlaid on the in-memory collections at boot. |
 | `market.js` | `Market` — price sim (random walk + mean reversion + news/local effects + category drift), offline `advance`, sparkline history, sentiment. |
 | `galaxy.js` | `Galaxy` — deterministic procedural galaxy (sectors/systems/planets, each planet has a `type`/`cat`/`commodity`), local news log + mechanical local events. |
-| `pois.js` | `POIs` — seeded deep-space points of interest in the ring between `coreSpan` and `worldSpan` (docs/SPACE_INTERACTIVITY.md §2); nothing persisted, rendered/clickable in the system scene. Belt POIs carry a seeded ore seam. |
-| `mining.js` | `Mining` — asteroid mining (docs/SPACE_INTERACTIVITY.md §3): park a miner-class hull at a belt POI for untaxed clock-math ore batches into positions + the system bay; finite per-epoch pools in `state.beltPools`. Guest/local-ledger only until its SQL phase. |
+| `pois.js` | `POIs` — seeded deep-space points of interest in the ring between `coreSpan` and `worldSpan` (docs/SPACE_INTERACTIVITY.md §2); nothing persisted, rendered/clickable in the system scene. Belt POIs carry a seeded ore seam. `slots()` is the permanent geography; `list(sysId, now)` is who occupies it — belts/debris/derelicts churn on a seeded 1–3h clock (`POICFG`), everything else is permanent. |
+| `mining.js` | `Mining` — asteroid mining (docs/SPACE_INTERACTIVITY.md §3): park a miner-class hull at a belt POI for untaxed clock-math ore batches into positions + the system bay. NPC crews drain the same finite pool on the site's clock (`npcTaken`), so you race them; `state.beltPools` stores only your own take, keyed by the site's generation. Guest/local-ledger only until its SQL phase. |
 | `economy.js` | `Economy` — credits, buy/sell, timed docking/travel, net worth, achievements, prestige (resets routes/orders/industries/extractors/components too). |
 | `fleet.js` | `Fleet` — owned ships, stats, flagship, equip, mercenaries (`pruneMercs` returns expired), power/cargo, dock travel time. |
 | `items.js` | `Items` — procedural accessories (rarity/naming/value). |

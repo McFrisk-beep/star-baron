@@ -555,6 +555,18 @@ const EXPEDCFG = {
   },
 };
 
+/* ---- DEEP-SPACE SITES (POI churn) -----------------------------------------
+   A system's sites are permanent geography, but what sits in them is not:
+   NPC mining crews work a rock out and salvagers haul a wreck away, and a
+   fresh site takes the slot (docs/SPACE_INTERACTIVITY.md §1.3). Each churning
+   site gets its own seeded lifetime in this window, staggered so a system's
+   sites don't all turn over at once. Gas clouds, buoys, listening posts, rigs
+   and pirate dens are permanent — a den only leaves when someone clears it.  */
+const POICFG = {
+  churnMinMs: 1 * 60 * 60 * 1000,   // shortest a rock / wreck lasts before the crews finish
+  churnMaxMs: 3 * 60 * 60 * 1000,   // longest
+};
+
 /* ---- ASTEROID MINING ------------------------------------------------------
    The untaxed twin of INDUSTRYCFG (docs/SPACE_INTERACTIVITY.md §3): park a
    miner-class hull at a seeded belt POI in the deep-space ring and it drops
@@ -562,11 +574,11 @@ const EXPEDCFG = {
    rock's finite epoch pool lasts. The trade is exposure: the parked hull is
    the stationary target later build steps point piracy at.                    */
 const MININGCFG = {
-  cycleMs: 2 * 60 * 60 * 1000,   // small untaxed batches every ~2h (industry: 50/12h taxed)
-  baseYield: 6,                  // units per batch before richness / mine stat / rig
+  cycleMs: 30 * 60 * 1000,       // small untaxed batches every ~30m — several per site life (POICFG)
+  baseYield: 2,                  // units per batch before richness / mine stat / rig
   poolBase: 260,                 // ore units per rock per epoch (× seeded size jitter)
-  epochMs: 24 * 60 * 60 * 1000,  // depletion regenerates daily (open question §11.4 — matches the 24h restock gate)
-  maxCyclesPerResolve: 24,       // offline batch cap per op (24 × 2h ≈ 2 days)
+  npcShare: 1,                   // NPC crews work a seam out over the site's life — race them
+  maxCyclesPerResolve: 24,       // offline batch cap per op (a site's pool caps it well before this)
   maxOps: 4,                     // parked mining ops at once
   legSecondsPerDist: 220,        // one-way seconds per map-distance unit, before ship speed (mirrors EXPEDCFG)
   minLegMs: 15 * 1000,           // travel floor for a local belt
@@ -1672,6 +1684,7 @@ window.CUSTOMS = CUSTOMS;
 window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
+window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;
 window.WORKSHOPCFG = WORKSHOPCFG;
 window.BLUEPRINTS = BLUEPRINTS;
