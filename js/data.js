@@ -505,8 +505,11 @@ const CRIMECFG = {
   start: 50, min: 0, max: 1000,
   decayPerDay: 1,                 // the file cools this much every real day
   watch: 100, lockout: 200, criminal: 300,
-  // what each senate action adds. Lobbying a bloc is legal — that's politics.
-  gain: { lobby: 0, bribe: 6, coerce: 20 },
+  // what each act adds. Lobbying a bloc is legal — that's politics. Piracy is
+  // armed robbery (a failed attempt still tried); a toll is menace, not theft.
+  // Destroying a Senate patrol is the worst crime on the books — charged per
+  // pair broken, on top of the robbery that drew them.
+  gain: { lobby: 0, bribe: 6, coerce: 20, piracy: 12, piracyFail: 6, toll: 4, police: 25 },
   // coercion refusal: per 100 points above `watch`, capped. A refused coercion
   // still costs the credits and still adds the crime — you were caught trying.
   coerceFailPer100: 0.35, coerceFailCap: 0.9,
@@ -626,6 +629,94 @@ const RAIDCFG = {
     { at: 0.2,  id: "hunted",  label: "hunted",    color: "#ff9146" },
     { at: 0.33, id: "lawless", label: "corsair country", color: "#ff5d73" },
   ],
+};
+
+/* ---- PLAYER PIRACY (docs/SPACE_INTERACTIVITY.md §4, build step 4) ---------
+   The player-side verbs at an NPC contact: rob a hauler for its manifest,
+   shake it down for a toll, or escort a relief convoy in for lawful pay.
+   Entirely PvE — the sandbox where the loot → scarcity → spike loop is
+   learned before any player is ever a target.
+
+   §4.2 is the point: robbed cargo NEVER reaches the destination shelf, so the
+   pirate sells into the very scarcity they created. §6.7 is the guard rail:
+   high variance, not high expected value — a failed run costs a repair bill
+   and the crime sticks either way.                                           */
+const PIRACYCFG = {
+  maxOps: 2,                     // intercepts in flight at once
+  legSecondsPerDist: 220,        // same distance metric mining/expeditions fly
+  minLegMs: 15 * 1000,
+  // What a hauler's hired guns are worth (Charters.defenseScore units), before
+  // the law: policed space multiplies the effective escort (§5.1 response is
+  // priced in), lawless space leaves the hauler naked.
+  targetSoft: { freighter: 340, trader: 170 },
+  lawFactor: 2.2,
+  chanceClamp: [0.05, 0.9],      // never certain, either way
+  tollEase: 1.35,                // a captain pays a cut more readily than he loses the hold
+  // Loot rolled per manifest commodity (freighters run heavy), capped in total
+  // by the raider's cargo stat — you keep what your hold can lift.
+  lootQty: { freighter: [10, 22], trader: [4, 10] },
+  tollFrac: [0.16, 0.30],        // of the manifest's quoted value, paid in credits
+  escortPayFrac: [0.10, 0.16],   // the relief sponsor's lawful fee, same base
+  atkDmg: [0.04, 0.12],          // hull damage when the target's guns win
+  // Standing swings per verb (Rep.change deltas).
+  rep: {
+    rob:    [["free_trade", -3], ["syndicate", 2]],
+    toll:   [["free_trade", -1], ["syndicate", 1]],
+    escort: [["free_trade", 3]],
+  },
+  hitTtlMs: 2 * 60 * 60 * 1000,  // robbed-run marks outlive any traffic loop, then die
+};
+
+/* ---- POLICE (docs/SPACE_INTERACTIVITY.md §5.2 response, built form) -------
+   The law's RESPONSE half: precincts in top-band systems, standing sector
+   patrols that always fly in pairs, and a chase after a successful robbery
+   that resolves exactly like a mission battle — wallet first, then a
+   replayable report in Dispatches. Still no AI anywhere: patrols are seeded
+   flight plans (the §5.2 idea, given hulls and lights), and the chase is a
+   pure function of the op — a night offline banks the same pursuit a watched
+   tab would have seen.
+
+   Police are formidable but killable. Killing them is the worst crime on the
+   books, and the next response comes heavier — but break every wave and you
+   fly home with the loot, maybe with a piece of their kit.                   */
+const POLICECFG = {
+  // Precincts sit at the SECTOR CAPITALS — the seats of the law, one per
+  // sector, rather than scattered across whichever systems happen to score
+  // highest (which put every station in the Core and left four sectors with
+  // no police at all). Still derived, never authored: a capital also has to
+  // be somewhere the law actually runs, so the Sable Sprawl's capital is
+  // excluded on the same §5.4 grounds that make it Syndicate ground — and if
+  // players ever lift it above this floor, a precinct opens there too.
+  precinctMinScore: 0.42,          // the Contested boundary in SECURITYCFG.bands
+  pairsPerSector: 1,               // standing patrol pairs per sector with a precinct
+  patrolLoopMinMs: 20 * 60 * 1000, // one patrol hop + dwell
+  patrolLoopMaxMs: 35 * 60 * 1000,
+  patrolFlyFrac: 0.85,
+  // Response after a successful rob: odds scale with the law present where it
+  // happened (stamped on the op at dispatch — the risk you accepted).
+  responseBase: 0.9,               // × the system's security score
+  responseClamp: [0, 0.95],        // truly lawless space answers to nobody
+  // One patrol pair's worth, in Charters.defenseScore units, deepened by the
+  // local law and escalating per wave when you keep shooting back.
+  pairScore: 700,
+  lawScore: 1.4,
+  waveMult: 1.6,
+  maxWaves: 3,                     // break this many and they lose the trail
+  destroyClamp: [0.02, 0.75],      // formidable, never unbeatable — or safe
+  catchMult: 1.1,                  // pairs run fat freighter-chasers down hard
+  catchClamp: [0.1, 0.92],
+  chaseDmg: [0.06, 0.16],          // hull damage per wave actually fought
+  itemChance: 0.2,                 // salvage roll per destroyed pair (the police-only kit)
+};
+
+// The police-only accessory, stripped from a broken patrol ship. Deliberately
+// above what Items.gen can roll (legendary reactor tops out ~+39%): the only
+// way to hold one is to have beaten the law at its own game.
+const POLICE_ITEM = {
+  kind: "reactor", rarity: "legendary",
+  name: "Senate Enforcement Core",
+  primary: { stat: "firepower", amount: 0.45, pct: true, kind: "reactor" },
+  bonus:   { stat: "shields",   amount: 60,   pct: false, kind: "shield" },
 };
 
 /* ---- SECURITY BANDS (docs/SPACE_INTERACTIVITY.md §5.3) ---------------------
@@ -1258,6 +1349,14 @@ const ENEMY_CATALOG = {
     { id: "syn_collector",name: "Debt Collector",   firepower: 58,  hull: 250, armor: 60,  shields: 42, speed: 1.5,  sprite: "syndics",  tier: 2 },
     { id: "syn_widow",    name: "Widow Cruiser",    firepower: 115, hull: 460, armor: 115, shields: 85, speed: 1.2,  sprite: "syndics",  tier: 3 },
   ],
+  // Senate patrol hulls (js/police.js): the pairs on the lanes and the waves
+  // that answer a robbery. Tier climbs with the response wave.
+  police: [
+    { id: "pol_interceptor", name: "Patrol Interceptor", firepower: 32,  hull: 130, armor: 32,  shields: 28,  speed: 2.2, sprite: "voidkin",  tier: 0 },
+    { id: "pol_cutter",      name: "Senate Cutter",      firepower: 58,  hull: 240, armor: 62,  shields: 55,  speed: 1.7, sprite: "glorthi",  tier: 1 },
+    { id: "pol_vanguard",    name: "Vanguard Frigate",   firepower: 100, hull: 400, armor: 105, shields: 95,  speed: 1.4, sprite: "krell",    tier: 2 },
+    { id: "pol_justicar",    name: "Justicar Cruiser",   firepower: 165, hull: 600, armor: 160, shields: 145, speed: 1.2, sprite: "aurelian", tier: 3 },
+  ],
   corporate: [
     { id: "corp_ward",    name: "Ward Picket",      firepower: 26,  hull: 130, armor: 34,  shields: 30, speed: 1.7,  sprite: "mechanim", tier: 0 },
     { id: "corp_lancer",  name: "Compliance Lancer",firepower: 45,  hull: 210, armor: 55,  shields: 50, speed: 1.5,  sprite: "syndics",  tier: 1 },
@@ -1763,6 +1862,9 @@ window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
 window.RAIDCFG = RAIDCFG;
+window.PIRACYCFG = PIRACYCFG;
+window.POLICECFG = POLICECFG;
+window.POLICE_ITEM = POLICE_ITEM;
 window.SECURITYCFG = SECURITYCFG;
 window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;

@@ -548,6 +548,9 @@ const Cloud = {
   // belt ops. There is no mining RPC to probe with _optional(): mining rides
   // app_pull, so the echoed slice IS the capability check.
   miningOwned: false,
+  // Same latch for piracy (docs/sql/piracy_rpcs.sql): app_pull echoes a
+  // `piracy` key only on that SQL, so the echoed slice IS the capability check.
+  piracyOwned: false,
   _rpcMissing: {},
   async _optional(name, args) {
     if (this._rpcMissing[name]) return null;
@@ -750,6 +753,12 @@ const Cloud = {
     // generation. On a project without that SQL they ride as client-owned and
     // mining stays local, exactly as it was.
     "mining", "beltPools",
+    // Piracy ops, the robbed-run marks and the stolen-goods flags. Merge
+    // inputs once docs/sql/piracy_rpcs.sql is applied: app._merge_piracy takes
+    // new dispatches and owns every outcome after that, app._merge_hot only
+    // ever lets a flag go DOWN from the client. Without that SQL they ride as
+    // client-owned and piracy stays local, exactly as it was.
+    "piracy", "piracyHits", "hot",
     // craftedOnce IS sent even though the server owns it: on a project running
     // older SQL (or the raw-app_commit fallback) the row keeps whatever the
     // client sends, so omitting it would wipe the burn list there — and a

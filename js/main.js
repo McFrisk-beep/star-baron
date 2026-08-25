@@ -235,9 +235,23 @@ const Game = {
     }
     const onClaim = uid => s.mining.some(op => op.shipUid === uid);
     const onGuard = uid => s.mining.some(op => op.guardUids.includes(uid));
+    // Piracy rows are save data too (SPACE_INTERACTIVITY.md §4): drop malformed
+    // ops, clamp the hot-cargo ledger to sane counts, free stranded hulls.
+    s.piracy = (Array.isArray(s.piracy) ? s.piracy : [])
+      .filter(op => op && typeof op.id === "string" && liveHulls.has(op.shipUid)
+        && Number.isFinite(+op.resolveAt) && Number.isFinite(+op.returnAt));
+    if (!Array.isArray(s.piracyHits)) s.piracyHits = [];
+    s.piracyHits = s.piracyHits.filter(h => h && typeof h.f === "string" && Number.isFinite(+h.at));
+    if (!s.hot || typeof s.hot !== "object") s.hot = {};
+    for (const [k, v] of Object.entries(s.hot)) {
+      if (!Number.isFinite(+v) || +v <= 0) delete s.hot[k];
+      else s.hot[k] = Math.floor(+v);
+    }
+    const onRaid = uid => s.piracy.some(op => op.shipUid === uid);
     for (const sh of s.ships) {
       if (sh.status === "mining" && !onClaim(sh.uid)) sh.status = "idle";
       else if (sh.status === "guarding" && !onGuard(sh.uid)) sh.status = "idle";
+      else if (sh.status === "raiding" && !onRaid(sh.uid)) sh.status = "idle";
     }
     // battle damage: default + clamp (saves predate it / could be tampered)
     for (const sh of s.ships) sh.dmg = Util.clamp(+sh.dmg || 0, 0, DMGCFG.maxDmg);
@@ -481,6 +495,19 @@ const Game = {
         }
         offlineIndustry = offlineIndustry.concat(pulled.mining || [])
           .concat((pulled.miningRaids || []).map(raid => ({ raid })));
+        // Piracy settled by app._catchup_piracy: the fight, the loot, the
+        // police chase. Positions already carry the take; park the matching
+        // bay blocks so the hauling ledger agrees, then let it ride the same
+        // recap the local resolver feeds.
+        for (const p of pulled.piracy || []) {
+          if (window.Assets && p.fromSys && p.loot) {
+            for (const [id, qty] of Object.entries(p.loot)) {
+              if (qty > 0) Assets.parkBlocks(p.fromSys, id, qty);
+            }
+          }
+        }
+        offlineIndustry = offlineIndustry.concat(
+          (pulled.piracy || []).map(piracy => ({ piracy })));
         offlineMercs = Fleet.pruneMercs(now);
         offlineOrders = await Orders.process();
         if (window.Charters) Charters.reconcileShips();
@@ -503,6 +530,8 @@ const Game = {
     // Mining ops bank belt batches / land returning hulls (guest-local; the
     // resolver self-gates minting on the server ledger).
     if (window.Mining) offlineIndustry = offlineIndustry.concat(Mining.resolve(now));
+    // Piracy intercepts settle the same way — the verdict rides the same recap.
+    if (window.Piracy) offlineIndustry = offlineIndustry.concat(Piracy.resolve(now));
     // Workshop is client-local (not on the Phase-3 ledger yet).
     if (window.Workshop) Workshop.resolve(now);
     // Courier manifests use absolute timestamps — bank arrivals while away.
@@ -737,7 +766,8 @@ const Game = {
       }).catch(e => console.warn("[Charters] resolve failed:", e));
       if (Economy.softIncomeLocal()) {
         const surveyed = Expeditions.resolve(now);
-        const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : []);
+        const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : [])
+          .concat(window.Piracy ? Piracy.resolve(now) : []);
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         if (surveyed.length || made.length || crafted.length || shipped.length) this.requestSave();
@@ -745,6 +775,7 @@ const Game = {
         const shipped = window.Shipments ? Shipments.resolve(now) : [];
         const crafted = window.Workshop ? Workshop.resolve(now) : [];
         if (window.Mining) Mining.resolve(now);   // lands returning hulls; minting is gated
+        if (window.Piracy) Piracy.resolve(now);   // same gate, same reason
         if (shipped.length || crafted.length) this.requestSave();
       }
       Fleet.pruneMercs(now);
@@ -769,7 +800,8 @@ const Game = {
         for (const ev of orderEv) Bus.emit("order", ev);
         if (orderEv.length) this.requestSave();
       }).catch(e => console.warn("[Orders] process failed:", e));
-      const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : []);
+      const made = Industries.resolve(now).concat(window.Mining ? Mining.resolve(now) : [])
+        .concat(window.Piracy ? Piracy.resolve(now) : []);
       const crafted = window.Workshop ? Workshop.resolve(now) : [];
       const shipped = window.Shipments ? Shipments.resolve(now) : [];
       if (surveyed.length || chartered.length || made.length || crafted.length || shipped.length || senateBills.length) this.requestSave();
@@ -860,6 +892,7 @@ const Game = {
             Industries.resolve(now);
           }
           if (window.Mining) Mining.resolve(now);
+          if (window.Piracy) Piracy.resolve(now);
           // Bank matured charters (async server settle when charter_rpcs.sql is live).
           if (window.Charters) void Promise.resolve(Charters.resolve(now));
           if (window.Workshop) Workshop.resolve(now);
@@ -875,6 +908,7 @@ const Game = {
       void Orders.process();
       Industries.resolve(now);
       if (window.Mining) Mining.resolve(now);
+      if (window.Piracy) Piracy.resolve(now);
       if (window.Workshop) Workshop.resolve(now);
       finish();
       return;
@@ -970,6 +1004,8 @@ const Game = {
     // A matured belt batch or a hull due home — without this, server-owned ore
     // would only land on a reload.
     if ((s.mining || []).some(o => (o.nextAt && now >= o.nextAt) || (o.returnAt && now >= o.returnAt))) return true;
+    // An intercept due to resolve, or a raider due home with the take.
+    if ((s.piracy || []).some(o => (!o.resolved && now >= o.resolveAt) || now >= o.returnAt)) return true;
     return false;
   },
 

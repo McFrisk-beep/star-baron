@@ -302,7 +302,8 @@ const Voyages = {
   // Everything moving, for the galaxy chart. Parked entries are skipped there.
   markers(now = Date.now()) {
     const npc = window.Traffic ? Traffic.flights(now) : [];
-    return this.active(now).concat(this.others(now)).concat(npc).filter(v => v.at);
+    const pol = window.Police ? Police.patrols(now) : [];
+    return this.active(now).concat(this.others(now)).concat(npc).concat(pol).filter(v => v.at);
   },
 
   // What's visibly IN a system for the system view. Docked flagships are
@@ -313,7 +314,8 @@ const Voyages = {
   inSystem(sysId, now = Date.now()) {
     const out = [];
     const npc = window.Traffic ? Traffic.flights(now) : [];
-    for (const v of this.active(now).concat(this.others(now)).concat(npc)) {
+    const pol = window.Police ? Police.patrols(now) : [];
+    for (const v of this.active(now).concat(this.others(now)).concat(npc).concat(pol)) {
       if (v.sysId === sysId) {
         if (v.kind !== "flagship") out.push({ ...v, mode: "working" });
         continue;

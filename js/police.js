@@ -1,0 +1,213 @@
+/* police.js — the law's response (docs/SPACE_INTERACTIVITY.md §5.2, built
+   form). Three things, none of them AI:
+
+   • PRECINCTS — derived geography, never authored: any system whose published
+     security band reaches POLICECFG.stationBand hosts a police station, drawn
+     in the scene. Fit a Customs House and lift a system into the band, and a
+     precinct opens; a Free Port drops the band and the precinct closes. The
+     players keep changing the map by playing (§5.3).
+
+   • PATROLS — seeded flight plans, exactly the §5.2 idea given hulls and
+     lights: each sector with a precinct flies a standing patrol, always in a
+     PAIR, hopping between that sector's systems on a seeded loop. A pure view
+     of the clock riding the same Voyages pipeline as all traffic — nothing
+     stored, identical on every client, red/blue strobes drawn by the scene.
+
+   • THE CHASE — §5.1's "you succeed, then the bill arrives". A successful
+     robbery can draw a response on the way home, with odds scaled by the law
+     present where it happened (stamped on the op at dispatch — the risk you
+     accepted). It resolves like a mission: the wallet is decided first by a
+     pure seeded function of the op, then a report is filed in Dispatches that
+     BattleView can replay — the movie never disagrees with the outcome.
+
+     Police are formidable but killable. Break the pair and the loot is yours
+     for now — but killing patrol officers is the worst crime on the books
+     (CRIMECFG.gain.police per pair), the next wave comes heavier, and only
+     breaking every wave (POLICECFG.maxWaves) shakes the trail. A broken pair
+     sometimes yields the one piece of kit money can't buy (POLICE_ITEM).
+
+     Anti-grief holds even mid-gunfight: being caught costs the stolen cargo
+     (recovered to the shelf it was bound for) and a repair bill — never the
+     hull, never banked stock, never credits.                                 */
+
+const Police = {
+  cfg() { return window.POLICECFG || {}; },
+
+  _ready() {
+    return !!(window.Galaxy && Galaxy.sectors && Galaxy.sectors.length
+      && window.Security && window.Voyages && window.Lanes);
+  },
+
+  // ---- precincts: derived, never authored ---------------------------------
+  // The seat of a sector's law is its CAPITAL — one precinct per sector, not
+  // one per high-scoring system (which piled every station into the Core and
+  // left four sectors unpoliced). Still derived: a capital must also be
+  // somewhere the law runs at all, which is what keeps Senate stations out of
+  // the Sable Sprawl (§5.4 — the Syndicate is the law there). Lift the
+  // Sprawl's capital above the floor by playing and a precinct opens there.
+  hasPrecinct(sysId) {
+    const sys = window.Galaxy ? Galaxy.get(sysId) : null;
+    if (!sys || !sys.capital || !window.Security) return false;
+    return Security.score(sysId) >= (this.cfg().precinctMinScore || 0);
+  },
+  // Per-sector precinct lists, cached per minute — Security reads station
+  // tables, and patrols() runs per frame.
+  _pc: null,
+  _precincts(now) {
+    const bucket = Math.floor(now / 60000);
+    if (this._pc && this._pc.bucket === bucket) return this._pc.map;
+    const map = {};
+    for (const sec of Galaxy.sectors) {
+      const list = sec.systems.filter(id => this.hasPrecinct(id));
+      if (list.length) map[sec.id] = list;
+    }
+    this._pc = { bucket, map };
+    return map;
+  },
+
+  // ---- patrols: seeded pairs on the sector lanes --------------------------
+  // Same shape as Traffic flights so Voyages/StarMap draw them for free.
+  // manifest stays empty: the intercept card has nothing to offer on them.
+  patrols(now = Date.now()) {
+    if (!this._ready()) return [];
+    try {
+      const c = this.cfg(), out = [];
+      const pre = this._precincts(now);
+      for (const sec of Galaxy.sectors) {
+        const homes = pre[sec.id];
+        if (!homes) continue;
+        for (let i = 0; i < (c.pairsPerSector || 1); i++) {
+          const sSlot = Market._seed(["police", "pair", sec.id, String(i)]);
+          const loopMs = (c.patrolLoopMinMs || 1200000)
+            + Market._u01(sSlot, 0) * ((c.patrolLoopMaxMs || 2100000) - (c.patrolLoopMinMs || 1200000));
+          const k = Math.floor(now / loopMs);
+          const s = Market._seed(["police", "hop", sec.id, String(i), String(k)]);
+          // Out of a precinct, sweep to another system in the sector.
+          const from = homes[k % homes.length];
+          const ids = sec.systems;
+          let to = ids[Math.floor(Market._u01(s, 0) * ids.length) % ids.length];
+          if (to === from) to = ids[(ids.indexOf(from) + 1) % ids.length];
+          if (to === from) continue;
+          const plan = Voyages.plan(from, to, k * loopMs, loopMs * (c.patrolFlyFrac || 0.85));
+          if (!plan) continue;
+          const at = Voyages.pos(plan, now);
+          if (!at || at.p >= 1) continue;         // holding at the far end of the sweep
+          out.push({
+            id: `npc:pol:${sec.id}:${i}`, kind: "police", police: true, pair: true,
+            npc: true, name: `${sec.name} Patrol`, label: "Senate Patrol",
+            sprite: "race:voidkin", manifest: [], plan, at,
+          });
+        }
+      }
+      return out;
+    } catch (e) {
+      console.warn("Police.patrols failed", e);
+      return [];
+    }
+  },
+
+  // ---- the chase ----------------------------------------------------------
+  responseChance(law) {
+    const cl = this.cfg().responseClamp || [0, 1];
+    return Util.clamp((this.cfg().responseBase || 0) * law, cl[0], cl[1]);
+  },
+  pairScoreAt(law, wave) {
+    const c = this.cfg();
+    return (c.pairScore || 600) * (1 + law * (c.lawScore || 0)) * Math.pow(c.waveMult || 1, wave);
+  },
+
+  // Resolve the pursuit for one robbed run. Called by Piracy.resolve exactly
+  // once, under the op.resolved gate, so applying effects here keeps offline
+  // equal to online. Every roll is seeded from the op id — pure per wave:
+  // index 0 gates the response, then 4 indexes per wave.
+  // Returns null (no response formed) or a summary for the recap/toast.
+  pursue(op, sh, now = Date.now()) {
+    const c = this.cfg();
+    if (!op || !op.loot || !sh || !window.Charters) return null;
+    const law = op.law != null ? op.law : (window.Security ? Security.score(op.sysId) : 0.5);
+    const s = Market._seed(["police", op.id]);
+    if (Market._u01(s, 0) >= this.responseChance(law)) return null;
+    const atk = Charters.defenseScore(Charters.fleetStats([sh]));
+    const roll = (range, n) => { const r = range || [0, 0]; return r[0] + Market._u01(s, n) * (r[1] - r[0]); };
+    const dCl = c.destroyClamp || [0, 1], cCl = c.catchClamp || [0, 1];
+    const out = { waves: 0, destroyed: 0, caught: false, escaped: false,
+      seized: 0, crime: 0, item: null, report: null, ship: sh.name, sysId: op.sysId };
+    for (let w = 0; w < (c.maxWaves || 3); w++) {
+      const def = this.pairScoreAt(law, w);
+      const base = 1 + w * 4;
+      out.waves++;
+      if (Market._u01(s, base) < Util.clamp(atk / (atk + def), dCl[0], dCl[1])) {
+        // The pair is broken. The loot stays yours; the charge sheet grows,
+        // and the next response comes heavier.
+        out.destroyed++;
+        out.crime += ((window.CRIMECFG || {}).gain || {}).police || 0;
+        const dmg = roll(c.chaseDmg, base + 1);
+        Fleet.addDamage(sh, dmg);
+        out.report = this._fileReport(op, sh, w, true, dmg, now);
+        if (!out.item && Market._u01(s, base + 2) < (c.itemChance || 0)) out.item = this._salvage();
+        continue;
+      }
+      if (Market._u01(s, base + 3) < Util.clamp(def / (def + atk) * (c.catchMult || 1), cCl[0], cCl[1])) {
+        // Run down. The cargo is recovered — it goes back to the shelf the
+        // delivery was bound for — and the hull limps home with a repair
+        // bill. Never the hull, never banked stock, never credits (§6.6).
+        out.caught = true;
+        const dmg = roll(c.chaseDmg, base + 1);
+        Fleet.addDamage(sh, dmg);
+        const sid = window.Stock ? Stock.sectorOf(op.toSys) : null;
+        for (const [id, q] of Object.entries(op.loot)) { out.seized += q; if (sid) Stock.put(sid, id, q); }
+        op.loot = null;
+        out.report = this._fileReport(op, sh, w, false, dmg, now);
+        break;
+      }
+      out.escaped = true;                   // outran the lights, loot intact
+      break;
+    }
+    if (!out.caught && !out.escaped) out.escaped = true;   // broke every wave — the trail goes cold
+    if (out.crime && window.Crime) Crime.add(out.crime);
+    if (window.Bus) Bus.emit("policeChase", out);
+    return out;
+  },
+
+  // A mission-shaped report: the chase plays in BattleView off the smuggle
+  // template (a run for the gate, pursuers cutting angles) and lands in
+  // Comms → Dispatches like any engagement. Combat's police flavour fields
+  // the ENEMY_CATALOG.police hulls, tier rising with the wave.
+  _fileReport(op, sh, wave, success, dmg, now) {
+    const s = window.Game.state;
+    if (!s.reports) s.reports = [];
+    const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
+    const report = {
+      uid: op.id + "w" + wave,
+      title: `${["Patrol response", "Reinforced response", "Vanguard response"][Math.min(wave, 2)]}`
+        + (sys ? ` — ${sys.name}` : ""),
+      type: "smuggle", success, ts: now, faction: "police", police: true,
+      danger: ["moderate", "high", "extreme"][Math.min(wave, 2)],
+      enemyCount: 2 * (wave + 1),         // pairs, reinforced per wave
+      credits: 0, items: [], lost: [], impounded: [],
+      damaged: dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],
+      roster: [{ uid: sh.uid, name: sh.name, type: sh.type }],
+    };
+    s.reports.unshift(report);
+    if (s.reports.length > 20) s.reports.length = 20;
+    return report.uid;
+  },
+
+  // The police-only accessory, stripped from a broken pair. Fixed shape from
+  // POLICE_ITEM — deliberately stronger than anything Items.gen can roll.
+  _salvage() {
+    const def = window.POLICE_ITEM;
+    if (!def) return null;
+    if (window.Bazaar && Bazaar.inventoryUsed() >= Bazaar.capacity())
+      return { name: def.name, full: true };    // no room — the wreck burns with it
+    const s = window.Game.state;
+    const it = JSON.parse(JSON.stringify(def));
+    it.uid = "i" + (++s.seq);
+    it.police = true;
+    it.value = window.Items ? Items.value(it) : 0;
+    s.items[it.uid] = it;
+    return { name: it.name, uid: it.uid };
+  },
+};
+
+window.Police = Police;

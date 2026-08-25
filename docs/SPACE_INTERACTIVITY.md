@@ -1,7 +1,7 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order steps 1–3 are built, plus §5.3's security bands (the
-derivation half of step 5).**
+**Status: build order steps 1–4 are built, plus step 5's security bands
+(§5.3) and police response (§5.2, in its built form below).**
 
 - **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
   renders them, makes them clickable and adds the minimap;
@@ -35,6 +35,71 @@ derivation half of step 5).**
   raiding costs:** a raid takes the batch that was in the hold and nothing else
   — never banked ore, never the system bay, never a hull. A robbed miner takes
   damage (a repair bill) and can be chased off its rock; it always flies home.
+- **Step 4 (player piracy on NPC traffic, §4):** `js/piracy.js`. An NPC hauler
+  in the system view is now a clickable contact carrying §4.3's verbs — rob,
+  toll, and (on relief traders only) escort. Dispatch an armed hull, close the
+  tab: the odds, loot ranges and target worth are stamped on the op at
+  dispatch, and the outcome is a pure function of the op id, exactly the
+  mining pattern. §4.2 is live: a robbed delivery is taken **off the
+  destination sector's shelf** (`Stock.take`) — the opposite of step 3's
+  shelf-neutral NPC raids, deliberately, because here the drain IS the loot —
+  and the pirate can sell into the spike they made. §4.4 is live: stolen units
+  are flagged **hot** (`state.hot`), and the existing `CUSTOMS` docking scan
+  seizes from the hot slice only — legitimate units of the same commodity
+  pass. §5.1's *prevention* is the law half that shipped with it: in a policed
+  system the verb is simply not offered (`Piracy.verbs` reads
+  `Security.bandOf`); *response* is built too — see §5.2 below. A failed run
+  costs a repair bill and `CRIMECFG.gain.piracyFail` — §6.7's "high variance, never free"
+  rule, enforced from day one. **Server-settled too:**
+  `docs/sql/piracy_rpcs.sql` moves the whole loop — the fight, the loot, the
+  §4.2 shelf drain, the police chase, the hot flags and the hull landing home
+  — into `app_pull`, so a signed-in baron can dispatch and close the tab. The
+  op row carries the four numbers the server cannot derive (`chance`, `value`,
+  `atk`, `law`), computed by the client and clamped server-side, and
+  `tools/check_piracy_parity.js` pins the two implementations together.
+  `tools/check_piracy.js` is the client check. A robbed run limps on with an
+  empty hold — the same distress pulse as a corsair hit, one law for the whole
+  world.
+- **§5.2 police response (the other half of step 5):** `js/police.js`. Three
+  pieces, still no AI anywhere. **Precincts** sit at the **sector capitals** —
+  the seats of the law, one per sector — drawn in the scene with a rotating
+  red/blue beacon. Still derived rather than authored: a capital also has to
+  be somewhere the law actually runs (`POLICECFG.precinctMinScore`, the
+  Contested boundary), which is what keeps Senate stations out of the Sable
+  Sprawl on §5.4's own grounds — the Syndicate is the law there — and means
+  lifting Sable Reach above the floor by playing would open one. That is 5 of
+  6 sectors today. (An earlier build keyed precincts to the top security band
+  instead; it put 12 of 13 stations inside the Core and left four sectors with
+  no police at all, which is the failure mode the capital rule exists to
+  avoid.) **Patrols** are §5.2's seeded flight plans given hulls and lights: each
+  sector with a precinct flies a standing patrol, always in a **pair**,
+  launching from the capital and sweeping out across that sector's systems on
+  a seeded loop, riding the same Voyages pipeline as all traffic, strobing
+  red/blue in the scene. `pairsPerSector` is the density knob: at 1 that is 5
+  pairs — 10 hulls — galaxy-wide, ~4 of them in flight at any moment and the
+  rest docked between sweeps. They are drawn on the **galaxy chart** too, the
+  way NPC haulers are: a lead hull with its wingman in echelon under strobing
+  red/blue, named, with the same two lamps badging every capital that seats a
+  precinct — and both ride a **Law** chart layer with its own legend key, so
+  switching it off takes the stations and their patrols together. **The
+  chase** is §5.1's response made concrete: a successful robbery can draw
+  pursuit on the way home, odds scaled by the law stamped on the op at
+  dispatch, resolving *exactly like a mission* — the outcome is a pure seeded
+  function of the op (offline banks the same chase a watched tab sees), then
+  a mission-shaped report lands in Comms → Dispatches that `BattleView`
+  replays off the smuggle template (a run for the gate, pursuers cutting
+  angles), fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
+  formidable but killable: caught costs exactly the stolen cargo (recovered
+  to the shelf it was bound for) plus a repair bill — never the hull, never
+  banked stock, never credits; each destroyed pair adds
+  `CRIMECFG.gain.police` (the worst charge on the books) and draws a heavier
+  wave, up to `maxWaves`, and a broken pair sometimes yields `POLICE_ITEM` —
+  the one accessory `Items.gen` cannot roll. This deliberately trades §5.2's
+  parked-picket sketch for a resolved encounter, at the owner's direction —
+  but keeps the sketch's actual point: no pathfinding, no behaviour trees, no
+  tick loop, and the movie never decides anything. `tools/check_police.js` is
+  the check. Crime with teeth beyond the chase (§5.5 bounties) is still
+  design.
 - **§5.3 security bands (part of step 5):** `js/security.js` computes how much
   law is present in a system — sector floor + sector capital + station modules
   + Senate edicts + a running war — and the galaxy chart paints it: each region
@@ -253,12 +318,14 @@ Adding one class means touching class-handling code once. Candidates:
 The PvE half. It ships before anything player-facing and teaches the whole threat
 model in a sandbox where nobody can be griefed.
 
-**Half of this is built (build step 3, `js/raiders.js`): piracy *by* NPCs.**
-Corsairs raid parked mining claims and strip NPC haulers running out of a den
+**All of this is built.** Step 3 (`js/raiders.js`) is piracy *by* NPCs:
+corsairs raid parked mining claims and strip NPC haulers running out of a den
 system — the threat model, taught from the receiving end, where nobody can be
-griefed at all. The player-side verbs below (§4.1/§4.3 — rob, toll, escort a
-contact of your own) are step 4 and are still design only. Two decisions worth
-recording, because both were tempting to get wrong:
+griefed at all. Step 4 (`js/piracy.js`) is the player-side half below —
+§4.1's click-a-contact loop, §4.3's three verbs, §4.2's shelf drain and
+§4.4's hot-cargo fencing (see the status block up top for what each landed
+as). Two decisions from step 3 worth recording, because both were tempting to
+get wrong:
 
 - **A raided NPC hauler still arrives, with an empty hold.** Hull kept, cargo
   gone — the same rule that protects a player's miner (§6.6.5), applied to the
@@ -553,8 +620,8 @@ Each step ships alone and is playable without the next one.
 | 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
-| 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
-| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response and crime still design | The rules now have something to govern |
+| 4 | **Player piracy on NPC traffic** — ✅ shipped (`js/piracy.js`, server-settled by `docs/sql/piracy_rpcs.sql`) | The loot → scarcity → spike loop, still entirely PvE |
+| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response ✅ shipped (`js/police.js`, §5.2 built form); §5.5 bounties still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |
 

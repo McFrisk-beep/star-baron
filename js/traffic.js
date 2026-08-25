@@ -78,9 +78,11 @@ const Traffic = {
       if (!at) continue;
       const id = "npc:f:" + st.systemId;
       // Same phased loop index tau rides, so a run keeps one status end to end.
-      const robbed = this._robbed(id, Math.floor((now + phase * P) / P), st.systemId, sec.capital);
+      // Stamped on the row: piracy.js keys an intercept to (flight, loop).
+      const loop = Math.floor((now + phase * P) / P);
+      const robbed = this._robbed(id, loop, st.systemId, sec.capital);
       out.push({
-        id, kind: "freighter", npc: true, raided: robbed,
+        id, loop, kind: "freighter", npc: true, raided: robbed,
         name: this._name("f:" + st.systemId),
         label: this._name("f:" + st.systemId),
         sprite: "ship:freighter", manifest: robbed ? [] : this.manifest(st, now),
@@ -137,7 +139,7 @@ const Traffic = {
         const id = `npc:t:${sec.id}:${i}`;
         const robbed = this._robbed(id, k, from, to);
         out.push({
-          id, kind: "trader", npc: true, relief, raided: robbed,
+          id, loop: k, kind: "trader", npc: true, relief, raided: robbed,
           name: this._name(`t:${sec.id}:${i}`),
           sprite: "ship:shuttle", manifest: robbed ? [] : this._traderManifest(sec.id, i, k),
           plan, at,
@@ -165,10 +167,12 @@ const Traffic = {
     return m.ids;
   },
 
-  // Corsairs out of a den take this run's manifest (raiders.js §4). Pure
-  // function of the flight and its loop index — no storage, same for everyone.
+  // Corsairs out of a den take this run's manifest (raiders.js §4) — or the
+  // player did (piracy.js, step 4). Either way the hauler limps on with an
+  // empty hold: hull kept, cargo gone, one law for the whole world.
   _robbed(id, loopIndex, fromSys, toSys) {
-    return !!(window.Raiders && Raiders.tookManifest(id, loopIndex, fromSys, toSys));
+    return !!(window.Raiders && Raiders.tookManifest(id, loopIndex, fromSys, toSys))
+      || !!(window.Piracy && Piracy.tookManifest(id, loopIndex));
   },
 
   // Everything currently flying. Never throws — a render layer must not take

@@ -1279,6 +1279,16 @@ const UI = {
     return `<span class="badge" title="sitting a mining claim — recall it from the belt's card on the Star Map">🛡 guarding ${where} · repels ${pct}%</span>`;
   },
 
+  // "intercepting Iron Widow · ~4m" — a hull committed to a contact (§4).
+  _raidBadge(sh) {
+    const op = window.Piracy ? Piracy.opFor(sh.uid) : null;
+    if (!op) return `<span class="badge">raiding</span>`;
+    const verb = op.verb === "escort" ? "🛡 escorting" : op.verb === "toll" ? "🏴 shaking down" : "🏴 intercepting";
+    return op.resolved
+      ? `<span class="badge" title="heading home with the outcome">${verb} ${Util.esc(op.name)} · home ~${Util.duration(Math.max(0, op.returnAt - Date.now()))}</span>`
+      : `<span class="badge" title="committed to a contact — the fight resolves at the intercept">${verb} ${Util.esc(op.name)} · ~${Util.duration(Math.max(0, op.resolveAt - Date.now()))}</span>`;
+  },
+
   shipCard(sh) {
     const def = Fleet.shipDef(sh.type), st = Fleet.stats(sh);
     const slots = def.slots || 2, used = (sh.accessories || []).length;
@@ -1297,6 +1307,7 @@ const UI = {
     else if (sh.status === "surveying") status = this._surveyBadge(sh);
     else if (sh.status === "mining") status = this._miningBadge(sh);
     else if (sh.status === "guarding") status = this._guardBadge(sh);
+    else if (sh.status === "raiding") status = this._raidBadge(sh);
     else if (sh.status === "debrief") status = `<span class="badge trade" title="the survey is back — finish the debrief in Comms → Dispatches">survey debrief waiting</span>`;
     else status = `<span class="badge idle">idle</span>`;
     const dmg = sh.dmg || 0;
@@ -4225,6 +4236,43 @@ const UI = {
       made = made.filter(m => !m.raid);
     }
     if (made.length) {
+      // Your own piracy runs (Piracy.resolve, step 4) — the verdict has to be
+      // here, or a night's intercept just looks like a hull that went nowhere.
+      const runs = made.filter(m => m.piracy)
+        .map(m => ({ ...m.piracy, ship: Util.esc(m.piracy.ship), name: Util.esc(m.piracy.name) }));
+      for (const p of runs) {
+        const where = this.sysName(p.sysId);
+        if (p.verb === "escort") {
+          html += `<p class="up">🛡 ${p.ship} escorted ${p.name} in near ${where} — +${Util.credits(p.credits)}c, lawful work.</p>`;
+        } else if (!p.won) {
+          html += `<p class="down">🏴 ${p.ship} was driven off ${p.name} near ${where} — a repair bill, and the attempt is on your record.</p>`;
+        } else if (p.verb === "toll") {
+          html += `<p>🏴 ${p.name} paid your toll near ${where} — +${Util.credits(p.credits)}c.</p>`;
+        } else {
+          const bits = Object.entries(p.loot || {}).map(([id, q]) =>
+            `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`);
+          html += `<p>🏴 ${p.ship} took ${p.name}'s manifest near ${where} — ${bits.join(", ")} <span class="muted-note">(hot cargo — customs will want a look)</span></p>`;
+        }
+        // The law's answer (police.js): a chase on the way home is part of the
+        // same verdict — a seized haul must never just look like missing ore.
+        const ch = p.chase;
+        if (ch) {
+          if (ch.caught) {
+            html += `<p class="down">🚨 A Senate patrol ran the hull down on the way home — the stolen cargo was recovered`
+              + (ch.destroyed ? ` after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was destroyed` : "")
+              + `. <span class="muted-note">(the ship always comes home — replay is in Dispatches)</span></p>`;
+          } else if (ch.destroyed) {
+            html += `<p>🚨 Patrols answered — ${ch.destroyed} pair${ch.destroyed === 1 ? "" : "s"} destroyed on the run home`
+              + (ch.item && !ch.item.full ? ` · salvaged <b>${ch.item.name}</b>` : "")
+              + ` · +${ch.crime} crime. <span class="muted-note">(replay is in Dispatches)</span></p>`;
+          } else {
+            html += `<p>🚨 A patrol answered — the hull outran the lights.</p>`;
+          }
+        }
+      }
+      made = made.filter(m => !m.piracy);
+    }
+    if (made.length) {
       // Belt mining entries (untaxed, Mining.resolve) get their own line —
       // "Industries produced" would misattribute the ore.
       const mined = made.filter(m => m.mining);
@@ -4655,6 +4703,46 @@ const UI = {
       this.audioSafe("news");
       if (this.page === "fleet") this.renderFleet();
       if (window.StarMap) StarMap.refreshInfo();
+    });
+    Bus.on("piracyResolved", p => {
+      if (window.Game._booting) return;   // offline verdicts land in the "while you were away" recap
+      const where = this.sysName(p.sysId);
+      if (p.verb === "escort") {
+        this.toast(`🛡 ${p.ship} brought ${p.name} in safe near ${where} — +${Util.credits(p.credits)}c.`, "good", 6000);
+      } else if (!p.won) {
+        this.toast(`🏴 ${p.name}'s guns drove ${p.ship} off near ${where} — nothing taken, and the attempt is on your record.`, "bad", 7000);
+      } else if (p.verb === "toll") {
+        this.toast(`🏴 ${p.name} paid your toll near ${where} — +${Util.credits(p.credits)}c.`, "good", 6000);
+      } else {
+        const bits = Object.entries(p.loot || {}).map(([id, q]) =>
+          `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`);
+        this.toast(`🏴 ${p.ship} stripped ${p.name} — ${bits.join(", ")}. The take lands when the hull does.`, "good", 7000);
+        if (window.Feed) Feed.emit(`a hauler was hit near ${where.toLowerCase()} — shelves are about to feel it 🏴`, { kind: "reaction" });
+      }
+      this.audioSafe("news");
+      if (this.page === "fleet") this.renderFleet();
+    });
+    Bus.on("policeChase", p => {
+      if (window.Game._booting) return;   // offline chases land in the "while you were away" recap
+      const where = this.sysName(p.sysId);
+      let msg, kind;
+      if (p.caught) {
+        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the stolen cargo was recovered.`;
+        kind = "bad";
+      } else if (p.destroyed) {
+        msg = `🚨 ${p.ship} shot its way clear near ${where} — ${p.destroyed} patrol pair${p.destroyed === 1 ? "" : "s"} destroyed`
+          + (p.item && !p.item.full ? ` · salvaged ${p.item.name}` : "") + `. The Senate will remember.`;
+        kind = "good";
+      } else {
+        msg = `🚨 A patrol answered the robbery near ${where} — ${p.ship} outran the lights.`;
+        kind = "info";
+      }
+      const r = p.report ? (this.s().reports || []).find(x => x.uid === p.report) : null;
+      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
+      else this.toast(msg, kind, 7500);
+      this.audioSafe("news");
+      this.bumpComms();
+      if (this.page === "fleet") this.renderFleet();
     });
     Bus.on("customs", ev => {
       if (window.Game._booting) return;   // offline seizures are shown in the "while you were away" recap

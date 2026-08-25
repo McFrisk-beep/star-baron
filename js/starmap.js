@@ -38,7 +38,20 @@ const StarMap = {
       poiTip: $("poi-tip"),
       title: $("sm-title"), crumbSys: $("sm-crumb-sys"), sceneHint: $("sm-scene-hint"),
       btnOpen: $("btn-starmap"), btnClose: $("sm-close"), toGalaxy: $("sm-to-galaxy"),
+      infoToggle: $("sm-info-toggle"),
     };
+    // Collapse the info panel so the scene gets the whole overlay — worth a
+    // real toggle on a phone, where the panel takes over half the screen. The
+    // choice rides settings (client-owned, already on the wire), and the
+    // scene's draw loop re-fits the camera on the resize by itself.
+    if (this.refs.infoToggle) {
+      this.refs.infoToggle.onclick = () => {
+        const s = this.s().settings;
+        s.sysInfoHidden = !s.sysInfoHidden;
+        this.applyInfoHidden();
+        window.Game.requestSave();
+      };
+    }
     if (this.refs.btnOpen) this.refs.btnOpen.onclick = () => this.openGalaxy();   // legacy header button (now the nav "Star Map" tab)
     // Close / Escape: system → galaxy first; only leave the overlay from the chart.
     this.refs.btnClose.onclick = () => this.backOrClose();
@@ -50,6 +63,20 @@ const StarMap = {
       this.backOrClose();
     });
     if (window.PlanetView) PlanetView.init();
+  },
+
+  // Paint the collapsed/expanded state onto the view + button. Safe before a
+  // save exists (init runs early), and idempotent.
+  applyInfoHidden() {
+    const { systemView, infoToggle } = this.refs;
+    if (!systemView || !infoToggle) return;
+    const st = (window.Game && Game.state && Game.state.settings) || null;
+    const hidden = !!(st && st.sysInfoHidden);
+    systemView.classList.toggle("info-hidden", hidden);
+    infoToggle.textContent = hidden ? "Show info" : "Hide info";
+    infoToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    infoToggle.title = hidden
+      ? "Show this system's details" : "Collapse the panel and give the scene the full screen";
   },
 
   backOrClose() {
@@ -131,6 +158,16 @@ const StarMap = {
         el.plume.setAttribute("points", `${-el.tail},2 ${-el.tail - fl},0 ${-el.tail},-2`);
         // Raid state is per-LOOP, the element is per-flight and outlives it, so
         // repaint on change (and only on change — this runs every frame).
+        // Patrol strobes: alternate red/blue on the same 320ms beat the scene
+        // uses, and only write on the flip — this runs every frame.
+        if (el.lights) {
+          const on = Math.floor(now / 320) % 2 === 0;
+          if (el.lit !== on) {
+            el.lit = on;
+            el.lights[0].setAttribute("opacity", on ? 1 : 0.25);
+            el.lights[1].setAttribute("opacity", on ? 0.25 : 1);
+          }
+        }
         const robbed = !!v.raided;
         if (el.robbed !== robbed) {
           el.robbed = robbed;
@@ -171,6 +208,19 @@ const StarMap = {
       hull.setAttribute("points", "4,0 -3,2.2 -3,-2.2");
       hull.setAttribute("class", "voy-hull-trader");
       tail = 3;
+    } else if (v.police) {
+      // A Senate patrol reads as a PAIR on the chart, the way it does in the
+      // scene: lead hull plus a wingman in trailing echelon, with the strobes
+      // over the lead. Both ride the rotating group, so the formation turns
+      // with the patrol instead of sliding around it.
+      hull.setAttribute("points", "6,0 -4,3 -1.5,0 -4,-3");
+      hull.setAttribute("class", "voy-hull-police");
+      const wing = document.createElementNS(ns, "polygon");
+      wing.setAttribute("points", "6,0 -4,3 -1.5,0 -4,-3");
+      wing.setAttribute("class", "voy-hull-police wing");
+      wing.setAttribute("transform", "translate(-7,5) scale(.8)");
+      hullG.appendChild(wing);
+      tail = 4;
     } else {
       hull.setAttribute("points", "5.5,0 -4.5,3.2 -4.5,-3.2");
       hull.setAttribute("class", v.kind === "courier" ? "voy-hull-courier" : "voy-hull-fleet");
@@ -178,7 +228,28 @@ const StarMap = {
     }
     hullG.appendChild(hull);
     g.appendChild(hullG);
+    // Strobes ride OUTSIDE the rotating group — a light doesn't bank with the
+    // hull, and this keeps them legible at any heading. The tick alternates
+    // them; `lights` is the handle it toggles.
+    let lights = null;
+    if (v.police) {
+      lights = [];
+      for (const [dx, cls] of [[-3.5, "pc-red"], [3.5, "pc-blue"]]) {
+        const d = document.createElementNS(ns, "circle");
+        d.setAttribute("cx", dx); d.setAttribute("cy", -7); d.setAttribute("r", 1.9);
+        d.setAttribute("class", cls);
+        g.appendChild(d);
+        lights.push(d);
+      }
+    }
     let nameEl = null;
+    if (v.police && v.name) {
+      nameEl = document.createElementNS(ns, "text");
+      nameEl.setAttribute("class", "voy-name police");
+      nameEl.setAttribute("y", -12);
+      nameEl.textContent = v.name;
+      g.appendChild(nameEl);
+    }
     if (v.kind === "freighter" && v.name) {
       nameEl = document.createElementNS(ns, "text");
       nameEl.setAttribute("class", "voy-name npc");
@@ -193,11 +264,12 @@ const StarMap = {
       t.textContent = v.name;   // textContent — other barons' names are untrusted text
       g.appendChild(t);
     }
-    // Layer class: TRAFFIC covers the NPC economy, FLEETS covers anything
-    // crewed by a baron. The CSS hides the whole group, names included.
-    g.setAttribute("class", "voy " + (v.npc ? "voy-traffic" : "voy-fleets"));
+    // Layer class: LAW covers the Senate's own hulls, TRAFFIC the NPC economy,
+    // FLEETS anything crewed by a baron. The CSS hides the whole group, names
+    // and strobes included.
+    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets"));
     layer.appendChild(g);
-    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -219,6 +291,7 @@ const StarMap = {
     { id: "allegiance", label: "Allegiance", hint: "which faction a system's economy answers to" },
     { id: "markets",    label: "Markets",    hint: "price direction, local events and trade hubs" },
     { id: "traffic",    label: "Traffic",    hint: "NPC haulers, and the ones corsairs emptied" },
+    { id: "law",        label: "Law",        hint: "Senate precincts and the patrol pairs they fly" },
     { id: "fleets",     label: "Fleets",     hint: "your ships, rival barons, survey sites" },
   ],
   // Saved per player. Anything absent defaults ON, so a new layer added later
@@ -323,6 +396,22 @@ const StarMap = {
       img.setAttribute("width", sz); img.setAttribute("height", sz);
       g.appendChild(img);
 
+      // Precinct badge: the seat of this sector's law (police.js). Its own
+      // element under the Law layer, so switching the layer off takes the
+      // stations and their patrols together.
+      if (window.Police && Police.hasPrecinct(sys.id)) {
+        const p = document.createElementNS(ns, "g");
+        p.setAttribute("class", "node-precinct");
+        p.setAttribute("transform", "translate(0,-16)");
+        for (const [dx, cls] of [[-3, "pc-red"], [3, "pc-blue"]]) {
+          const d = document.createElementNS(ns, "circle");
+          d.setAttribute("cx", dx); d.setAttribute("cy", 0); d.setAttribute("r", 2);
+          d.setAttribute("class", cls);
+          p.appendChild(d);
+        }
+        g.appendChild(p);
+      }
+
       if (sys.capital) {
         const t = document.createElementNS(ns, "text");
         t.setAttribute("y", 26); t.setAttribute("class", "node-label");
@@ -367,6 +456,9 @@ const StarMap = {
       case "traffic": return [
         dot("var(--voy-npc)", "hauler", "an NPC supply hauler with its cargo aboard"),
         dot("var(--voy-raided)", "raided", "corsairs out of a pirate den took this run's manifest — the hull flies on, the hold is empty")];
+      case "law": return [
+        dot("#8fb4ff", "patrol pair", "a Senate patrol — always two hulls, sweeping its sector out of the capital"),
+        dot("#ff4d5e", "precinct", "the seat of a sector's law: a police station at the capital, where the patrols fly from")];
       case "fleets": return [
         dot("var(--accent)", "yours"), dot("#ffd9a0", "rivals"), dot("#5fd7ff", "survey")];
       default: return [];
@@ -691,6 +783,7 @@ const StarMap = {
     this.refs.btnClose.classList.remove("hidden");
     this.refs.crumbSys.textContent = " ▸ " + sys.name;
     this.refs.title.textContent = sys.name.toUpperCase();
+    this.applyInfoHidden();      // restore the panel's collapsed state
     this.renderInfo(sys);
     this.startScene(sys);
     this.startLocalFeed(sys);
@@ -1171,11 +1264,25 @@ const StarMap = {
     const handle = { sysId: sys.id, stopped: false, raf: null, stop: null };
     const cleanups = [];
     const reduced = this.s().settings.reduced;
+    // How much of the canvas's bottom edge the floating command dock covers.
+    // Measured rather than assumed — the dock is fixed-position and its height
+    // varies with the device — and only ever non-zero when the scene runs to
+    // the foot of the screen (info panel collapsed on a phone).
+    let dockInset = 0;
+    const measureDock = () => {
+      dockInset = 0;
+      const nav = document.getElementById("tabs");
+      if (!nav || ext) return;
+      const nr = nav.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      if (!nr.height || !cr.height) return;
+      dockInset = Util.clamp(cr.bottom - nr.top + 8, 0, cr.height * 0.4);
+    };
     const resize = () => {
       const r = canvas.parentElement.getBoundingClientRect();
       const w = Math.max(320, Math.floor(r.width)), h = Math.max(260, Math.floor(r.height));
-      if (canvas.width === w && canvas.height === h) return;
+      if (canvas.width === w && canvas.height === h) return measureDock();
       canvas.width = w; canvas.height = h;
+      measureDock();
     };
     resize();
     window.addEventListener("resize", resize);
@@ -1285,7 +1392,8 @@ const StarMap = {
         if (!p) {   // no button down: POI / minimap hover cursor
           const r = rectOf(), mx = e.clientX - r.left, my = e.clientY - r.top;
           const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
-          const hot = inMini(mx, my) || (window.POIs && POIs.at(sys.id, wx, wy, 12 / cam.zoom));
+          const hot = inMini(mx, my) || (window.POIs && POIs.at(sys.id, wx, wy, 12 / cam.zoom))
+            || !!this._npcPosAt(voyFx, wx, wy, 12 / cam.zoom);
           canvas.style.cursor = hot ? "pointer" : "";
           return;
         }
@@ -1315,7 +1423,10 @@ const StarMap = {
         }
         const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
         const hit = window.POIs && POIs.at(sys.id, wx, wy, 16 / cam.zoom);
-        if (hit) this._showPoiTip(hit, mx, my); else hidePoiTip();
+        if (hit) { this._showPoiTip(hit, mx, my); return; }
+        // An NPC hauler is a contact (§4): click it for the intercept card.
+        const fl = this._npcFlightAt(sys.id, voyFx, wx, wy, 16 / cam.zoom);
+        if (fl) this._showFlightTip(fl, sys.id, mx, my); else hidePoiTip();
       };
       canvas.addEventListener("pointerdown", onDown);
       canvas.addEventListener("pointermove", onMove);
@@ -1540,6 +1651,13 @@ const StarMap = {
       const sx = cx + Math.cos(station.angle) * station.orbit * R, sy = cy + Math.sin(station.angle) * station.orbit * R;
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
+      // precinct — the seat of the law in a top-band system (police.js).
+      // Derived like the band itself: lift the system into POLICECFG.stationBand
+      // and the precinct opens; drop it and the lights go out.
+      if (window.Police && Police.hasPrecinct(sys.id)) {
+        const pa = berth + 2.3;
+        this._drawPrecinct(ctx, cx + Math.cos(pa) * 0.55 * R, cy + Math.sin(pa) * 0.55 * R, now, cam.zoom);
+      }
 
       // hyperspace gates at the system edge — one per lane, ships warp in/out
       for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name, cam.zoom);
@@ -1636,7 +1754,7 @@ const StarMap = {
 
       // minimap (screen space): the widened world stays navigable — §2 step 1.
       // Chase-cam (Hub Live View) scenes skip it; their camera isn't yours.
-      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois: poiList() });
+      mini = ext ? null : this._drawMinimap(ctx, w, h, cam, { CORE, WORLD, wcx, wcy, gates: gates(), pois: poiList() }, dockInset);
 
       if (opts.overlay) opts.overlay(ctx, w, h, now);   // Hub Live View chrome (chart inset, flashes)
 
@@ -1930,6 +2048,23 @@ const StarMap = {
         ctx.lineWidth = 1.4;
         ctx.beginPath(); ctx.arc(x, y, sz + pr * 18, 0, 7); ctx.stroke();
       }
+      // Senate patrols fly in PAIRS with the lights on (police.js): the
+      // wingman holds trailing echelon, and both strobe red/blue so the law
+      // reads at a glance from anywhere on the map.
+      if (v.police) {
+        const wx = x - Math.cos(ang) * sz * 2.1 + Math.cos(ang + Math.PI / 2) * sz * 1.35;
+        const wy = y - Math.sin(ang) * sz * 2.1 + Math.sin(ang + Math.PI / 2) * sz * 1.35;
+        ctx.save(); ctx.globalAlpha = 0.95; ctx.translate(wx, wy); ctx.rotate(ang);
+        if (im.ok) ctx.drawImage(im, -sz * 0.9, -sz * 0.54, sz * 1.8, sz * 1.08);
+        else {
+          ctx.fillStyle = "#8fb4ff";
+          ctx.beginPath(); ctx.moveTo(sz * 0.9, 0); ctx.lineTo(-sz * 0.6, sz * 0.45); ctx.lineTo(-sz * 0.6, -sz * 0.45);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+        this._copLights(ctx, x, y, sz, now);
+        this._copLights(ctx, wx, wy, sz * 0.9, now + 320);
+      }
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
       const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
       const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
@@ -1979,6 +2114,66 @@ const StarMap = {
   // world label the same size on screen at any zoom; the anchor stays in
   // world units so the label still hugs the thing it names.
   _labelFont(zoom) { return `${(9 / (zoom || 1)).toFixed(1)}px ui-monospace, monospace`; },
+
+  // Red/blue strobes over a patrol hull — alternating, with a soft glow when
+  // lit. The second ship of the pair calls this with a phase offset so the
+  // two never flash in step.
+  _copLights(ctx, x, y, sz, now) {
+    const on = Math.floor(now / 320) % 2 === 0;
+    const dot = (dx, color, lit) => {
+      ctx.save();
+      const dy = y - sz * 0.95;
+      if (lit) {
+        const g = ctx.createRadialGradient(x + dx, dy, 0.5, x + dx, dy, 7);
+        g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = 0.5; ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x + dx, dy, 7, 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = lit ? 0.95 : 0.25;
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x + dx, dy, lit ? 2 : 1.3, 0, 7); ctx.fill();
+      ctx.restore();
+    };
+    dot(-3, "#ff4d5e", on);
+    dot(3, "#3f8cff", !on);
+  },
+
+  // Precinct station (police.js): canvas primitive in the fallback style —
+  // an armored hub, two docking pylons, and the rotating red/blue beacon
+  // that says the law lives here.
+  _drawPrecinct(ctx, x, y, now, zoom) {
+    ctx.save();
+    ctx.translate(x, y);
+    // hub
+    ctx.fillStyle = "#2b3752";
+    ctx.strokeStyle = "#8fa4cc"; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 + 0.26;
+      ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * 11, Math.sin(a) * 11);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // docking pylons
+    ctx.fillStyle = "#42527a";
+    ctx.fillRect(-19, -2.5, 8, 5); ctx.fillRect(11, -2.5, 8, 5);
+    // rotating beacon: a red and a blue lamp sweep the ring in opposition
+    const a = now * 0.003;
+    for (const [off, color] of [[0, "#ff4d5e"], [Math.PI, "#3f8cff"]]) {
+      const bx = Math.cos(a + off) * 14, by = Math.sin(a + off) * 14;
+      const g = ctx.createRadialGradient(bx, by, 0.5, bx, by, 6);
+      g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.globalAlpha = 0.6; ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(bx, by, 6, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(bx, by, 1.6, 0, 7); ctx.fill();
+    }
+    // label, screen-fixed size like every world label
+    ctx.globalAlpha = 0.85;
+    ctx.font = this._labelFont(zoom);
+    ctx.textAlign = "center"; ctx.fillStyle = "#9fb4d8";
+    ctx.fillText("PRECINCT", 0, 22 / (zoom || 1) + 8);
+    ctx.restore();
+  },
 
   _gateBurst(particles, x, y) {
     for (let i = 0; i < 14; i++) {
@@ -2207,9 +2402,12 @@ const StarMap = {
   // Minimap inset (screen space, bottom-right): world box, core outline,
   // star, gates and POI dots, plus the current viewport rectangle. Returns
   // its rect so the scene's click handler can jump the camera.
-  _drawMinimap(ctx, w, h, cam, g) {
+  // bottomInset: px of the canvas's bottom edge covered by the floating
+  // command dock. With the info panel collapsed the scene runs to the foot of
+  // the screen, and without this the minimap's corner hides under the dock.
+  _drawMinimap(ctx, w, h, cam, g, bottomInset = 0) {
     const s = Util.clamp(Math.round(Math.min(w, h) * 0.24), 90, 150);
-    const x = w - s - 10, y = h - s - 10, k = s / g.WORLD;
+    const x = w - s - 10, y = h - s - 10 - Math.max(0, bottomInset), k = s / g.WORLD;
     ctx.save();
     ctx.fillStyle = "rgba(6,10,20,.72)";
     this._roundRect(ctx, x, y, s, s, 6); ctx.fill();
@@ -2380,6 +2578,141 @@ const StarMap = {
       const r = Mining.recall(op.id);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Recalled — home in ~${Util.duration(op.travelMs)}.`, "info");
+      refresh();
+    };
+  },
+
+  // ---- NPC hauler intercept card (docs/SPACE_INTERACTIVITY.md §4, step 4) --
+  // Nearest NPC hauler to a world point, via the positions _drawVoyagers
+  // recorded this frame (fx.pos) — no re-simulation, and own fleets don't hit.
+  _npcPosAt(fx, wx, wy, r) {
+    if (!window.Piracy || !fx || !fx.pos) return null;
+    let best = null, bd = r;
+    for (const id in fx.pos) {
+      if (id.indexOf("npc:") !== 0) continue;
+      const p = fx.pos[id];
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
+  },
+  _npcFlightAt(sysId, fx, wx, wy, r) {
+    const id = this._npcPosAt(fx, wx, wy, r);
+    if (!id || !window.Voyages) return null;
+    return Voyages.inSystem(sysId).find(v => v.id === id) || null;
+  },
+
+  // Same shell as the POI card: the contact, its run, and the verbs on it —
+  // rob / toll / escort, quoted with the odds and the crime you'd carry.
+  _showFlightTip(v, sysId, mx, my) {
+    const tip = this.refs.poiTip;
+    if (!tip || !window.Piracy) return;
+    this._poiTipAt = { mx, my };
+    const from = Galaxy.get(Piracy.fromSysOf(v)), to = Galaxy.get(Piracy.toSysOf(v));
+    // A patrol pair is a contact with nothing on offer — the card says who
+    // they are and what they answer to, and pointedly lists no verbs.
+    if (v.police) {
+      tip.innerHTML = `<b>${Util.esc(v.name)}</b>
+        <div class="pt-sub">🚨 Senate patrol · always in pairs · ${from ? from.name : "?"} → ${to ? to.name : "?"}</div>
+        <div class="pt-sub tip-dim">Carrying nothing you can take — and hoping you try. Patrols answer robberies worked in their sector.</div>`;
+      this._placeTip(tip, mx, my);
+      return;
+    }
+    const kindLbl = v.kind === "freighter" ? "NPC freighter" : v.relief ? "relief trader" : "NPC trader";
+    const docksIn = Util.duration(Math.max(0, Piracy.landsAt(v) - Date.now()));
+    let html = `<b>${Util.esc(v.name)}</b>
+      <div class="pt-sub">🚚 ${kindLbl} · ${from ? from.name : "?"} → ${to ? to.name : "?"} · docks in ~${docksIn}</div>`;
+    if (v.raided) {
+      html += `<div class="pt-sub tip-dim">Hold empty — this run was already robbed.</div>`;
+    } else {
+      const names = v.manifest.map(id => (COMMODITIES.find(c => c.id === id) || { name: id }).name);
+      html += `<div class="pt-sub">📦 Manifest: ${names.join(", ") || "—"}</div>`;
+    }
+    if (window.Security) {
+      const band = Security.bandOf(sysId);
+      html += `<div class="pt-sub">⚖ Law here: <b style="color:${band.color}">${band.label}</b></div>`;
+    }
+    html += this._flightVerbBlock(v, sysId);
+    tip.innerHTML = html;
+    this._placeTip(tip, mx, my);
+    this._wireFlightTip(v, sysId);
+  },
+
+  // Shared card layout: lay it out first (heights vary), then clamp into view.
+  _placeTip(tip, mx, my) {
+    tip.style.pointerEvents = "auto";
+    tip.style.display = "block";
+    const cr = this.refs.canvas.getBoundingClientRect();
+    const vr = this.refs.systemView.getBoundingClientRect();
+    const tw = tip.offsetWidth || 240, th = tip.offsetHeight || 90;
+    tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - tw - 6)) + "px";
+    tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - th - 6)) + "px";
+  },
+
+  _flightVerbBlock(v, sysId) {
+    const op = Piracy.opOnFlight(v.id, v.loop);
+    if (op) {
+      const now = Date.now();
+      const stat = !op.resolved ? `closing in ~${Util.duration(Math.max(0, op.resolveAt - now))}`
+        : `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`;
+      const sh = Fleet.ship(op.shipUid);
+      return `<div class="pt-sub">🏴 ${Util.esc(sh ? sh.name : "Your hull")} — ${op.verb} · ${stat}</div>`;
+    }
+    const verbs = Piracy.verbs(v, sysId);
+    if (!verbs.length)
+      return `<div class="pt-sub tip-dim">${v.raided ? "Nothing left to take."
+        : "The Senate writ runs here — the verb is not offered."}</div>`;
+    if (!Piracy.local())
+      return `<div class="pt-sub">Piracy settles on the local ledger for now — signed-in dispatch waits on a piracy SQL surface.</div>`;
+    const hulls = Fleet.idle().filter(sh => !sh.mercenary && Fleet.stats(sh).firepower >= 1)
+      .sort((a, b) => Fleet.stats(b).firepower - Fleet.stats(a).firepower);
+    if (!hulls.length) return `<div class="pt-sub">No idle armed hull — guns make the argument out here.</div>`;
+    const ships = hulls.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ✦ ${Fleet.stats(sh).firepower}</option>`).join("");
+    const label = { rob: "Rob", toll: "Toll", escort: "Escort" };
+    const btns = verbs.map(vb =>
+      `<button class="btn btn-mini${vb === "escort" ? " btn-go" : ""}" data-verb="${vb}">${label[vb]}</button>`).join(" ");
+    return `<div class="st-hall-list" style="margin-top:6px"><select id="poi-pr-ship">${ships}</select> ${btns}</div>
+      <div class="pt-sub" id="poi-pr-est">${this._flightEstText(v, sysId, hulls[0].uid)}</div>`;
+  },
+
+  // The quote, per verb, for the picked hull — the same numbers the resolver
+  // stamps on the op, so the card never flatters the odds.
+  _flightEstText(v, sysId, shipUid) {
+    const g = (window.CRIMECFG || {}).gain || {}, parts = [];
+    for (const vb of Piracy.verbs(v, sysId)) {
+      if (vb === "escort") {
+        const r = (window.PIRACYCFG || {}).escortPayFrac || [0.1, 0.16];
+        parts.push(`escort ≈${Util.credits(Piracy.manifestValue(v) * (r[0] + r[1]) / 2)}c · lawful`);
+      } else {
+        parts.push(`${vb} ${Math.round(Piracy.chance(shipUid, v, sysId, vb) * 100)}% · +${vb === "rob" ? g.piracy : g.toll} crime`);
+      }
+    }
+    // The other half of the quote (police.js): how likely a successful rob is
+    // to draw a patrol response here. The same number pursue() rolls against.
+    if (window.Police && window.Security && Piracy.verbs(v, sysId).includes("rob")) {
+      const p = Police.responseChance(Security.score(sysId));
+      if (p > 0) parts.push(`🚨 law answers ${Math.round(p * 100)}%`);
+    }
+    return parts.join(" · ");
+  },
+
+  _wireFlightTip(v, sysId) {
+    const tip = this.refs.poiTip;
+    const refresh = () => {
+      window.Game.requestSave();
+      const at = this._poiTipAt || { mx: 20, my: 20 };
+      this._showFlightTip(v, sysId, at.mx, at.my);
+      if (UI.page === "fleet") UI.renderFleet();
+    };
+    const shipSel = tip.querySelector("#poi-pr-ship");
+    const est = tip.querySelector("#poi-pr-est");
+    if (shipSel && est) shipSel.onchange = () => { est.textContent = this._flightEstText(v, sysId, shipSel.value); };
+    for (const b of tip.querySelectorAll("[data-verb]")) b.onclick = () => {
+      const r = Piracy.start(v, b.dataset.verb, shipSel ? shipSel.value : null, sysId);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      const what = { rob: "Intercept", toll: "Shakedown", escort: "Escort" }[r.op.verb];
+      UI.toast(`${what} dispatched — on ${v.name} in ~${Util.duration(r.op.travelMs)}.`,
+        r.op.verb === "escort" ? "good" : "info");
       refresh();
     };
   },
