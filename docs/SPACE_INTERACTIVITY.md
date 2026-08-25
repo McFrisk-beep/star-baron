@@ -48,8 +48,8 @@
   seizes from the hot slice only — legitimate units of the same commodity
   pass. §5.1's *prevention* is the law half that shipped with it: in a policed
   system the verb is simply not offered (`Piracy.verbs` reads
-  `Security.bandOf`); *response* is still design. A failed run costs a repair
-  bill and `CRIMECFG.gain.piracyFail` — §6.7's "high variance, never free"
+  `Security.bandOf`); *response* is built too — see §5.2 below. A failed run
+  costs a repair bill and `CRIMECFG.gain.piracyFail` — §6.7's "high variance, never free"
   rule, enforced from day one. **Server-settled too:**
   `docs/sql/piracy_rpcs.sql` moves the whole loop — the fight, the loot, the
   §4.2 shelf drain, the police chase, the hot flags and the hull landing home
@@ -57,8 +57,9 @@
   op row carries the four numbers the server cannot derive (`chance`, `value`,
   `atk`, `law`), computed by the client and clamped server-side, and
   `tools/check_piracy_parity.js` pins the two implementations together.
-  `tools/check_piracy.js` is the client check. A robbed run limps on with an empty hold — the same distress pulse as
-  a corsair hit, one law for the whole world.
+  `tools/check_piracy.js` is the client check. A robbed run limps on with an
+  empty hold — the same distress pulse as a corsair hit, one law for the whole
+  world.
 - **§5.2 police response (the other half of step 5):** `js/police.js`. Three
   pieces, still no AI anywhere. **Precincts** sit at the **sector capitals** —
   the seats of the law, one per sector — drawn in the scene with a rotating
