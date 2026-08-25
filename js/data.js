@@ -505,8 +505,9 @@ const CRIMECFG = {
   start: 50, min: 0, max: 1000,
   decayPerDay: 1,                 // the file cools this much every real day
   watch: 100, lockout: 200, criminal: 300,
-  // what each senate action adds. Lobbying a bloc is legal — that's politics.
-  gain: { lobby: 0, bribe: 6, coerce: 20 },
+  // what each act adds. Lobbying a bloc is legal — that's politics. Piracy is
+  // armed robbery (a failed attempt still tried); a toll is menace, not theft.
+  gain: { lobby: 0, bribe: 6, coerce: 20, piracy: 12, piracyFail: 6, toll: 4 },
   // coercion refusal: per 100 points above `watch`, capped. A refused coercion
   // still costs the credits and still adds the crime — you were caught trying.
   coerceFailPer100: 0.35, coerceFailCap: 0.9,
@@ -626,6 +627,42 @@ const RAIDCFG = {
     { at: 0.2,  id: "hunted",  label: "hunted",    color: "#ff9146" },
     { at: 0.33, id: "lawless", label: "corsair country", color: "#ff5d73" },
   ],
+};
+
+/* ---- PLAYER PIRACY (docs/SPACE_INTERACTIVITY.md §4, build step 4) ---------
+   The player-side verbs at an NPC contact: rob a hauler for its manifest,
+   shake it down for a toll, or escort a relief convoy in for lawful pay.
+   Entirely PvE — the sandbox where the loot → scarcity → spike loop is
+   learned before any player is ever a target.
+
+   §4.2 is the point: robbed cargo NEVER reaches the destination shelf, so the
+   pirate sells into the very scarcity they created. §6.7 is the guard rail:
+   high variance, not high expected value — a failed run costs a repair bill
+   and the crime sticks either way.                                           */
+const PIRACYCFG = {
+  maxOps: 2,                     // intercepts in flight at once
+  legSecondsPerDist: 220,        // same distance metric mining/expeditions fly
+  minLegMs: 15 * 1000,
+  // What a hauler's hired guns are worth (Charters.defenseScore units), before
+  // the law: policed space multiplies the effective escort (§5.1 response is
+  // priced in), lawless space leaves the hauler naked.
+  targetSoft: { freighter: 340, trader: 170 },
+  lawFactor: 2.2,
+  chanceClamp: [0.05, 0.9],      // never certain, either way
+  tollEase: 1.35,                // a captain pays a cut more readily than he loses the hold
+  // Loot rolled per manifest commodity (freighters run heavy), capped in total
+  // by the raider's cargo stat — you keep what your hold can lift.
+  lootQty: { freighter: [10, 22], trader: [4, 10] },
+  tollFrac: [0.16, 0.30],        // of the manifest's quoted value, paid in credits
+  escortPayFrac: [0.10, 0.16],   // the relief sponsor's lawful fee, same base
+  atkDmg: [0.04, 0.12],          // hull damage when the target's guns win
+  // Standing swings per verb (Rep.change deltas).
+  rep: {
+    rob:    [["free_trade", -3], ["syndicate", 2]],
+    toll:   [["free_trade", -1], ["syndicate", 1]],
+    escort: [["free_trade", 3]],
+  },
+  hitTtlMs: 2 * 60 * 60 * 1000,  // robbed-run marks outlive any traffic loop, then die
 };
 
 /* ---- SECURITY BANDS (docs/SPACE_INTERACTIVITY.md §5.3) ---------------------
@@ -1763,6 +1800,7 @@ window.CRIMECFG = CRIMECFG;
 window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
 window.RAIDCFG = RAIDCFG;
+window.PIRACYCFG = PIRACYCFG;
 window.SECURITYCFG = SECURITYCFG;
 window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;

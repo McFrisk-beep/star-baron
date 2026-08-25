@@ -928,22 +928,30 @@ const Economy = {
   customsScan(sysId) {
     const s = this.s();
     // Hold-only: park illicit in a Free Port bay and carry it only when you mean to.
-    const illicit = COMMODITIES.filter(c => c.cat === "illicit"
-      && (window.Assets ? Assets.holdQty(c.id) : (s.positions[c.id] || 0)) > 0);
-    if (!illicit.length) return null;
+    // Stolen goods ride the same scan (SPACE_INTERACTIVITY.md §4.4): only the HOT
+    // slice of a stack is contraband — legitimate units of the same commodity pass.
+    const holdOf = id => window.Assets ? Assets.holdQty(id) : (s.positions[id] || 0);
+    const seizableOf = c => c.cat === "illicit" ? holdOf(c.id)
+      : window.Piracy ? Math.min(holdOf(c.id), Piracy.hotQty(c.id)) : 0;
+    const carrying = COMMODITIES.filter(c => seizableOf(c) > 0);
+    if (!carrying.length) return null;
     if (window.Stations && Stations.customsExempt(sysId)) return null;
     const chance = this.customsChance(sysId);
     if (chance <= 0 || Math.random() >= chance) return null;
-    const comm = Util.pick(illicit);
-    const held = window.Assets ? Assets.holdQty(comm.id) : (s.positions[comm.id] || 0);
+    const comm = Util.pick(carrying);
+    const held = seizableOf(comm);
     const qty = Math.min(held, Math.max(1, Math.ceil(held * Util.randFloat(CUSTOMS.seize[0], CUSTOMS.seize[1]))));
     const value = Math.round(qty * Market.systemPrice(comm.id, sysId));
     if (window.Assets) {
       Assets.withdraw("hold", "block", comm.id, qty);
     } else {
-      s.positions[comm.id] = held - qty;
+      // Decrement, don't overwrite: `held` is the seizable slice, and a hot
+      // stack can sit on top of legitimately-bought units of the same good.
+      s.positions[comm.id] = Math.max(0, (s.positions[comm.id] || 0) - qty);
       if (s.positions[comm.id] <= 0) { s.positions[comm.id] = 0; s.avgCost[comm.id] = 0; }
     }
+    // The seized units were the stolen ones — the flag leaves with the goods.
+    if (comm.cat !== "illicit" && window.Piracy) Piracy.takeHot(comm.id, qty);
     let impoundedTo = null, claimId = null;
     const st = window.Stations && Stations.get(sysId);
     if (st && (st.modules.customs_house | 0) && st.status === "owned" && window.Stations) {

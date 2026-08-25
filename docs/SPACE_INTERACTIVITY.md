@@ -1,6 +1,6 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order steps 1–3 are built, plus §5.3's security bands (the
+**Status: build order steps 1–4 are built, plus §5.3's security bands (the
 derivation half of step 5).**
 
 - **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
@@ -35,6 +35,26 @@ derivation half of step 5).**
   raiding costs:** a raid takes the batch that was in the hold and nothing else
   — never banked ore, never the system bay, never a hull. A robbed miner takes
   damage (a repair bill) and can be chased off its rock; it always flies home.
+- **Step 4 (player piracy on NPC traffic, §4):** `js/piracy.js`. An NPC hauler
+  in the system view is now a clickable contact carrying §4.3's verbs — rob,
+  toll, and (on relief traders only) escort. Dispatch an armed hull, close the
+  tab: the odds, loot ranges and target worth are stamped on the op at
+  dispatch, and the outcome is a pure function of the op id, exactly the
+  mining pattern. §4.2 is live: a robbed delivery is taken **off the
+  destination sector's shelf** (`Stock.take`) — the opposite of step 3's
+  shelf-neutral NPC raids, deliberately, because here the drain IS the loot —
+  and the pirate can sell into the spike they made. §4.4 is live: stolen units
+  are flagged **hot** (`state.hot`), and the existing `CUSTOMS` docking scan
+  seizes from the hot slice only — legitimate units of the same commodity
+  pass. §5.1's *prevention* is the law half that shipped with it: in a policed
+  system the verb is simply not offered (`Piracy.verbs` reads
+  `Security.bandOf`); *response* is still design. A failed run costs a repair
+  bill and `CRIMECFG.gain.piracyFail` — §6.7's "high variance, never free"
+  rule, enforced from day one. Client-local like mining before its SQL:
+  signed-in dispatch is gated until a piracy SQL surface lands
+  (`Piracy.local`, keys on `Cloud.localOnly`). `tools/check_piracy.js` is the
+  check. A robbed run limps on with an empty hold — the same distress pulse as
+  a corsair hit, one law for the whole world.
 - **§5.3 security bands (part of step 5):** `js/security.js` computes how much
   law is present in a system — sector floor + sector capital + station modules
   + Senate edicts + a running war — and the galaxy chart paints it: each region
@@ -253,12 +273,14 @@ Adding one class means touching class-handling code once. Candidates:
 The PvE half. It ships before anything player-facing and teaches the whole threat
 model in a sandbox where nobody can be griefed.
 
-**Half of this is built (build step 3, `js/raiders.js`): piracy *by* NPCs.**
-Corsairs raid parked mining claims and strip NPC haulers running out of a den
+**All of this is built.** Step 3 (`js/raiders.js`) is piracy *by* NPCs:
+corsairs raid parked mining claims and strip NPC haulers running out of a den
 system — the threat model, taught from the receiving end, where nobody can be
-griefed at all. The player-side verbs below (§4.1/§4.3 — rob, toll, escort a
-contact of your own) are step 4 and are still design only. Two decisions worth
-recording, because both were tempting to get wrong:
+griefed at all. Step 4 (`js/piracy.js`) is the player-side half below —
+§4.1's click-a-contact loop, §4.3's three verbs, §4.2's shelf drain and
+§4.4's hot-cargo fencing (see the status block up top for what each landed
+as). Two decisions from step 3 worth recording, because both were tempting to
+get wrong:
 
 - **A raided NPC hauler still arrives, with an empty hold.** Hull kept, cargo
   gone — the same rule that protects a player's miner (§6.6.5), applied to the
@@ -553,7 +575,7 @@ Each step ships alone and is playable without the next one.
 | 1 | **POI layer** in the deep-space ring — ✅ shipped (`js/pois.js`) | Everything needs a destination inside a system |
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
-| 4 | **Player piracy on NPC traffic** | The loot → scarcity → spike loop, still entirely PvE |
+| 4 | **Player piracy on NPC traffic** — ✅ shipped client-side (`js/piracy.js`; signed-in dispatch waits on a piracy SQL surface) | The loot → scarcity → spike loop, still entirely PvE |
 | 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response and crime still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |

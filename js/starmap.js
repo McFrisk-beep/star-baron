@@ -1285,7 +1285,8 @@ const StarMap = {
         if (!p) {   // no button down: POI / minimap hover cursor
           const r = rectOf(), mx = e.clientX - r.left, my = e.clientY - r.top;
           const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
-          const hot = inMini(mx, my) || (window.POIs && POIs.at(sys.id, wx, wy, 12 / cam.zoom));
+          const hot = inMini(mx, my) || (window.POIs && POIs.at(sys.id, wx, wy, 12 / cam.zoom))
+            || !!this._npcPosAt(voyFx, wx, wy, 12 / cam.zoom);
           canvas.style.cursor = hot ? "pointer" : "";
           return;
         }
@@ -1315,7 +1316,10 @@ const StarMap = {
         }
         const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
         const hit = window.POIs && POIs.at(sys.id, wx, wy, 16 / cam.zoom);
-        if (hit) this._showPoiTip(hit, mx, my); else hidePoiTip();
+        if (hit) { this._showPoiTip(hit, mx, my); return; }
+        // An NPC hauler is a contact (§4): click it for the intercept card.
+        const fl = this._npcFlightAt(sys.id, voyFx, wx, wy, 16 / cam.zoom);
+        if (fl) this._showFlightTip(fl, sys.id, mx, my); else hidePoiTip();
       };
       canvas.addEventListener("pointerdown", onDown);
       canvas.addEventListener("pointermove", onMove);
@@ -2380,6 +2384,121 @@ const StarMap = {
       const r = Mining.recall(op.id);
       if (!r.ok) return UI.toast(r.msg, "warn");
       UI.toast(`Recalled — home in ~${Util.duration(op.travelMs)}.`, "info");
+      refresh();
+    };
+  },
+
+  // ---- NPC hauler intercept card (docs/SPACE_INTERACTIVITY.md §4, step 4) --
+  // Nearest NPC hauler to a world point, via the positions _drawVoyagers
+  // recorded this frame (fx.pos) — no re-simulation, and own fleets don't hit.
+  _npcPosAt(fx, wx, wy, r) {
+    if (!window.Piracy || !fx || !fx.pos) return null;
+    let best = null, bd = r;
+    for (const id in fx.pos) {
+      if (id.indexOf("npc:") !== 0) continue;
+      const p = fx.pos[id];
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      if (d < bd) { bd = d; best = id; }
+    }
+    return best;
+  },
+  _npcFlightAt(sysId, fx, wx, wy, r) {
+    const id = this._npcPosAt(fx, wx, wy, r);
+    if (!id || !window.Voyages) return null;
+    return Voyages.inSystem(sysId).find(v => v.id === id) || null;
+  },
+
+  // Same shell as the POI card: the contact, its run, and the verbs on it —
+  // rob / toll / escort, quoted with the odds and the crime you'd carry.
+  _showFlightTip(v, sysId, mx, my) {
+    const tip = this.refs.poiTip;
+    if (!tip || !window.Piracy) return;
+    this._poiTipAt = { mx, my };
+    const from = Galaxy.get(Piracy.fromSysOf(v)), to = Galaxy.get(Piracy.toSysOf(v));
+    const kindLbl = v.kind === "freighter" ? "NPC freighter" : v.relief ? "relief trader" : "NPC trader";
+    const docksIn = Util.duration(Math.max(0, Piracy.landsAt(v) - Date.now()));
+    let html = `<b>${Util.esc(v.name)}</b>
+      <div class="pt-sub">🚚 ${kindLbl} · ${from ? from.name : "?"} → ${to ? to.name : "?"} · docks in ~${docksIn}</div>`;
+    if (v.raided) {
+      html += `<div class="pt-sub tip-dim">Hold empty — this run was already robbed.</div>`;
+    } else {
+      const names = v.manifest.map(id => (COMMODITIES.find(c => c.id === id) || { name: id }).name);
+      html += `<div class="pt-sub">📦 Manifest: ${names.join(", ") || "—"}</div>`;
+    }
+    if (window.Security) {
+      const band = Security.bandOf(sysId);
+      html += `<div class="pt-sub">⚖ Law here: <b style="color:${band.color}">${band.label}</b></div>`;
+    }
+    html += this._flightVerbBlock(v, sysId);
+    tip.innerHTML = html;
+    tip.style.pointerEvents = "auto";
+    tip.style.display = "block";
+    const cr = this.refs.canvas.getBoundingClientRect();
+    const vr = this.refs.systemView.getBoundingClientRect();
+    const tw = tip.offsetWidth || 240, th = tip.offsetHeight || 90;
+    tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - tw - 6)) + "px";
+    tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - th - 6)) + "px";
+    this._wireFlightTip(v, sysId);
+  },
+
+  _flightVerbBlock(v, sysId) {
+    const op = Piracy.opOnFlight(v.id, v.loop);
+    if (op) {
+      const now = Date.now();
+      const stat = !op.resolved ? `closing in ~${Util.duration(Math.max(0, op.resolveAt - now))}`
+        : `returning ~${Util.duration(Math.max(0, op.returnAt - now))}`;
+      const sh = Fleet.ship(op.shipUid);
+      return `<div class="pt-sub">🏴 ${Util.esc(sh ? sh.name : "Your hull")} — ${op.verb} · ${stat}</div>`;
+    }
+    const verbs = Piracy.verbs(v, sysId);
+    if (!verbs.length)
+      return `<div class="pt-sub tip-dim">${v.raided ? "Nothing left to take."
+        : "The Senate writ runs here — the verb is not offered."}</div>`;
+    if (!Piracy.local())
+      return `<div class="pt-sub">Piracy settles on the local ledger for now — signed-in dispatch waits on a piracy SQL surface.</div>`;
+    const hulls = Fleet.idle().filter(sh => !sh.mercenary && Fleet.stats(sh).firepower >= 1)
+      .sort((a, b) => Fleet.stats(b).firepower - Fleet.stats(a).firepower);
+    if (!hulls.length) return `<div class="pt-sub">No idle armed hull — guns make the argument out here.</div>`;
+    const ships = hulls.map(sh => `<option value="${sh.uid}">${Util.esc(sh.name)} · ✦ ${Fleet.stats(sh).firepower}</option>`).join("");
+    const label = { rob: "Rob", toll: "Toll", escort: "Escort" };
+    const btns = verbs.map(vb =>
+      `<button class="btn btn-mini${vb === "escort" ? " btn-go" : ""}" data-verb="${vb}">${label[vb]}</button>`).join(" ");
+    return `<div class="st-hall-list" style="margin-top:6px"><select id="poi-pr-ship">${ships}</select> ${btns}</div>
+      <div class="pt-sub" id="poi-pr-est">${this._flightEstText(v, sysId, hulls[0].uid)}</div>`;
+  },
+
+  // The quote, per verb, for the picked hull — the same numbers the resolver
+  // stamps on the op, so the card never flatters the odds.
+  _flightEstText(v, sysId, shipUid) {
+    const g = (window.CRIMECFG || {}).gain || {}, parts = [];
+    for (const vb of Piracy.verbs(v, sysId)) {
+      if (vb === "escort") {
+        const r = (window.PIRACYCFG || {}).escortPayFrac || [0.1, 0.16];
+        parts.push(`escort ≈${Util.credits(Piracy.manifestValue(v) * (r[0] + r[1]) / 2)}c · lawful`);
+      } else {
+        parts.push(`${vb} ${Math.round(Piracy.chance(shipUid, v, sysId, vb) * 100)}% · +${vb === "rob" ? g.piracy : g.toll} crime`);
+      }
+    }
+    return parts.join(" · ");
+  },
+
+  _wireFlightTip(v, sysId) {
+    const tip = this.refs.poiTip;
+    const refresh = () => {
+      window.Game.requestSave();
+      const at = this._poiTipAt || { mx: 20, my: 20 };
+      this._showFlightTip(v, sysId, at.mx, at.my);
+      if (UI.page === "fleet") UI.renderFleet();
+    };
+    const shipSel = tip.querySelector("#poi-pr-ship");
+    const est = tip.querySelector("#poi-pr-est");
+    if (shipSel && est) shipSel.onchange = () => { est.textContent = this._flightEstText(v, sysId, shipSel.value); };
+    for (const b of tip.querySelectorAll("[data-verb]")) b.onclick = () => {
+      const r = Piracy.start(v, b.dataset.verb, shipSel ? shipSel.value : null, sysId);
+      if (!r.ok) return UI.toast(r.msg, "warn");
+      const what = { rob: "Intercept", toll: "Shakedown", escort: "Escort" }[r.op.verb];
+      UI.toast(`${what} dispatched — on ${v.name} in ~${Util.duration(r.op.travelMs)}.`,
+        r.op.verb === "escort" ? "good" : "info");
       refresh();
     };
   },

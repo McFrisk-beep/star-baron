@@ -717,7 +717,12 @@ const Cloud = {
   // mining/beltPools: guest-local for now — dispatch is gated off the server
   // ledger (Mining.canStart) until the mining SQL phase adds its RPC surface,
   // at which point both move onto WIRE_KEYS + commit_allowlist together.
-  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war"],
+  // piracy/piracyHits/hot: same posture as mining before its SQL landed —
+  // dispatch is gated off the server ledger (Piracy.local), so these stay in
+  // this browser until a piracy SQL surface moves them onto WIRE_KEYS +
+  // commit_allowlist together.
+  localOnly: ["galaxy", "senate", "newswire", "stock", "market", "war",
+    "piracy", "piracyHits", "hot"],
   // The legacy `saves` strip is ONLY galaxy (cosmetic, regenerated): that row
   // has no server-side merge and no guaranteed world tables behind it, so it
   // must keep carrying the world slices or a device change loses them —
