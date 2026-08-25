@@ -1,7 +1,7 @@
 # Space Interactivity — mining, piracy, and the law
 
-**Status: build order steps 1–4 are built, plus §5.3's security bands (the
-derivation half of step 5).**
+**Status: build order steps 1–4 are built, plus step 5's security bands
+(§5.3) and police response (§5.2, in its built form below).**
 
 - **Step 1 (POI layer, §2):** `js/pois.js` seeds the places, `js/starmap.js`
   renders them, makes them clickable and adds the minimap;
@@ -55,6 +55,33 @@ derivation half of step 5).**
   (`Piracy.local`, keys on `Cloud.localOnly`). `tools/check_piracy.js` is the
   check. A robbed run limps on with an empty hold — the same distress pulse as
   a corsair hit, one law for the whole world.
+- **§5.2 police response (the other half of step 5):** `js/police.js`. Three
+  pieces, still no AI anywhere. **Precincts** are derived geography: any
+  system whose security band reaches `POLICECFG.stationBand` hosts a police
+  station, drawn in the scene with a rotating red/blue beacon — lift a system
+  into the band with a Customs House and a precinct opens; a Free Port closes
+  it. **Patrols** are §5.2's seeded flight plans given hulls and lights: each
+  sector with a precinct flies a standing patrol, always in a **pair**,
+  sweeping between that sector's systems on a seeded loop, riding the same
+  Voyages pipeline as all traffic, strobing red/blue in the scene. **The
+  chase** is §5.1's response made concrete: a successful robbery can draw
+  pursuit on the way home, odds scaled by the law stamped on the op at
+  dispatch, resolving *exactly like a mission* — the outcome is a pure seeded
+  function of the op (offline banks the same chase a watched tab sees), then
+  a mission-shaped report lands in Comms → Dispatches that `BattleView`
+  replays off the smuggle template (a run for the gate, pursuers cutting
+  angles), fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
+  formidable but killable: caught costs exactly the stolen cargo (recovered
+  to the shelf it was bound for) plus a repair bill — never the hull, never
+  banked stock, never credits; each destroyed pair adds
+  `CRIMECFG.gain.police` (the worst charge on the books) and draws a heavier
+  wave, up to `maxWaves`, and a broken pair sometimes yields `POLICE_ITEM` —
+  the one accessory `Items.gen` cannot roll. This deliberately trades §5.2's
+  parked-picket sketch for a resolved encounter, at the owner's direction —
+  but keeps the sketch's actual point: no pathfinding, no behaviour trees, no
+  tick loop, and the movie never decides anything. `tools/check_police.js` is
+  the check. Crime with teeth beyond the chase (§5.5 bounties) is still
+  design.
 - **§5.3 security bands (part of step 5):** `js/security.js` computes how much
   law is present in a system — sector floor + sector capital + station modules
   + Senate edicts + a running war — and the galaxy chart paints it: each region
@@ -576,7 +603,7 @@ Each step ships alone and is playable without the next one.
 | 2 | **Mining + the `miner` class** (NPC miners first) — ✅ shipped client-side (`js/mining.js`; signed-in dispatch waits on the mining SQL surface) | Creates the stationary target and the ore leg; belts should look worked before players arrive |
 | 3 | **NPC piracy against miners and traffic** — ✅ shipped (`js/raiders.js`) | Teaches the threat model where nobody can grief anybody |
 | 4 | **Player piracy on NPC traffic** — ✅ shipped client-side (`js/piracy.js`; signed-in dispatch waits on a piracy SQL surface) | The loot → scarcity → spike loop, still entirely PvE |
-| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response and crime still design | The rules now have something to govern |
+| 5 | **Security bands, response, crime with teeth** — bands ✅ shipped (`js/security.js`, §5.3); response ✅ shipped (`js/police.js`, §5.2 built form); §5.5 bounties still design | The rules now have something to govern |
 | 6 | **The den, then the boss** | Persistent threat on top of proven site tech |
 | 7 | **Player-vs-player raiding** | Last: the only part that *requires* server RPCs and the only part that can make people quit |
 

@@ -4253,6 +4253,22 @@ const UI = {
             `${q} ${(COMMODITIES.find(c => c.id === id) || {}).name || id}`);
           html += `<p>🏴 ${p.ship} took ${p.name}'s manifest near ${where} — ${bits.join(", ")} <span class="muted-note">(hot cargo — customs will want a look)</span></p>`;
         }
+        // The law's answer (police.js): a chase on the way home is part of the
+        // same verdict — a seized haul must never just look like missing ore.
+        const ch = p.chase;
+        if (ch) {
+          if (ch.caught) {
+            html += `<p class="down">🚨 A Senate patrol ran the hull down on the way home — the stolen cargo was recovered`
+              + (ch.destroyed ? ` after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was destroyed` : "")
+              + `. <span class="muted-note">(the ship always comes home — replay is in Dispatches)</span></p>`;
+          } else if (ch.destroyed) {
+            html += `<p>🚨 Patrols answered — ${ch.destroyed} pair${ch.destroyed === 1 ? "" : "s"} destroyed on the run home`
+              + (ch.item && !ch.item.full ? ` · salvaged <b>${ch.item.name}</b>` : "")
+              + ` · +${ch.crime} crime. <span class="muted-note">(replay is in Dispatches)</span></p>`;
+          } else {
+            html += `<p>🚨 A patrol answered — the hull outran the lights.</p>`;
+          }
+        }
       }
       made = made.filter(m => !m.piracy);
     }
@@ -4704,6 +4720,28 @@ const UI = {
         if (window.Feed) Feed.emit(`a hauler was hit near ${where.toLowerCase()} — shelves are about to feel it 🏴`, { kind: "reaction" });
       }
       this.audioSafe("news");
+      if (this.page === "fleet") this.renderFleet();
+    });
+    Bus.on("policeChase", p => {
+      if (window.Game._booting) return;   // offline chases land in the "while you were away" recap
+      const where = this.sysName(p.sysId);
+      let msg, kind;
+      if (p.caught) {
+        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the stolen cargo was recovered.`;
+        kind = "bad";
+      } else if (p.destroyed) {
+        msg = `🚨 ${p.ship} shot its way clear near ${where} — ${p.destroyed} patrol pair${p.destroyed === 1 ? "" : "s"} destroyed`
+          + (p.item && !p.item.full ? ` · salvaged ${p.item.name}` : "") + `. The Senate will remember.`;
+        kind = "good";
+      } else {
+        msg = `🚨 A patrol answered the robbery near ${where} — ${p.ship} outran the lights.`;
+        kind = "info";
+      }
+      const r = p.report ? (this.s().reports || []).find(x => x.uid === p.report) : null;
+      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
+      else this.toast(msg, kind, 7500);
+      this.audioSafe("news");
+      this.bumpComms();
       if (this.page === "fleet") this.renderFleet();
     });
     Bus.on("customs", ev => {

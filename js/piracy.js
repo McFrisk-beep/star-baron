@@ -145,6 +145,10 @@ const Piracy = {
       flightId: v.id, loop: v.loop, kind: v.kind, name: v.name,
       manifest: v.manifest.slice(), toSys: this.toSysOf(v),
       chance: this.chance(shipUid, v, sysId, verb),
+      // The law present where you struck, locked in with the odds: the police
+      // response (police.js) rolls against this, not against whatever the map
+      // says by the time the hull is flying home.
+      law: window.Security ? Security.score(sysId) : 0.5,
       value: this.manifestValue(v),
       cargo: Fleet.stats(Fleet.ship(shipUid)).cargo || 0,
       fromSys: s.currentSystem, travelMs: can.travel,
@@ -252,6 +256,14 @@ const Piracy = {
         const r = { verb: op.verb, won: out.won, name: op.name, kind: op.kind,
           sysId: op.sysId, credits: out.credits, loot: op.loot || null,
           dmg: out.dmg, crime, ship: sh.name };
+        // §5.1 response: a successful robbery can draw the law on the way
+        // home (police.js). Runs under the same resolved-once gate, so the
+        // chase is banked offline exactly as it would play out live. A caught
+        // run clears op.loot — nothing banks, nothing goes hot.
+        if (op.loot && window.Police) {
+          const chase = Police.pursue(op, sh, now);
+          if (chase) r.chase = chase;
+        }
         made.push({ piracy: r });
         if (window.Bus) Bus.emit("piracyResolved", r);
       }

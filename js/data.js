@@ -507,7 +507,9 @@ const CRIMECFG = {
   watch: 100, lockout: 200, criminal: 300,
   // what each act adds. Lobbying a bloc is legal — that's politics. Piracy is
   // armed robbery (a failed attempt still tried); a toll is menace, not theft.
-  gain: { lobby: 0, bribe: 6, coerce: 20, piracy: 12, piracyFail: 6, toll: 4 },
+  // Destroying a Senate patrol is the worst crime on the books — charged per
+  // pair broken, on top of the robbery that drew them.
+  gain: { lobby: 0, bribe: 6, coerce: 20, piracy: 12, piracyFail: 6, toll: 4, police: 25 },
   // coercion refusal: per 100 points above `watch`, capped. A refused coercion
   // still costs the credits and still adds the crime — you were caught trying.
   coerceFailPer100: 0.35, coerceFailCap: 0.9,
@@ -663,6 +665,51 @@ const PIRACYCFG = {
     escort: [["free_trade", 3]],
   },
   hitTtlMs: 2 * 60 * 60 * 1000,  // robbed-run marks outlive any traffic loop, then die
+};
+
+/* ---- POLICE (docs/SPACE_INTERACTIVITY.md §5.2 response, built form) -------
+   The law's RESPONSE half: precincts in top-band systems, standing sector
+   patrols that always fly in pairs, and a chase after a successful robbery
+   that resolves exactly like a mission battle — wallet first, then a
+   replayable report in Dispatches. Still no AI anywhere: patrols are seeded
+   flight plans (the §5.2 idea, given hulls and lights), and the chase is a
+   pure function of the op — a night offline banks the same pursuit a watched
+   tab would have seen.
+
+   Police are formidable but killable. Killing them is the worst crime on the
+   books, and the next response comes heavier — but break every wave and you
+   fly home with the loot, maybe with a piece of their kit.                   */
+const POLICECFG = {
+  stationBand: "policed",          // systems in this security band host a precinct
+  pairsPerSector: 1,               // standing patrol pairs per sector with a precinct
+  patrolLoopMinMs: 20 * 60 * 1000, // one patrol hop + dwell
+  patrolLoopMaxMs: 35 * 60 * 1000,
+  patrolFlyFrac: 0.85,
+  // Response after a successful rob: odds scale with the law present where it
+  // happened (stamped on the op at dispatch — the risk you accepted).
+  responseBase: 0.9,               // × the system's security score
+  responseClamp: [0, 0.95],        // truly lawless space answers to nobody
+  // One patrol pair's worth, in Charters.defenseScore units, deepened by the
+  // local law and escalating per wave when you keep shooting back.
+  pairScore: 700,
+  lawScore: 1.4,
+  waveMult: 1.6,
+  maxWaves: 3,                     // break this many and they lose the trail
+  destroyClamp: [0.02, 0.75],      // formidable, never unbeatable — or safe
+  catchMult: 1.1,                  // pairs run fat freighter-chasers down hard
+  catchClamp: [0.1, 0.92],
+  chaseDmg: [0.06, 0.16],          // hull damage per wave actually fought
+  itemChance: 0.2,                 // salvage roll per destroyed pair (the police-only kit)
+};
+
+// The police-only accessory, stripped from a broken patrol ship. Deliberately
+// above what Items.gen can roll (legendary reactor tops out ~+39%): the only
+// way to hold one is to have beaten the law at its own game.
+const POLICE_ITEM = {
+  kind: "reactor", rarity: "legendary",
+  name: "Senate Enforcement Core",
+  primary: { stat: "firepower", amount: 0.45, pct: true, kind: "reactor" },
+  bonus:   { stat: "shields",   amount: 60,   pct: false, kind: "shield" },
 };
 
 /* ---- SECURITY BANDS (docs/SPACE_INTERACTIVITY.md §5.3) ---------------------
@@ -1295,6 +1342,14 @@ const ENEMY_CATALOG = {
     { id: "syn_collector",name: "Debt Collector",   firepower: 58,  hull: 250, armor: 60,  shields: 42, speed: 1.5,  sprite: "syndics",  tier: 2 },
     { id: "syn_widow",    name: "Widow Cruiser",    firepower: 115, hull: 460, armor: 115, shields: 85, speed: 1.2,  sprite: "syndics",  tier: 3 },
   ],
+  // Senate patrol hulls (js/police.js): the pairs on the lanes and the waves
+  // that answer a robbery. Tier climbs with the response wave.
+  police: [
+    { id: "pol_interceptor", name: "Patrol Interceptor", firepower: 32,  hull: 130, armor: 32,  shields: 28,  speed: 2.2, sprite: "voidkin",  tier: 0 },
+    { id: "pol_cutter",      name: "Senate Cutter",      firepower: 58,  hull: 240, armor: 62,  shields: 55,  speed: 1.7, sprite: "glorthi",  tier: 1 },
+    { id: "pol_vanguard",    name: "Vanguard Frigate",   firepower: 100, hull: 400, armor: 105, shields: 95,  speed: 1.4, sprite: "krell",    tier: 2 },
+    { id: "pol_justicar",    name: "Justicar Cruiser",   firepower: 165, hull: 600, armor: 160, shields: 145, speed: 1.2, sprite: "aurelian", tier: 3 },
+  ],
   corporate: [
     { id: "corp_ward",    name: "Ward Picket",      firepower: 26,  hull: 130, armor: 34,  shields: 30, speed: 1.7,  sprite: "mechanim", tier: 0 },
     { id: "corp_lancer",  name: "Compliance Lancer",firepower: 45,  hull: 210, armor: 55,  shields: 50, speed: 1.5,  sprite: "syndics",  tier: 1 },
@@ -1801,6 +1856,8 @@ window.EXPEDCFG = EXPEDCFG;
 window.MININGCFG = MININGCFG;
 window.RAIDCFG = RAIDCFG;
 window.PIRACYCFG = PIRACYCFG;
+window.POLICECFG = POLICECFG;
+window.POLICE_ITEM = POLICE_ITEM;
 window.SECURITYCFG = SECURITYCFG;
 window.POICFG = POICFG;
 window.BLACKBOX_EFFECTS = BLACKBOX_EFFECTS;

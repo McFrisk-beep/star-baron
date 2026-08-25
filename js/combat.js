@@ -77,8 +77,10 @@ const Combat = {
   },
 
   // Enemy flavour from the report's sponsor: syndicate jobs draw syndicate
-  // muscle, corporate factions field security, everything else is pirates.
+  // muscle, corporate factions field security, the law fields patrol hulls,
+  // everything else is pirates.
   _flavour(faction) {
+    if (faction === "police") return "police";
     if (faction === "syndicate") return "syndicate";
     if (faction === "free_trade" || faction === "mining_combine" || faction === "agri_collective") return "corporate";
     return "pirate";
@@ -125,7 +127,10 @@ const Combat = {
     const pool = (typeof ENEMY_CATALOG !== "undefined" ? ENEMY_CATALOG : { pirate: [] })[this._flavour(report.faction)] || [];
     const usable = pool.filter(e => e.tier <= cfg.tier);
     if (!usable.length) usable.push({ id: "raider", name: "Raider", firepower: 15, hull: 90, armor: 15, shields: 5, speed: 1.8, sprite: "mechanim", tier: 0 });
-    const nEnemies = Math.min(9, Math.max(1, ri(cfg.n[0], cfg.n[1]) + (players.length > 4 ? 1 : 0)));
+    // report.enemyCount pins the opposition's size when the fiction demands it
+    // (police fly in pairs; the band's roll would break that read).
+    const nEnemies = Math.min(9, Math.max(1, report.enemyCount
+      || (ri(cfg.n[0], cfg.n[1]) + (players.length > 4 ? 1 : 0))));
     const enemies = [];
     for (let i = 0; i < nEnemies; i++) {
       // bias toward the band's top tier so high jobs field real hulls

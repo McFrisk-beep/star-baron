@@ -1544,6 +1544,13 @@ const StarMap = {
       const sx = cx + Math.cos(station.angle) * station.orbit * R, sy = cy + Math.sin(station.angle) * station.orbit * R;
       if (station.img.ok) ctx.drawImage(station.img, sx - 16, sy - 16, 32, 32);
       else { ctx.fillStyle = "#9aa9c8"; ctx.fillRect(sx - 8, sy - 8, 16, 16); }
+      // precinct — the seat of the law in a top-band system (police.js).
+      // Derived like the band itself: lift the system into POLICECFG.stationBand
+      // and the precinct opens; drop it and the lights go out.
+      if (window.Police && Police.hasPrecinct(sys.id)) {
+        const pa = berth + 2.3;
+        this._drawPrecinct(ctx, cx + Math.cos(pa) * 0.55 * R, cy + Math.sin(pa) * 0.55 * R, now, cam.zoom);
+      }
 
       // hyperspace gates at the system edge — one per lane, ships warp in/out
       for (const gp of gates()) this._drawGate(ctx, gp.x, gp.y, now * 0.001, gp.name, cam.zoom);
@@ -1934,6 +1941,23 @@ const StarMap = {
         ctx.lineWidth = 1.4;
         ctx.beginPath(); ctx.arc(x, y, sz + pr * 18, 0, 7); ctx.stroke();
       }
+      // Senate patrols fly in PAIRS with the lights on (police.js): the
+      // wingman holds trailing echelon, and both strobe red/blue so the law
+      // reads at a glance from anywhere on the map.
+      if (v.police) {
+        const wx = x - Math.cos(ang) * sz * 2.1 + Math.cos(ang + Math.PI / 2) * sz * 1.35;
+        const wy = y - Math.sin(ang) * sz * 2.1 + Math.sin(ang + Math.PI / 2) * sz * 1.35;
+        ctx.save(); ctx.globalAlpha = 0.95; ctx.translate(wx, wy); ctx.rotate(ang);
+        if (im.ok) ctx.drawImage(im, -sz * 0.9, -sz * 0.54, sz * 1.8, sz * 1.08);
+        else {
+          ctx.fillStyle = "#8fb4ff";
+          ctx.beginPath(); ctx.moveTo(sz * 0.9, 0); ctx.lineTo(-sz * 0.6, sz * 0.45); ctx.lineTo(-sz * 0.6, -sz * 0.45);
+          ctx.closePath(); ctx.fill();
+        }
+        ctx.restore();
+        this._copLights(ctx, x, y, sz, now);
+        this._copLights(ctx, wx, wy, sz * 0.9, now + 320);
+      }
       ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
       const fl = (5 + Math.sin(now * 0.02 + x * 0.5) * 2) * (0.3 + thrust);   // exhaust plume
       const pg = ctx.createLinearGradient(-sz * 0.8, 0, -sz * 0.8 - fl * 2, 0);
@@ -1983,6 +2007,66 @@ const StarMap = {
   // world label the same size on screen at any zoom; the anchor stays in
   // world units so the label still hugs the thing it names.
   _labelFont(zoom) { return `${(9 / (zoom || 1)).toFixed(1)}px ui-monospace, monospace`; },
+
+  // Red/blue strobes over a patrol hull — alternating, with a soft glow when
+  // lit. The second ship of the pair calls this with a phase offset so the
+  // two never flash in step.
+  _copLights(ctx, x, y, sz, now) {
+    const on = Math.floor(now / 320) % 2 === 0;
+    const dot = (dx, color, lit) => {
+      ctx.save();
+      const dy = y - sz * 0.95;
+      if (lit) {
+        const g = ctx.createRadialGradient(x + dx, dy, 0.5, x + dx, dy, 7);
+        g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.globalAlpha = 0.5; ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(x + dx, dy, 7, 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = lit ? 0.95 : 0.25;
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x + dx, dy, lit ? 2 : 1.3, 0, 7); ctx.fill();
+      ctx.restore();
+    };
+    dot(-3, "#ff4d5e", on);
+    dot(3, "#3f8cff", !on);
+  },
+
+  // Precinct station (police.js): canvas primitive in the fallback style —
+  // an armored hub, two docking pylons, and the rotating red/blue beacon
+  // that says the law lives here.
+  _drawPrecinct(ctx, x, y, now, zoom) {
+    ctx.save();
+    ctx.translate(x, y);
+    // hub
+    ctx.fillStyle = "#2b3752";
+    ctx.strokeStyle = "#8fa4cc"; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 + 0.26;
+      ctx[i ? "lineTo" : "moveTo"](Math.cos(a) * 11, Math.sin(a) * 11);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // docking pylons
+    ctx.fillStyle = "#42527a";
+    ctx.fillRect(-19, -2.5, 8, 5); ctx.fillRect(11, -2.5, 8, 5);
+    // rotating beacon: a red and a blue lamp sweep the ring in opposition
+    const a = now * 0.003;
+    for (const [off, color] of [[0, "#ff4d5e"], [Math.PI, "#3f8cff"]]) {
+      const bx = Math.cos(a + off) * 14, by = Math.sin(a + off) * 14;
+      const g = ctx.createRadialGradient(bx, by, 0.5, bx, by, 6);
+      g.addColorStop(0, color); g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.globalAlpha = 0.6; ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(bx, by, 6, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(bx, by, 1.6, 0, 7); ctx.fill();
+    }
+    // label, screen-fixed size like every world label
+    ctx.globalAlpha = 0.85;
+    ctx.font = this._labelFont(zoom);
+    ctx.textAlign = "center"; ctx.fillStyle = "#9fb4d8";
+    ctx.fillText("PRECINCT", 0, 22 / (zoom || 1) + 8);
+    ctx.restore();
+  },
 
   _gateBurst(particles, x, y) {
     for (let i = 0; i < 14; i++) {
@@ -2415,6 +2499,15 @@ const StarMap = {
     if (!tip || !window.Piracy) return;
     this._poiTipAt = { mx, my };
     const from = Galaxy.get(Piracy.fromSysOf(v)), to = Galaxy.get(Piracy.toSysOf(v));
+    // A patrol pair is a contact with nothing on offer — the card says who
+    // they are and what they answer to, and pointedly lists no verbs.
+    if (v.police) {
+      tip.innerHTML = `<b>${Util.esc(v.name)}</b>
+        <div class="pt-sub">🚨 Senate patrol · always in pairs · ${from ? from.name : "?"} → ${to ? to.name : "?"}</div>
+        <div class="pt-sub tip-dim">Carrying nothing you can take — and hoping you try. Patrols answer robberies worked in their sector.</div>`;
+      this._placeTip(tip, mx, my);
+      return;
+    }
     const kindLbl = v.kind === "freighter" ? "NPC freighter" : v.relief ? "relief trader" : "NPC trader";
     const docksIn = Util.duration(Math.max(0, Piracy.landsAt(v) - Date.now()));
     let html = `<b>${Util.esc(v.name)}</b>
@@ -2431,6 +2524,12 @@ const StarMap = {
     }
     html += this._flightVerbBlock(v, sysId);
     tip.innerHTML = html;
+    this._placeTip(tip, mx, my);
+    this._wireFlightTip(v, sysId);
+  },
+
+  // Shared card layout: lay it out first (heights vary), then clamp into view.
+  _placeTip(tip, mx, my) {
     tip.style.pointerEvents = "auto";
     tip.style.display = "block";
     const cr = this.refs.canvas.getBoundingClientRect();
@@ -2438,7 +2537,6 @@ const StarMap = {
     const tw = tip.offsetWidth || 240, th = tip.offsetHeight || 90;
     tip.style.left = Math.max(6, Math.min(cr.left - vr.left + mx + 14, vr.width - tw - 6)) + "px";
     tip.style.top = Math.max(6, Math.min(cr.top - vr.top + my + 14, vr.height - th - 6)) + "px";
-    this._wireFlightTip(v, sysId);
   },
 
   _flightVerbBlock(v, sysId) {
@@ -2478,6 +2576,12 @@ const StarMap = {
       } else {
         parts.push(`${vb} ${Math.round(Piracy.chance(shipUid, v, sysId, vb) * 100)}% · +${vb === "rob" ? g.piracy : g.toll} crime`);
       }
+    }
+    // The other half of the quote (police.js): how likely a successful rob is
+    // to draw a patrol response here. The same number pursue() rolls against.
+    if (window.Police && window.Security && Piracy.verbs(v, sysId).includes("rob")) {
+      const p = Police.responseChance(Security.score(sysId));
+      if (p > 0) parts.push(`🚨 law answers ${Math.round(p * 100)}%`);
     }
     return parts.join(" · ");
   },
