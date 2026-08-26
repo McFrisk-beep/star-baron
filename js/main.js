@@ -1013,6 +1013,9 @@ const Game = {
           if (qty > 0) Assets.parkBlocks(p.fromSys, id, qty);
         }
       }
+      // A manhunt ended the run before the verb — report it as itself, not as
+      // a failed rob (the rob never happened).
+      if (p.manhunt) { Bus.emit("manhunt", p.manhunt); continue; }
       Bus.emit("piracyResolved", p);
       if (p.chase) Bus.emit("policeChase", p.chase);
     }

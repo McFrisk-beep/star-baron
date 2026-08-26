@@ -256,7 +256,29 @@ const Voyages = {
       const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
       if (now < op.resolveAt) {
         const plan = this.plan(op.fromSys, op.sysId, op.startedAt, op.resolveAt - op.startedAt);
-        if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
+        // The manhunt cuts the hull off partway out: both stop dead on the
+        // lane and circle, exactly as the post-robbery duel does, only here
+        // it happens before the mark is ever reached.
+        const mhAt = Piracy.manhuntAt(op), mhEnd = Piracy.manhuntEndAt(op);
+        const cut = plan && mhAt !== Infinity ? this.pos(plan, mhAt) : null;
+        if (cut && now >= mhAt && now < mhEnd) {
+          out.push({ ...base, id: "pr:mh:" + op.id, duel: true,
+            label: (sh ? sh.name : "Raider") + " — run down by a patrol",
+            at: this._circle(cut, now, 0) });
+          out.push({ id: "pr:mh:pol:" + op.id, kind: "police", police: true,
+            pair: true, npc: true, duel: true,
+            name: "Senate Manhunt", label: "Senate Manhunt",
+            sprite: "race:voidkin", manifest: [], at: this._circle(cut, now, Math.PI) });
+        } else if (cut && now >= mhEnd && Piracy.manhunt(op).caught) {
+          const wreckMs = (window.POLICECFG || {}).wreckMs || 0;
+          if (now < mhEnd + wreckMs) {
+            out.push({ id: "pr:mh:boom:" + op.id, kind: "wreck", boom: true, you: true,
+              at: this._circle(cut, mhEnd, 0),
+              label: (sh ? sh.name : "Your hull") + " — lost to a manhunt" });
+          }
+        } else if (plan) {
+          out.push({ ...base, plan, at: this.pos(plan, now) });
+        }
       } else if (now < settle) {
         // At the scene: the boarding, then — if the law answered — holding
         // for the pair to close, then the duel itself.

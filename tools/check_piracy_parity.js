@@ -97,6 +97,22 @@ function sqlChase(op, atk) {
   return { waves, destroyed, caught, escaped, item, dmg, crime, waveList };
 }
 
+// ---- 1c. the mirror: app._police_manhunt, transcribed ----------------------
+function sqlManhunt(op, atk, crime) {
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+  if (crime < 300) return null;
+  const over = Math.max(crime - 300, 0);
+  const chance = clamp(0.45 * (1 + over / 100 * 0.25), 0, 0.9);
+  const s = Market._fnv1a(["cosmocrat-market-v1", "manhunt", op.id].join("|"));
+  if (Market._u01(s, 0) >= chance) return null;
+  const law = clamp(op.law != null ? +op.law : 0.5, 0, 1);
+  const def = 700 * (1 + law * 1.4);
+  const broke = Market._u01(s, 1) < clamp(atk / (atk + def), 0.02, 0.75);
+  return { broke, caught: !broke,
+    dmg: broke ? 0.06 + Market._u01(s, 2) * 0.10 : 0,
+    frac: 0.30 + Market._u01(s, 3) * 0.40 };
+}
+
 // ---- the sweep -------------------------------------------------------------
 {
   const VERBS = ["rob", "toll", "escort"], KINDS = ["freighter", "trader"];
@@ -157,6 +173,33 @@ function sqlChase(op, atk) {
     `the sweep saw responses, catches and kills (${responses}/${caughts}/${kills})`);
 }
 
+{
+  // The manhunt: the JS rolls and the SQL mirror must agree wave for wave,
+  // and the crime GATE must bite at exactly the criminal line.
+  let hunts = 0, kills = 0, broke = 0;
+  for (let i = 0; i < 3000; i++) {
+    const op = { id: "mh" + i, law: ((i * 23) % 101) / 100 };
+    const atk = [80, 240, 700, 1800, 3400][i % 5];
+    const crime = [0, 100, 299, 300, 420, 900][i % 6];
+    const js = Police.manhuntOutcome(op, atk, crime), sq = sqlManhunt(op, atk, crime);
+    assert.strictEqual(!!js, !!sq, `manhunt ${i}: same gate`);
+    if (crime < 300) assert.strictEqual(js, null, `manhunt ${i}: under the line, no hunt`);
+    if (!sq) continue;
+    hunts++;
+    if (sq.caught) kills++; else broke++;
+    assert.strictEqual(js.broke, sq.broke, `manhunt ${i}: same verdict`);
+    assert.strictEqual(js.caught, sq.caught, `manhunt ${i}: same catch`);
+    assert.ok(Math.abs(js.dmg - sq.dmg) < 1e-9, `manhunt ${i}: same damage`);
+    assert.ok(Math.abs(js.frac - sq.frac) < 1e-9, `manhunt ${i}: same contact point`);
+    assert.ok(js.frac >= 0.30 && js.frac <= 0.70, `manhunt ${i}: contact inside the outbound leg`);
+  }
+  assert.ok(hunts > 300 && kills > 50 && broke > 50,
+    `the sweep saw hunts, kills and breaks (${hunts}/${kills}/${broke})`);
+  // A heavier record is hunted harder.
+  assert.ok(Police.manhuntChance(900) > Police.manhuntChance(300), "a worse record draws more hunts");
+  assert.ok(Police.manhuntChance(1000) <= POLICECFG.manhuntClamp[1], "never a certainty");
+}
+
 // ---- 2. the static read: every constant still agrees -----------------------
 const has = (re, why) => assert.ok(re.test(SQL), why);
 const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringify(b), why);
@@ -214,6 +257,19 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   has(/'\{chaseLenMs\}', to_jsonb\(/, "\u2026stamps the chase length on the op at settle\u2026");
   has(/\(op->>'chaseLenMs'\)::float8 else 0 end\n?\s*and coalesce\(\(op->>'resolved'\)/,
     "\u2026and adds it to the landing gate, so the run home departs after the duel (Piracy.landAt)");
+  // The manhunt (CRIMECFG.criminal and above).
+  assert.strictEqual(POLICECFG.manhuntBase, 0.45, "manhuntBase");
+  assert.strictEqual(POLICECFG.manhuntPer100, 0.25, "manhuntPer100");
+  eqArr(POLICECFG.manhuntClamp, [0, 0.9], "manhuntClamp");
+  eqArr(POLICECFG.manhuntAt, [0.30, 0.70], "manhuntAt");
+  assert.strictEqual(CRIMECFG.criminal, 300, "criminal — the manhunt line");
+  has(/if p_crime < 300 then return null; end if;/, "SQL gates the manhunt on the criminal line");
+  has(/0\.45 \* \(1 \+ over \/ 100 \* 0\.25\), 0\), 0\.9\)/, "SQL manhunt odds match the config");
+  has(/0\.30 \+ market\.u01\(s, 3\) \* 0\.40/, "SQL contact point matches manhuntAt");
+  has(/'\{mh\}', 'true'::jsonb/, "SQL once-gates the manhunt on op.mh");
+  has(/least\(40000\.0,\n?\s*greatest\(0, \(coalesce\(\(op->>'resolveAt'\)::float8, 0\) - mh_end\) \* 0\.9\)\)/,
+    "SQL clamps the manhunt duel to the outbound leg, like Piracy.manhuntEndAt");
+  has(/if ship_gone then continue; end if;/, "…and drops the op when the hull is taken");
   // Destruction on capture: the ship row is removed, not damaged.
   has(/where x\.value->>'uid' <> op->>'shipUid'/, "SQL removes a run-down hull from the fleet");
   has(/and not coalesce\(\(chase->>'caught'\)::boolean, false\)/, "…and skips its repair bill");

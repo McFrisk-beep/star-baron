@@ -380,4 +380,83 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   if (flag) assert.strictEqual(flag.tag.id, "criminal", "the flagship flies the tag");
 }
 
+// ---- the manhunt: past the criminal line, the law takes you on the way OUT -
+const mhOp = (c, shipUid, from) => ({
+  id: "prM", verb: "rob", shipUid, sysId: "navos", toSys: "navos", fromSys: from,
+  law: 0.8, chance: 1, atk: 400, cargo: 50, value: 500, kind: "freighter",
+  manifest: ["foodstuffs"], name: "Mark", startedAt: T0, travelMs: 60000,
+  resolveAt: T0 + 60000, returnAt: T0 + 120000, resolved: false,
+});
+{
+  const c = boot();
+  const sh = armed(c, "corvette");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  // Under the line the law waits for a crime — no hunt at all.
+  c.Game.state.crime = c.CRIMECFG.criminal - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "under the criminal line, nobody is hunting");
+  assert.strictEqual(c.Piracy.manhuntAt(op), Infinity, "…so there is no contact time");
+  // At the line they come.
+  c.POLICECFG.manhuntClamp = [1, 1];       // they always find the hull
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  const mh = c.Piracy.manhunt(op);
+  assert.ok(mh, "at the criminal line the hunt is on");
+  assert.ok(mh.frac >= c.POLICECFG.manhuntAt[0] && mh.frac <= c.POLICECFG.manhuntAt[1],
+    "…cutting in partway along the outbound leg");
+  assert.ok(c.Piracy.manhuntAt(op) > op.startedAt && c.Piracy.manhuntEndAt(op) < op.resolveAt,
+    "…and it is settled before the mark is ever reached");
+  // Lying low calls them off, live — the gate is not stamped on the op.
+  c.Game.state.crime = c.CRIMECFG.criminal - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "dropping under the line calls them off mid-flight");
+}
+
+// Run down by a manhunt: the hull is destroyed before the rob ever happens.
+{
+  const c = boot();
+  c.POLICECFG.manhuntClamp = [1, 1];
+  c.POLICECFG.destroyClamp = [0, 0];       // the pair cannot be broken
+  const sh = armed(c, "corvette");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  c.Game.state.piracy = [op];
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  sh.status = "raiding";
+  const made = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 1);
+  assert.strictEqual(made.length, 1, "one verdict — the manhunt");
+  const m = made[0].piracy.manhunt;
+  assert.ok(m && m.caught && m.lost && m.lost.uid === sh.uid, "the hull was run down and lost");
+  assert.ok(!c.Game.state.ships.includes(sh), "…and is gone from the fleet");
+  assert.strictEqual(c.Game.state.piracy.length, 0, "the op dies with the ship");
+  assert.strictEqual(Object.keys(c.Game.state.positions).length, 0, "the rob never happened — no loot");
+  const rep = c.Game.state.reports.find(r => r.uid === m.report);
+  assert.ok(rep && rep.wipe && !rep.success && rep.faction === "police", "filed as a police wipe");
+  assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
+}
+
+// Shot their way clear: damaged, charged for the pair, and the run continues.
+{
+  const c = boot();
+  c.POLICECFG.manhuntClamp = [1, 1];
+  c.POLICECFG.destroyClamp = [1, 1];       // every pair breaks
+  c.POLICECFG.responseClamp = [0, 0];      // no post-rob chase, to isolate this
+  const sh = armed(c, "cruiser");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  c.Game.state.piracy = [op];
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  sh.status = "raiding";
+  const crime0 = c.Crime.value();
+  const made = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 1);
+  const m = made[0].piracy.manhunt;
+  assert.ok(m && !m.caught && !m.lost, "the hull shot its way clear");
+  assert.ok(c.Game.state.ships.includes(sh), "…and survives");
+  assert.ok(sh.dmg > 0, "…carrying a repair bill");
+  assert.strictEqual(c.Crime.value(), crime0 + c.CRIMECFG.gain.police, "breaking a pair is charged");
+  assert.strictEqual(c.Game.state.piracy.length, 1, "the run continues to the mark");
+  assert.ok(op.mh, "…and the manhunt is once-gated");
+  // It does not fire twice, however often the loop runs.
+  const again = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 2000);
+  assert.ok(!again.some(x => x.piracy && x.piracy.manhunt), "a manhunt resolves exactly once");
+}
+
 console.log("OK check_police");

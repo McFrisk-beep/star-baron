@@ -724,6 +724,15 @@ const POLICECFG = {
   duelTurnMs: 18 * 1000,         // one slow revolution
   duelRadius: 0.014,             // galaxy-fraction separation between the two
   wreckMs: 3 * 1000,             // how long the loser's fireball stays on the chart
+  // THE MANHUNT (CRIMECFG.criminal and above). Past the criminal line the law
+  // stops waiting for you to commit a crime: a patrol that finds one of your
+  // dispatched hulls in its lane runs it down. Only fleet ships you SENT are
+  // hunted — the flagship you fly yourself is never taken, so a criminal
+  // record makes you unable to work, never unable to play.
+  manhuntBase: 0.45,             // odds a patrol finds the hull at all
+  manhuntPer100: 0.25,           // +this much, relatively, per 100 over the line
+  manhuntClamp: [0, 0.9],
+  manhuntAt: [0.30, 0.70],       // where in the outbound leg they cut you off
 };
 
 // The police-only accessory, stripped from a broken patrol ship. Deliberately

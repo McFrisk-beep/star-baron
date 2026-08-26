@@ -29,7 +29,13 @@
      The stakes are real: being run down costs the stolen cargo (recovered to
      the shelf it was bound for) AND the raiding hull itself — destroyed with
      all hands. Piracy risks the ship you fly it with; banked stock and
-     credits are still never touched.                                         */
+     credits are still never touched.
+
+   • THE MANHUNT — past CRIMECFG.criminal the law stops waiting for a fresh
+     crime: a patrol runs a dispatched hull down on the way OUT, for the
+     record it already carries. No outrun branch (they chase until they catch
+     it): you break the pair or you lose the ship. Only hulls a baron SENT are
+     hunted — never the flagship they fly themselves.                        */
 
 const Police = {
   cfg() { return window.POLICECFG || {}; },
@@ -160,6 +166,59 @@ const Police = {
     return chase ? (c.arriveMs || 0) + chase.waves.length * (c.waveGapMs || 0) : 0;
   },
 
+  // ---- the manhunt (CRIMECFG.criminal and above) ---------------------------
+  // Past the criminal line a patrol no longer needs a fresh crime to act on:
+  // finding one of your dispatched hulls in its lane is enough. Pure of
+  // (op id, atk) exactly like the chase — the CRIME gate is read live on both
+  // sides (client Crime.value(), server state) rather than stamped on the op,
+  // so lying low genuinely calls them off mid-flight.
+  // "Chases until it catches on": there is no outrun branch. You break the
+  // pair or they take the hull.
+  manhuntChance(crime) {
+    const c = this.cfg();
+    const line = (window.CRIMECFG || {}).criminal || 300;
+    const over = Math.max(0, crime - line);
+    const cl = c.manhuntClamp || [0, 1];
+    return Util.clamp((c.manhuntBase || 0) * (1 + over / 100 * (c.manhuntPer100 || 0)), cl[0], cl[1]);
+  },
+  manhuntOutcome(op, atk, crime) {
+    const c = this.cfg();
+    const line = (window.CRIMECFG || {}).criminal || 300;
+    if (!(crime >= line)) return null;
+    const s = Market._seed(["manhunt", op.id]);
+    if (Market._u01(s, 0) >= this.manhuntChance(crime)) return null;
+    const law = Util.clamp(op.law != null ? +op.law : 0.5, 0, 1);
+    const def = this.pairScoreAt(law, 0);
+    const dCl = c.destroyClamp || [0, 1];
+    const broke = Market._u01(s, 1) < Util.clamp(atk / (atk + def), dCl[0], dCl[1]);
+    const dm = c.chaseDmg || [0, 0];
+    const at = c.manhuntAt || [0.3, 0.7];
+    return {
+      broke, caught: !broke,
+      dmg: broke ? dm[0] + Market._u01(s, 2) * (dm[1] - dm[0]) : 0,
+      frac: at[0] + Market._u01(s, 3) * (at[1] - at[0]),
+    };
+  },
+  // Apply a manhunt that has come due. Called once per op, under the caller's
+  // own once-gate, so offline equals online.
+  runManhunt(op, sh, mh, now = Date.now()) {
+    const out = { caught: !!mh.caught, crime: 0, item: null, lost: null,
+      report: null, ship: sh.name, sysId: op.sysId };
+    if (mh.broke) {
+      out.crime = ((window.CRIMECFG || {}).gain || {}).police || 0;
+      Fleet.addDamage(sh, mh.dmg);
+      out.report = this._fileReport(op, sh, 0, true, mh.dmg, now, null, "Manhunt");
+      if (out.crime && window.Crime) Crime.add(out.crime);
+    } else {
+      out.lost = { uid: sh.uid, name: sh.name };
+      out.report = this._fileReport(op, sh, 0, false, 0, now, out.lost, "Manhunt");
+      const st = window.Game.state;
+      st.ships = st.ships.filter(x => x.uid !== sh.uid);
+    }
+    if (window.Bus) Bus.emit("manhunt", out);
+    return out;
+  },
+
   // Resolve the pursuit for one robbed run. Called by Piracy.resolve exactly
   // once, under the op.resolved gate, so applying effects here keeps offline
   // equal to online. All rolls come from chaseOutcome(); this applies them.
@@ -203,13 +262,13 @@ const Police = {
   // template (a run for the gate, pursuers cutting angles) and lands in
   // Comms → Dispatches like any engagement. Combat's police flavour fields
   // the ENEMY_CATALOG.police hulls, tier rising with the wave.
-  _fileReport(op, sh, wave, success, dmg, now, lost) {
+  _fileReport(op, sh, wave, success, dmg, now, lost, kindLabel) {
     const s = window.Game.state;
     if (!s.reports) s.reports = [];
     const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
     const report = {
-      uid: op.id + "w" + wave,
-      title: `${["Patrol response", "Reinforced response", "Vanguard response"][Math.min(wave, 2)]}`
+      uid: op.id + (kindLabel ? "mh" : "w") + wave,
+      title: (kindLabel || ["Patrol response", "Reinforced response", "Vanguard response"][Math.min(wave, 2)])
         + (sys ? ` — ${sys.name}` : ""),
       type: "smuggle", success, ts: now, faction: "police", police: true,
       danger: ["moderate", "high", "extreme"][Math.min(wave, 2)],

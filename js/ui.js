@@ -4242,6 +4242,17 @@ const UI = {
         .map(m => ({ ...m.piracy, ship: Util.esc(m.piracy.ship), name: Util.esc(m.piracy.name) }));
       for (const p of runs) {
         const where = this.sysName(p.sysId);
+        // A manhunt ended the run before the mark — the verb never happened,
+        // so none of the rob/toll/escort lines below apply.
+        if (p.manhunt) {
+          html += p.manhunt.lost
+            ? `<p class="down">🚨 A Senate manhunt ran <b>${Util.esc(p.manhunt.ship || p.ship)}</b> down near ${where} `
+              + `— destroyed with all hands, before it ever reached the mark. `
+              + `<span class="muted-note">(criminal record — replay is in Dispatches)</span></p>`
+            : `<p>🚨 A Senate manhunt caught ${p.ship} near ${where} on the way out — the hull shot its way clear `
+              + `· +${p.manhunt.crime} crime. <span class="muted-note">(replay is in Dispatches)</span></p>`;
+          continue;
+        }
         if (p.verb === "escort") {
           html += `<p class="up">🛡 ${p.ship} escorted ${p.name} in near ${where} — +${Util.credits(p.credits)}c, lawful work.</p>`;
         } else if (!p.won) {
@@ -4732,6 +4743,28 @@ const UI = {
       this.toast(`🚨 A Senate patrol is burning for ${this.sysName(op.sysId)} — the hauler jumps clear. `
         + `Your hull runs for home with the take.`, "bad", 8000);
       this.audioSafe("news");
+    });
+    Bus.on("manhuntEngaged", ({ op }) => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      this.toast(`🚨 A Senate patrol cut ${sh ? sh.name : "your hull"} off en route to `
+        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason. Watch the chart.`,
+        "bad", 8000);
+      this.audioSafe("news");
+    });
+    Bus.on("manhunt", m => {
+      if (window.Game._booting) return;
+      const where = this.sysName(m.sysId);
+      const r = m.report ? (this.s().reports || []).find(x => x.uid === m.report) : null;
+      const msg = m.lost
+        ? `🚨 ${m.ship} was run down by a manhunt near ${where} and destroyed with all hands.`
+        : `🚨 ${m.ship} shot its way clear of a manhunt near ${where} — +${m.crime} crime. The Senate will remember.`;
+      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch it", m.lost ? "bad" : "good", 8000,
+        () => BattleView.open(r, { offered: true }));
+      else this.toast(msg, m.lost ? "bad" : "good", 8000);
+      this.audioSafe("news");
+      this.bumpComms();
+      if (this.page === "fleet") this.renderFleet();
     });
     Bus.on("policeEngaged", ({ op, chase }) => {
       if (window.Game._booting) return;

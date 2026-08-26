@@ -245,6 +245,33 @@ const Piracy = {
     return this.settleAt(op) + (op.travelMs || Math.max(1, op.returnAt - op.resolveAt));
   },
 
+  // ---- the manhunt (POLICECFG.manhunt*, CRIMECFG.criminal and above) -------
+  // Past the criminal line the law stops waiting for a fresh crime: a patrol
+  // cuts the hull off partway OUT, before it ever reaches the mark. Computed
+  // fresh rather than cached with preview(), because the gate reads live
+  // crime — dropping back under the line calls them off mid-flight.
+  manhunt(op) {
+    if (!window.Police || !window.Charters || !window.Crime) return null;
+    const sh = Fleet.ship(op.shipUid);
+    const atk = sh ? Charters.defenseScore(Charters.fleetStats([sh])) : (+op.atk || 0);
+    return Police.manhuntOutcome(op, atk, Crime.value());
+  },
+  manhuntAt(op) {
+    const mh = this.manhunt(op);
+    if (!mh) return Infinity;
+    const leg = op.travelMs || Math.max(1, op.resolveAt - op.startedAt);
+    return op.startedAt + leg * mh.frac;
+  },
+  // The duel window, clamped to what is left of the outbound leg: a short hop
+  // gets a short, brutal interception rather than one that overruns the mark.
+  // Mirrored in docs/sql/piracy_rpcs.sql.
+  manhuntEndAt(op) {
+    const at = this.manhuntAt(op);
+    if (at === Infinity) return Infinity;
+    const gap = (window.POLICECFG || {}).waveGapMs || 0;
+    return at + Math.min(gap, Math.max(0, (op.resolveAt - at) * 0.9));
+  },
+
   // ---- the intercept engagement (Dispatches ▶ Replay) ----------------------
   // The boarding action is a real report: free_trade flavour fields the
   // hauler's hired security, and policeInbound tells combat.js the law showed
@@ -291,6 +318,13 @@ const Piracy = {
     if (op.resolved || (window.Game && Game._booting)) return;
     if (now >= this.settleAt(op)) return;
     const seen = this._seenStage[op.id] || 0;
+    if (!seen && !op.mh && now >= this.manhuntAt(op) && now < this.manhuntEndAt(op)) {
+      if (!this._seenMh) this._seenMh = {};
+      if (!this._seenMh[op.id]) {
+        this._seenMh[op.id] = true;
+        if (window.Bus) Bus.emit("manhuntEngaged", { op, mh: this.manhunt(op) });
+      }
+    }
     if (seen < 1 && now >= op.resolveAt && op.verb !== "escort") {
       this._seenStage[op.id] = 1;
       if (window.Bus) Bus.emit("piracyEngaged", { op });
@@ -352,6 +386,24 @@ const Piracy = {
       if (!sh) { op._dead = true; delete this._pre[op.id]; continue; }  // hull gone — close out
       if (sh.status === "idle") sh.status = "raiding";   // self-heal after a merge reset
       this._announce(op, now);
+      // The manhunt comes due on the way OUT, before any boarding: a criminal
+      // baron's hull is run down for what it is, not for what it just did.
+      // Once-gated on op.mh so offline equals online.
+      if (!op.mh && !op.resolved && local && now >= this.manhuntEndAt(op)) {
+        const mh = this.manhunt(op);
+        if (mh) {
+          op.mh = true;
+          const out = Police.runManhunt(op, sh, mh, now);
+          made.push({ piracy: { verb: op.verb, won: false, manhunt: out,
+            name: op.name, kind: op.kind, sysId: op.sysId, fromSys: op.fromSys,
+            credits: 0, loot: null, dmg: mh.dmg, crime: out.crime, ship: sh.name } });
+          if (out.lost) {                 // hull gone — the op dies with it
+            op._dead = true;
+            delete this._pre[op.id]; delete this._seenStage[op.id];
+            continue;
+          }
+        }
+      }
       // Settle at settleAt, not resolveAt: the boarding action and the police
       // response take real time on the clock. Watched or AFK, the ledger
       // moves once, when the last stage would have played out.

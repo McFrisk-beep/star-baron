@@ -100,7 +100,25 @@
   stock and credits are still never touched. The whole op runs on a staged
   clock (`PIRACYCFG.battleMs` for the boarding, `POLICECFG.arriveMs` +
   `waveGapMs` per wave for the response) and settles once, at the end —
-  watched or AFK, the same ledger. Each destroyed pair adds
+  watched or AFK, the same ledger. The run home departs only after the scene
+  is over, and the chart shows it: both hulls hold station and circle a
+  common point while the guns work, then the loser leaves a fireball
+  (`duelTurnMs` / `duelRadius` / `wreckMs`, all pure of the stage clock, so
+  every watcher sees the same dance).
+
+- **The manhunt (§5.2, `POLICECFG.manhunt*`)** — past `CRIMECFG.criminal`
+  the law stops waiting for a fresh crime: a patrol cuts a dispatched hull
+  off partway OUT, before it reaches the mark, purely for the record it
+  carries. Odds scale with how far over the line the baron is
+  (`manhuntBase`, `manhuntPer100`, clamped), and there is no outrun branch —
+  you break the pair (hull damage, `CRIMECFG.gain.police`) or they take the
+  hull. The gate is read LIVE on both sides rather than stamped on the op,
+  so lying low genuinely calls them off mid-flight; the roll itself is
+  seeded on the op id like everything else. Only fleet ships a baron
+  *dispatched* are hunted — the flagship they fly themselves is never taken,
+  so a criminal record makes you unable to work, never unable to play.
+  `tools/check_piracy_parity.js` pins the JS and SQL rolls together and
+  `tools/check_police.js` covers the outcomes. Each destroyed pair adds
   `CRIMECFG.gain.police` (the worst charge on the books) and draws a heavier
   wave, up to `maxWaves`, and a broken pair sometimes yields `POLICE_ITEM` —
   the one accessory `Items.gen` cannot roll. This deliberately trades §5.2's
