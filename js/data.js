@@ -718,6 +718,12 @@ const POLICECFG = {
   // watched or AFK, the same clock. Mirrored in docs/sql/piracy_rpcs.sql.
   arriveMs: 25 * 1000,
   waveGapMs: 40 * 1000,
+  // The duel itself, once they close: both hulls hold station and circle a
+  // common point while the guns work. Purely presentational — the outcome was
+  // decided by the seeded rolls before a single frame drew.
+  duelTurnMs: 18 * 1000,         // one slow revolution
+  duelRadius: 0.014,             // galaxy-fraction separation between the two
+  wreckMs: 3 * 1000,             // how long the loser's fireball stays on the chart
 };
 
 // The police-only accessory, stripped from a broken patrol ship. Deliberately

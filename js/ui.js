@@ -4733,6 +4733,14 @@ const UI = {
         + `Your hull runs for home with the take.`, "bad", 8000);
       this.audioSafe("news");
     });
+    Bus.on("policeEngaged", ({ op, chase }) => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      this.toast(`⚔ The patrol has ${sh ? sh.name : "your hull"} at ${this.sysName(op.sysId)} — `
+        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing. Watch the chart.`, "bad", 7000);
+      this.audioSafe("news");
+      if (window.StarMap) StarMap.refreshInfo();
+    });
     Bus.on("piracyResolved", p => {
       if (window.Game._booting) return;   // offline verdicts land in the "while you were away" recap
       const where = this.sysName(p.sysId);

@@ -236,7 +236,14 @@ const Piracy = {
     const p = this.preview(op);
     return this.robEndAt(op) + (p.chase && window.Police ? Police.chaseLenMs(p.chase) : 0);
   },
-  landAt(op) { return Math.max(op.returnAt + this.battleMs(), this.settleAt(op)); },
+  // When the law arrives and the duel opens — the hulls stop running and
+  // fight at the scene (POLICECFG.arriveMs after the boarding ends).
+  duelAt(op) { return this.robEndAt(op) + ((window.POLICECFG || {}).arriveMs || 0); },
+  // The run home departs when everything at the scene is over: no chase means
+  // settleAt === robEndAt, so this is one rule for both cases.
+  landAt(op) {
+    return this.settleAt(op) + (op.travelMs || Math.max(1, op.returnAt - op.resolveAt));
+  },
 
   // ---- the intercept engagement (Dispatches ▶ Replay) ----------------------
   // The boarding action is a real report: free_trade flavour fields the
@@ -291,6 +298,10 @@ const Piracy = {
     if ((this._seenStage[op.id] || 0) < 2 && now >= this.robEndAt(op) && this.preview(op).chase) {
       this._seenStage[op.id] = 2;
       if (window.Bus) Bus.emit("policeInbound", { op, waves: this.preview(op).chase.waves.length });
+    }
+    if ((this._seenStage[op.id] || 0) < 3 && now >= this.duelAt(op) && this.preview(op).chase) {
+      this._seenStage[op.id] = 3;
+      if (window.Bus) Bus.emit("policeEngaged", { op, chase: this.preview(op).chase });
     }
   },
 

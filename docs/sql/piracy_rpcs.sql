@@ -545,15 +545,25 @@ begin
       end if;
       runs := runs || jsonb_build_array(entry);
 
+      -- The landing gate below needs the chase's length on later pulls, when
+      -- `resolved` short-circuits the pre-read. Stamp it once, here.
+      op := jsonb_set(op, '{chaseLenMs}', to_jsonb(
+        case when chase is not null
+             then 25000.0 + coalesce(jsonb_array_length(chase->'waveList'), 0) * 40000.0
+             else 0 end));
+
       -- A run-down hull never lands: the op dies with the ship, here.
       if coalesce((chase->>'caught')::boolean, false) then continue; end if;
     end if;
 
-    -- Home with the take: bank the loot, flag it hot, free the hull. The
-    -- return leg departs when the boarding ends, so landing is returnAt +
-    -- battleMs 30000 (Piracy.landAt) — and `resolved` implies the settle
-    -- clock already ran, so the max() the client takes is implicit here.
+    -- Home with the take. The run home only departs once everything at the
+    -- scene is over — the boarding, and the duel if the law answered — so
+    -- landing is settleAt + the return leg (Piracy.landAt). settleAt is
+    -- resolveAt + 30000 + chase_len and travelMs is returnAt - resolveAt,
+    -- which makes that exactly returnAt + 30000 + chase_len.
     if p_now_ms >= coalesce((op->>'returnAt')::float8, 0) + 30000.0
+         + case when coalesce((op->>'chaseLenMs')::float8, -1) >= 0
+                then (op->>'chaseLenMs')::float8 else 0 end
        and coalesce((op->>'resolved')::boolean, false) then
       if op->'loot' is not null and op->'loot' <> 'null'::jsonb then
         for e in select key as k, (value#>>'{}')::int as q from jsonb_each(op->'loot') loop

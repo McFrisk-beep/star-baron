@@ -148,6 +148,17 @@ const Voyages = {
   // ---- own voyages: projections of existing state --------------------------
   // Each: { id, kind, label, name?, you:true, sprite, plan?|sysId, at? }
   //   at = pos() result when moving; sysId set when parked in a system.
+  // Two hulls holding station and circling a common point — the shape a duel
+  // takes on the chart. Pure of the clock (no state, no easing), so it draws
+  // identically for every watcher. `phase` puts the two on opposite arcs.
+  _circle(center, now, phase) {
+    const c = window.POLICECFG || {};
+    const turn = c.duelTurnMs || 18000, r = c.duelRadius || 0.014;
+    const th = (now % turn) / turn * Math.PI * 2 + phase;
+    return { x: center.x + Math.cos(th) * r, y: center.y + Math.sin(th) * r,
+      heading: th + Math.PI / 2, a: null, b: null, leg: 0, p: 0.5, legP: 0.15 };
+  },
+
   active(now = Date.now()) {
     const s = this.s();
     if (!s || !window.Lanes || !Object.keys(Lanes.adj).length) return [];
@@ -227,44 +238,79 @@ const Voyages = {
       else if (p >= 0.45 && p < 0.55) out.push({ ...base, sysId: e.sysId, phaseLabel: "Charting the system" });
     }
 
-    // piracy intercepts — out to the mark, the boarding window, the run home.
-    // The stage clock is derived (Piracy.settleAt), so this is a pure view; a
-    // run-down hull's marker dies with the ship at the settle.
+    // piracy intercepts — out to the mark, the boarding, the duel, the run
+    // home. Every stage time is derived (Piracy.robEndAt/duelAt/settleAt), so
+    // this stays a pure view of the clock: two watchers see the same dance,
+    // and a closed tab misses the movie but never the ledger.
     if (window.Piracy && window.Fleet) for (const op of s.piracy || []) {
-      if (!Galaxy.get(op.sysId) || !Galaxy.get(op.fromSys) || op.sysId === op.fromSys) continue;
+      const scene = Galaxy.get(op.sysId);
+      if (!scene || !Galaxy.get(op.fromSys) || op.sysId === op.fromSys) continue;
       const sh = Fleet.ship(op.shipUid);
       const base = { id: "pr:" + op.id, kind: "raider", you: true,
+        name: sh ? sh.name : "Raider",
         label: (sh ? sh.name : "Raider") + " — intercept",
         sprite: sh ? this._fleetSprite([sh.uid]) : "ship:sparrow" };
-      const robEnd = Piracy.robEndAt(op), settle = Piracy.settleAt(op);
+      const robEnd = Piracy.robEndAt(op), duelOn = Piracy.duelAt(op), settle = Piracy.settleAt(op);
       const pre = Piracy.preview(op);
+      const chase = pre.chase;
+      const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
       if (now < op.resolveAt) {
         const plan = this.plan(op.fromSys, op.sysId, op.startedAt, op.resolveAt - op.startedAt);
         if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
-      } else if (now < robEnd) {
-        out.push({ ...base, sysId: op.sysId,
-          phaseLabel: op.verb === "escort" ? "Flying escort" : op.verb === "toll" ? "Shaking the captain down" : "Boarding action" });
-      } else if (!(pre.chase && pre.chase.caught && now >= settle)) {
-        const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
-        const plan = this.plan(op.sysId, op.fromSys, robEnd, legMs);
+      } else if (now < settle) {
+        // At the scene: the boarding, then — if the law answered — holding
+        // for the pair to close, then the duel itself.
+        if (chase && now >= duelOn) {
+          // Both hulls stop dead and circle a common point while the guns
+          // work. Fresh marker ids so the renderer builds them with the
+          // duel's own furniture (muzzle flashes) instead of reusing the
+          // transit element.
+          out.push({ ...base, id: "pr:duel:" + op.id, duel: true,
+            label: (sh ? sh.name : "Raider") + " — under fire",
+            at: this._circle(scene.pos, now, 0) });
+          out.push({ id: "pr:duel:pol:" + op.id, kind: "police", police: true,
+            pair: true, npc: true, duel: true,
+            name: "Senate Response", label: "Senate Response",
+            sprite: "race:voidkin", manifest: [],
+            at: this._circle(scene.pos, now, Math.PI) });
+        } else {
+          out.push({ ...base, sysId: op.sysId,
+            phaseLabel: now < robEnd
+              ? (op.verb === "escort" ? "Flying escort" : op.verb === "toll" ? "Shaking the captain down" : "Boarding action")
+              : "Holding — patrol closing" });
+        }
+      } else if (!(chase && chase.caught)) {
+        // Survived the scene: the run home departs at the settle.
+        const plan = this.plan(op.sysId, op.fromSys, settle, legMs);
         const at = plan && this.pos(plan, now);
         if (at && at.p < 1) out.push({ ...base, plan, at });
       }
-      // The law, burning for the scene from the sector's precinct once the
-      // boarding ends — POLICECFG.arriveMs of flight, then the fight is the
-      // chase reports' business.
-      if (pre.chase && now >= robEnd && now < settle && window.Police && window.Stock) {
+      // The law burning in from the sector's precinct, between the boarding
+      // ending and the pair arriving on station.
+      if (chase && now >= robEnd && now < duelOn && window.Police && window.Stock) {
         const sec = Galaxy.sectors.find(x => x.id === Stock.sectorOf(op.sysId));
         const home = sec && sec.systems.find(id => (Galaxy.get(id) || {}).capital && Police.hasPrecinct(id));
-        if (home && home !== op.sysId) {
-          const plan = this.plan(home, op.sysId, robEnd, (window.POLICECFG || {}).arriveMs || 25000);
-          const at = plan && this.pos(plan, now);
-          if (at && at.p < 1) out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
-            pair: true, npc: true, name: "Senate Response", label: "Senate Response",
-            sprite: "race:voidkin", manifest: [], plan, at });
-        }
+        const plan = home && home !== op.sysId
+          ? this.plan(home, op.sysId, robEnd, Math.max(1, duelOn - robEnd)) : null;
+        const at = plan && this.pos(plan, now);
+        if (at && at.p < 1) out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
+          pair: true, npc: true, name: "Senate Response", label: "Senate Response",
+          sprite: "race:voidkin", manifest: [], plan, at });
+      }
+      // The fireball. Whoever lost the duel burns at the scene for a beat
+      // after the settle — the only way the chart ever says who died.
+      const wreck = (window.POLICECFG || {}).wreckMs || 0;
+      if (chase && now >= settle && now < settle + wreck) {
+        out.push({ id: "pr:boom:" + op.id, kind: "wreck", boom: true, npc: !chase.caught,
+          you: !!chase.caught, at: this._circle(scene.pos, settle, chase.caught ? 0 : Math.PI),
+          label: chase.caught ? (sh ? sh.name : "Your hull") + " — lost with all hands"
+                              : "Senate patrol — destroyed" });
       }
     }
+    // Every hull a baron has in the black flies their crime tag once the
+    // record leaves clean — one read, applied to whatever active() produced.
+    const tag = window.Crime ? Crime.tag() : null;
+    if (tag) for (const v of out) if (v.you) v.tag = tag;
     return out;
   },
 

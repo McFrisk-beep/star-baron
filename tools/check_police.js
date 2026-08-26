@@ -259,4 +259,125 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   }
 }
 
+// ---- the duel on the chart: stages, and who is left standing ---------------
+// The visual is a pure view of the derived stage clock, so it can be driven
+// headlessly: sample Voyages.active() at each stage and assert what is drawn.
+{
+  const c = boot();
+  c.POLICECFG.responseClamp = [1, 1];      // the law always answers
+  c.POLICECFG.destroyClamp = [0, 0];       // …and can't be broken
+  c.POLICECFG.catchClamp = [1, 1];         // …so it runs the hull down
+  // Dispatch from a NEIGHBOUR of the mark, so there is a real outbound leg to
+  // draw (a same-system intercept has no transit and is skipped by design).
+  let v = null, t = T0, sysId = null, from = null;
+  for (let m = 0; m < 240 && !v; m++) {
+    t = T0 + m * 60000;
+    for (const x of c.Traffic.flights(t)) {
+      if (x.kind !== "freighter" || x.raided || !x.manifest.length) continue;
+      if (c.Piracy.landsAt(x) - t < 12 * 60000) continue;
+      const at = x.plan.legs[0];
+      if (c.Security.bandOf(at).id === "policed") continue;
+      const nb = (c.Lanes.adj[at] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+      if (!nb) continue;
+      v = x; sysId = at; from = nb; break;
+    }
+  }
+  assert.ok(v, "an interceptable freighter with a neighbouring staging system exists");
+  c.Game.state.currentSystem = from;
+  const sh = armed(c, "corvette");
+  const r = c.Piracy.start(v, "rob", sh.uid, sysId, t);
+  assert.ok(r.ok, r.msg);
+  r.op.chance = 1;                          // force the rob so a chase forms
+  const op = r.op;
+  const ids = at => new Set(c.Voyages.active(at).map(m => m.id));
+  const mark = (at, id) => c.Voyages.active(at).find(m => m.id === id);
+
+  // Stage order is strictly increasing, and the run home now departs only
+  // after the duel is over (Piracy.landAt).
+  assert.ok(op.resolveAt < c.Piracy.robEndAt(op), "boarding follows the approach");
+  assert.ok(c.Piracy.robEndAt(op) < c.Piracy.duelAt(op), "the law needs arriveMs to close");
+  assert.ok(c.Piracy.duelAt(op) < c.Piracy.settleAt(op), "the duel takes the wave windows");
+  assert.ok(c.Piracy.landAt(op) > c.Piracy.settleAt(op), "the run home departs after the settle");
+
+  // Outbound.
+  assert.ok(ids(op.startedAt + 1000).has("pr:" + op.id), "the raider flies out on the chart");
+  // Boarding: parked at the mark, no duel yet.
+  const board = mark(op.resolveAt + 1000, "pr:" + op.id);
+  assert.ok(board && board.sysId === op.sysId, "…and parks at the mark to board");
+  assert.ok(!ids(op.resolveAt + 1000).has("pr:duel:" + op.id), "no duel while boarding");
+  // The law inbound — only drawable when the sector actually seats a precinct
+  // somewhere other than the scene. Rob-able space often doesn't, and the
+  // duel below is what carries the read either way.
+  const secOf = c.Galaxy.sectors.find(x => x.systems.includes(op.sysId));
+  const seat = secOf && secOf.systems.find(id => (c.Galaxy.get(id) || {}).capital && c.Police.hasPrecinct(id));
+  if (seat && seat !== op.sysId) {
+    assert.ok(ids(c.Piracy.robEndAt(op) + 1000).has("pr:pol:" + op.id),
+      "the patrol burns for the scene once the boarding ends");
+  }
+  const mid = c.Piracy.duelAt(op) + 5000;
+  const you = mark(mid, "pr:duel:" + op.id), law = mark(mid, "pr:duel:pol:" + op.id);
+  assert.ok(you && law, "the duel draws BOTH hulls");
+  assert.ok(you.duel && law.duel && law.police, "…flagged as a duel, the law as police");
+  const sep = Math.hypot(you.at.x - law.at.x, you.at.y - law.at.y);
+  assert.ok(Math.abs(sep - 2 * c.POLICECFG.duelRadius) < 1e-9, "…on opposite arcs of one circle");
+  // Circling: the pair moves, but stays on the circle (holding station).
+  const later = c.Piracy.duelAt(op) + 5000 + c.POLICECFG.duelTurnMs / 4;
+  const you2 = mark(later, "pr:duel:" + op.id);
+  assert.ok(Math.hypot(you2.at.x - you.at.x, you2.at.y - you.at.y) > 1e-6, "the hulls circle");
+  const scene = c.Galaxy.get(op.sysId).pos;
+  for (const m of [you, law, you2]) {
+    const rad = Math.hypot(m.at.x - scene.x, m.at.y - scene.y);
+    assert.ok(Math.abs(rad - c.POLICECFG.duelRadius) < 1e-9, "…and never drift off the scene");
+  }
+  // The settle: this hull was run down, so it burns and never flies home.
+  const boom = mark(c.Piracy.settleAt(op) + 500, "pr:boom:" + op.id);
+  assert.ok(boom && boom.boom && boom.you, "the loser leaves a fireball");
+  assert.ok(!ids(c.Piracy.settleAt(op) + 500).has("pr:" + op.id), "…and no hull flies home");
+  const after = c.Piracy.settleAt(op) + c.POLICECFG.wreckMs + 1000;
+  assert.ok(!ids(after).has("pr:boom:" + op.id), "the fireball burns out");
+}
+
+// ---- a survivor flies home, and the fireball is the PATROL's --------------
+{
+  const c = boot();
+  c.POLICECFG.responseClamp = [1, 1];
+  c.POLICECFG.destroyClamp = [1, 1];        // every pair breaks
+  const sh = armed(c, "cruiser");
+  const home = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = { id: "prD", verb: "rob", shipUid: sh.uid, sysId: "navos", toSys: "navos",
+    fromSys: home, law: 0.8, chance: 1, atk: 3000, cargo: 50, value: 500,
+    kind: "freighter", manifest: ["foodstuffs"], name: "Mark",
+    startedAt: T0, travelMs: 60000, resolveAt: T0 + 60000, returnAt: T0 + 120000,
+    resolved: false };
+  {
+    assert.ok(home, "navos has a lane neighbour to stage from");
+    c.Game.state.piracy = [op];
+    c.Game.state.currentSystem = home;
+    const pre = c.Piracy.preview(op);
+    assert.ok(pre.chase && !pre.chase.caught, "the hull broke every wave");
+    const boom = c.Voyages.active(c.Piracy.settleAt(op) + 500).find(m => m.id === "pr:boom:" + op.id);
+    assert.ok(boom && !boom.you, "the PATROL is the wreck when the raider wins");
+    const runner = c.Voyages.active(c.Piracy.settleAt(op) + 2000).find(m => m.id === "pr:" + op.id);
+    assert.ok(runner && runner.plan, "…and the survivor flies home after the duel");
+  }
+}
+
+// ---- the crime tag rides on every hull a baron has out ---------------------
+{
+  const c = boot();
+  c.Game.state.crime = 0;
+  assert.strictEqual(c.Crime.tag(), null, "a clean record flies no tag");
+  c.Game.state.crime = c.CRIMECFG.watch;
+  assert.strictEqual(c.Crime.tag().id, "watched", "the watch line tags Watchlisted");
+  c.Game.state.crime = c.CRIMECFG.lockout;
+  assert.strictEqual(c.Crime.tag().id, "barred", "…then Barred");
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  assert.strictEqual(c.Crime.tag().id, "criminal", "…then Criminal");
+  // And it reaches the markers active() produces.
+  c.Game.state.travel = { from: "navos", to: c.Galaxy.list.find(x => x.id !== "navos").id,
+    departedAt: T0, etaMs: 120000 };
+  const flag = c.Voyages.active(T0 + 1000).find(m => m.kind === "flagship");
+  if (flag) assert.strictEqual(flag.tag.id, "criminal", "the flagship flies the tag");
+}
+
 console.log("OK check_police");

@@ -210,7 +210,10 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   assert.strictEqual(POLICECFG.waveGapMs, 40000, "waveGapMs");
   has(/25000\.0 \+ coalesce\(jsonb_array_length\(chase->'waveList'\), 0\) \* 40000\.0/,
     "SQL settle waits arriveMs + waveGapMs per wave, like Piracy.settleAt");
-  has(/returnAt'\)::float8, 0\) \+ 30000\.0/, "SQL lands returnAt + battleMs, like Piracy.landAt");
+  has(/returnAt'\)::float8, 0\) \+ 30000\.0/, "SQL lands returnAt + battleMs\u2026");
+  has(/'\{chaseLenMs\}', to_jsonb\(/, "\u2026stamps the chase length on the op at settle\u2026");
+  has(/\(op->>'chaseLenMs'\)::float8 else 0 end\n?\s*and coalesce\(\(op->>'resolved'\)/,
+    "\u2026and adds it to the landing gate, so the run home departs after the duel (Piracy.landAt)");
   // Destruction on capture: the ship row is removed, not damaged.
   has(/where x\.value->>'uid' <> op->>'shipUid'/, "SQL removes a run-down hull from the fleet");
   has(/and not coalesce\(\(chase->>'caught'\)::boolean, false\)/, "…and skips its repair bill");

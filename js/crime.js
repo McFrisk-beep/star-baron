@@ -43,6 +43,14 @@ const Crime = {
     return out;
   },
   label(v = this.value()) { return this.tier(v).label; },
+  // The tag a baron's hulls fly under: null while the record is clean, the
+  // tier otherwise ("Watchlisted" at watch, "Barred" at lockout, "Criminal"
+  // at criminal). Read by the chart and the fleet list — a hot record should
+  // be legible on the ship, not buried in a Senate tab.
+  tag(v = this.value()) {
+    const t = this.tier(v);
+    return t.id === "clean" ? null : t;
+  },
   watched(v = this.value()) { return v >= this.cfg().watch; },
   locked(v = this.value()) { return v >= this.cfg().lockout; },      // Senate bars you
   isCriminal(v = this.value()) { return v >= this.cfg().criminal; },

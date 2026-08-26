@@ -147,6 +147,27 @@ const StarMap = {
         live.add(v.id);
         const el = this._voyEls[v.id] || (this._voyEls[v.id] = this._mkVoyEl(layer, v));
         el.g.setAttribute("transform", `translate(${(v.at.x * W).toFixed(1)},${(v.at.y * H).toFixed(1)})`);
+        // A wreck is a fireball, not a ship: it has no hull to turn or plume
+        // to flicker. Expand and fade over POLICECFG.wreckMs, then the live
+        // set drops it.
+        if (el.boom) {
+          const f = Util.clamp((now - el.t0) / ((window.POLICECFG || {}).wreckMs || 3000), 0, 1);
+          el.boom.setAttribute("r", (3 + f * 16).toFixed(1));
+          el.boom.setAttribute("opacity", (1 - f).toFixed(2));
+          if (el.ring) {
+            el.ring.setAttribute("r", (5 + f * 26).toFixed(1));
+            el.ring.setAttribute("opacity", ((1 - f) * 0.5).toFixed(2));
+          }
+          continue;
+        }
+        // Duel: guns working between two hulls holding station. The flash is
+        // a sawtooth on a fixed beat, jittered per marker so the two sides
+        // don't fire in lockstep.
+        if (el.flash) {
+          const beat = 640, k = ((now + el.jit) % beat) / beat;
+          el.flash.setAttribute("opacity", k < 0.32 ? (0.9 - k * 2.2).toFixed(2) : "0");
+          el.flash.setAttribute("r", (2.2 + k * 5).toFixed(1));
+        }
         // flown turns: ease the drawn heading toward the route bearing
         if (el.hdg == null) el.hdg = v.at.heading;
         const diff = Math.atan2(Math.sin(v.at.heading - el.hdg), Math.cos(v.at.heading - el.hdg));
@@ -187,6 +208,26 @@ const StarMap = {
   _mkVoyEl(layer, v) {
     const ns = "http://www.w3.org/2000/svg";
     const g = document.createElementNS(ns, "g");
+    // A wreck: the fireball a lost duel leaves behind. No hull, no plume —
+    // the tick expands and fades it, then it is gone.
+    if (v.boom) {
+      const ring = document.createElementNS(ns, "circle");
+      ring.setAttribute("class", "voy-boom-ring");
+      g.appendChild(ring);
+      const core = document.createElementNS(ns, "circle");
+      core.setAttribute("class", "voy-boom");
+      g.appendChild(core);
+      if (v.label) {
+        const t = document.createElementNS(ns, "text");
+        t.setAttribute("class", "voy-name boom");
+        t.setAttribute("y", -14);
+        t.textContent = v.label;
+        g.appendChild(t);
+      }
+      g.setAttribute("class", "voy " + (v.you ? "voy-fleets" : "voy-law"));
+      layer.appendChild(g);
+      return { g, boom: core, ring, t0: Date.now() };
+    }
     const hullG = document.createElementNS(ns, "g");   // rotates: plume + hull together
     const plume = document.createElementNS(ns, "polygon");
     plume.setAttribute("class", "voy-plume");
@@ -261,15 +302,41 @@ const StarMap = {
       const t = document.createElementNS(ns, "text");
       t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
       t.setAttribute("y", -11);
-      t.textContent = v.name;   // textContent — other barons' names are untrusted text
+      // textContent — other barons' names are untrusted text
+      t.textContent = v.name + (v.you && v.tag ? " · " + v.tag.label : "");
+      if (v.you && v.tag) t.setAttribute("fill", v.tag.color);
       g.appendChild(t);
+      nameEl = t;
+    }
+    // A baron's own hull flies its crime tag over it once the record leaves
+    // clean — Watchlisted, then Barred, then Criminal. The law reads it off
+    // the transponder; so should the player (js/crime.js tag()).
+    if (v.you && v.tag && !nameEl) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name you crime");
+      t.setAttribute("fill", v.tag.color);
+      t.setAttribute("y", -11);
+      t.textContent = v.name ? v.name + " · " + v.tag.label : v.tag.label;
+      g.appendChild(t);
+      nameEl = t;
+    }
+    // Muzzle flash for a hull locked in a duel, animated by the tick.
+    let flash = null, jit = 0;
+    if (v.duel) {
+      flash = document.createElementNS(ns, "circle");
+      flash.setAttribute("class", "voy-duel-flash");
+      flash.setAttribute("cx", 6); flash.setAttribute("cy", 0);
+      flash.setAttribute("opacity", 0);
+      g.appendChild(flash);
+      jit = v.police ? 320 : 0;
     }
     // Layer class: LAW covers the Senate's own hulls, TRAFFIC the NPC economy,
     // FLEETS anything crewed by a baron. The CSS hides the whole group, names
     // and strobes included.
-    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets"));
+    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets")
+      + (v.duel ? " voy-duel" : ""));
     layer.appendChild(g);
-    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights, flash, jit };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
