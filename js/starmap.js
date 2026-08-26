@@ -2662,7 +2662,7 @@ const StarMap = {
     if (!verbs.length)
       return `<div class="pt-sub tip-dim">${v.raided ? "Nothing left to take."
         : "The Senate writ runs here — the verb is not offered."}</div>`;
-    if (!Piracy.local())
+    if (!Piracy.canSettle())
       return `<div class="pt-sub">Piracy settles on the local ledger for now — signed-in dispatch waits on a piracy SQL surface.</div>`;
     const hulls = Fleet.idle().filter(sh => !sh.mercenary && Fleet.stats(sh).firepower >= 1)
       .sort((a, b) => Fleet.stats(b).firepower - Fleet.stats(a).firepower);
