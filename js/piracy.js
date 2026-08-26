@@ -17,11 +17,13 @@
    CUSTOMS docking scan becomes the fence-or-risk gate — only the hot slice of
    a stack is seizable, legitimate units of the same commodity are not.
 
-   The law (§5.1, the half that exists): PREVENTION — in a policed system the
-   verb is simply not offered; you cannot start the fight the Senate would
-   win. Everywhere else the bill is crime (CRIMECFG.gain) plus standing, and
-   §6.7's guard rail holds: a failed run costs a repair bill and the crime
-   sticks either way — high variance, never high expected value.
+   The law (§5.1): PREVENTION — in a policed system the verb is simply not
+   offered; you cannot start the fight the Senate would win. Everywhere else
+   the bill is real: armed robbery books you straight onto the watchlist
+   (Crime.bookRobbery — the police can chase you the moment you rob), the
+   response plays out on a staged clock (settleAt), and a hull the patrols
+   run down is DESTROYED with all hands. §6.7's guard rail still holds —
+   high variance, never high expected value.
 
    Idle-first and deterministic: the odds, the loot ranges and the target's
    worth are stamped on the op at dispatch (the risk you accepted, exactly as
@@ -206,6 +208,92 @@ const Piracy = {
     return out;
   },
 
+  // ---- the stage clock (derived, never stored) -----------------------------
+  // The fight takes PIRACYCFG.battleMs, the law takes POLICECFG.arriveMs to
+  // reach the scene and waveGapMs per wave — all derived from resolveAt and
+  // the pure rolls, so nothing new rides the op, app._merge_piracy needs no
+  // new keys, and the SQL derives the identical clock.
+  battleMs() { return this.cfg().battleMs || 0; },
+  robEndAt(op) { return op.resolveAt + this.battleMs(); },
+  // Pre-read the fight and the chase — pure of the op, cached per op id so the
+  // per-frame chart markers don't re-roll. atk uses the live hull when it
+  // still flies (what pursue() will use); a refit mid-flight can nudge the
+  // predicted wave count until the settle corrects it.
+  _pre: {},
+  preview(op) {
+    const hit = this._pre[op.id];
+    if (hit) return hit;
+    const out = this.rollOutcome(op);
+    let chase = null;
+    if (op.verb === "rob" && out.won && out.loot && window.Police && window.Charters) {
+      const sh = Fleet.ship(op.shipUid);
+      const atk = sh ? Charters.defenseScore(Charters.fleetStats([sh])) : (+op.atk || 0);
+      chase = Police.chaseOutcome(op, atk);
+    }
+    return (this._pre[op.id] = { out, chase });
+  },
+  settleAt(op) {
+    const p = this.preview(op);
+    return this.robEndAt(op) + (p.chase && window.Police ? Police.chaseLenMs(p.chase) : 0);
+  },
+  landAt(op) { return Math.max(op.returnAt + this.battleMs(), this.settleAt(op)); },
+
+  // ---- the intercept engagement (Dispatches ▶ Replay) ----------------------
+  // The boarding action is a real report: free_trade flavour fields the
+  // hauler's hired security, and policeInbound tells combat.js the law showed
+  // up — the hauler jumps clear at the end of the movie.
+  robReport(op, sh, out, policeInbound, now) {
+    const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
+    return {
+      uid: op.id + "rob",
+      title: `Intercept — ${op.name}` + (sys ? ` (${sys.name})` : ""),
+      type: "combat", success: !!out.won, ts: now, faction: "free_trade",
+      danger: op.kind === "freighter" ? "moderate" : "low",
+      enemyCount: op.kind === "freighter" ? 3 : 2,
+      policeInbound: !!policeInbound,
+      credits: out.credits || 0, items: [], lost: [], impounded: [],
+      damaged: out.dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(out.dmg * 100)) }] : [],
+      roster: [{ uid: sh.uid, name: sh.name, type: sh.type }],
+    };
+  },
+  // The same movie, before the settle: the rolls are pure, so the live-watch
+  // offer at engage time and the post-settle replay show the identical fight.
+  previewReport(op) {
+    const sh = Fleet.ship(op.shipUid);
+    if (!sh || op.verb !== "rob") return null;
+    const p = this.preview(op);
+    return this.robReport(op, sh, p.out, !!p.chase, Date.now());
+  },
+  _fileRobReport(op, sh, out, policeInbound, now) {
+    const s = this.s();
+    if (!s.reports) s.reports = [];
+    const r = this.robReport(op, sh, out, policeInbound, now);
+    s.reports.unshift(r);
+    if (s.reports.length > 20) s.reports.length = 20;
+    return r.uid;
+  },
+
+  // ---- live stage announcements --------------------------------------------
+  // Purely presentational: as an op's derived stages pass on a watched tab,
+  // tell the UI — the fight starting, the law inbound. The ledger still moves
+  // only at settleAt. Transient marks, never saved; stages that are already
+  // history (a reload mid-op, the settle passed) stay silent — the resolved
+  // toast covers them.
+  _seenStage: {},
+  _announce(op, now) {
+    if (op.resolved || (window.Game && Game._booting)) return;
+    if (now >= this.settleAt(op)) return;
+    const seen = this._seenStage[op.id] || 0;
+    if (seen < 1 && now >= op.resolveAt && op.verb !== "escort") {
+      this._seenStage[op.id] = 1;
+      if (window.Bus) Bus.emit("piracyEngaged", { op });
+    }
+    if ((this._seenStage[op.id] || 0) < 2 && now >= this.robEndAt(op) && this.preview(op).chase) {
+      this._seenStage[op.id] = 2;
+      if (window.Bus) Bus.emit("policeInbound", { op, waves: this.preview(op).chase.waves.length });
+    }
+  },
+
   // ---- the hot ledger (§4.4) -----------------------------------------------
   // Stolen units stay hot until fenced (sold — positions drop and the clamp
   // follows) or seized at a customs gate. One small map, clamped on read so
@@ -250,9 +338,13 @@ const Piracy = {
     const local = this.local();
     for (const op of this.list()) {
       const sh = Fleet.ship(op.shipUid);
-      if (!sh) { op._dead = true; continue; }            // hull gone — close out
+      if (!sh) { op._dead = true; delete this._pre[op.id]; continue; }  // hull gone — close out
       if (sh.status === "idle") sh.status = "raiding";   // self-heal after a merge reset
-      if (!op.resolved && now >= op.resolveAt && local) {
+      this._announce(op, now);
+      // Settle at settleAt, not resolveAt: the boarding action and the police
+      // response take real time on the clock. Watched or AFK, the ledger
+      // moves once, when the last stage would have played out.
+      if (!op.resolved && now >= this.settleAt(op) && local) {
         const out = this.rollOutcome(op);
         op.resolved = true;
         op.outcome = { verb: op.verb, won: out.won, credits: out.credits };
@@ -266,26 +358,40 @@ const Piracy = {
           const sid = window.Stock ? Stock.sectorOf(op.toSys) : null;
           if (sid) for (const [id, q] of Object.entries(out.loot)) Stock.take(sid, id, q);
         }
+        // Armed robbery books you straight onto the watchlist (won or not —
+        // you tried); a toll is menace and stays a plain gain.
         const crime = this.crimeGain(op.verb, out.won);
-        if (crime && window.Crime) Crime.add(crime);
+        if (window.Crime) {
+          if (op.verb === "rob") Crime.bookRobbery(crime);
+          else if (crime) Crime.add(crime);
+        }
         if (out.won && window.Rep) {
           for (const [f, d] of (this.cfg().rep || {})[op.verb] || []) Rep.change(f, d);
         }
         const r = { verb: op.verb, won: out.won, name: op.name, kind: op.kind,
           sysId: op.sysId, credits: out.credits, loot: op.loot || null,
           dmg: out.dmg, crime, ship: sh.name };
+        // The boarding action itself is a replayable Dispatches report.
+        if (op.verb === "rob")
+          r.report = this._fileRobReport(op, sh, out, !!(op.loot && this.preview(op).chase), now);
         // §5.1 response: a successful robbery can draw the law on the way
         // home (police.js). Runs under the same resolved-once gate, so the
         // chase is banked offline exactly as it would play out live. A caught
-        // run clears op.loot — nothing banks, nothing goes hot.
+        // run clears op.loot AND costs the hull — nothing banks, nothing
+        // lands, the ship is gone.
         if (op.loot && window.Police) {
           const chase = Police.pursue(op, sh, now);
           if (chase) r.chase = chase;
         }
         made.push({ piracy: r });
         if (window.Bus) Bus.emit("piracyResolved", r);
+        if (r.chase && r.chase.lost) {          // run down — no hull to land
+          op._dead = true;
+          delete this._pre[op.id]; delete this._seenStage[op.id];
+          continue;
+        }
       }
-      if (now >= op.returnAt && (op.resolved || !local)) {
+      if (now >= this.landAt(op) && (op.resolved || !local)) {
         // Home with the take. The manifest lands like mined ore: positions at
         // zero cost, parked at the home system's bay — hauling it somewhere
         // sellable is the same ore leg, now with a customs problem (§4.4).
@@ -300,6 +406,7 @@ const Piracy = {
         }
         sh.status = "idle";
         op._dead = true;
+        delete this._pre[op.id]; delete this._seenStage[op.id];
       }
     }
     if (this.list().some(o => o._dead)) s.piracy = this.list().filter(o => !o._dead);

@@ -89,9 +89,18 @@
   a mission-shaped report lands in Comms → Dispatches that `BattleView`
   replays off the smuggle template (a run for the gate, pursuers cutting
   angles), fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
-  formidable but killable: caught costs exactly the stolen cargo (recovered
-  to the shelf it was bound for) plus a repair bill — never the hull, never
-  banked stock, never credits; each destroyed pair adds
+  formidable but killable — and the stakes are real, at the owner's
+  direction: armed robbery books the baron straight onto the watchlist
+  (`Crime.bookRobbery` jumps the record to `CRIMECFG.watch`; at or past it
+  the plain gain applies), and being run down DESTROYS the raiding hull with
+  all hands — the stolen cargo is recovered to the shelf it was bound for
+  and the ship is gone. This does not touch §6.6.5, which protects the
+  *victim* of a raid: risking the aggressor's own hull is §6.6.2's consent
+  through action — you dispatched it against the law on purpose. Banked
+  stock and credits are still never touched. The whole op runs on a staged
+  clock (`PIRACYCFG.battleMs` for the boarding, `POLICECFG.arriveMs` +
+  `waveGapMs` per wave for the response) and settles once, at the end —
+  watched or AFK, the same ledger. Each destroyed pair adds
   `CRIMECFG.gain.police` (the worst charge on the books) and draws a heavier
   wave, up to `maxWaves`, and a broken pair sometimes yields `POLICE_ITEM` —
   the one accessory `Items.gen` cannot roll. This deliberately trades §5.2's

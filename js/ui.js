@@ -4258,9 +4258,10 @@ const UI = {
         const ch = p.chase;
         if (ch) {
           if (ch.caught) {
-            html += `<p class="down">🚨 A Senate patrol ran the hull down on the way home — the stolen cargo was recovered`
-              + (ch.destroyed ? ` after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was destroyed` : "")
-              + `. <span class="muted-note">(the ship always comes home — replay is in Dispatches)</span></p>`;
+            html += `<p class="down">🚨 A Senate patrol ran ${ch.lost ? `<b>${Util.esc(ch.lost.name || p.ship)}</b>` : "the hull"} down on the way home — `
+              + `the ship was destroyed with all hands and the stolen cargo recovered`
+              + (ch.destroyed ? `, after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was broken` : "")
+              + `. <span class="muted-note">(replay is in Dispatches)</span></p>`;
           } else if (ch.destroyed) {
             html += `<p>🚨 Patrols answered — ${ch.destroyed} pair${ch.destroyed === 1 ? "" : "s"} destroyed on the run home`
               + (ch.item && !ch.item.full ? ` · salvaged <b>${ch.item.name}</b>` : "")
@@ -4704,6 +4705,34 @@ const UI = {
       if (this.page === "fleet") this.renderFleet();
       if (window.StarMap) StarMap.refreshInfo();
     });
+    Bus.on("piracyStart", op => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      const verb = { rob: "intercept", toll: "shake down", escort: "escort" }[op.verb] || op.verb;
+      this.toast(`🏴 ${sh ? sh.name : "Your hull"} dispatched to ${verb} ${op.name} near ${this.sysName(op.sysId)}`
+        + ` — contact in ~${Util.duration(Math.max(0, op.resolveAt - Date.now()))}.`, "info", 6000);
+      this.audioSafe("news");
+    });
+    // Stage beats on a watched tab (js/piracy.js _announce): the fight opening
+    // — with the movie on offer — and the law burning for the scene. The
+    // ledger still settles once, at settleAt; these are the live view of it.
+    Bus.on("piracyEngaged", ({ op }) => {
+      if (window.Game._booting) return;
+      const where = this.sysName(op.sysId);
+      const r = op.verb === "rob" && window.Piracy ? Piracy.previewReport(op) : null;
+      const msg = op.verb === "toll"
+        ? `🏴 Shaking ${op.name}'s captain down near ${where}…`
+        : `⚔ Engaging ${op.name} near ${where} — going for the hold.`;
+      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the boarding", "info", 7000, () => BattleView.open(r, { offered: true }));
+      else this.toast(msg, "info", 6000);
+      this.audioSafe("news");
+    });
+    Bus.on("policeInbound", ({ op, waves }) => {
+      if (window.Game._booting) return;
+      this.toast(`🚨 A Senate patrol is burning for ${this.sysName(op.sysId)} — the hauler jumps clear. `
+        + `Your hull runs for home with the take.`, "bad", 8000);
+      this.audioSafe("news");
+    });
     Bus.on("piracyResolved", p => {
       if (window.Game._booting) return;   // offline verdicts land in the "while you were away" recap
       const where = this.sysName(p.sysId);
@@ -4727,7 +4756,7 @@ const UI = {
       const where = this.sysName(p.sysId);
       let msg, kind;
       if (p.caught) {
-        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the stolen cargo was recovered.`;
+        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the ship was destroyed with all hands, the stolen cargo recovered.`;
         kind = "bad";
       } else if (p.destroyed) {
         msg = `🚨 ${p.ship} shot its way clear near ${where} — ${p.destroyed} patrol pair${p.destroyed === 1 ? "" : "s"} destroyed`

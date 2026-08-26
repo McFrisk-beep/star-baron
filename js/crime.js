@@ -25,6 +25,14 @@ const Crime = {
   // Local bookkeeping only — online, the RPC that authorised the act returns the
   // authoritative value and applyServer() overwrites this.
   add(n) { return this.set(this.value() + (Number(n) || 0)); },
+  // Armed robbery puts you straight on the watchlist: below `watch` the record
+  // JUMPS to it (the police can chase you the moment you rob); at or above it,
+  // the normal gain applies on top. Mirrored in docs/sql/piracy_rpcs.sql and
+  // pinned by tools/check_piracy_parity.js.
+  bookRobbery(gain) {
+    const w = this.cfg().watch || 100, v = this.value();
+    return this.set(v < w ? w : v + (Number(gain) || 0));
+  },
   applyServer(v) { if (v != null) this.set(v); return this.value(); },
   gain(kind) { return (this.cfg().gain || {})[kind] || 0; },
 

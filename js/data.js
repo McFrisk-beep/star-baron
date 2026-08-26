@@ -658,6 +658,11 @@ const PIRACYCFG = {
   tollFrac: [0.16, 0.30],        // of the manifest's quoted value, paid in credits
   escortPayFrac: [0.10, 0.16],   // the relief sponsor's lawful fee, same base
   atkDmg: [0.04, 0.12],          // hull damage when the target's guns win
+  // The boarding action itself takes this long: the op settles (and the take
+  // banks) only once the fight window has run, live or AFK — the ledger lands
+  // when the movie would have ended. Derived stage times only; nothing new is
+  // stored on the op, so the SQL derives the same clock from resolveAt.
+  battleMs: 30 * 1000,
   // Standing swings per verb (Rep.change deltas).
   rep: {
     rob:    [["free_trade", -3], ["syndicate", 2]],
@@ -707,6 +712,12 @@ const POLICECFG = {
   catchClamp: [0.1, 0.92],
   chaseDmg: [0.06, 0.16],          // hull damage per wave actually fought
   itemChance: 0.2,                 // salvage roll per destroyed pair (the police-only kit)
+  // The response plays out in real time on the chart: the nearest precinct's
+  // pair takes arriveMs to reach the scene after the boarding ends, and each
+  // wave is fought over waveGapMs. The op's settle waits for the last wave —
+  // watched or AFK, the same clock. Mirrored in docs/sql/piracy_rpcs.sql.
+  arriveMs: 25 * 1000,
+  waveGapMs: 40 * 1000,
 };
 
 // The police-only accessory, stripped from a broken patrol ship. Deliberately

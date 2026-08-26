@@ -4,8 +4,9 @@
    security bands the chart paints (never authored); patrols are deterministic
    seeded flight plans that always fly in pairs and only where the law lives;
    the chase is a pure function of the op so offline equals online; being
-   caught costs exactly the stolen cargo (recovered to the shelf it was bound
-   for) and a repair bill — never the hull, never banked stock, never credits;
+   caught costs the stolen cargo (recovered to the shelf it was bound for)
+   AND the raiding hull itself — destroyed with all hands, filed as a wipe —
+   while banked stock and credits are still never touched;
    destroying police is the worst crime on the books and draws a heavier wave,
    capped; the police-only item comes from a broken pair and from nowhere
    else; and every fought wave files a mission-shaped report BattleView can
@@ -137,7 +138,7 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   loot: JSON.parse(JSON.stringify(loot)),
 });
 
-// ---- caught: the cargo is recovered, and nothing worse ---------------------
+// ---- caught: the cargo is recovered and the hull is lost -------------------
 {
   const c = boot();
   c.POLICECFG.destroyClamp = [0, 0];    // the pair cannot be broken
@@ -158,12 +159,14 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   assert.strictEqual(c.Game.state.positions.foodstuffs, 50, "banked stock never touched");
   assert.strictEqual(c.Game.state.credits, credits0, "credits never touched");
   assert.strictEqual(c.Crime.value(), crime0, "being caught adds no charge — the rob already did");
-  assert.ok(sh.dmg > 0 && sh.dmg <= c.POLICECFG.chaseDmg[1], `a repair bill, clamped (${sh.dmg})`);
-  assert.ok(c.Game.state.ships.includes(sh), "the hull still exists");
-  assert.notStrictEqual(sh.status, "impounded", "never impounded");
+  assert.ok(out.lost && out.lost.uid === sh.uid && out.lost.name === sh.name,
+    "the hull is lost with all hands");
+  assert.ok(!c.Game.state.ships.includes(sh), "…and gone from the fleet");
   // The fight is on the record and watchable, fielding a pair.
   const rep = c.Game.state.reports.find(r => r.uid === out.report);
   assert.ok(rep && !rep.success && rep.faction === "police", "a failed-escape report is filed");
+  assert.ok(rep.wipe && rep.lost.length === 1 && rep.lost[0].uid === sh.uid,
+    "…as a wipe, naming the lost hull");
   assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
   const script = c.Combat.script(rep, rep.roster);
   assert.strictEqual(script.ships.filter(s => s.side === "enemy").length, 2, "the first wave is one pair");
@@ -238,9 +241,10 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   const a = setup(chunk), b = setup(drip);
   assert.strictEqual(a.op.id, b.op.id, "same op, same seed");
   assert.ok(a.op.law > 0, "the law at the scene rides the op");
-  const madeA = chunk.Piracy.resolve(a.op.returnAt + 1);
-  drip.Piracy.resolve(b.op.resolveAt + 1);
-  drip.Piracy.resolve(b.op.returnAt + 1);
+  const madeA = chunk.Piracy.resolve(chunk.Piracy.landAt(a.op) + 1);
+  drip.Piracy.resolve(b.op.resolveAt + 1);              // mid-boarding: nothing settles
+  drip.Piracy.resolve(drip.Piracy.settleAt(b.op) + 1);  // the staged clock ran — settle
+  drip.Piracy.resolve(drip.Piracy.landAt(b.op) + 1);    // the hull lands (if it can)
   assert.deepStrictEqual(chunk.Game.state.positions, drip.Game.state.positions, "same outcome either way");
   assert.strictEqual(chunk.Crime.value(), drip.Crime.value(), "same record");
   assert.ok(Math.abs(a.sh.dmg - b.sh.dmg) < 1e-9, "same wear");
@@ -249,8 +253,10 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   if (p.chase.caught) {
     assert.strictEqual(Object.keys(chunk.Game.state.positions).length, 0, "a seized haul never banks");
     assert.strictEqual(chunk.Piracy.hotQty(a.op.manifest[0]), 0, "…and never goes hot");
+    assert.ok(!chunk.Game.state.ships.includes(a.sh), "a run-down hull is lost, not landed");
+  } else {
+    assert.strictEqual(a.sh.status, "idle", "an uncaught hull comes home");
   }
-  assert.strictEqual(a.sh.status, "idle", "the hull always comes home");
 }
 
 console.log("OK check_police");

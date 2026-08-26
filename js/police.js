@@ -26,9 +26,10 @@
      breaking every wave (POLICECFG.maxWaves) shakes the trail. A broken pair
      sometimes yields the one piece of kit money can't buy (POLICE_ITEM).
 
-     Anti-grief holds even mid-gunfight: being caught costs the stolen cargo
-     (recovered to the shelf it was bound for) and a repair bill — never the
-     hull, never banked stock, never credits.                                 */
+     The stakes are real: being run down costs the stolen cargo (recovered to
+     the shelf it was bound for) AND the raiding hull itself — destroyed with
+     all hands. Piracy risks the ship you fly it with; banked stock and
+     credits are still never touched.                                         */
 
 const Police = {
   cfg() { return window.POLICECFG || {}; },
@@ -116,54 +117,83 @@ const Police = {
     return (c.pairScore || 600) * (1 + law * (c.lawScore || 0)) * Math.pow(c.waveMult || 1, wave);
   },
 
-  // Resolve the pursuit for one robbed run. Called by Piracy.resolve exactly
-  // once, under the op.resolved gate, so applying effects here keeps offline
-  // equal to online. Every roll is seeded from the op id — pure per wave:
-  // index 0 gates the response, then 4 indexes per wave.
-  // Returns null (no response formed) or a summary for the recap/toast.
-  pursue(op, sh, now = Date.now()) {
+  // The pursuit's ROLLS, pure of (op id, atk) — no state touched. Same seed
+  // and draw order the SQL's app._police_chase mirrors: index 0 gates the
+  // response, then 4 indexes per wave. Split from pursue() so the timeline
+  // (Piracy.settleAt, the chart markers, the stage toasts) can pre-read how
+  // the chase runs without applying a single effect.
+  // Returns null (no response formed) or
+  // { waves: [{destroyed, caught, dmg, item}], destroyed, caught, escaped }.
+  chaseOutcome(op, atk) {
     const c = this.cfg();
-    if (!op || !op.loot || !sh || !window.Charters) return null;
-    const law = op.law != null ? op.law : (window.Security ? Security.score(op.sysId) : 0.5);
+    const law = Util.clamp(op.law != null ? +op.law : 0.5, 0, 1);
     const s = Market._seed(["police", op.id]);
     if (Market._u01(s, 0) >= this.responseChance(law)) return null;
-    const atk = Charters.defenseScore(Charters.fleetStats([sh]));
     const roll = (range, n) => { const r = range || [0, 0]; return r[0] + Market._u01(s, n) * (r[1] - r[0]); };
     const dCl = c.destroyClamp || [0, 1], cCl = c.catchClamp || [0, 1];
-    const out = { waves: 0, destroyed: 0, caught: false, escaped: false,
-      seized: 0, crime: 0, item: null, report: null, ship: sh.name, sysId: op.sysId };
+    const out = { waves: [], destroyed: 0, caught: false, escaped: false };
     for (let w = 0; w < (c.maxWaves || 3); w++) {
       const def = this.pairScoreAt(law, w);
       const base = 1 + w * 4;
-      out.waves++;
       if (Market._u01(s, base) < Util.clamp(atk / (atk + def), dCl[0], dCl[1])) {
-        // The pair is broken. The loot stays yours; the charge sheet grows,
-        // and the next response comes heavier.
         out.destroyed++;
-        out.crime += ((window.CRIMECFG || {}).gain || {}).police || 0;
-        const dmg = roll(c.chaseDmg, base + 1);
-        Fleet.addDamage(sh, dmg);
-        out.report = this._fileReport(op, sh, w, true, dmg, now);
-        if (!out.item && Market._u01(s, base + 2) < (c.itemChance || 0)) out.item = this._salvage();
+        out.waves.push({ destroyed: true, dmg: roll(c.chaseDmg, base + 1),
+          item: Market._u01(s, base + 2) < (c.itemChance || 0) });
         continue;
       }
       if (Market._u01(s, base + 3) < Util.clamp(def / (def + atk) * (c.catchMult || 1), cCl[0], cCl[1])) {
-        // Run down. The cargo is recovered — it goes back to the shelf the
-        // delivery was bound for — and the hull limps home with a repair
-        // bill. Never the hull, never banked stock, never credits (§6.6).
         out.caught = true;
-        const dmg = roll(c.chaseDmg, base + 1);
-        Fleet.addDamage(sh, dmg);
-        const sid = window.Stock ? Stock.sectorOf(op.toSys) : null;
-        for (const [id, q] of Object.entries(op.loot)) { out.seized += q; if (sid) Stock.put(sid, id, q); }
-        op.loot = null;
-        out.report = this._fileReport(op, sh, w, false, dmg, now);
+        out.waves.push({ caught: true, dmg: roll(c.chaseDmg, base + 1) });
         break;
       }
-      out.escaped = true;                   // outran the lights, loot intact
+      out.waves.push({});                   // outran the lights
+      out.escaped = true;
       break;
     }
     if (!out.caught && !out.escaped) out.escaped = true;   // broke every wave — the trail goes cold
+    return out;
+  },
+  // How long the response plays on the clock: the rush to the scene, then one
+  // fight window per wave actually formed. Zero when no response forms.
+  chaseLenMs(chase) {
+    const c = this.cfg();
+    return chase ? (c.arriveMs || 0) + chase.waves.length * (c.waveGapMs || 0) : 0;
+  },
+
+  // Resolve the pursuit for one robbed run. Called by Piracy.resolve exactly
+  // once, under the op.resolved gate, so applying effects here keeps offline
+  // equal to online. All rolls come from chaseOutcome(); this applies them.
+  // Returns null (no response formed) or a summary for the recap/toast.
+  pursue(op, sh, now = Date.now()) {
+    if (!op || !op.loot || !sh || !window.Charters) return null;
+    const atk = Charters.defenseScore(Charters.fleetStats([sh]));
+    const rolls = this.chaseOutcome(op, atk);
+    if (!rolls) return null;
+    const out = { waves: rolls.waves.length, destroyed: rolls.destroyed,
+      caught: rolls.caught, escaped: rolls.escaped, seized: 0, crime: 0,
+      item: null, report: null, lost: null, ship: sh.name, sysId: op.sysId };
+    for (let w = 0; w < rolls.waves.length; w++) {
+      const wave = rolls.waves[w];
+      if (wave.destroyed) {
+        // The pair is broken. The loot stays yours; the charge sheet grows,
+        // and the next response comes heavier.
+        out.crime += ((window.CRIMECFG || {}).gain || {}).police || 0;
+        Fleet.addDamage(sh, wave.dmg);
+        out.report = this._fileReport(op, sh, w, true, wave.dmg, now);
+        if (!out.item && wave.item) out.item = this._salvage();
+      } else if (wave.caught) {
+        // Run down. The stolen cargo is recovered — it goes back to the shelf
+        // the delivery was bound for — and the hull is LOST WITH ALL HANDS:
+        // shooting it out with the Senate and losing costs the ship itself.
+        const sid = window.Stock ? Stock.sectorOf(op.toSys) : null;
+        for (const [id, q] of Object.entries(op.loot)) { out.seized += q; if (sid) Stock.put(sid, id, q); }
+        op.loot = null;
+        out.lost = { uid: sh.uid, name: sh.name };
+        out.report = this._fileReport(op, sh, w, false, wave.dmg, now, out.lost);
+        const st = window.Game.state;
+        st.ships = st.ships.filter(x => x.uid !== sh.uid);
+      }
+    }
     if (out.crime && window.Crime) Crime.add(out.crime);
     if (window.Bus) Bus.emit("policeChase", out);
     return out;
@@ -173,7 +203,7 @@ const Police = {
   // template (a run for the gate, pursuers cutting angles) and lands in
   // Comms → Dispatches like any engagement. Combat's police flavour fields
   // the ENEMY_CATALOG.police hulls, tier rising with the wave.
-  _fileReport(op, sh, wave, success, dmg, now) {
+  _fileReport(op, sh, wave, success, dmg, now, lost) {
     const s = window.Game.state;
     if (!s.reports) s.reports = [];
     const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
@@ -184,8 +214,9 @@ const Police = {
       type: "smuggle", success, ts: now, faction: "police", police: true,
       danger: ["moderate", "high", "extreme"][Math.min(wave, 2)],
       enemyCount: 2 * (wave + 1),         // pairs, reinforced per wave
-      credits: 0, items: [], lost: [], impounded: [],
-      damaged: dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],
+      credits: 0, items: [], lost: lost ? [lost] : [], impounded: [],
+      wipe: !!lost,                       // the run-down hull goes with all hands
+      damaged: !lost && dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],
       roster: [{ uid: sh.uid, name: sh.name, type: sh.type }],
     };
     s.reports.unshift(report);

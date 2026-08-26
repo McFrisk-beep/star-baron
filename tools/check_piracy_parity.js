@@ -71,23 +71,30 @@ function sqlChase(op, atk) {
   const s = Market._fnv1a(["cosmocrat-market-v1", "police", op.id].join("|"));
   if (Market._u01(s, 0) >= clamp(0.9 * law, 0, 0.95)) return null;
   let waves = 0, destroyed = 0, caught = false, escaped = false, item = false, dmg = 0, crime = 0;
+  const waveList = [];
   for (let w = 0; w <= 2; w++) {
     const base = 1 + w * 4;
     waves++;
     const def = 700 * (1 + law * 1.4) * Math.pow(1.6, w);
     if (Market._u01(s, base) < clamp(atk / (atk + def), 0.02, 0.75)) {
       destroyed++; crime += 25;
-      dmg += 0.06 + Market._u01(s, base + 1) * 0.10;
+      const wDmg = 0.06 + Market._u01(s, base + 1) * 0.10;
+      dmg += wDmg;
       if (!item && Market._u01(s, base + 2) < 0.2) item = true;
+      waveList.push({ destroyed: true, dmg: wDmg });
       continue;
     }
     if (Market._u01(s, base + 3) < clamp(def / (def + atk) * 1.1, 0.1, 0.92)) {
-      caught = true; dmg += 0.06 + Market._u01(s, base + 1) * 0.10; break;
+      caught = true;
+      const wDmg = 0.06 + Market._u01(s, base + 1) * 0.10;
+      dmg += wDmg;
+      waveList.push({ caught: true, dmg: wDmg });
+      break;
     }
-    escaped = true; break;
+    escaped = true; waveList.push({}); break;
   }
   if (!caught && !escaped) escaped = true;
-  return { waves, destroyed, caught, escaped, item, dmg, crime };
+  return { waves, destroyed, caught, escaped, item, dmg, crime, waveList };
 }
 
 // ---- the sweep -------------------------------------------------------------
@@ -128,6 +135,23 @@ function sqlChase(op, atk) {
       assert.ok(Math.abs(Police.pairScoreAt(op.law, w) - 700 * (1 + op.law * 1.4) * Math.pow(1.6, w)) < 1e-6,
         `chase ${i}: wave ${w} strength matches Police.pairScoreAt`);
     }
+    // And the REAL client-side rolls (Police.chaseOutcome — what pursue and
+    // the stage clock both read) must agree with the SQL wave for wave.
+    const js = Police.chaseOutcome(op, atk);
+    assert.ok(js, `chase ${i}: chaseOutcome forms when the SQL does`);
+    assert.strictEqual(js.waves.length, sq.waves, `chase ${i}: same wave count`);
+    assert.strictEqual(js.destroyed, sq.destroyed, `chase ${i}: same pairs broken`);
+    assert.strictEqual(js.caught, sq.caught, `chase ${i}: same catch verdict`);
+    assert.strictEqual(js.escaped, sq.escaped, `chase ${i}: same escape verdict`);
+    for (let w = 0; w < sq.waves; w++) {
+      assert.strictEqual(!!js.waves[w].destroyed, !!sq.waveList[w].destroyed, `chase ${i}w${w}: same wave verdict`);
+      assert.strictEqual(!!js.waves[w].caught, !!sq.waveList[w].caught, `chase ${i}w${w}: same wave catch`);
+      assert.ok(Math.abs((js.waves[w].dmg || 0) - (sq.waveList[w].dmg || 0)) < 1e-9,
+        `chase ${i}w${w}: same wave damage`);
+    }
+    // The staged clock both sides derive from those waves.
+    assert.strictEqual(Police.chaseLenMs(js), 25000 + js.waves.length * 40000,
+      `chase ${i}: chaseLenMs matches the SQL's arrive/waveGap arithmetic`);
   }
   assert.ok(responses > 500 && caughts > 50 && kills > 50,
     `the sweep saw responses, catches and kills (${responses}/${caughts}/${kills})`);
@@ -179,6 +203,17 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   has(/0\.06 \+ market\.u01\(s, base \+ 1\) \* 0\.10/, "SQL chase damage matches chaseDmg");
   assert.strictEqual(POLICECFG.itemChance, 0.2, "itemChance");
   has(/market\.u01\(s, base \+ 2\) < 0\.2/, "SQL salvage roll matches itemChance");
+  // The staged clock (docs/SPACE_INTERACTIVITY.md §5.2 built form).
+  assert.strictEqual(PIRACYCFG.battleMs, 30000, "battleMs");
+  has(/\+ 30000\.0/, "SQL settles battleMs after the intercept");
+  assert.strictEqual(POLICECFG.arriveMs, 25000, "arriveMs");
+  assert.strictEqual(POLICECFG.waveGapMs, 40000, "waveGapMs");
+  has(/25000\.0 \+ coalesce\(jsonb_array_length\(chase->'waveList'\), 0\) \* 40000\.0/,
+    "SQL settle waits arriveMs + waveGapMs per wave, like Piracy.settleAt");
+  has(/returnAt'\)::float8, 0\) \+ 30000\.0/, "SQL lands returnAt + battleMs, like Piracy.landAt");
+  // Destruction on capture: the ship row is removed, not damaged.
+  has(/where x\.value->>'uid' <> op->>'shipUid'/, "SQL removes a run-down hull from the fleet");
+  has(/and not coalesce\(\(chase->>'caught'\)::boolean, false\)/, "…and skips its repair bill");
 }
 {
   // Crime + the police-only item
@@ -187,6 +222,9 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   assert.strictEqual(CRIMECFG.gain.toll, 4, "gain.toll");
   assert.strictEqual(CRIMECFG.gain.police, 25, "gain.police");
   has(/then 12 else 6 end/, "SQL charges piracy / piracyFail");
+  assert.strictEqual(CRIMECFG.watch, 100, "watch — the robbery floor");
+  has(/when crime < 100 then 100 else crime \+ gain end/,
+    "SQL books a rob straight onto the watchlist, like Crime.bookRobbery");
   has(/'toll' then 4 else 0 end/, "SQL charges a toll");
   has(/crime \+ 25/, "SQL charges a destroyed patrol");
   assert.strictEqual(POLICE_ITEM.name, "Senate Enforcement Core", "the police item's name");
@@ -224,6 +262,8 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   has(/'piracy', piracy/, "…and hands the away slice back");
   has(/app\._merge_piracy\(/, "app_commit merges piracy ops");
   has(/app\._merge_hot\(/, "…and the hot-cargo flags");
+  has(/app\._piracy_report_push\(reports, rep_row\)/, "the resolver files rob + wave reports");
+  has(/'\{reports\}', reports/, "…and writes them back onto the state");
 }
 
 console.log("OK check_piracy_parity");

@@ -269,6 +269,13 @@ const Combat = {
       events.push({ t: +(t3 + rf(0.2, 0.8)).toFixed(2), kind: "say", from: pick(talkers).id, to: pick(talkers).id,
         text: pick(outcome === "pyrrhic" ? this.LINES.pyrrhic : this.LINES.win) });
 
+    // Piracy intercepts stamped policeInbound (js/piracy.js): the law answered
+    // the distress call — the survivors' exit jumps are already choreographed,
+    // this is the radio call that explains them.
+    if (report.policeInbound && talkers.length)
+      events.push({ t: +(t3 + rf(0.9, 1.4)).toFixed(2), kind: "say", from: pick(talkers).id, to: pick(talkers).id,
+        text: "🚨 Senate patrol inbound — grab what's aboard and burn!" });
+
     events.sort((a, b) => a.t - b.t);
     return {
       duration: +D.toFixed(2),

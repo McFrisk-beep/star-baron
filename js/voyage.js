@@ -226,6 +226,45 @@ const Voyages = {
       if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
       else if (p >= 0.45 && p < 0.55) out.push({ ...base, sysId: e.sysId, phaseLabel: "Charting the system" });
     }
+
+    // piracy intercepts — out to the mark, the boarding window, the run home.
+    // The stage clock is derived (Piracy.settleAt), so this is a pure view; a
+    // run-down hull's marker dies with the ship at the settle.
+    if (window.Piracy && window.Fleet) for (const op of s.piracy || []) {
+      if (!Galaxy.get(op.sysId) || !Galaxy.get(op.fromSys) || op.sysId === op.fromSys) continue;
+      const sh = Fleet.ship(op.shipUid);
+      const base = { id: "pr:" + op.id, kind: "raider", you: true,
+        label: (sh ? sh.name : "Raider") + " — intercept",
+        sprite: sh ? this._fleetSprite([sh.uid]) : "ship:sparrow" };
+      const robEnd = Piracy.robEndAt(op), settle = Piracy.settleAt(op);
+      const pre = Piracy.preview(op);
+      if (now < op.resolveAt) {
+        const plan = this.plan(op.fromSys, op.sysId, op.startedAt, op.resolveAt - op.startedAt);
+        if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
+      } else if (now < robEnd) {
+        out.push({ ...base, sysId: op.sysId,
+          phaseLabel: op.verb === "escort" ? "Flying escort" : op.verb === "toll" ? "Shaking the captain down" : "Boarding action" });
+      } else if (!(pre.chase && pre.chase.caught && now >= settle)) {
+        const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
+        const plan = this.plan(op.sysId, op.fromSys, robEnd, legMs);
+        const at = plan && this.pos(plan, now);
+        if (at && at.p < 1) out.push({ ...base, plan, at });
+      }
+      // The law, burning for the scene from the sector's precinct once the
+      // boarding ends — POLICECFG.arriveMs of flight, then the fight is the
+      // chase reports' business.
+      if (pre.chase && now >= robEnd && now < settle && window.Police && window.Stock) {
+        const sec = Galaxy.sectors.find(x => x.id === Stock.sectorOf(op.sysId));
+        const home = sec && sec.systems.find(id => (Galaxy.get(id) || {}).capital && Police.hasPrecinct(id));
+        if (home && home !== op.sysId) {
+          const plan = this.plan(home, op.sysId, robEnd, (window.POLICECFG || {}).arriveMs || 25000);
+          const at = plan && this.pos(plan, now);
+          if (at && at.p < 1) out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
+            pair: true, npc: true, name: "Senate Response", label: "Senate Response",
+            sprite: "race:voidkin", manifest: [], plan, at });
+        }
+      }
+    }
     return out;
   },
 
