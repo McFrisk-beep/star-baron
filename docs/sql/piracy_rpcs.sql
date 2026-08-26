@@ -670,9 +670,14 @@ begin
     -- landing is settleAt + the return leg (Piracy.landAt). settleAt is
     -- resolveAt + 30000 + chase_len and travelMs is returnAt - resolveAt,
     -- which makes that exactly returnAt + 30000 + chase_len.
+    -- NOTE the parentheses around the CASE: PL/pgSQL reads an IF condition by
+    -- scanning for the terminating THEN at paren depth zero, and does not know
+    -- that a bare CASE opens a THEN of its own. Without them it ends the
+    -- condition at the CASE's THEN and the function fails to compile with
+    -- "syntax error at end of input".
     if p_now_ms >= coalesce((op->>'returnAt')::float8, 0) + 30000.0
-         + case when coalesce((op->>'chaseLenMs')::float8, -1) >= 0
-                then (op->>'chaseLenMs')::float8 else 0 end
+         + (case when coalesce((op->>'chaseLenMs')::float8, -1) >= 0
+                 then (op->>'chaseLenMs')::float8 else 0 end)
        and coalesce((op->>'resolved')::boolean, false) then
       if op->'loot' is not null and op->'loot' <> 'null'::jsonb then
         for e in select key as k, (value#>>'{}')::int as q from jsonb_each(op->'loot') loop

@@ -34,6 +34,35 @@ ctx.Market.init();
 ctx.Game = { state: { settings: {}, seq: 1, ships: [], items: {}, reputation: {} } };
 const { Market, Piracy, Police, PIRACYCFG, POLICECFG, CRIMECFG, POLICE_ITEM, Util } = ctx;
 
+{
+  // PL/pgSQL reads an IF condition by scanning for the terminating THEN at
+  // paren depth zero — it does not know a bare CASE opens a THEN of its own.
+  // `if x > (case when a then b else c end) then` compiles; the same line
+  // without the parens fails with "syntax error at end of input", and only
+  // when the migration is APPLIED. Nothing else here compiles SQL, so this
+  // catches it in the check instead of in a deploy.
+  const lines = SQL.split("\n");
+  const bad = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*(els)?if\b/i.test(lines[i])) continue;
+    let cond = "", j = i;
+    for (; j < lines.length && j < i + 10; j++) {
+      cond += " " + lines[j];
+      const open = (cond.match(/\(/g) || []).length, close = (cond.match(/\)/g) || []).length;
+      if (/\bthen\b/i.test(lines[j]) && open <= close) break;
+    }
+    let depth = 0;
+    for (const m of cond.matchAll(/[()]|\bcase\b/gi)) {
+      const t = m[0].toLowerCase();
+      if (t === "(") depth++;
+      else if (t === ")") depth--;
+      else if (depth === 0) { bad.push(`${i + 1}: ${lines[i].trim().slice(0, 60)}`); break; }
+    }
+  }
+  assert.strictEqual(bad.length, 0,
+    `bare CASE inside an IF condition (parenthesise it, or the function will not compile):\n  ${bad.join("\n  ")}`);
+}
+
 // ---- 1a. the mirror: app._piracy_outcome, transcribed ----------------------
 // Keep this identical to the SQL body. It is deliberately a separate
 // transcription rather than a call into Piracy — a bug copied into both would
@@ -255,7 +284,7 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
     "SQL settle waits arriveMs + waveGapMs per wave, like Piracy.settleAt");
   has(/returnAt'\)::float8, 0\) \+ 30000\.0/, "SQL lands returnAt + battleMs\u2026");
   has(/'\{chaseLenMs\}', to_jsonb\(/, "\u2026stamps the chase length on the op at settle\u2026");
-  has(/\(op->>'chaseLenMs'\)::float8 else 0 end\n?\s*and coalesce\(\(op->>'resolved'\)/,
+  has(/\(op->>'chaseLenMs'\)::float8 else 0 end\)\n?\s*and coalesce\(\(op->>'resolved'\)/,
     "\u2026and adds it to the landing gate, so the run home departs after the duel (Piracy.landAt)");
   // The manhunt (CRIMECFG.criminal and above).
   assert.strictEqual(POLICECFG.manhuntBase, 0.45, "manhuntBase");
