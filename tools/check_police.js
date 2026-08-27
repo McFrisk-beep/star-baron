@@ -91,41 +91,57 @@ const boot = () => {
   assert.strictEqual(c.Piracy.verbs(v, lawless.id).length, 0, "no verbs on the law");
 }
 
-// ---- patrols reach the galaxy chart, and the Law layer can hide them -------
-// The chart is SVG + CSS, so what this can pin without a DOM is the contract
-// between them: patrols ride the same markers() pipeline the haulers do, and
-// the layer id the CSS keys on exists in both files.
+// ---- patrols are HIDDEN from the galaxy chart, present in the scene --------
+// Owner's direction: the law's whereabouts is learned by flying, not by
+// reading the map. Ambient pairs never ride markers(); they still exist in
+// the system view (inSystem), and the response/duel markers still draw when
+// they engage (covered below).
 {
   const c = boot();
-  let t = T0, marks = [];
-  for (let m = 0; m < 60 && !marks.some(v => v.police); m++) {
-    t = T0 + m * 60000;
-    marks = c.Voyages.markers(t);
+  for (let m = 0; m < 60; m += 7) {
+    const marks = c.Voyages.markers(T0 + m * 60000);
+    assert.ok(!marks.some(v => String(v.id).startsWith("npc:pol")),
+      "ambient patrols never appear on the galaxy chart");
   }
-  const pol = marks.filter(v => v.police);
-  assert.ok(pol.length > 0, "patrols are drawn on the galaxy chart, like the haulers");
-  for (const v of pol) {
-    assert.ok(v.at && Number.isFinite(v.at.x) && Number.isFinite(v.at.y), "…with a real chart position");
-    assert.ok(v.name, "…and a name over the hull");
+  // …but they are still flying, and the scene can see them.
+  let flights = [];
+  for (let m = 0; m < 60 && !flights.length; m++) flights = c.Police.patrols(T0 + m * 60000);
+  assert.ok(flights.length > 0, "the pairs still fly (the scene draws them)");
+  const v = flights[0];
+  const seen = [];
+  for (let m = 0; m < 90 && !seen.length; m++) {
+    for (const sysId of v.plan.legs) {
+      if (c.Voyages.inSystem(sysId, T0 + m * 60000).some(x => x.id === v.id)) { seen.push(sysId); break; }
+    }
   }
+  assert.ok(seen.length, "…and a patrol shows up inside a system view");
   const sm = fs.readFileSync(path.join(__dirname, "../js/starmap.js"), "utf8");
-  const css = fs.readFileSync(path.join(__dirname, "../css/style.css"), "utf8");
-  assert.ok(/\{ id: "law"/.test(sm), "the chart offers a Law layer");
-  assert.ok(/case "law": return/.test(sm), "…which carries its own legend key");
-  assert.ok(/v\.police \? "voy-law"/.test(sm), "patrol markers are tagged for that layer");
   assert.ok(/"node-precinct"/.test(sm) && /Police\.hasPrecinct\(sys\.id\)/.test(sm),
-    "…and a precinct badge is drawn on the systems that seat one");
-  assert.ok(/\.lay-off-law \.voy-law/.test(css) && /\.lay-off-law[^{]*\.node-precinct/.test(css),
-    "switching the layer off hides patrols AND precincts");
+    "precinct badges still mark the seats of the law");
 }
 
-// ---- the response gate scales with the law ---------------------------------
+// ---- presence, not dice: the gate the response and the hunt both read ------
 {
   const c = boot();
-  assert.strictEqual(c.Police.responseChance(0), 0, "truly lawless space answers to nobody");
-  assert.ok(c.Police.responseChance(0.9) > c.Police.responseChance(0.3), "more law, more response");
-  assert.ok(c.Police.responseChance(1) <= c.POLICECFG.responseClamp[1], "never a certainty");
+  assert.strictEqual(c.Police.patrolsIn("anywhere", 0.1, T0), 0, "lawless space is never patrolled");
+  for (let i = 0; i < 40; i++) {
+    const n = c.Police.patrolsIn("sys" + i, 0.8, T0 + i * 7e5);
+    assert.ok(n >= 1 && n <= 3, `guarded/policed space always fields 1-3 pairs (${n})`);
+  }
+  let contested = 0, frontier = 0;
+  for (let i = 0; i < 400; i++) {
+    if (c.Police.patrolsIn("sys" + i, 0.5, T0 + i * 1300000) > 0) contested++;
+    if (c.Police.patrolsIn("sys" + i, 0.3, T0 + i * 1300000) > 0) frontier++;
+  }
+  assert.ok(contested > 120 && contested < 280, `contested space is patrolled about half the time (${contested}/400)`);
+  assert.ok(frontier > 40 && frontier < 180, `the frontier about a quarter (${frontier}/400)`);
+  assert.ok(frontier < contested, "…and always thinner than contested");
+  // Same slot, same answer — a pure view of the clock.
+  assert.strictEqual(c.Police.patrolsIn("navos", 0.7, T0 + 1000),
+    c.Police.patrolsIn("navos", 0.7, T0 + 2000), "presence is stable within a slot");
   assert.ok(c.Police.pairScoreAt(0.7, 1) > c.Police.pairScoreAt(0.7, 0), "each wave comes heavier");
+  assert.strictEqual(c.Police.arriveMsFor("toll"), c.POLICECFG.arriveMs * c.POLICECFG.tollArriveMult,
+    "a toll's response arrives slower");
 }
 
 // A crafted robbed op + hull, for driving pursue() directly.
@@ -143,7 +159,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   const c = boot();
   c.POLICECFG.destroyClamp = [0, 0];    // the pair cannot be broken
   c.POLICECFG.catchClamp = [1, 1];      // and always runs you down
-  c.POLICECFG.responseClamp = [1, 1];   // response is certain
   const sh = armed(c);
   const op = robbedOp(c, 0.8);
   const sid = c.Stock.sectorOf(op.toSys);
@@ -178,7 +193,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 {
   const c = boot();
   c.POLICECFG.destroyClamp = [1, 1];    // every wave is broken
-  c.POLICECFG.responseClamp = [1, 1];
   c.POLICECFG.itemChance = 1;           // salvage is certain, for the test
   const sh = armed(c, "cruiser");
   const op = robbedOp(c, 0.8);
@@ -205,7 +219,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // ---- pure: the same op meets the same fate in any boot ---------------------
 {
   const one = boot(), two = boot();
-  for (const c of [one, two]) { c.POLICECFG.responseClamp = [1, 1]; }
   const o1 = one.Police.pursue(robbedOp(one, 0.7), armed(one), T0);
   const o2 = two.Police.pursue(robbedOp(two, 0.7), armed(two), T0);
   assert.strictEqual(JSON.stringify([o1.waves, o1.destroyed, o1.caught, o1.escaped, o1.seized, o1.crime]),
@@ -220,7 +233,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // ---- through the whole piracy loop: offline == online ----------------------
 {
   const setup = c => {
-    c.POLICECFG.responseClamp = [1, 1];
     let v = null, t = T0;
     for (let m = 0; m < 240 && !v; m++) {
       t = T0 + m * 60000;
@@ -264,7 +276,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // headlessly: sample Voyages.active() at each stage and assert what is drawn.
 {
   const c = boot();
-  c.POLICECFG.responseClamp = [1, 1];      // the law always answers
   c.POLICECFG.destroyClamp = [0, 0];       // …and can't be broken
   c.POLICECFG.catchClamp = [1, 1];         // …so it runs the hull down
   // Dispatch from a NEIGHBOUR of the mark, so there is a real outbound leg to
@@ -359,7 +370,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // ---- a survivor flies home, and the fireball is the PATROL's --------------
 {
   const c = boot();
-  c.POLICECFG.responseClamp = [1, 1];
   c.POLICECFG.destroyClamp = [1, 1];        // every pair breaks
   const sh = armed(c, "cruiser");
   const home = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
@@ -411,11 +421,22 @@ const mhOp = (c, shipUid, from) => ({
   const sh = armed(c, "corvette");
   const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
   const op = mhOp(c, sh.uid, from);
-  // Under the line the law waits for a crime — no hunt at all.
-  c.Game.state.crime = c.CRIMECFG.criminal - 1;
-  assert.strictEqual(c.Piracy.manhunt(op), null, "under the criminal line, nobody is hunting");
+  // Under the WATCH line nobody hunts, anywhere.
+  c.Game.state.crime = c.CRIMECFG.watch - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "a clean-ish record is not hunted");
   assert.strictEqual(c.Piracy.manhuntAt(op), Infinity, "…so there is no contact time");
-  // At the line they come.
+  // BAND HUNTING (owner's direction): a Watchlisted baron's hull is actively
+  // hunted in contested+ space whenever a patrol is on station — the op's law
+  // is 0.8, guarded, where presence is always 1-3 — certain, not a roll.
+  c.Game.state.crime = c.CRIMECFG.watch;
+  assert.ok(c.Piracy.manhunt(op), "a Watchlisted hull in guarded space is actively hunted");
+  // …but the same record below contested waits for the criminal line.
+  const opLow = { ...op, id: "prMlow", law: 0.30 };
+  assert.strictEqual(c.Piracy.manhunt(opLow), null,
+    "on the frontier the law waits for the criminal line");
+  c.Game.state.crime = c.CRIMECFG.criminal - 1;
+  assert.strictEqual(c.Piracy.manhunt(opLow), null, "…even at 299");
+  // At the line they come, any band with a finder's roll.
   c.POLICECFG.manhuntClamp = [1, 1];       // they always find the hull
   c.Game.state.crime = c.CRIMECFG.criminal;
   const mh = c.Piracy.manhunt(op);
@@ -425,8 +446,8 @@ const mhOp = (c, shipUid, from) => ({
   assert.ok(c.Piracy.manhuntAt(op) > op.startedAt && c.Piracy.manhuntEndAt(op) < op.resolveAt,
     "…and it is settled before the mark is ever reached");
   // Lying low calls them off, live — the gate is not stamped on the op.
-  c.Game.state.crime = c.CRIMECFG.criminal - 1;
-  assert.strictEqual(c.Piracy.manhunt(op), null, "dropping under the line calls them off mid-flight");
+  c.Game.state.crime = c.CRIMECFG.watch - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "dropping under the watch line calls them off mid-flight");
 }
 
 // Run down by a manhunt: the hull is destroyed before the rob ever happens.
@@ -457,7 +478,7 @@ const mhOp = (c, shipUid, from) => ({
   const c = boot();
   c.POLICECFG.manhuntClamp = [1, 1];
   c.POLICECFG.destroyClamp = [1, 1];       // every pair breaks
-  c.POLICECFG.responseClamp = [0, 0];      // no post-rob chase, to isolate this
+  // (no chase isolation needed: the manhunt is settled long before the rob)
   const sh = armed(c, "cruiser");
   const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
   const op = mhOp(c, sh.uid, from);

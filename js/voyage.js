@@ -424,8 +424,11 @@ const Voyages = {
   // Everything moving, for the galaxy chart. Parked entries are skipped there.
   markers(now = Date.now()) {
     const npc = window.Traffic ? Traffic.flights(now) : [];
-    const pol = window.Police ? Police.patrols(now) : [];
-    return this.active(now).concat(this.others(now)).concat(npc).concat(pol).filter(v => v.at);
+    // Ambient patrols are deliberately NOT on the galaxy chart (owner's
+    // direction): the law's whereabouts is something you learn by flying,
+    // not by reading the map. They still appear in the system scene
+    // (inSystem), and the response/duel markers still draw when they engage.
+    return this.active(now).concat(this.others(now)).concat(npc).filter(v => v.at);
   },
 
   // What's visibly IN a system for the system view. Docked flagships are

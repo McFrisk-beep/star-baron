@@ -2884,11 +2884,13 @@ const StarMap = {
         parts.push(`${vb} ${Math.round(Piracy.chance(shipUid, v, sysId, vb) * 100)}% · +${vb === "rob" ? g.piracy : g.toll} crime`);
       }
     }
-    // The other half of the quote (police.js): how likely a successful rob is
-    // to draw a patrol response here. The same number pursue() rolls against.
+    // The other half of the quote (police.js): whether the law is on station
+    // HERE, right now. The response is certain when a patrol is present —
+    // the risk you can read is whether one is, and how many.
     if (window.Police && window.Security && Piracy.verbs(v, sysId).includes("rob")) {
-      const p = Police.responseChance(Security.score(sysId));
-      if (p > 0) parts.push(`🚨 law answers ${Math.round(p * 100)}%`);
+      const n = Police.patrolsIn(sysId, Security.score(sysId), Date.now());
+      parts.push(n ? `🚨 ${n} patrol${n === 1 ? "" : "s"} on station — the law WILL answer`
+        : "🌑 no patrols on station");
     }
     return parts.join(" · ");
   },

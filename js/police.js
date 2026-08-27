@@ -114,9 +114,23 @@ const Police = {
   },
 
   // ---- the chase ----------------------------------------------------------
-  responseChance(law) {
-    const cl = this.cfg().responseClamp || [0, 1];
-    return Util.clamp((this.cfg().responseBase || 0) * law, cl[0], cl[1]);
+  // Patrol PAIRS present in a system at time t — a pure seeded function of
+  // (system, 20-min slot), banded off the LAW NUMBER so the SQL derives the
+  // identical count from the op's stamped law: policed/guarded always 1-3,
+  // contested ~half the slots, frontier ~a quarter, lawless never.
+  patrolsIn(sysId, law, t) {
+    const slot = Math.floor(t / (this.cfg().presenceSlotMs || 1200000));
+    const s = Market._seed(["patrolN", sysId, String(slot)]);
+    const u = Market._u01(s, 0);
+    if (law >= 0.62) return 1 + Math.floor(Market._u01(s, 1) * 3);
+    if (law >= 0.42) return u < 0.5 ? 1 : 0;
+    if (law >= 0.22) return u < 0.25 ? 1 : 0;
+    return 0;
+  },
+  // How long the pair takes to reach the scene: a distress call for a rob, a
+  // filed complaint for a toll — the complaint is answered slower.
+  arriveMsFor(verb) {
+    return (this.cfg().arriveMs || 0) * (verb === "toll" ? (this.cfg().tollArriveMult || 1) : 1);
   },
   pairScoreAt(law, wave) {
     const c = this.cfg();
@@ -133,11 +147,17 @@ const Police = {
   chaseOutcome(op, atk) {
     const c = this.cfg();
     const law = Util.clamp(op.law != null ? +op.law : 0.5, 0, 1);
+    // The gate is PRESENCE, not dice: a patrol at the scene when the deed
+    // ends always answers; empty space never does. The old u01(s, 0) gate
+    // draw is simply unused — wave draws use absolute indexes, so removing
+    // it changes no other roll.
+    const pairs = this.patrolsIn(op.sysId, law,
+      (op.resolveAt || 0) + ((window.PIRACYCFG || {}).battleMs || 0));
+    if (!pairs) return null;
     const s = Market._seed(["police", op.id]);
-    if (Market._u01(s, 0) >= this.responseChance(law)) return null;
     const roll = (range, n) => { const r = range || [0, 0]; return r[0] + Market._u01(s, n) * (r[1] - r[0]); };
     const dCl = c.destroyClamp || [0, 1], cCl = c.catchClamp || [0, 1];
-    const out = { waves: [], destroyed: 0, caught: false, escaped: false };
+    const out = { waves: [], destroyed: 0, caught: false, escaped: false, pairs };
     for (let w = 0; w < (c.maxWaves || 3); w++) {
       const def = this.pairScoreAt(law, w);
       const base = 1 + w * 4;
@@ -161,9 +181,8 @@ const Police = {
   },
   // How long the response plays on the clock: the rush to the scene, then one
   // fight window per wave actually formed. Zero when no response forms.
-  chaseLenMs(chase) {
-    const c = this.cfg();
-    return chase ? (c.arriveMs || 0) + chase.waves.length * (c.waveGapMs || 0) : 0;
+  chaseLenMs(chase, verb) {
+    return chase ? this.arriveMsFor(verb) + chase.waves.length * (this.cfg().waveGapMs || 0) : 0;
   },
 
   // ---- the manhunt (CRIMECFG.criminal and above) ---------------------------
@@ -184,10 +203,20 @@ const Police = {
   manhuntOutcome(op, atk, crime) {
     const c = this.cfg();
     const line = (window.CRIMECFG || {}).criminal || 300;
-    if (!(crime >= line)) return null;
-    const s = Market._seed(["manhunt", op.id]);
-    if (Market._u01(s, 0) >= this.manhuntChance(crime)) return null;
+    const watch = (window.CRIMECFG || {}).watch || 100;
     const law = Util.clamp(op.law != null ? +op.law : 0.5, 0, 1);
+    let chance = null;
+    if (crime >= line) {
+      chance = this.manhuntChance(crime);      // hunted everywhere, any band
+    } else if (crime >= watch && law >= 0.42) {
+      // Contested and up: a Watchlisted baron's dispatched hull is ACTIVELY
+      // hunted whenever a patrol is on station — certain, not a roll. Below
+      // contested the law waits for the criminal line.
+      if (!this.patrolsIn(op.sysId, law, op.startedAt || 0)) return null;
+      chance = 1;
+    } else return null;
+    const s = Market._seed(["manhunt", op.id]);
+    if (Market._u01(s, 0) >= chance) return null;
     const def = this.pairScoreAt(law, 0);
     const dCl = c.destroyClamp || [0, 1];
     const broke = Market._u01(s, 1) < Util.clamp(atk / (atk + def), dCl[0], dCl[1]);
@@ -224,13 +253,15 @@ const Police = {
   // equal to online. All rolls come from chaseOutcome(); this applies them.
   // Returns null (no response formed) or a summary for the recap/toast.
   pursue(op, sh, now = Date.now()) {
-    if (!op || !op.loot || !sh || !window.Charters) return null;
+    if (!op || !sh || !window.Charters) return null;
+    if (op.verb !== "toll" && !op.loot) return null;   // rob needs the take aboard; a toll drew blood by itself
     const atk = Charters.defenseScore(Charters.fleetStats([sh]));
     const rolls = this.chaseOutcome(op, atk);
     if (!rolls) return null;
     const out = { waves: rolls.waves.length, destroyed: rolls.destroyed,
-      caught: rolls.caught, escaped: rolls.escaped, seized: 0, crime: 0,
-      item: null, report: null, lost: null, ship: sh.name, sysId: op.sysId };
+      caught: rolls.caught, escaped: rolls.escaped, pairs: rolls.pairs || 1,
+      seized: 0, crime: 0, item: null, report: null, lost: null,
+      ship: sh.name, sysId: op.sysId };
     for (let w = 0; w < rolls.waves.length; w++) {
       const wave = rolls.waves[w];
       if (wave.destroyed) {
@@ -238,17 +269,17 @@ const Police = {
         // and the next response comes heavier.
         out.crime += ((window.CRIMECFG || {}).gain || {}).police || 0;
         Fleet.addDamage(sh, wave.dmg);
-        out.report = this._fileReport(op, sh, w, true, wave.dmg, now);
+        out.report = this._fileReport(op, sh, w, true, wave.dmg, now, null, null, rolls.pairs);
         if (!out.item && wave.item) out.item = this._salvage();
       } else if (wave.caught) {
         // Run down. The stolen cargo is recovered — it goes back to the shelf
         // the delivery was bound for — and the hull is LOST WITH ALL HANDS:
         // shooting it out with the Senate and losing costs the ship itself.
         const sid = window.Stock ? Stock.sectorOf(op.toSys) : null;
-        for (const [id, q] of Object.entries(op.loot)) { out.seized += q; if (sid) Stock.put(sid, id, q); }
+        for (const [id, q] of Object.entries(op.loot || {})) { out.seized += q; if (sid) Stock.put(sid, id, q); }
         op.loot = null;
         out.lost = { uid: sh.uid, name: sh.name };
-        out.report = this._fileReport(op, sh, w, false, wave.dmg, now, out.lost);
+        out.report = this._fileReport(op, sh, w, false, wave.dmg, now, out.lost, null, rolls.pairs);
         const st = window.Game.state;
         st.ships = st.ships.filter(x => x.uid !== sh.uid);
       }
@@ -262,7 +293,7 @@ const Police = {
   // template (a run for the gate, pursuers cutting angles) and lands in
   // Comms → Dispatches like any engagement. Combat's police flavour fields
   // the ENEMY_CATALOG.police hulls, tier rising with the wave.
-  _fileReport(op, sh, wave, success, dmg, now, lost, kindLabel) {
+  _fileReport(op, sh, wave, success, dmg, now, lost, kindLabel, pairs) {
     const s = window.Game.state;
     if (!s.reports) s.reports = [];
     const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
@@ -272,8 +303,10 @@ const Police = {
         + (sys ? ` — ${sys.name}` : ""),
       type: "smuggle", success, ts: now, faction: "police", police: true,
       danger: ["moderate", "high", "extreme"][Math.min(wave, 2)],
-      enemyCount: 2 * (wave + 1),         // pairs, reinforced per wave
-      wave,                               // combat.js fields a UNIFORM pair per wave
+      // Every pair ON STATION piles into the fight, and each wave brings one
+      // more — the battle fields however many the system actually had.
+      enemyCount: Math.min(8, 2 * ((pairs || 1) + wave)),
+      wave,                               // combat.js fields a UNIFORM hull per wave
       credits: 0, items: [], lost: lost ? [lost] : [], impounded: [],
       wipe: !!lost,                       // the run-down hull goes with all hands
       damaged: !lost && dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],

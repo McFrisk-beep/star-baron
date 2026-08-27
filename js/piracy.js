@@ -225,7 +225,12 @@ const Piracy = {
     if (hit) return hit;
     const out = this.rollOutcome(op);
     let chase = null;
-    if (op.verb === "rob" && out.won && out.loot && window.Police && window.Charters) {
+    // A won ROB draws the law for the stolen hold; a won TOLL draws it for
+    // the shakedown — the captain paid, then filed, and the complaint is
+    // answered slower (Police.arriveMsFor). A driven-off attempt draws
+    // nothing; the hauler already made its point.
+    const drew = out.won && (op.verb === "rob" ? !!out.loot : op.verb === "toll");
+    if (drew && window.Police && window.Charters) {
       const sh = Fleet.ship(op.shipUid);
       const atk = sh ? Charters.defenseScore(Charters.fleetStats([sh])) : (+op.atk || 0);
       chase = Police.chaseOutcome(op, atk);
@@ -234,11 +239,13 @@ const Piracy = {
   },
   settleAt(op) {
     const p = this.preview(op);
-    return this.robEndAt(op) + (p.chase && window.Police ? Police.chaseLenMs(p.chase) : 0);
+    return this.robEndAt(op) + (p.chase && window.Police ? Police.chaseLenMs(p.chase, op.verb) : 0);
   },
   // When the law arrives and the duel opens — the hulls stop running and
   // fight at the scene (POLICECFG.arriveMs after the boarding ends).
-  duelAt(op) { return this.robEndAt(op) + ((window.POLICECFG || {}).arriveMs || 0); },
+  duelAt(op) {
+    return this.robEndAt(op) + (window.Police ? Police.arriveMsFor(op.verb) : ((window.POLICECFG || {}).arriveMs || 0));
+  },
   // The run home departs when everything at the scene is over: no chase means
   // settleAt === robEndAt, so this is one rule for both cases.
   landAt(op) {
@@ -451,14 +458,22 @@ const Piracy = {
         // The boarding action itself is a replayable Dispatches report.
         if (op.verb === "rob")
           r.report = this._fileRobReport(op, sh, out, !!(op.loot && this.preview(op).chase), now);
-        // §5.1 response: a successful robbery can draw the law on the way
-        // home (police.js). Runs under the same resolved-once gate, so the
-        // chase is banked offline exactly as it would play out live. A caught
-        // run clears op.loot AND costs the hull — nothing banks, nothing
-        // lands, the ship is gone.
-        if (op.loot && window.Police) {
+        // §5.1 response: a rob or a toll that LANDED draws the law (police.js)
+        // — 100% when a patrol is on station, never otherwise. Runs under the
+        // same resolved-once gate, so the chase is banked offline exactly as
+        // it would play out live. A caught run clears op.loot AND costs the
+        // hull; a caught toll forfeits the payment too — the credits were
+        // recovered with the wreck.
+        if ((op.loot || (op.verb === "toll" && out.won)) && window.Police) {
           const chase = Police.pursue(op, sh, now);
-          if (chase) r.chase = chase;
+          if (chase) {
+            r.chase = chase;
+            if (chase.lost && op.verb === "toll" && out.credits > 0) {
+              s.credits -= out.credits;
+              r.credits = 0;
+              op.outcome.credits = 0;
+            }
+          }
         }
         made.push({ piracy: r });
         if (window.Bus) Bus.emit("piracyResolved", r);

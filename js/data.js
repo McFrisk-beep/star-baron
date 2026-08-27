@@ -697,10 +697,17 @@ const POLICECFG = {
   patrolLoopMinMs: 20 * 60 * 1000, // one patrol hop + dwell
   patrolLoopMaxMs: 35 * 60 * 1000,
   patrolFlyFrac: 0.85,
-  // Response after a successful rob: odds scale with the law present where it
-  // happened (stamped on the op at dispatch — the risk you accepted).
-  responseBase: 0.9,               // × the system's security score
-  responseClamp: [0, 0.95],        // truly lawless space answers to nobody
+  // PRESENCE (owner's direction): high-law space is never unwatched. Patrols
+  // per system is a pure seeded function of (system, 20-min slot): policed and
+  // guarded always field 1-3, contested has one about half the time, the
+  // frontier a quarter, lawless none — and the RESPONSE is no longer a dice
+  // roll: a rob or a toll draws the law 100% of the time a patrol is present
+  // at the scene, never when space is empty. Band boundaries come off the op's
+  // stamped law (0.22 / 0.42 / 0.62 — SECURITYCFG.bands), so the SQL derives
+  // the identical count. A tolled captain files a complaint, not a distress
+  // call — the response comes, but slower.
+  presenceSlotMs: 20 * 60 * 1000,
+  tollArriveMult: 2.5,
   // One patrol pair's worth, in Charters.defenseScore units, deepened by the
   // local law and escalating per wave when you keep shooting back.
   pairScore: 700,
