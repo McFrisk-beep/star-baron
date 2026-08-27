@@ -555,4 +555,29 @@ const mhOp = (c, shipUid, from) => ({
   }
 }
 
+// ---- the verdict reports in, and the inbox is the player's -----------------
+{
+  const c = boot();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../js/story.js"), "utf8"), c, { filename: "story.js" });
+  c.Game.state.inbox = []; c.Game.state.prog = {}; c.Game.state.unread = 0;
+  c.Game.requestSave = () => {};
+  // A clean rob reports the take.
+  c.Story.piracyDispatch({ verb: "rob", won: true, name: "Star Maw", ship: "Test Hull",
+    sysId: "navos", credits: 0, loot: { foodstuffs: 12 } });
+  let msgs = c.Story.thread("fleet-dispatch");
+  assert.ok(msgs.length === 1 && /stripped Star Maw/.test(msgs[0].text)
+    && /12 foodstuffs|12 Foodstuffs/i.test(msgs[0].text), "the take is in the dispatch");
+  // A hull lost to the law sends its last transmission, cut off mid-word.
+  c.Story.piracyDispatch({ verb: "rob", won: true, name: "Star Maw", ship: "Test Hull",
+    sysId: "navos", credits: 0, loot: null,
+    chase: { caught: true, lost: { uid: "s1", name: "Test Hull" }, seized: 12, destroyed: 0 } });
+  msgs = c.Story.thread("fleet-dispatch");
+  assert.ok(/mayday, mayday, we're being—$/.test(msgs[msgs.length - 2].text),
+    "the last transmission cuts off mid-word");
+  assert.ok(/Signal lost/.test(msgs[msgs.length - 1].text), "…and dispatch confirms the loss");
+  // The inbox is the player's: a conversation can be deleted whole.
+  c.Story.deleteConversation("fleet-dispatch");
+  assert.strictEqual(c.Story.thread("fleet-dispatch").length, 0, "a deleted conversation is gone");
+}
+
 console.log("OK check_police");

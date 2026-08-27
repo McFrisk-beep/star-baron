@@ -506,6 +506,10 @@ const Game = {
             }
           }
         }
+        // Every settled run reports in on the Fleet Dispatch thread too — the
+        // WYWA modal is a summary, the dispatch is the record.
+        if (window.Story && Story.piracyDispatch)
+          for (const p of pulled.piracy || []) Story.piracyDispatch(p);
         offlineIndustry = offlineIndustry.concat(
           (pulled.piracy || []).map(piracy => ({ piracy })));
         offlineMercs = Fleet.pruneMercs(now);

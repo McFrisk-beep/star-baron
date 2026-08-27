@@ -2122,3 +2122,9 @@ body.reduced .hub-prompt { animation: none; }
 /* The crime tag a baron's hull flies (fill comes from the tier colour). */
 .voy-name.crime { font-size: 8px; font-weight: 600; }
 body.reduced .voy-duel-flash { display: none; }
+
+/* Dispatch deletion (js/ui.js _dispatchListHtml): quiet until hovered. */
+.disp-row { position: relative; }
+.disp-del { position: absolute; right: 4px; bottom: 4px; background: none; border: none;
+  color: rgba(170,185,220,.45); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.disp-del:hover { color: #ff5d73; }

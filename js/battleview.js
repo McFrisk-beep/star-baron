@@ -46,6 +46,12 @@ const BattleView = {
 
   // opts.offered: playback the game offered (not an explicit ▶ Replay click) —
   // skipping one of those early remembers the preference (§5.7).
+  // Is a movie on screen right now? The auto-playback never hijacks one.
+  isOpen() {
+    try { const el = this._els(); return !!(el.modal && !el.modal.classList.contains("hidden")); }
+    catch (e) { return false; }
+  },
+
   open(report, opts = {}) {
     if (!window.Combat || !Combat.replayable(report)) return;
     const el = this._els();

@@ -547,7 +547,8 @@ const UI = {
       const tag = c.status === "active" ? (c.kind === "arc" ? "story" : "job") : c.status;
       return `<li class="disp-row${c.unread ? " unread" : ""}${open ? " open" : ""}" data-open="${c.arc}">${this._avatar(c.portrait)}` +
              `<div class="disp-row-main"><div class="disp-row-top"><b>${c.from}</b> <span class="disp-kind">${tag}</span>` +
-             `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}</li>`;
+             `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}` +
+             `<button class="disp-del" data-del="${c.arc}" title="Delete conversation">🗑</button></li>`;
     }).join("") + `</ul>`;
   },
 
@@ -592,6 +593,18 @@ const UI = {
   onDispatchClick(e) {
     const abort = e.target.closest("[data-mission-cancel]");
     if (abort) { this.cancelMission(abort.dataset.missionCancel); return; }
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      const arc = del.dataset.del;
+      const active = Story.s().prog && Story.s().prog[arc] && Story.s().prog[arc].status === "active";
+      if (!confirm(active
+        ? "Delete this conversation? Its storyline is still ACTIVE — deleting abandons it for good."
+        : "Delete this conversation?")) return;
+      if (this._dispatchArc === arc) this._dispatchArc = null;
+      Story.deleteConversation(arc);
+      this.renderDispatches();
+      return;
+    }
     const back = e.target.closest("[data-back]");
     if (back) { this._dispatchArc = null; this.renderDispatches(); return; }
     const row = e.target.closest("[data-open]");
@@ -4716,6 +4729,18 @@ const UI = {
       if (this.page === "fleet") this.renderFleet();
       if (window.StarMap) StarMap.refreshInfo();
     });
+    // The live playback (owner's direction): when a battle involving the
+    // player's ship begins on a watched tab, SHOW it — the same movie, same
+    // uid, the settle will file as a replayable report. battleSkip (set by
+    // skipping an offered movie early) turns this back into toast offers.
+    this._autoBattle = r => {
+      if (!r || !window.BattleView || !window.Combat) return false;
+      if (document.hidden || (this.s().settings || {}).battleSkip) return false;
+      if (BattleView.isOpen()) return false;
+      if (!Combat.replayable(r)) return false;
+      BattleView.open(r, { offered: true });
+      return true;
+    };
     Bus.on("piracyStart", op => {
       if (window.Game._booting) return;
       const sh = Fleet.ship(op.shipUid);
@@ -4734,7 +4759,8 @@ const UI = {
       const msg = op.verb === "toll"
         ? `🏴 Shaking ${op.name}'s captain down near ${where}…`
         : `⚔ Engaging ${op.name} near ${where} — going for the hold.`;
-      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the boarding", "info", 7000, () => BattleView.open(r, { offered: true }));
+      if (this._autoBattle(r)) this.toast(msg, "info", 5000);
+      else if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the boarding", "info", 7000, () => BattleView.open(r, { offered: true }));
       else this.toast(msg, "info", 6000);
       this.audioSafe("news");
     });
@@ -4748,11 +4774,13 @@ const UI = {
       if (window.Game._booting) return;
       const sh = Fleet.ship(op.shipUid);
       this.toast(`🚨 A Senate patrol cut ${sh ? sh.name : "your hull"} off en route to `
-        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason. Watch the chart.`,
+        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason.`,
         "bad", 8000);
+      this._autoBattle(sh && window.Police ? Police.previewManhuntReport(op, sh) : null);
       this.audioSafe("news");
     });
     Bus.on("manhunt", m => {
+      if (window.Story && Story.piracyDispatch) Story.piracyDispatch({ manhunt: m, ship: m.ship, sysId: m.sysId });
       if (window.Game._booting) return;
       const where = this.sysName(m.sysId);
       const r = m.report ? (this.s().reports || []).find(x => x.uid === m.report) : null;
@@ -4769,12 +4797,15 @@ const UI = {
     Bus.on("policeEngaged", ({ op, chase }) => {
       if (window.Game._booting) return;
       const sh = Fleet.ship(op.shipUid);
+      const r = sh && window.Police ? Police.previewWaveReport(op, sh, 0) : null;
       this.toast(`⚔ The patrol has ${sh ? sh.name : "your hull"} at ${this.sysName(op.sysId)} — `
-        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing. Watch the chart.`, "bad", 7000);
+        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing.`, "bad", 7000);
+      this._autoBattle(r);
       this.audioSafe("news");
       if (window.StarMap) StarMap.refreshInfo();
     });
     Bus.on("piracyResolved", p => {
+      if (window.Story && Story.piracyDispatch) Story.piracyDispatch(p);
       if (window.Game._booting) return;   // offline verdicts land in the "while you were away" recap
       const where = this.sysName(p.sysId);
       if (p.verb === "escort") {

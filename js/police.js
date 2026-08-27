@@ -296,6 +296,15 @@ const Police = {
   _fileReport(op, sh, wave, success, dmg, now, lost, kindLabel, pairs) {
     const s = window.Game.state;
     if (!s.reports) s.reports = [];
+    const report = this._waveReport(op, sh, wave, success, dmg, now, lost, kindLabel, pairs);
+    s.reports.unshift(report);
+    if (s.reports.length > 20) s.reports.length = 20;
+    return report.uid;
+  },
+  // The report itself, without filing it — the live auto-playback at duel
+  // time builds the SAME object (same uid, same seed) the settle will file,
+  // so the movie watched live and the replay in Dispatches are one movie.
+  _waveReport(op, sh, wave, success, dmg, now, lost, kindLabel, pairs) {
     const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
     const report = {
       uid: op.id + (kindLabel ? "mh" : "w") + wave,
@@ -312,9 +321,24 @@ const Police = {
       damaged: !lost && dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],
       roster: [{ uid: sh.uid, name: sh.name, type: sh.type }],
     };
-    s.reports.unshift(report);
-    if (s.reports.length > 20) s.reports.length = 20;
-    return report.uid;
+    return report;
+  },
+  // Live previews for the auto-playback (js/ui.js): pure of the same rolls
+  // the settle applies, never filed here.
+  previewWaveReport(op, sh, w = 0) {
+    if (!sh || !window.Charters) return null;
+    const rolls = this.chaseOutcome(op, Charters.defenseScore(Charters.fleetStats([sh])));
+    const wave = rolls && rolls.waves[w];
+    if (!wave || (!wave.destroyed && !wave.caught)) return null;
+    return this._waveReport(op, sh, w, !!wave.destroyed, wave.dmg || 0, Date.now(),
+      wave.caught ? { uid: sh.uid, name: sh.name } : null, null, rolls.pairs);
+  },
+  previewManhuntReport(op, sh) {
+    if (!sh || !window.Charters || !window.Crime) return null;
+    const mh = this.manhuntOutcome(op, Charters.defenseScore(Charters.fleetStats([sh])), Crime.value());
+    if (!mh) return null;
+    return this._waveReport(op, sh, 0, !!mh.broke, mh.broke ? mh.dmg : 0, Date.now(),
+      mh.caught ? { uid: sh.uid, name: sh.name } : null, "Manhunt");
   },
 
   // The police-only accessory, stripped from a broken pair. Fixed shape from
