@@ -321,15 +321,18 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
     if (broke) assert.ok(Math.hypot(hold.at.x - broke.x, hold.at.y - broke.y) < 1e-9,
       "…holding where the boarding happened");
   }
-  // The law inbound — only drawable when the sector actually seats a precinct
-  // somewhere other than the scene. Rob-able space often doesn't, and the
-  // duel below is what carries the read either way.
-  const secOf = c.Galaxy.sectors.find(x => x.systems.includes(op.sysId));
-  const seat = secOf && secOf.systems.find(id => (c.Galaxy.get(id) || {}).capital && c.Police.hasPrecinct(id));
-  if (seat && seat !== op.sysId) {
-    assert.ok(ids(c.Piracy.robEndAt(op) + 1000).has("pr:pol:" + op.id),
-      "the patrol burns for the scene once the boarding ends");
-  }
+  // The law inbound — ALWAYS seen arriving when a chase formed, whatever the
+  // sector's precinct geography (this went missing whenever the robbery
+  // happened at the precinct capital itself, which read as "the police are
+  // gone"). It closes on the duel's anchor as the window runs.
+  const early = mark(c.Piracy.robEndAt(op) + 1000, "pr:pol:" + op.id);
+  const late = mark(c.Piracy.duelAt(op) - 1000, "pr:pol:" + op.id);
+  assert.ok(early && early.police && early.at, "the response pair is seen arriving once the boarding ends");
+  assert.ok(late && late.at, "…and is still inbound just before the duel opens");
+  const anchor0 = c.Piracy.contactAt(op, c.Piracy.robEndAt(op)) || c.Galaxy.get(op.sysId).pos;
+  const dEarly = Math.hypot(early.at.x - anchor0.x, early.at.y - anchor0.y);
+  const dLate = Math.hypot(late.at.x - anchor0.x, late.at.y - anchor0.y);
+  assert.ok(dLate <= dEarly + 1e-9, "…closing on the scene, never drifting away");
   const mid = c.Piracy.duelAt(op) + 5000;
   const you = mark(mid, "pr:duel:" + op.id), law = mark(mid, "pr:duel:pol:" + op.id);
   assert.ok(you && law, "the duel draws BOTH hulls");

@@ -314,17 +314,25 @@ const Voyages = {
         const at = plan && this.pos(plan, now);
         if (at && at.p < 1) out.push({ ...base, plan, at });
       }
-      // The law burning in from the sector's precinct, between the boarding
-      // ending and the pair arriving on station.
-      if (chase && now >= robEnd && now < duelOn && window.Police && window.Stock) {
-        const sec = Galaxy.sectors.find(x => x.id === Stock.sectorOf(op.sysId));
-        const home = sec && sec.systems.find(id => (Galaxy.get(id) || {}).capital && Police.hasPrecinct(id));
-        const plan = home && home !== op.sysId
-          ? this.plan(home, op.sysId, robEnd, Math.max(1, duelOn - robEnd)) : null;
-        const at = plan && this.pos(plan, now);
-        if (at && at.p < 1) out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
-          pair: true, npc: true, name: "Senate Response", label: "Senate Response",
-          sprite: "race:voidkin", manifest: [], plan, at });
+      // The law burning in for the ANCHOR once the boarding ends — from the
+      // sector's precinct seat when it has one that isn't the scene itself,
+      // else scrambled from the scene's own station. Either way the pair that
+      // fights the duel is SEEN arriving; it never just materialises. (The
+      // old form skipped the approach entirely whenever the robbery happened
+      // AT the precinct capital, which read as "the police are gone".)
+      if (chase && now >= robEnd && now < duelOn) {
+        const sec2 = window.Stock ? Galaxy.sectors.find(x => x.id === Stock.sectorOf(op.sysId)) : null;
+        const seat = sec2 && window.Police
+          ? sec2.systems.find(id => (Galaxy.get(id) || {}).capital && Police.hasPrecinct(id)) : null;
+        const src = seat && seat !== op.sysId ? Galaxy.get(seat).pos : scene.pos;
+        const f = (now - robEnd) / Math.max(1, duelOn - robEnd);
+        const ease = f * f * (3 - 2 * f);
+        const px = src.x + (anchor.x - src.x) * ease, py = src.y + (anchor.y - src.y) * ease;
+        out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
+          pair: true, npc: true, engaged: true, name: "Senate Response", label: "Senate Response",
+          sprite: "race:voidkin", manifest: [],
+          at: { x: px, y: py, heading: Math.atan2(anchor.y - py, anchor.x - px),
+            a: null, b: null, leg: 0, p: 0.5, legP: 0.5 } });
       }
       // The fireball. Whoever lost the duel burns at the scene for a beat
       // after the settle — the only way the chart ever says who died.
