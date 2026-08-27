@@ -395,7 +395,7 @@ begin
             'uid', last_report, 'title', 'Manhunt',
             'type', 'smuggle', 'success', (manhunt->>'broke')::boolean,
             'ts', p_now_ms, 'faction', 'police', 'police', true,
-            'danger', 'high', 'enemyCount', 2,
+            'danger', 'high', 'enemyCount', 2, 'wave', 0,
             'credits', 0, 'items', '[]'::jsonb, 'impounded', '[]'::jsonb,
             'lost', case when (manhunt->>'caught')::boolean
               then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name'))
@@ -584,6 +584,7 @@ begin
           'ts', p_now_ms, 'faction', 'free_trade',
           'danger', case when op->>'kind' = 'freighter' then 'moderate' else 'low' end,
           'enemyCount', case when op->>'kind' = 'freighter' then 3 else 2 end,
+          'hauler', jsonb_build_object('name', op->>'name', 'kind', op->>'kind'),
           'policeInbound', chase is not null,
           'credits', coalesce((outcome->>'credits')::float8, 0),
           'items', '[]'::jsonb, 'lost', '[]'::jsonb, 'impounded', '[]'::jsonb,
@@ -608,7 +609,7 @@ begin
               'type', 'smuggle', 'success', coalesce((wv->>'destroyed')::boolean, false),
               'ts', p_now_ms, 'faction', 'police', 'police', true,
               'danger', (array['moderate', 'high', 'extreme'])[least(w_i, 2) + 1],
-              'enemyCount', 2 * (w_i + 1),
+              'enemyCount', 2 * (w_i + 1), 'wave', w_i,
               'credits', 0, 'items', '[]'::jsonb, 'impounded', '[]'::jsonb,
               'lost', case when coalesce((wv->>'caught')::boolean, false)
                 then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name'))

@@ -132,7 +132,38 @@ const Combat = {
     const nEnemies = Math.min(9, Math.max(1, report.enemyCount
       || (ri(cfg.n[0], cfg.n[1]) + (players.length > 4 ? 1 : 0))));
     const enemies = [];
-    for (let i = 0; i < nEnemies; i++) {
+    if (report.hauler) {
+      // A piracy intercept: the opposition IS the hauler — the same hull the
+      // chart draws, flying convoy (it never shoots, never dies, and runs for
+      // its jump the moment it can) — plus its hired guns. The count matches
+      // the report so the movie never fields more than the fiction sold.
+      const hk = report.hauler.kind === "freighter";
+      enemies.push({ id: "e0", side: "enemy", name: report.hauler.name || "Hauler",
+        type: hk ? "freighter" : "trader", sprite: hk ? "ship:freighter" : "ship:shuttle",
+        size: this._size(hk ? 300 : 140), role: "convoy",
+        shields: 0, fp: 0, dead: false, pct: 0, noDeath: true });
+      const guns = (typeof ENEMY_CATALOG !== "undefined" ? ENEMY_CATALOG.corporate : [])
+        .filter(e => e.tier <= 1);
+      for (let i = 1; i < nEnemies; i++) {
+        const e = guns.length ? pick(guns) : usable[0];
+        enemies.push({ id: "e" + i, side: "enemy", name: e.name, type: e.id,
+          sprite: "ship:" + e.sprite, size: this._size(e.hull),
+          role: this._role(Object.assign({ cls: "escort" }, e)),
+          shields: e.shields || 0, fp: e.firepower || 10, dead: false, pct: 0 });
+      }
+    } else if (report.police) {
+      // The law flies UNIFORM pairs: every hull in a wave is the same class,
+      // stepped up by the wave (report.wave), exactly what the chart's pair
+      // marker promised — never a mixed bag the player didn't see coming.
+      const e = pool[Math.min(report.wave || 0, pool.length - 1)] || usable[0];
+      const race = (typeof RACES !== "undefined") && RACES[e.sprite];
+      for (let i = 0; i < nEnemies; i++) {
+        enemies.push({ id: "e" + i, side: "enemy", name: e.name, type: e.id,
+          sprite: (race ? "race:" : "ship:") + e.sprite,
+          size: this._size(e.hull), role: this._role(Object.assign({ cls: "escort" }, e)),
+          shields: e.shields || 0, fp: e.firepower || 10, dead: false, pct: 0 });
+      }
+    } else for (let i = 0; i < nEnemies; i++) {
       // bias toward the band's top tier so high jobs field real hulls
       const e = rng() < 0.5 ? usable[usable.length - 1] : pick(usable);
       const race = (typeof RACES !== "undefined") && RACES[e.sprite];
@@ -142,10 +173,13 @@ const Combat = {
         shields: e.shields || 0, fp: e.firepower || 10, dead: false, pct: 0 });
     }
 
-    // enemy fates are free variables: rout on success, few losses on failure
-    const eDeaths = report.success ? Math.max(1, enemies.length - (rng() < 0.3 ? 1 : 0))
-      : Math.round(enemies.length * (report.wipe ? 0.1 : 0.25));
-    for (let i = 0; i < eDeaths && i < enemies.length; i++) enemies[i].dead = true;
+    // enemy fates are free variables: rout on success, few losses on failure —
+    // but a noDeath hull (the boarded hauler) is stripped, never destroyed.
+    const killable = enemies.filter(e => !e.noDeath);
+    const eDeaths = Math.min(killable.length,
+      report.success ? Math.max(report.hauler ? 0 : 1, killable.length - (rng() < 0.3 ? 1 : 0))
+        : Math.round(killable.length * (report.wipe ? 0.1 : 0.25)));
+    for (let i = 0; i < eDeaths; i++) killable[i].dead = true;
 
     // ---- timeline: approach → first exchange → attrition → resolution ----
     const D = Math.max(6, Math.min(62, cfg.dur + Math.min(4, (players.length + enemies.length) * 0.25)));
@@ -155,6 +189,18 @@ const Combat = {
     this._paths(tmpl, players, enemies, D, t1, t2, rng);
     this._strafe(tmpl, players, enemies, D, t2, t3, rng);
     this._exits(tmpl, report, players, enemies, D, t3, rng);
+    // The hauler runs the moment the fight is decided, in EVERY outcome —
+    // stripped or saved, its priority is escape, never the field.
+    if (report.hauler) for (const s of enemies) {
+      if (s.role !== "convoy" || s.dead || s.jumpT) continue;
+      const t = +(t3 - rf(0.2, 0.9)).toFixed(2);
+      const h = this._at(s, t);
+      const jt = +Math.min(D - 0.2, t + rf(1.8, 2.6)).toFixed(2);
+      s.path = s.path.filter(w => w.t < t || w.t === 0);
+      s.path.push({ t, x: h.x, y: h.y });
+      s.path.push({ t: jt, x: Math.min(0.95, h.x + 0.2), y: Math.max(0.05, Math.min(0.95, h.y + rf(-0.05, 0.05))) });
+      s.jumpT = jt;
+    }
 
     // death beats: player losses land in attrition (later on success — the
     // pyrrhic read), enemy rout crescendos toward t3
@@ -198,7 +244,7 @@ const Combat = {
       // shooter must be alive at t — if every enemy is gone by then, pull the
       // hit back to just before the last one dies (sum stays exact either way)
       const shooter = t => {
-        const a = enemies.filter(e => this._live(e, t));
+        const a = enemies.filter(e => this._live(e, t) && e.role !== "convoy");
         if (a.length) return { from: pick(a), t };
         const last = enemies.reduce((x, y) => ((x.deathT || 0) >= (y.deathT || 0) ? x : y));
         return { from: last, t: Math.max(0.4, +(last.deathT - 0.1).toFixed(2)) };

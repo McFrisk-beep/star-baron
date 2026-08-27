@@ -351,6 +351,10 @@ const eqArr = (a, b, why) => assert.strictEqual(JSON.stringify(a), JSON.stringif
   has(/app\._merge_piracy\(/, "app_commit merges piracy ops");
   has(/app\._merge_hot\(/, "…and the hot-cargo flags");
   has(/app\._piracy_report_push\(reports, rep_row\)/, "the resolver files rob + wave reports");
+  has(/'hauler', jsonb_build_object\('name', op->>'name', 'kind', op->>'kind'\)/,
+    "rob reports carry the hauler, so the movie fields the ship the chart drew");
+  has(/'enemyCount', 2 \* \(w_i \+ 1\), 'wave', w_i/,
+    "wave reports carry the wave, so combat fields a uniform pair");
   has(/'\{reports\}', reports/, "…and writes them back onto the state");
 }
 

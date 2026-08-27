@@ -301,10 +301,26 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 
   // Outbound.
   assert.ok(ids(op.startedAt + 1000).has("pr:" + op.id), "the raider flies out on the chart");
-  // Boarding: parked at the mark, no duel yet.
+  // Boarding: alongside the CONTACT, with a real chart position (a marker
+  // with no `at` falls out of markers() and the hull vanishes mid-op — the
+  // original sin this block guards against).
   const board = mark(op.resolveAt + 1000, "pr:" + op.id);
-  assert.ok(board && board.sysId === op.sysId, "…and parks at the mark to board");
+  assert.ok(board && board.engaged, "…and engages at the mark to board");
+  assert.ok(board.at && Number.isFinite(board.at.x) && Number.isFinite(board.at.y),
+    "…with a real chart position, so it never vanishes mid-op");
+  const contact = c.Piracy.contactAt(op, op.resolveAt + 1000);
+  if (contact) assert.ok(Math.hypot(board.at.x - contact.x, board.at.y - contact.y) < 1e-9,
+    "…following the hauler itself, not parked at the star");
   assert.ok(!ids(op.resolveAt + 1000).has("pr:duel:" + op.id), "no duel while boarding");
+  // Holding (patrol closing): still drawn, pinned where the hauler broke away.
+  const holdT = c.Piracy.robEndAt(op) + 1000;
+  if (holdT < c.Piracy.duelAt(op)) {
+    const hold = mark(holdT, "pr:" + op.id);
+    assert.ok(hold && hold.at, "the hull is still on the chart while the patrol closes");
+    const broke = c.Piracy.contactAt(op, c.Piracy.robEndAt(op));
+    if (broke) assert.ok(Math.hypot(hold.at.x - broke.x, hold.at.y - broke.y) < 1e-9,
+      "…holding where the boarding happened");
+  }
   // The law inbound — only drawable when the sector actually seats a precinct
   // somewhere other than the scene. Rob-able space often doesn't, and the
   // duel below is what carries the read either way.
@@ -324,9 +340,9 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   const later = c.Piracy.duelAt(op) + 5000 + c.POLICECFG.duelTurnMs / 4;
   const you2 = mark(later, "pr:duel:" + op.id);
   assert.ok(Math.hypot(you2.at.x - you.at.x, you2.at.y - you.at.y) > 1e-6, "the hulls circle");
-  const scene = c.Galaxy.get(op.sysId).pos;
+  const anchor = c.Piracy.contactAt(op, c.Piracy.robEndAt(op)) || c.Galaxy.get(op.sysId).pos;
   for (const m of [you, law, you2]) {
-    const rad = Math.hypot(m.at.x - scene.x, m.at.y - scene.y);
+    const rad = Math.hypot(m.at.x - anchor.x, m.at.y - anchor.y);
     assert.ok(Math.abs(rad - c.POLICECFG.duelRadius) < 1e-9, "…and never drift off the scene");
   }
   // The settle: this hull was run down, so it burns and never flies home.
@@ -457,6 +473,62 @@ const mhOp = (c, shipUid, from) => ({
   // It does not fire twice, however often the loop runs.
   const again = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 2000);
   assert.ok(!again.some(x => x.piracy && x.piracy.manhunt), "a manhunt resolves exactly once");
+}
+
+// ---- the movie fields what the chart sold ----------------------------------
+// A rob report plays the ACTUAL hauler — convoy role (it never shoots), never
+// destroyed, and it runs for its jump in every outcome — plus its hired guns.
+// A police wave plays a UNIFORM pair matched to the wave. Counts and sprites
+// must agree with what the player saw outside the movie.
+{
+  const c = boot();
+  const mk = (success, policeInbound) => ({
+    uid: "prV" + (success ? "w" : "l") + "rob",
+    title: "Intercept — Star Maw", type: "combat", success, ts: T0,
+    faction: "free_trade", danger: "moderate", enemyCount: 3,
+    hauler: { name: "Star Maw", kind: "freighter" }, policeInbound,
+    credits: 0, items: [], lost: [], impounded: [],
+    damaged: success ? [] : [{ uid: "s1", name: "Test Hull", pct: 8 }],
+    roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
+  });
+  for (const success of [true, false]) {
+    const rep = mk(success, success);
+    assert.ok(c.Combat.replayable(rep), "a rob report is replayable");
+    const script = c.Combat.script(rep, rep.roster);
+    const foes = script.ships.filter(x => x.side === "enemy");
+    assert.strictEqual(foes.length, 3, "the movie fields exactly the report's count");
+    const hauler = foes.find(x => x.name === "Star Maw");
+    assert.ok(hauler, "the hauler ITSELF is on the field");
+    assert.strictEqual(hauler.sprite, "ship:freighter", "…wearing the chart's own hull");
+    assert.strictEqual(hauler.role, "convoy", "…flying convoy");
+    assert.ok(!hauler.deathT, "…and it is never destroyed — stripped, not sunk");
+    assert.ok(hauler.jumpT, "…and it runs for its jump, win or lose");
+    for (const e of foes.filter(x => x !== hauler))
+      assert.ok(c.ENEMY_CATALOG.corporate.some(g => g.name === e.name && g.tier <= 1),
+        "the guns are light hired security, not warships");
+    // The hauler never fires: no weapon event originates from it.
+    for (const ev of script.events) {
+      if (["beam", "missile", "flak"].includes(ev.kind))
+        assert.notStrictEqual(ev.from, hauler.id, "the hauler never shoots — its job is to run");
+    }
+  }
+  // Police waves: uniform pairs, stepped by the wave.
+  for (const wave of [0, 1, 2]) {
+    const rep = {
+      uid: "prVw" + wave, title: "Patrol response", type: "smuggle", success: false,
+      ts: T0, faction: "police", police: true, wave,
+      danger: ["moderate", "high", "extreme"][wave], enemyCount: 2 * (wave + 1),
+      credits: 0, items: [], impounded: [], wipe: true,
+      lost: [{ uid: "s1", name: "Test Hull" }], damaged: [],
+      roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
+    };
+    const script = c.Combat.script(rep, rep.roster);
+    const foes = script.ships.filter(x => x.side === "enemy");
+    assert.strictEqual(foes.length, 2 * (wave + 1), `wave ${wave} fields its pairs exactly`);
+    const want = c.ENEMY_CATALOG.police[wave].name;
+    for (const e of foes) assert.strictEqual(e.name, want,
+      `wave ${wave} flies a UNIFORM ${want} formation — no mixed bag`);
+  }
 }
 
 console.log("OK check_police");

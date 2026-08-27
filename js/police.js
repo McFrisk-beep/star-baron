@@ -273,6 +273,7 @@ const Police = {
       type: "smuggle", success, ts: now, faction: "police", police: true,
       danger: ["moderate", "high", "extreme"][Math.min(wave, 2)],
       enemyCount: 2 * (wave + 1),         // pairs, reinforced per wave
+      wave,                               // combat.js fields a UNIFORM pair per wave
       credits: 0, items: [], lost: lost ? [lost] : [], impounded: [],
       wipe: !!lost,                       // the run-down hull goes with all hands
       damaged: !lost && dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(dmg * 100)) }] : [],

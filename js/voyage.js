@@ -254,6 +254,10 @@ const Voyages = {
       const pre = Piracy.preview(op);
       const chase = pre.chase;
       const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
+      // The engagement is anchored where the CONTACT is, not at the star:
+      // the boarding follows the hauler's own live chart position, and once
+      // it breaks away the scene stays pinned where it was at robEnd.
+      const anchor = Piracy.contactAt(op, Math.min(now, robEnd)) || { x: scene.pos.x, y: scene.pos.y };
       if (now < op.resolveAt) {
         const plan = this.plan(op.fromSys, op.sysId, op.startedAt, op.resolveAt - op.startedAt);
         // The manhunt cuts the hull off partway out: both stop dead on the
@@ -262,17 +266,17 @@ const Voyages = {
         const mhAt = Piracy.manhuntAt(op), mhEnd = Piracy.manhuntEndAt(op);
         const cut = plan && mhAt !== Infinity ? this.pos(plan, mhAt) : null;
         if (cut && now >= mhAt && now < mhEnd) {
-          out.push({ ...base, id: "pr:mh:" + op.id, duel: true,
+          out.push({ ...base, id: "pr:mh:" + op.id, duel: true, engaged: true,
             label: (sh ? sh.name : "Raider") + " — run down by a patrol",
             at: this._circle(cut, now, 0) });
           out.push({ id: "pr:mh:pol:" + op.id, kind: "police", police: true,
-            pair: true, npc: true, duel: true,
+            pair: true, npc: true, duel: true, engaged: true,
             name: "Senate Manhunt", label: "Senate Manhunt",
             sprite: "race:voidkin", manifest: [], at: this._circle(cut, now, Math.PI) });
         } else if (cut && now >= mhEnd && Piracy.manhunt(op).caught) {
           const wreckMs = (window.POLICECFG || {}).wreckMs || 0;
           if (now < mhEnd + wreckMs) {
-            out.push({ id: "pr:mh:boom:" + op.id, kind: "wreck", boom: true, you: true,
+            out.push({ id: "pr:mh:boom:" + op.id, kind: "wreck", boom: true, you: true, engaged: true,
               at: this._circle(cut, mhEnd, 0),
               label: (sh ? sh.name : "Your hull") + " — lost to a manhunt" });
           }
@@ -280,26 +284,29 @@ const Voyages = {
           out.push({ ...base, plan, at: this.pos(plan, now) });
         }
       } else if (now < settle) {
-        // At the scene: the boarding, then — if the law answered — holding
-        // for the pair to close, then the duel itself.
+        // At the scene: the boarding (alongside the hauler), then — if the
+        // law answered — holding where it broke away, then the duel itself.
         if (chase && now >= duelOn) {
           // Both hulls stop dead and circle a common point while the guns
           // work. Fresh marker ids so the renderer builds them with the
           // duel's own furniture (muzzle flashes) instead of reusing the
           // transit element.
-          out.push({ ...base, id: "pr:duel:" + op.id, duel: true,
+          out.push({ ...base, id: "pr:duel:" + op.id, duel: true, engaged: true,
             label: (sh ? sh.name : "Raider") + " — under fire",
-            at: this._circle(scene.pos, now, 0) });
+            at: this._circle(anchor, now, 0) });
           out.push({ id: "pr:duel:pol:" + op.id, kind: "police", police: true,
-            pair: true, npc: true, duel: true,
+            pair: true, npc: true, duel: true, engaged: true,
             name: "Senate Response", label: "Senate Response",
             sprite: "race:voidkin", manifest: [],
-            at: this._circle(scene.pos, now, Math.PI) });
+            at: this._circle(anchor, now, Math.PI) });
         } else {
-          out.push({ ...base, sysId: op.sysId,
-            phaseLabel: now < robEnd
-              ? (op.verb === "escort" ? "Flying escort" : op.verb === "toll" ? "Shaking the captain down" : "Boarding action")
-              : "Holding — patrol closing" });
+          // A real chart position at every moment — a marker with no `at`
+          // falls out of markers() and the hull "vanishes" mid-op.
+          out.push({ ...base, engaged: true, op,
+            at: { x: anchor.x, y: anchor.y, heading: anchor.heading || 0, a: null, b: null, leg: 0, p: 0.5, legP: 0.15 },
+            label: (sh ? sh.name : "Raider") + " — " + (now < robEnd
+              ? (op.verb === "escort" ? "flying escort" : op.verb === "toll" ? "shaking the captain down" : "boarding action")
+              : "holding — patrol closing") });
         }
       } else if (!(chase && chase.caught)) {
         // Survived the scene: the run home departs at the settle.
@@ -323,8 +330,8 @@ const Voyages = {
       // after the settle — the only way the chart ever says who died.
       const wreck = (window.POLICECFG || {}).wreckMs || 0;
       if (chase && now >= settle && now < settle + wreck) {
-        out.push({ id: "pr:boom:" + op.id, kind: "wreck", boom: true, npc: !chase.caught,
-          you: !!chase.caught, at: this._circle(scene.pos, settle, chase.caught ? 0 : Math.PI),
+        out.push({ id: "pr:boom:" + op.id, kind: "wreck", boom: true, npc: !chase.caught, engaged: true,
+          you: !!chase.caught, at: this._circle(anchor, settle, chase.caught ? 0 : Math.PI),
           label: chase.caught ? (sh ? sh.name : "Your hull") + " — lost with all hands"
                               : "Senate patrol — destroyed" });
       }

@@ -245,6 +245,17 @@ const Piracy = {
     return this.settleAt(op) + (op.travelMs || Math.max(1, op.returnAt - op.resolveAt));
   },
 
+  // Where the CONTACT is at time t, in chart coordinates: the hauler's own
+  // live position on its run (Traffic is a pure view, so any t works — during
+  // the boarding we follow it live, and freezing t at robEnd pins the spot
+  // where it broke away). Null once that loop is over (docked) — callers fall
+  // back to the system's own position.
+  contactAt(op, t) {
+    if (!window.Traffic) return null;
+    const v = Traffic.flights(t).find(x => x.id === op.flightId && x.loop === op.loop);
+    return (v && v.at) || null;
+  },
+
   // ---- the manhunt (POLICECFG.manhunt*, CRIMECFG.criminal and above) -------
   // Past the criminal line the law stops waiting for a fresh crime: a patrol
   // cuts the hull off partway OUT, before it ever reaches the mark. Computed
@@ -284,6 +295,9 @@ const Piracy = {
       type: "combat", success: !!out.won, ts: now, faction: "free_trade",
       danger: op.kind === "freighter" ? "moderate" : "low",
       enemyCount: op.kind === "freighter" ? 3 : 2,
+      // The movie fields the ACTUAL hauler (combat.js draws it as a fleeing
+      // convoy) plus its hired guns — never a line of warships it wasn't.
+      hauler: { name: op.name, kind: op.kind },
       policeInbound: !!policeInbound,
       credits: out.credits || 0, items: [], lost: [], impounded: [],
       damaged: out.dmg > 0 ? [{ uid: sh.uid, name: sh.name, pct: Math.max(1, Math.round(out.dmg * 100)) }] : [],
