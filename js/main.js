@@ -759,6 +759,9 @@ const Game = {
           this.requestSave();
         }).catch(() => { this._pullInflight = false; });
       }
+      // Cross-player fights: publish my windows, fetch everyone's
+      // (self-throttled to ~1/min; quietly off without the table).
+      if (window.Encounters) void Encounters.sync(now);
       // Missions still have a dedicated RPC; pull also resolves them — either is fine.
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();

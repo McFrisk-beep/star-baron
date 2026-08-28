@@ -2458,16 +2458,27 @@ const StarMap = {
     // Live encounters at their seeded intercept points — the fight the whole
     // redesign is about: real ships, shield/hull bars, projectiles, and a
     // click on any of it opens the zoom view (the magnifier).
-    const encs = window.Encounters ? Encounters.active(now) : [];
+    const encs = window.Encounters
+      ? Encounters.active(now).concat(Encounters.remoteActive(now)) : [];
     for (const e of encs) {
-      if (!e.op || e.op.sysId !== sys.id || e.kind === "manhunt") continue;
-      const hs = window.Combat ? Combat.seedFrom("prx:" + e.op.id) : 1;
+      const encSys = e.op ? e.op.sysId : e.sysId;
+      if (encSys !== sys.id || (e.kind === "manhunt" && !e.remote)) continue;
+      const seedBase = e.op ? e.op.id : (e.anchorSeed || e.uid);
+      const hs = window.Combat ? Combat.seedFrom("prx:" + seedBase) : 1;
       const r = geom.R * (0.45 + (hs % 25) / 100);
       const aa = ((hs >> 5) % 628) / 100;
       const ax = geom.cx + Math.cos(aa) * r, ay = geom.cy + Math.sin(aa) * r;
       this._drawEncounter(ctx, e, ax, ay, 150, now);
       this._encHitboxes.push({ x: ax, y: ay, r: 80, enc: e });
-      fx.pos["pr:" + e.op.id] = { x: ax, y: ay };     // the Live View chase cam
+      if (e.op) fx.pos["pr:" + e.op.id] = { x: ax, y: ay };  // the Live View chase cam
+      if (e.remote && e.display) {
+        ctx.save();
+        ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
+        ctx.strokeText(e.display, ax, ay - 96);
+        ctx.fillStyle = "#ffd9a0"; ctx.fillText(e.display, ax, ay - 96);
+        ctx.restore();
+      }
     }
     for (const op of ops) {
       if (op.sysId !== sys.id || now < op.resolveAt) continue;

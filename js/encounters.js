@@ -229,6 +229,115 @@ const Encounters = {
     }
     return { t, D, ships, shots, booms, done: t >= D };
   },
+
+  // ---- cross-player fights (docs/sql/encounter_presence.sql) ---------------
+  // Fights are deterministic, so a spectator needs only the DESCRIPTION. A
+  // baron's client posts one row per engagement window IN ADVANCE (everything
+  // is pre-rolled), other clients poll about once a minute and replay the
+  // identical fight from the seed when the clock enters the window. No table
+  // → feature quietly off, like flagship presence.
+  _remote: [], _remAt: 0, _remMissing: false, _pub: {},
+  _mpOn() {
+    return !!(window.Cloud && Cloud.enabled && Cloud.client
+      && Cloud.signedIn && Cloud.signedIn()) && !this._remMissing;
+  },
+  // Report-shaped params, with roster uids anonymised (r0, r1…) so nothing
+  // internal leaks; lost/damaged remap onto the same fake uids.
+  _params(r) {
+    const map = {};
+    const roster = (r.roster || []).slice(0, 4).map((p, i) => {
+      map[p.uid] = "r" + i;
+      return { uid: "r" + i, name: String(p.name || "Hull").slice(0, 24), type: p.type };
+    });
+    return {
+      police: !!r.police, wave: r.wave || 0, hauler: r.hauler || null,
+      enemyCount: r.enemyCount || 2, success: !!r.success, wipe: !!r.wipe,
+      roster,
+      lost: (r.lost || []).map(x => ({ uid: map[x.uid] || "r0", name: String(x.name || "").slice(0, 24) })),
+      damaged: (r.damaged || []).map(x => ({ uid: map[x.uid] || "r0", name: String(x.name || "").slice(0, 24), pct: x.pct || 0 })),
+    };
+  },
+  // Every window one of my ops will fight — pre-rolled, so postable at dispatch.
+  _windowsFor(op) {
+    const sh = window.Fleet && Fleet.ship(op.shipUid);
+    if (!sh || !window.Piracy || !window.Police) return [];
+    const out = [];
+    const pre = Piracy.preview(op);
+    const robEnd = Piracy.robEndAt(op), duelOn = Piracy.duelAt(op);
+    if (op.verb !== "escort") {
+      const r = Piracy.previewReport(op);
+      if (r) out.push({ enc_id: r.uid, kind: "boarding", t0: op.resolveAt, t1: robEnd, params: this._params(r) });
+    }
+    if (pre.chase) {
+      const gap = (window.POLICECFG || {}).waveGapMs || 40000;
+      pre.chase.waves.forEach((w, i) => {
+        if (!w.destroyed && !w.caught) return;
+        const wr = Police.previewWaveReport(op, sh, i);
+        if (wr) out.push({ enc_id: wr.uid, kind: "wave", t0: duelOn + i * gap, t1: duelOn + (i + 1) * gap, params: this._params(wr) });
+      });
+    }
+    const mhAt = Piracy.manhuntAt(op);
+    if (!op.mh && mhAt !== Infinity) {
+      const mr = Police.previewManhuntReport(op, sh);
+      if (mr) out.push({ enc_id: mr.uid, kind: "manhunt", t0: mhAt, t1: Piracy.manhuntEndAt(op), params: this._params(mr) });
+    }
+    return out.map(w => ({ ...w, sys_id: op.sysId }));
+  },
+  // Publish + poll, self-throttled to about a minute — call from the main
+  // loop; it is safe to call every tick.
+  async sync(now = Date.now()) {
+    if (!this._mpOn() || now - this._remAt < 60000) return;
+    this._remAt = now;
+    try {
+      const me = Cloud.user() ? String(Cloud.user().id) : null;
+      // publish my windows (once per enc id per session)
+      const rows = [];
+      for (const op of (this.s() || {}).piracy || []) {
+        for (const w of this._windowsFor(op)) {
+          if (this._pub[w.enc_id]) continue;
+          this._pub[w.enc_id] = true;
+          rows.push({ user_id: me, enc_id: w.enc_id, kind: w.kind, sys_id: w.sys_id,
+            t0: Math.round(w.t0), t1: Math.round(w.t1), params: w.params,
+            display: (window.Voyages ? Voyages.playerName() : "Baron").slice(0, 24),
+            updated_at: new Date().toISOString() });
+        }
+      }
+      if (rows.length) await Cloud.client.from("encounter_presence").upsert(rows);
+      // sweep my finished rows
+      await Cloud.client.from("encounter_presence").delete()
+        .eq("user_id", me).lt("t1", now - 60000);
+      // fetch everyone's live-or-upcoming windows
+      const { data, error } = await Cloud.client.from("encounter_presence")
+        .select("user_id,enc_id,display,kind,sys_id,t0,t1,params")
+        .gt("t1", now - 5000).limit(200);
+      if (error) throw error;
+      this._remote = (data || []).filter(r => String(r.user_id) !== me);
+    } catch (e) {
+      const msg = String((e && (e.message || e)) || e);
+      if (/encounter_presence|does not exist|relation|PGRST/i.test(msg)) this._remMissing = true;
+    }
+  },
+  // Other barons' fights whose window the clock is inside — the same
+  // descriptor shape active() yields, tagged remote with the baron's name.
+  remoteActive(now = Date.now()) {
+    const out = [];
+    for (const r of this._remote) {
+      if (now < r.t0 || now >= r.t1) continue;
+      const p = r.params || {};
+      const rep = { uid: String(r.enc_id), sysId: r.sys_id, police: p.police, wave: p.wave,
+        hauler: p.hauler, enemyCount: p.enemyCount, success: p.success, wipe: p.wipe,
+        roster: p.roster, lost: p.lost, damaged: p.damaged };
+      const e = this.fromReport(rep);
+      if (!e) continue;
+      e.t0 = r.t0; e.t1 = r.t1; e.sysId = r.sys_id;
+      e.remote = true; e.display = String(r.display || "Baron").slice(0, 24);
+      e.kind = r.kind === "manhunt" ? "manhunt" : e.kind;
+      // the scene anchors fights by the op id — strip the stage suffix
+      e.anchorSeed = String(r.enc_id).replace(/(rob|w\d+|mh\d+)$/, "");
+      out.push(e);
+    }
+    return out;
+  },
 };
 
 window.Encounters = Encounters;

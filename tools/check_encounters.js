@@ -95,4 +95,34 @@ const E = ctx.Encounters;
   assert.strictEqual(E.active(20000).length, 0, "nothing renders before the intercept");
 }
 
+// ---- the spectator round-trip: publish params, rebuild the SAME fight ------
+// What a baron's client posts to encounter_presence is what every other
+// client rebuilds from. The rebuilt snapshot must be identical to the
+// publisher's own — that is the whole multiplayer trick.
+{
+  const r = { uid: "encT4w1", type: "smuggle", police: true, wave: 1, success: true,
+    enemyCount: 4, lost: [], damaged: [{ uid: "s9", name: "My Hull", pct: 9 }],
+    roster: [{ uid: "s9", name: "My Hull", type: "frigate" }], sysId: "navos" };
+  const p = E._params(r);
+  assert.ok(!JSON.stringify(p).includes("s9"), "internal ship uids never leave the client");
+  const rebuilt = { uid: r.uid, sysId: "navos", police: p.police, wave: p.wave,
+    hauler: p.hauler, enemyCount: p.enemyCount, success: p.success, wipe: p.wipe,
+    roster: p.roster, lost: p.lost, damaged: p.damaged };
+  const mine = E.snapshot(E.fromReport(r), 22222);
+  const theirs = E.snapshot(E.fromReport(rebuilt), 22222);
+  const strip = s2 => JSON.stringify(s2.ships.map(x => [x.name, x.side, +x.sh.toFixed(6), +x.hull.toFixed(6), +x.x.toFixed(6), +x.y.toFixed(6)]));
+  assert.strictEqual(strip(mine), strip(theirs),
+    "a spectator rebuilds the publisher's exact fight from the posted params");
+  // and the window filter behaves
+  E._remote = [{ user_id: "u2", enc_id: r.uid, display: "Rival", kind: "wave",
+    sys_id: "navos", t0: 1000, t1: 41000, params: p }];
+  assert.strictEqual(E.remoteActive(500).length, 0, "nothing before the window");
+  const act = E.remoteActive(2000);
+  assert.strictEqual(act.length, 1, "inside the window the fight exists");
+  assert.ok(act[0].remote && act[0].display === "Rival" && act[0].sysId === "navos",
+    "…tagged with the baron's name and place");
+  assert.strictEqual(E.remoteActive(42000).length, 0, "…and gone after it");
+  E._remote = [];
+}
+
 console.log("OK check_encounters");
