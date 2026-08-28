@@ -5,7 +5,10 @@
    verdict); the shield/hull bars only ever fall and land EXACTLY on that
    verdict; projectiles fly and deaths burn; the hauler never dies and always
    jumps; and a snapshot is a pure function of the clock, so the scene, the
-   zoom view and every spectating client render the identical moment.
+   bench and every spectating client render the identical moment. Every
+   action is a kind of encounter now: rob boardings, toll shakedowns, police
+   waves and manhunts, fleet combat, escort raids, smuggling gate runs,
+   assassinations, transport ambushes, charters and survey hazards.
    Run: node tools/check_encounters.js */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
@@ -123,6 +126,125 @@ const E = ctx.Encounters;
     "…tagged with the baron's name and place");
   assert.strictEqual(E.remoteActive(42000).length, 0, "…and gone after it");
   E._remote = [];
+}
+
+// ---- mission kinds: every action fields its own encounter ------------------
+{
+  const roster = [{ uid: "s1", name: "Iron Vigil", type: "battleship" },
+    { uid: "s2", name: "Sparrow", type: "corvette" }];
+  // A won fleet battle: real opposition from the flavour pool, and by the end
+  // the field is swept — every foe dead (with a fireball) or run off.
+  const r = { uid: "encM1", type: "combat", success: true, danger: "high", faction: "syndicate",
+    lost: [], damaged: [{ uid: "s2", name: "Sparrow", pct: 18 }], roster };
+  const e = E.fromReport(r);
+  assert.ok(e && e.kind === "combat" && e.sides.foe.length >= 1, "a combat report fields a fleet engagement");
+  const synd = new Set(ctx.ENEMY_CATALOG.syndicate.map(x => x.name));
+  for (const f of e.sides.foe) assert.ok(synd.has(f.name), "syndicate muscle for a syndicate job");
+  const D = e.t1 - e.t0;
+  let sawBoom = false;
+  for (let t = 0; t <= D; t += 500) if (E.snapshot(e, t).booms.length) sawBoom = true;
+  const end = E.snapshot(e, D * 0.99);
+  assert.ok(!end.ships.some(x => x.side === "foe"), "a won field is swept — dead or run off");
+  const me = end.ships.find(x => x.name === "Sparrow");
+  assert.ok(me && Math.abs(me.hull - 0.82) < 1e-9, "damage lands exactly on the verdict (18%)");
+  assert.ok(sawBoom, "at least one foe burns");
+  // A lost one: the foes hold the field and your survivors run for the jump.
+  const rl = { uid: "encM2", type: "combat", success: false, danger: "high", faction: null,
+    lost: [{ uid: "s2", name: "Sparrow" }], damaged: [], roster };
+  const el = E.fromReport(rl);
+  const endL = E.snapshot(el, (el.t1 - el.t0) * 0.99);
+  assert.ok(endL.ships.some(x => x.side === "foe"), "a lost field stays held by the enemy");
+  assert.ok(!endL.ships.some(x => x.side === "you"), "…and your survivors have jumped clear");
+}
+
+// ---- smuggle: a chase, not a brawl -----------------------------------------
+{
+  const roster = [{ uid: "s1", name: "Quiet Margin", type: "clipper" }];
+  const win = E.fromReport({ uid: "encS1", type: "smuggle", success: true, danger: "moderate",
+    faction: "police", lost: [], damaged: [], roster });
+  assert.strictEqual(win.kind, "smuggle", "a smuggle report is a gate run");
+  const D = win.t1 - win.t0;
+  for (let t = 0; t <= D; t += 500)
+    assert.ok(!E.snapshot(win, t).booms.length, "nobody dies in a clean run — cutters included");
+  assert.ok(!E.snapshot(win, D * 0.99).ships.some(x => x.side === "you"), "you jump the gate at the end");
+  const loss = E.fromReport({ uid: "encS2", type: "smuggle", success: false, danger: "moderate",
+    faction: "police", lost: [], damaged: [], impounded: [{ uid: "s1", name: "Quiet Margin" }], roster });
+  assert.ok(E.snapshot(loss, (loss.t1 - loss.t0) * 0.99).ships.some(x => x.side === "you"),
+    "a boarded runner ends dead in space, not through the gate");
+  // charters fight with the freight templates
+  assert.strictEqual(E.fromReport({ uid: "encC1", type: "charter", success: true, danger: "extreme",
+    faction: null, lost: [], damaged: [], roster }).kind, "smuggle", "an extreme charter runs the gate");
+  assert.strictEqual(E.fromReport({ uid: "encC2", type: "charter", success: true, danger: "low",
+    faction: null, lost: [], damaged: [], roster }).kind, "transport", "a calm charter flies the column");
+}
+
+// ---- toll: a stand-off — warning shots, no blood, the mark pays and jumps --
+{
+  const r = { uid: "encTo1rob", type: "combat", success: true, toll: true,
+    hauler: { name: "Star Maw", kind: "freighter" }, enemyCount: 2,
+    lost: [], damaged: [], roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }] };
+  const e = E.fromReport(r);
+  assert.strictEqual(e.kind, "toll", "a toll-flagged report is a shakedown");
+  const D = e.t1 - e.t0;
+  let sawTracer = false;
+  for (let t = 0; t <= D; t += 250) {
+    const s = E.snapshot(e, t);
+    for (const sh of s.ships) {
+      assert.ok(sh.hull === 1 && sh.sh === 1, "nobody bleeds in a paid shakedown");
+    }
+    assert.ok(!s.booms.length, "…and nobody dies");
+    if (s.shots.some(x => x.miss)) sawTracer = true;
+  }
+  assert.ok(sawTracer, "warning shots still cross the bow — tension without damage");
+  assert.ok(!E.snapshot(e, D * 0.99).ships.some(x => x.convoy), "the mark pays and jumps clear");
+}
+
+// ---- toll ops render live in their boarding window -------------------------
+{
+  const c = ctx;
+  const sh = c.Fleet.makeShip("corvette"); c.Game.state.ships.push(sh);
+  sh.status = "raiding";
+  const op = { id: "prT1", verb: "toll", shipUid: sh.uid, sysId: "navos", toSys: "navos",
+    fromSys: "navos", flightId: "f2", loop: 0, kind: "freighter", name: "Ore Crown",
+    manifest: ["foodstuffs"], chance: 1, atk: 300, law: 0.1, value: 500, cargo: 40,
+    startedAt: 0, travelMs: 60000, resolveAt: 60000, returnAt: 120000, resolved: false };
+  c.Game.state.piracy = [op];
+  const live = E.active(65000).filter(x => x.op === op);
+  assert.strictEqual(live.length, 1, "the shakedown window yields one live encounter");
+  assert.strictEqual(live[0].kind, "toll", "…rendered as a shakedown, not a boarding");
+  c.Game.state.piracy = [];
+}
+
+// ---- survey: a clean chart is quiet; a hazard fields the raider ------------
+{
+  const roster = [{ uid: "s1", name: "Long Eye", type: "sparrow" }];
+  const clean = E.fromReport({ uid: "encV1", type: "survey", success: true,
+    lost: [], damaged: [], roster });
+  assert.ok(clean && clean.kind === "survey" && clean.sides.foe.length === 0, "a clean chart has no opposition");
+  const D = clean.t1 - clean.t0;
+  for (let t = 0; t <= D; t += 500) {
+    const s = E.snapshot(clean, t);
+    assert.ok(!s.shots.length && !s.booms.length, "…and no fire at all");
+  }
+  const rough = E.fromReport({ uid: "encV2", type: "survey", success: true,
+    lost: [], damaged: [{ uid: "s1", name: "Long Eye", pct: 9 }], roster });
+  assert.ok(rough.sides.foe.length >= 1, "a shaken survey fields what shook it");
+  const meEnd = E.snapshot(rough, (rough.t1 - rough.t0) * 0.99).ships.find(x => x.side === "you");
+  assert.ok(meEnd && Math.abs(meEnd.hull - 0.91) < 1e-9, "the hazard damage lands exactly (9%)");
+}
+
+// ---- voyage events become skirmish encounters ------------------------------
+{
+  const c = ctx;
+  const sh = c.Fleet.makeShip("corvette"); c.Game.state.ships.push(sh);
+  const ev = { id: "m9:e0", kind: "raid", t: 5000, watch: true,
+    m: { uid: "m9", shipUids: [sh.uid], type: "escort", danger: "moderate", faction: null } };
+  const r = E.skirmishReport(ev);
+  assert.ok(r && r.skirmish && r.type === "escort" && r.roster.length === 1,
+    "a raid event builds an escort skirmish from the fleet");
+  assert.ok(!r.lost.length && !r.damaged.length, "a skirmish is never decisive");
+  const e = E.fromReport(r);
+  assert.ok(e && e.kind === "escort", "…and the scene can field it");
 }
 
 console.log("OK check_encounters");

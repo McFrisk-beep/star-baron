@@ -2,8 +2,9 @@
 
 **Status: Steps 1–4 of §8 are built.** Step 1: lane graph (`js/lanes.js`),
 galaxy-view lane render, per-bearing gates, lane-routed travel ETAs. Step 2:
-combat view (`js/combat.js`, `js/battleview.js`), `ENEMY_CATALOG`, report
-rosters + replays. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
+combat view — shipped as a modal, since REBUILT canvas-first (see the §5
+note): `js/encounters.js` + `js/encounterscene.js`, `ENEMY_CATALOG`, report
+rosters. Step 3: voyages (`js/voyage.js`) — `pos(plan, t)` over the
 lane graph, moving markers on the galaxy chart, flagship/convoy vignettes in
 the system view (a slice of §6.2 shipped early), the Hub's **Live View**
 (the REAL system scene — `StarMap.startScene` rendering onto the Hub canvas
@@ -214,7 +215,8 @@ server at resolve. New rule:
 ### 4.5 Comms integration
 
 When an event's time passes, `feed.js`/comms gets an entry:
-`⚔ Convoy engaged off Sable-4 — ▶ watch`. Clicking plays the encounter (§5).
+`⚔ Convoy engaged off Sable-4 — live in the system scene`. The skirmish itself
+renders in the scene for the event's window (§5, canvas-first).
 Entries also append to the mission's report card, so the log shows the journey,
 not just the verdict. Catch-up after a closed tab posts the missed entries in
 order — same fast-forward the game already does everywhere.
@@ -222,6 +224,18 @@ order — same fast-forward the game already does everywhere.
 ---
 
 ## 5. The combat view
+
+> **Superseded (owner's direction, kept as the design record):** the modal
+> playback below shipped, then was replaced by CANVAS-FIRST encounters.
+> `js/encounters.js` is now the one engagement model (every action — rob,
+> toll, police waves, manhunts, missions, charters, surveys — is an
+> encounter kind whose bars land exactly on the verdict) and
+> `js/encounterscene.js` the one renderer, drawing fights straight into the
+> system scene. There is no modal, no "click to watch" and no ▶ Replay: a
+> fight is watched live in the world or read afterwards in the
+> dispatch/fleet report. The ideas below survive in that form — fates
+> first (§5.2), a template per mission type (§5.3), the wallet always
+> ruling the picture. `tools/battle_demo.html` benches every kind.
 
 ### 5.1 Two new files
 
@@ -373,8 +387,9 @@ make systems feel inhabited. Stop points after every step.
 
 - `check_lanes.js` — graph connected; every system's gate count = degree;
   identical graph across two independent builds; ring property on capitals.
-- `check_combat_script.js` — script terminal state matches the report exactly
-  (same dead, damage sums within rounding) across many seeded reports.
+- `check_encounters.js` — encounter terminal state matches the report exactly
+  (bars land on the verdict to the digit) across every kind; snapshot purity;
+  the spectator round-trip.
 - `check_voyage.js` — event schedules deterministic; `pos(plan, t)` identical
   under shuffled/odd-stepped timestamp evaluation (the anti-accumulation test).
 

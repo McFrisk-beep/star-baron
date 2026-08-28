@@ -17,8 +17,9 @@
      robbery can draw a response on the way home, with odds scaled by the law
      present where it happened (stamped on the op at dispatch — the risk you
      accepted). It resolves like a mission: the wallet is decided first by a
-     pure seeded function of the op, then a report is filed in Dispatches that
-     BattleView can replay — the movie never disagrees with the outcome.
+     pure seeded function of the op, then a report is filed in Dispatches and
+     the fight renders live in the system scene (js/encounters.js) — the
+     canvas never disagrees with the outcome.
 
      Police are formidable but killable. Break the pair and the loot is yours
      for now — but killing patrol officers is the worst crime on the books
@@ -289,10 +290,10 @@ const Police = {
     return out;
   },
 
-  // A mission-shaped report: the chase plays in BattleView off the smuggle
-  // template (a run for the gate, pursuers cutting angles) and lands in
-  // Comms → Dispatches like any engagement. Combat's police flavour fields
-  // the ENEMY_CATALOG.police hulls, tier rising with the wave.
+  // A mission-shaped report: the duel renders live in the system scene
+  // (Encounters builds the wave encounter from this same shape) and lands in
+  // Comms → Dispatches like any engagement. The police flavour fields the
+  // ENEMY_CATALOG.police hulls, tier rising with the wave.
   _fileReport(op, sh, wave, success, dmg, now, lost, kindLabel, pairs) {
     const s = window.Game.state;
     if (!s.reports) s.reports = [];
