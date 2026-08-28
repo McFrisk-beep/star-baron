@@ -4,8 +4,9 @@
    security bands the chart paints (never authored); patrols are deterministic
    seeded flight plans that always fly in pairs and only where the law lives;
    the chase is a pure function of the op so offline equals online; being
-   caught costs exactly the stolen cargo (recovered to the shelf it was bound
-   for) and a repair bill — never the hull, never banked stock, never credits;
+   caught costs the stolen cargo (recovered to the shelf it was bound for)
+   AND the raiding hull itself — destroyed with all hands, filed as a wipe —
+   while banked stock and credits are still never touched;
    destroying police is the worst crime on the books and draws a heavier wave,
    capped; the police-only item comes from a broken pair and from nowhere
    else; and every fought wave files a mission-shaped report BattleView can
@@ -90,41 +91,57 @@ const boot = () => {
   assert.strictEqual(c.Piracy.verbs(v, lawless.id).length, 0, "no verbs on the law");
 }
 
-// ---- patrols reach the galaxy chart, and the Law layer can hide them -------
-// The chart is SVG + CSS, so what this can pin without a DOM is the contract
-// between them: patrols ride the same markers() pipeline the haulers do, and
-// the layer id the CSS keys on exists in both files.
+// ---- patrols are HIDDEN from the galaxy chart, present in the scene --------
+// Owner's direction: the law's whereabouts is learned by flying, not by
+// reading the map. Ambient pairs never ride markers(); they still exist in
+// the system view (inSystem), and the response/duel markers still draw when
+// they engage (covered below).
 {
   const c = boot();
-  let t = T0, marks = [];
-  for (let m = 0; m < 60 && !marks.some(v => v.police); m++) {
-    t = T0 + m * 60000;
-    marks = c.Voyages.markers(t);
+  for (let m = 0; m < 60; m += 7) {
+    const marks = c.Voyages.markers(T0 + m * 60000);
+    assert.ok(!marks.some(v => String(v.id).startsWith("npc:pol")),
+      "ambient patrols never appear on the galaxy chart");
   }
-  const pol = marks.filter(v => v.police);
-  assert.ok(pol.length > 0, "patrols are drawn on the galaxy chart, like the haulers");
-  for (const v of pol) {
-    assert.ok(v.at && Number.isFinite(v.at.x) && Number.isFinite(v.at.y), "…with a real chart position");
-    assert.ok(v.name, "…and a name over the hull");
+  // …but they are still flying, and the scene can see them.
+  let flights = [];
+  for (let m = 0; m < 60 && !flights.length; m++) flights = c.Police.patrols(T0 + m * 60000);
+  assert.ok(flights.length > 0, "the pairs still fly (the scene draws them)");
+  const v = flights[0];
+  const seen = [];
+  for (let m = 0; m < 90 && !seen.length; m++) {
+    for (const sysId of v.plan.legs) {
+      if (c.Voyages.inSystem(sysId, T0 + m * 60000).some(x => x.id === v.id)) { seen.push(sysId); break; }
+    }
   }
+  assert.ok(seen.length, "…and a patrol shows up inside a system view");
   const sm = fs.readFileSync(path.join(__dirname, "../js/starmap.js"), "utf8");
-  const css = fs.readFileSync(path.join(__dirname, "../css/style.css"), "utf8");
-  assert.ok(/\{ id: "law"/.test(sm), "the chart offers a Law layer");
-  assert.ok(/case "law": return/.test(sm), "…which carries its own legend key");
-  assert.ok(/v\.police \? "voy-law"/.test(sm), "patrol markers are tagged for that layer");
   assert.ok(/"node-precinct"/.test(sm) && /Police\.hasPrecinct\(sys\.id\)/.test(sm),
-    "…and a precinct badge is drawn on the systems that seat one");
-  assert.ok(/\.lay-off-law \.voy-law/.test(css) && /\.lay-off-law[^{]*\.node-precinct/.test(css),
-    "switching the layer off hides patrols AND precincts");
+    "precinct badges still mark the seats of the law");
 }
 
-// ---- the response gate scales with the law ---------------------------------
+// ---- presence, not dice: the gate the response and the hunt both read ------
 {
   const c = boot();
-  assert.strictEqual(c.Police.responseChance(0), 0, "truly lawless space answers to nobody");
-  assert.ok(c.Police.responseChance(0.9) > c.Police.responseChance(0.3), "more law, more response");
-  assert.ok(c.Police.responseChance(1) <= c.POLICECFG.responseClamp[1], "never a certainty");
+  assert.strictEqual(c.Police.patrolsIn("anywhere", 0.1, T0), 0, "lawless space is never patrolled");
+  for (let i = 0; i < 40; i++) {
+    const n = c.Police.patrolsIn("sys" + i, 0.8, T0 + i * 7e5);
+    assert.ok(n >= 1 && n <= 3, `guarded/policed space always fields 1-3 pairs (${n})`);
+  }
+  let contested = 0, frontier = 0;
+  for (let i = 0; i < 400; i++) {
+    if (c.Police.patrolsIn("sys" + i, 0.5, T0 + i * 1300000) > 0) contested++;
+    if (c.Police.patrolsIn("sys" + i, 0.3, T0 + i * 1300000) > 0) frontier++;
+  }
+  assert.ok(contested > 120 && contested < 280, `contested space is patrolled about half the time (${contested}/400)`);
+  assert.ok(frontier > 40 && frontier < 180, `the frontier about a quarter (${frontier}/400)`);
+  assert.ok(frontier < contested, "…and always thinner than contested");
+  // Same slot, same answer — a pure view of the clock.
+  assert.strictEqual(c.Police.patrolsIn("navos", 0.7, T0 + 1000),
+    c.Police.patrolsIn("navos", 0.7, T0 + 2000), "presence is stable within a slot");
   assert.ok(c.Police.pairScoreAt(0.7, 1) > c.Police.pairScoreAt(0.7, 0), "each wave comes heavier");
+  assert.strictEqual(c.Police.arriveMsFor("toll"), c.POLICECFG.arriveMs * c.POLICECFG.tollArriveMult,
+    "a toll's response arrives slower");
 }
 
 // A crafted robbed op + hull, for driving pursue() directly.
@@ -137,12 +154,11 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   loot: JSON.parse(JSON.stringify(loot)),
 });
 
-// ---- caught: the cargo is recovered, and nothing worse ---------------------
+// ---- caught: the cargo is recovered and the hull is lost -------------------
 {
   const c = boot();
   c.POLICECFG.destroyClamp = [0, 0];    // the pair cannot be broken
   c.POLICECFG.catchClamp = [1, 1];      // and always runs you down
-  c.POLICECFG.responseClamp = [1, 1];   // response is certain
   const sh = armed(c);
   const op = robbedOp(c, 0.8);
   const sid = c.Stock.sectorOf(op.toSys);
@@ -158,12 +174,14 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   assert.strictEqual(c.Game.state.positions.foodstuffs, 50, "banked stock never touched");
   assert.strictEqual(c.Game.state.credits, credits0, "credits never touched");
   assert.strictEqual(c.Crime.value(), crime0, "being caught adds no charge — the rob already did");
-  assert.ok(sh.dmg > 0 && sh.dmg <= c.POLICECFG.chaseDmg[1], `a repair bill, clamped (${sh.dmg})`);
-  assert.ok(c.Game.state.ships.includes(sh), "the hull still exists");
-  assert.notStrictEqual(sh.status, "impounded", "never impounded");
+  assert.ok(out.lost && out.lost.uid === sh.uid && out.lost.name === sh.name,
+    "the hull is lost with all hands");
+  assert.ok(!c.Game.state.ships.includes(sh), "…and gone from the fleet");
   // The fight is on the record and watchable, fielding a pair.
   const rep = c.Game.state.reports.find(r => r.uid === out.report);
   assert.ok(rep && !rep.success && rep.faction === "police", "a failed-escape report is filed");
+  assert.ok(rep.wipe && rep.lost.length === 1 && rep.lost[0].uid === sh.uid,
+    "…as a wipe, naming the lost hull");
   assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
   const script = c.Combat.script(rep, rep.roster);
   assert.strictEqual(script.ships.filter(s => s.side === "enemy").length, 2, "the first wave is one pair");
@@ -175,7 +193,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 {
   const c = boot();
   c.POLICECFG.destroyClamp = [1, 1];    // every wave is broken
-  c.POLICECFG.responseClamp = [1, 1];
   c.POLICECFG.itemChance = 1;           // salvage is certain, for the test
   const sh = armed(c, "cruiser");
   const op = robbedOp(c, 0.8);
@@ -202,7 +219,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // ---- pure: the same op meets the same fate in any boot ---------------------
 {
   const one = boot(), two = boot();
-  for (const c of [one, two]) { c.POLICECFG.responseClamp = [1, 1]; }
   const o1 = one.Police.pursue(robbedOp(one, 0.7), armed(one), T0);
   const o2 = two.Police.pursue(robbedOp(two, 0.7), armed(two), T0);
   assert.strictEqual(JSON.stringify([o1.waves, o1.destroyed, o1.caught, o1.escaped, o1.seized, o1.crime]),
@@ -217,7 +233,6 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
 // ---- through the whole piracy loop: offline == online ----------------------
 {
   const setup = c => {
-    c.POLICECFG.responseClamp = [1, 1];
     let v = null, t = T0;
     for (let m = 0; m < 240 && !v; m++) {
       t = T0 + m * 60000;
@@ -238,9 +253,10 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   const a = setup(chunk), b = setup(drip);
   assert.strictEqual(a.op.id, b.op.id, "same op, same seed");
   assert.ok(a.op.law > 0, "the law at the scene rides the op");
-  const madeA = chunk.Piracy.resolve(a.op.returnAt + 1);
-  drip.Piracy.resolve(b.op.resolveAt + 1);
-  drip.Piracy.resolve(b.op.returnAt + 1);
+  const madeA = chunk.Piracy.resolve(chunk.Piracy.landAt(a.op) + 1);
+  drip.Piracy.resolve(b.op.resolveAt + 1);              // mid-boarding: nothing settles
+  drip.Piracy.resolve(drip.Piracy.settleAt(b.op) + 1);  // the staged clock ran — settle
+  drip.Piracy.resolve(drip.Piracy.landAt(b.op) + 1);    // the hull lands (if it can)
   assert.deepStrictEqual(chunk.Game.state.positions, drip.Game.state.positions, "same outcome either way");
   assert.strictEqual(chunk.Crime.value(), drip.Crime.value(), "same record");
   assert.ok(Math.abs(a.sh.dmg - b.sh.dmg) < 1e-9, "same wear");
@@ -249,8 +265,319 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   if (p.chase.caught) {
     assert.strictEqual(Object.keys(chunk.Game.state.positions).length, 0, "a seized haul never banks");
     assert.strictEqual(chunk.Piracy.hotQty(a.op.manifest[0]), 0, "…and never goes hot");
+    assert.ok(!chunk.Game.state.ships.includes(a.sh), "a run-down hull is lost, not landed");
+  } else {
+    assert.strictEqual(a.sh.status, "idle", "an uncaught hull comes home");
   }
-  assert.strictEqual(a.sh.status, "idle", "the hull always comes home");
+}
+
+// ---- the duel on the chart: stages, and who is left standing ---------------
+// The visual is a pure view of the derived stage clock, so it can be driven
+// headlessly: sample Voyages.active() at each stage and assert what is drawn.
+{
+  const c = boot();
+  c.POLICECFG.destroyClamp = [0, 0];       // …and can't be broken
+  c.POLICECFG.catchClamp = [1, 1];         // …so it runs the hull down
+  // Dispatch from a NEIGHBOUR of the mark, so there is a real outbound leg to
+  // draw (a same-system intercept has no transit and is skipped by design).
+  let v = null, t = T0, sysId = null, from = null;
+  for (let m = 0; m < 240 && !v; m++) {
+    t = T0 + m * 60000;
+    for (const x of c.Traffic.flights(t)) {
+      if (x.kind !== "freighter" || x.raided || !x.manifest.length) continue;
+      if (c.Piracy.landsAt(x) - t < 12 * 60000) continue;
+      const at = x.plan.legs[0];
+      if (c.Security.bandOf(at).id === "policed") continue;
+      const nb = (c.Lanes.adj[at] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+      if (!nb) continue;
+      v = x; sysId = at; from = nb; break;
+    }
+  }
+  assert.ok(v, "an interceptable freighter with a neighbouring staging system exists");
+  c.Game.state.currentSystem = from;
+  const sh = armed(c, "corvette");
+  const r = c.Piracy.start(v, "rob", sh.uid, sysId, t);
+  assert.ok(r.ok, r.msg);
+  r.op.chance = 1;                          // force the rob so a chase forms
+  const op = r.op;
+  const ids = at => new Set(c.Voyages.active(at).map(m => m.id));
+  const mark = (at, id) => c.Voyages.active(at).find(m => m.id === id);
+
+  // Stage order is strictly increasing, and the run home now departs only
+  // after the duel is over (Piracy.landAt).
+  assert.ok(op.resolveAt < c.Piracy.robEndAt(op), "boarding follows the approach");
+  assert.ok(c.Piracy.robEndAt(op) < c.Piracy.duelAt(op), "the law needs arriveMs to close");
+  assert.ok(c.Piracy.duelAt(op) < c.Piracy.settleAt(op), "the duel takes the wave windows");
+  assert.ok(c.Piracy.landAt(op) > c.Piracy.settleAt(op), "the run home departs after the settle");
+
+  // Outbound.
+  assert.ok(ids(op.startedAt + 1000).has("pr:" + op.id), "the raider flies out on the chart");
+  // Boarding: alongside the CONTACT, with a real chart position (a marker
+  // with no `at` falls out of markers() and the hull vanishes mid-op — the
+  // original sin this block guards against).
+  const board = mark(op.resolveAt + 1000, "pr:" + op.id);
+  assert.ok(board && board.engaged, "…and engages at the mark to board");
+  assert.ok(board.at && Number.isFinite(board.at.x) && Number.isFinite(board.at.y),
+    "…with a real chart position, so it never vanishes mid-op");
+  const contact = c.Piracy.contactAt(op, op.resolveAt + 1000);
+  if (contact) assert.ok(Math.hypot(board.at.x - contact.x, board.at.y - contact.y) < 1e-9,
+    "…following the hauler itself, not parked at the star");
+  assert.ok(!ids(op.resolveAt + 1000).has("pr:duel:" + op.id), "no duel while boarding");
+  // Holding (patrol closing): still drawn, pinned where the hauler broke away.
+  const holdT = c.Piracy.robEndAt(op) + 1000;
+  if (holdT < c.Piracy.duelAt(op)) {
+    const hold = mark(holdT, "pr:" + op.id);
+    assert.ok(hold && hold.at, "the hull is still on the chart while the patrol closes");
+    const broke = c.Piracy.contactAt(op, c.Piracy.robEndAt(op));
+    if (broke) assert.ok(Math.hypot(hold.at.x - broke.x, hold.at.y - broke.y) < 1e-9,
+      "…holding where the boarding happened");
+  }
+  // The law inbound — ALWAYS seen arriving when a chase formed, whatever the
+  // sector's precinct geography (this went missing whenever the robbery
+  // happened at the precinct capital itself, which read as "the police are
+  // gone"). It closes on the duel's anchor as the window runs.
+  const early = mark(c.Piracy.robEndAt(op) + 1000, "pr:pol:" + op.id);
+  const late = mark(c.Piracy.duelAt(op) - 1000, "pr:pol:" + op.id);
+  assert.ok(early && early.police && early.at, "the response pair is seen arriving once the boarding ends");
+  assert.ok(late && late.at, "…and is still inbound just before the duel opens");
+  const anchor0 = c.Piracy.contactAt(op, c.Piracy.robEndAt(op)) || c.Galaxy.get(op.sysId).pos;
+  const dEarly = Math.hypot(early.at.x - anchor0.x, early.at.y - anchor0.y);
+  const dLate = Math.hypot(late.at.x - anchor0.x, late.at.y - anchor0.y);
+  assert.ok(dLate <= dEarly + 1e-9, "…closing on the scene, never drifting away");
+  const mid = c.Piracy.duelAt(op) + 5000;
+  const you = mark(mid, "pr:duel:" + op.id), law = mark(mid, "pr:duel:pol:" + op.id);
+  assert.ok(you && law, "the duel draws BOTH hulls");
+  assert.ok(you.duel && law.duel && law.police, "…flagged as a duel, the law as police");
+  const sep = Math.hypot(you.at.x - law.at.x, you.at.y - law.at.y);
+  assert.ok(Math.abs(sep - 2 * c.POLICECFG.duelRadius) < 1e-9, "…on opposite arcs of one circle");
+  // Circling: the pair moves, but stays on the circle (holding station).
+  const later = c.Piracy.duelAt(op) + 5000 + c.POLICECFG.duelTurnMs / 4;
+  const you2 = mark(later, "pr:duel:" + op.id);
+  assert.ok(Math.hypot(you2.at.x - you.at.x, you2.at.y - you.at.y) > 1e-6, "the hulls circle");
+  const anchor = c.Piracy.contactAt(op, c.Piracy.robEndAt(op)) || c.Galaxy.get(op.sysId).pos;
+  for (const m of [you, law, you2]) {
+    const rad = Math.hypot(m.at.x - anchor.x, m.at.y - anchor.y);
+    assert.ok(Math.abs(rad - c.POLICECFG.duelRadius) < 1e-9, "…and never drift off the scene");
+  }
+  // The settle: this hull was run down, so it burns and never flies home.
+  const boom = mark(c.Piracy.settleAt(op) + 500, "pr:boom:" + op.id);
+  assert.ok(boom && boom.boom && boom.you, "the loser leaves a fireball");
+  assert.ok(!ids(c.Piracy.settleAt(op) + 500).has("pr:" + op.id), "…and no hull flies home");
+  const after = c.Piracy.settleAt(op) + c.POLICECFG.wreckMs + 1000;
+  assert.ok(!ids(after).has("pr:boom:" + op.id), "the fireball burns out");
+}
+
+// ---- a survivor flies home, and the fireball is the PATROL's --------------
+{
+  const c = boot();
+  c.POLICECFG.destroyClamp = [1, 1];        // every pair breaks
+  const sh = armed(c, "cruiser");
+  const home = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = { id: "prD", verb: "rob", shipUid: sh.uid, sysId: "navos", toSys: "navos",
+    fromSys: home, law: 0.8, chance: 1, atk: 3000, cargo: 50, value: 500,
+    kind: "freighter", manifest: ["foodstuffs"], name: "Mark",
+    startedAt: T0, travelMs: 60000, resolveAt: T0 + 60000, returnAt: T0 + 120000,
+    resolved: false };
+  {
+    assert.ok(home, "navos has a lane neighbour to stage from");
+    c.Game.state.piracy = [op];
+    c.Game.state.currentSystem = home;
+    const pre = c.Piracy.preview(op);
+    assert.ok(pre.chase && !pre.chase.caught, "the hull broke every wave");
+    const boom = c.Voyages.active(c.Piracy.settleAt(op) + 500).find(m => m.id === "pr:boom:" + op.id);
+    assert.ok(boom && !boom.you, "the PATROL is the wreck when the raider wins");
+    const runner = c.Voyages.active(c.Piracy.settleAt(op) + 2000).find(m => m.id === "pr:" + op.id);
+    assert.ok(runner && runner.plan, "…and the survivor flies home after the duel");
+  }
+}
+
+// ---- the crime tag rides on every hull a baron has out ---------------------
+{
+  const c = boot();
+  c.Game.state.crime = 0;
+  assert.strictEqual(c.Crime.tag(), null, "a clean record flies no tag");
+  c.Game.state.crime = c.CRIMECFG.watch;
+  assert.strictEqual(c.Crime.tag().id, "watched", "the watch line tags Watchlisted");
+  c.Game.state.crime = c.CRIMECFG.lockout;
+  assert.strictEqual(c.Crime.tag().id, "barred", "…then Barred");
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  assert.strictEqual(c.Crime.tag().id, "criminal", "…then Criminal");
+  // And it reaches the markers active() produces.
+  c.Game.state.travel = { from: "navos", to: c.Galaxy.list.find(x => x.id !== "navos").id,
+    departedAt: T0, etaMs: 120000 };
+  const flag = c.Voyages.active(T0 + 1000).find(m => m.kind === "flagship");
+  if (flag) assert.strictEqual(flag.tag.id, "criminal", "the flagship flies the tag");
+}
+
+// ---- the manhunt: past the criminal line, the law takes you on the way OUT -
+const mhOp = (c, shipUid, from) => ({
+  id: "prM", verb: "rob", shipUid, sysId: "navos", toSys: "navos", fromSys: from,
+  law: 0.8, chance: 1, atk: 400, cargo: 50, value: 500, kind: "freighter",
+  manifest: ["foodstuffs"], name: "Mark", startedAt: T0, travelMs: 60000,
+  resolveAt: T0 + 60000, returnAt: T0 + 120000, resolved: false,
+});
+{
+  const c = boot();
+  const sh = armed(c, "corvette");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  // Under the WATCH line nobody hunts, anywhere.
+  c.Game.state.crime = c.CRIMECFG.watch - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "a clean-ish record is not hunted");
+  assert.strictEqual(c.Piracy.manhuntAt(op), Infinity, "…so there is no contact time");
+  // BAND HUNTING (owner's direction): a Watchlisted baron's hull is actively
+  // hunted in contested+ space whenever a patrol is on station — the op's law
+  // is 0.8, guarded, where presence is always 1-3 — certain, not a roll.
+  c.Game.state.crime = c.CRIMECFG.watch;
+  assert.ok(c.Piracy.manhunt(op), "a Watchlisted hull in guarded space is actively hunted");
+  // …but the same record below contested waits for the criminal line.
+  const opLow = { ...op, id: "prMlow", law: 0.30 };
+  assert.strictEqual(c.Piracy.manhunt(opLow), null,
+    "on the frontier the law waits for the criminal line");
+  c.Game.state.crime = c.CRIMECFG.criminal - 1;
+  assert.strictEqual(c.Piracy.manhunt(opLow), null, "…even at 299");
+  // At the line they come, any band with a finder's roll.
+  c.POLICECFG.manhuntClamp = [1, 1];       // they always find the hull
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  const mh = c.Piracy.manhunt(op);
+  assert.ok(mh, "at the criminal line the hunt is on");
+  assert.ok(mh.frac >= c.POLICECFG.manhuntAt[0] && mh.frac <= c.POLICECFG.manhuntAt[1],
+    "…cutting in partway along the outbound leg");
+  assert.ok(c.Piracy.manhuntAt(op) > op.startedAt && c.Piracy.manhuntEndAt(op) < op.resolveAt,
+    "…and it is settled before the mark is ever reached");
+  // Lying low calls them off, live — the gate is not stamped on the op.
+  c.Game.state.crime = c.CRIMECFG.watch - 1;
+  assert.strictEqual(c.Piracy.manhunt(op), null, "dropping under the watch line calls them off mid-flight");
+}
+
+// Run down by a manhunt: the hull is destroyed before the rob ever happens.
+{
+  const c = boot();
+  c.POLICECFG.manhuntClamp = [1, 1];
+  c.POLICECFG.destroyClamp = [0, 0];       // the pair cannot be broken
+  const sh = armed(c, "corvette");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  c.Game.state.piracy = [op];
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  sh.status = "raiding";
+  const made = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 1);
+  assert.strictEqual(made.length, 1, "one verdict — the manhunt");
+  const m = made[0].piracy.manhunt;
+  assert.ok(m && m.caught && m.lost && m.lost.uid === sh.uid, "the hull was run down and lost");
+  assert.ok(!c.Game.state.ships.includes(sh), "…and is gone from the fleet");
+  assert.strictEqual(c.Game.state.piracy.length, 0, "the op dies with the ship");
+  assert.strictEqual(Object.keys(c.Game.state.positions).length, 0, "the rob never happened — no loot");
+  const rep = c.Game.state.reports.find(r => r.uid === m.report);
+  assert.ok(rep && rep.wipe && !rep.success && rep.faction === "police", "filed as a police wipe");
+  assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
+}
+
+// Shot their way clear: damaged, charged for the pair, and the run continues.
+{
+  const c = boot();
+  c.POLICECFG.manhuntClamp = [1, 1];
+  c.POLICECFG.destroyClamp = [1, 1];       // every pair breaks
+  // (no chase isolation needed: the manhunt is settled long before the rob)
+  const sh = armed(c, "cruiser");
+  const from = (c.Lanes.adj["navos"] || []).map(e => e.to).find(id => c.Galaxy.get(id));
+  const op = mhOp(c, sh.uid, from);
+  c.Game.state.piracy = [op];
+  c.Game.state.crime = c.CRIMECFG.criminal;
+  sh.status = "raiding";
+  const crime0 = c.Crime.value();
+  const made = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 1);
+  const m = made[0].piracy.manhunt;
+  assert.ok(m && !m.caught && !m.lost, "the hull shot its way clear");
+  assert.ok(c.Game.state.ships.includes(sh), "…and survives");
+  assert.ok(sh.dmg > 0, "…carrying a repair bill");
+  assert.strictEqual(c.Crime.value(), crime0 + c.CRIMECFG.gain.police, "breaking a pair is charged");
+  assert.strictEqual(c.Game.state.piracy.length, 1, "the run continues to the mark");
+  assert.ok(op.mh, "…and the manhunt is once-gated");
+  // It does not fire twice, however often the loop runs.
+  const again = c.Piracy.resolve(c.Piracy.manhuntEndAt(op) + 2000);
+  assert.ok(!again.some(x => x.piracy && x.piracy.manhunt), "a manhunt resolves exactly once");
+}
+
+// ---- the movie fields what the chart sold ----------------------------------
+// A rob report plays the ACTUAL hauler — convoy role (it never shoots), never
+// destroyed, and it runs for its jump in every outcome — plus its hired guns.
+// A police wave plays a UNIFORM pair matched to the wave. Counts and sprites
+// must agree with what the player saw outside the movie.
+{
+  const c = boot();
+  const mk = (success, policeInbound) => ({
+    uid: "prV" + (success ? "w" : "l") + "rob",
+    title: "Intercept — Star Maw", type: "combat", success, ts: T0,
+    faction: "free_trade", danger: "moderate", enemyCount: 3,
+    hauler: { name: "Star Maw", kind: "freighter" }, policeInbound,
+    credits: 0, items: [], lost: [], impounded: [],
+    damaged: success ? [] : [{ uid: "s1", name: "Test Hull", pct: 8 }],
+    roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
+  });
+  for (const success of [true, false]) {
+    const rep = mk(success, success);
+    assert.ok(c.Combat.replayable(rep), "a rob report is replayable");
+    const script = c.Combat.script(rep, rep.roster);
+    const foes = script.ships.filter(x => x.side === "enemy");
+    assert.strictEqual(foes.length, 3, "the movie fields exactly the report's count");
+    const hauler = foes.find(x => x.name === "Star Maw");
+    assert.ok(hauler, "the hauler ITSELF is on the field");
+    assert.strictEqual(hauler.sprite, "ship:freighter", "…wearing the chart's own hull");
+    assert.strictEqual(hauler.role, "convoy", "…flying convoy");
+    assert.ok(!hauler.deathT, "…and it is never destroyed — stripped, not sunk");
+    assert.ok(hauler.jumpT, "…and it runs for its jump, win or lose");
+    for (const e of foes.filter(x => x !== hauler))
+      assert.ok(c.ENEMY_CATALOG.corporate.some(g => g.name === e.name && g.tier <= 1),
+        "the guns are light hired security, not warships");
+    // The hauler never fires: no weapon event originates from it.
+    for (const ev of script.events) {
+      if (["beam", "missile", "flak"].includes(ev.kind))
+        assert.notStrictEqual(ev.from, hauler.id, "the hauler never shoots — its job is to run");
+    }
+  }
+  // Police waves: uniform pairs, stepped by the wave.
+  for (const wave of [0, 1, 2]) {
+    const rep = {
+      uid: "prVw" + wave, title: "Patrol response", type: "smuggle", success: false,
+      ts: T0, faction: "police", police: true, wave,
+      danger: ["moderate", "high", "extreme"][wave], enemyCount: 2 * (wave + 1),
+      credits: 0, items: [], impounded: [], wipe: true,
+      lost: [{ uid: "s1", name: "Test Hull" }], damaged: [],
+      roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
+    };
+    const script = c.Combat.script(rep, rep.roster);
+    const foes = script.ships.filter(x => x.side === "enemy");
+    assert.strictEqual(foes.length, 2 * (wave + 1), `wave ${wave} fields its pairs exactly`);
+    const want = c.ENEMY_CATALOG.police[wave].name;
+    for (const e of foes) assert.strictEqual(e.name, want,
+      `wave ${wave} flies a UNIFORM ${want} formation — no mixed bag`);
+  }
+}
+
+// ---- the verdict reports in, and the inbox is the player's -----------------
+{
+  const c = boot();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../js/story.js"), "utf8"), c, { filename: "story.js" });
+  c.Game.state.inbox = []; c.Game.state.prog = {}; c.Game.state.unread = 0;
+  c.Game.requestSave = () => {};
+  // A clean rob reports the take.
+  c.Story.piracyDispatch({ verb: "rob", won: true, name: "Star Maw", ship: "Test Hull",
+    sysId: "navos", credits: 0, loot: { foodstuffs: 12 } });
+  let msgs = c.Story.thread("fleet-dispatch");
+  assert.ok(msgs.length === 1 && /stripped Star Maw/.test(msgs[0].text)
+    && /12 foodstuffs|12 Foodstuffs/i.test(msgs[0].text), "the take is in the dispatch");
+  // A hull lost to the law sends its last transmission, cut off mid-word.
+  c.Story.piracyDispatch({ verb: "rob", won: true, name: "Star Maw", ship: "Test Hull",
+    sysId: "navos", credits: 0, loot: null,
+    chase: { caught: true, lost: { uid: "s1", name: "Test Hull" }, seized: 12, destroyed: 0 } });
+  msgs = c.Story.thread("fleet-dispatch");
+  assert.ok(/mayday, mayday, we're being—$/.test(msgs[msgs.length - 2].text),
+    "the last transmission cuts off mid-word");
+  assert.ok(/Signal lost/.test(msgs[msgs.length - 1].text), "…and dispatch confirms the loss");
+  // The inbox is the player's: a conversation can be deleted whole.
+  c.Story.deleteConversation("fleet-dispatch");
+  assert.strictEqual(c.Story.thread("fleet-dispatch").length, 0, "a deleted conversation is gone");
 }
 
 console.log("OK check_police");

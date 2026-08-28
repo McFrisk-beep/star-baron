@@ -547,7 +547,8 @@ const UI = {
       const tag = c.status === "active" ? (c.kind === "arc" ? "story" : "job") : c.status;
       return `<li class="disp-row${c.unread ? " unread" : ""}${open ? " open" : ""}" data-open="${c.arc}">${this._avatar(c.portrait)}` +
              `<div class="disp-row-main"><div class="disp-row-top"><b>${c.from}</b> <span class="disp-kind">${tag}</span>` +
-             `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}</li>`;
+             `<span class="disp-time">${Util.ago(c.ts)}</span></div><div class="disp-snip">${c.snippet}</div></div>${dot}` +
+             `<button class="disp-del" data-del="${c.arc}" title="Delete conversation">🗑</button></li>`;
     }).join("") + `</ul>`;
   },
 
@@ -592,6 +593,18 @@ const UI = {
   onDispatchClick(e) {
     const abort = e.target.closest("[data-mission-cancel]");
     if (abort) { this.cancelMission(abort.dataset.missionCancel); return; }
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      const arc = del.dataset.del;
+      const active = Story.s().prog && Story.s().prog[arc] && Story.s().prog[arc].status === "active";
+      if (!confirm(active
+        ? "Delete this conversation? Its storyline is still ACTIVE — deleting abandons it for good."
+        : "Delete this conversation?")) return;
+      if (this._dispatchArc === arc) this._dispatchArc = null;
+      Story.deleteConversation(arc);
+      this.renderDispatches();
+      return;
+    }
     const back = e.target.closest("[data-back]");
     if (back) { this._dispatchArc = null; this.renderDispatches(); return; }
     const row = e.target.closest("[data-open]");
@@ -2013,7 +2026,8 @@ const UI = {
       const p = e.target.closest("[data-replay]");
       if (p) {   // seeded by mission uid — the same fight plays every time
         const r = this.s().reports.find(x => x.uid === p.dataset.replay);
-        if (r && window.BattleView) BattleView.open(r);
+        if (r && window.Encounters && window.EncounterView && Encounters.fromReport(r)) EncounterView.replay(r);
+        else if (r && window.BattleView) BattleView.open(r);
         return;
       }
       const d = e.target.closest("[data-dismiss]"); if (!d) return;
@@ -4242,6 +4256,17 @@ const UI = {
         .map(m => ({ ...m.piracy, ship: Util.esc(m.piracy.ship), name: Util.esc(m.piracy.name) }));
       for (const p of runs) {
         const where = this.sysName(p.sysId);
+        // A manhunt ended the run before the mark — the verb never happened,
+        // so none of the rob/toll/escort lines below apply.
+        if (p.manhunt) {
+          html += p.manhunt.lost
+            ? `<p class="down">🚨 A Senate manhunt ran <b>${Util.esc(p.manhunt.ship || p.ship)}</b> down near ${where} `
+              + `— destroyed with all hands, before it ever reached the mark. `
+              + `<span class="muted-note">(criminal record — replay is in Dispatches)</span></p>`
+            : `<p>🚨 A Senate manhunt caught ${p.ship} near ${where} on the way out — the hull shot its way clear `
+              + `· +${p.manhunt.crime} crime. <span class="muted-note">(replay is in Dispatches)</span></p>`;
+          continue;
+        }
         if (p.verb === "escort") {
           html += `<p class="up">🛡 ${p.ship} escorted ${p.name} in near ${where} — +${Util.credits(p.credits)}c, lawful work.</p>`;
         } else if (!p.won) {
@@ -4258,9 +4283,10 @@ const UI = {
         const ch = p.chase;
         if (ch) {
           if (ch.caught) {
-            html += `<p class="down">🚨 A Senate patrol ran the hull down on the way home — the stolen cargo was recovered`
-              + (ch.destroyed ? ` after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was destroyed` : "")
-              + `. <span class="muted-note">(the ship always comes home — replay is in Dispatches)</span></p>`;
+            html += `<p class="down">🚨 A Senate patrol ran ${ch.lost ? `<b>${Util.esc(ch.lost.name || p.ship)}</b>` : "the hull"} down on the way home — `
+              + `the ship was destroyed with all hands and the stolen cargo recovered`
+              + (ch.destroyed ? `, after ${ch.destroyed} patrol pair${ch.destroyed === 1 ? "" : "s"} was broken` : "")
+              + `. <span class="muted-note">(replay is in Dispatches)</span></p>`;
           } else if (ch.destroyed) {
             html += `<p>🚨 Patrols answered — ${ch.destroyed} pair${ch.destroyed === 1 ? "" : "s"} destroyed on the run home`
               + (ch.item && !ch.item.full ? ` · salvaged <b>${ch.item.name}</b>` : "")
@@ -4704,7 +4730,82 @@ const UI = {
       if (this.page === "fleet") this.renderFleet();
       if (window.StarMap) StarMap.refreshInfo();
     });
+    // The live playback (owner's direction): when a battle involving the
+    // player's ship begins on a watched tab, SHOW it — the same movie, same
+    // uid, the settle will file as a replayable report. battleSkip (set by
+    // skipping an offered movie early) turns this back into toast offers.
+    // Canvas-first (owner's direction): fights live in the system scene, and
+    // this offers the MAGNIFIER on them — a clickable toast that opens the
+    // zoom view on the live encounter. Never auto-opens, never hijacks.
+    this._watchToast = (msg, kind, enc) => {
+      if (enc && window.EncounterView && !EncounterView.isOpen()) {
+        this.toast(msg + " ▶ watch", kind, 8000, () => EncounterView.open(enc, { live: true }));
+      } else this.toast(msg, kind, 6500);
+    };
+    this._liveEnc = uid => {
+      const list = window.Encounters ? Encounters.active(Date.now()) : [];
+      return list.find(e => e.uid === uid) || null;
+    };
+    Bus.on("piracyStart", op => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      const verb = { rob: "intercept", toll: "shake down", escort: "escort" }[op.verb] || op.verb;
+      this.toast(`🏴 ${sh ? sh.name : "Your hull"} dispatched to ${verb} ${op.name} near ${this.sysName(op.sysId)}`
+        + ` — contact in ~${Util.duration(Math.max(0, op.resolveAt - Date.now()))}.`, "info", 6000);
+      this.audioSafe("news");
+    });
+    // Stage beats on a watched tab (js/piracy.js _announce): the fight opening
+    // — with the movie on offer — and the law burning for the scene. The
+    // ledger still settles once, at settleAt; these are the live view of it.
+    Bus.on("piracyEngaged", ({ op }) => {
+      if (window.Game._booting) return;
+      const where = this.sysName(op.sysId);
+      const msg = op.verb === "toll"
+        ? `🏴 Shaking ${op.name}'s captain down near ${where}…`
+        : `⚔ Engaging ${op.name} near ${where} — going for the hold.`;
+      this._watchToast(msg, "info", this._liveEnc(op.id + "rob"));
+      this.audioSafe("news");
+    });
+    Bus.on("policeInbound", ({ op, waves }) => {
+      if (window.Game._booting) return;
+      this.toast(`🚨 A Senate patrol is burning for ${this.sysName(op.sysId)} — the hauler jumps clear. `
+        + `Your hull runs for home with the take.`, "bad", 8000);
+      this.audioSafe("news");
+    });
+    Bus.on("manhuntEngaged", ({ op }) => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      this._watchToast(`🚨 A Senate patrol cut ${sh ? sh.name : "your hull"} off en route to `
+        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason.`, "bad",
+        this._liveEnc(op.id + "mh0"));
+      this.audioSafe("news");
+    });
+    Bus.on("manhunt", m => {
+      if (window.Story && Story.piracyDispatch) Story.piracyDispatch({ manhunt: m, ship: m.ship, sysId: m.sysId });
+      if (window.Game._booting) return;
+      const where = this.sysName(m.sysId);
+      const r = m.report ? (this.s().reports || []).find(x => x.uid === m.report) : null;
+      const msg = m.lost
+        ? `🚨 ${m.ship} was run down by a manhunt near ${where} and destroyed with all hands.`
+        : `🚨 ${m.ship} shot its way clear of a manhunt near ${where} — +${m.crime} crime. The Senate will remember.`;
+      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch it", m.lost ? "bad" : "good", 8000,
+        () => BattleView.open(r, { offered: true }));
+      else this.toast(msg, m.lost ? "bad" : "good", 8000);
+      this.audioSafe("news");
+      this.bumpComms();
+      if (this.page === "fleet") this.renderFleet();
+    });
+    Bus.on("policeEngaged", ({ op, chase }) => {
+      if (window.Game._booting) return;
+      const sh = Fleet.ship(op.shipUid);
+      this._watchToast(`⚔ The patrol has ${sh ? sh.name : "your hull"} at ${this.sysName(op.sysId)} — `
+        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing.`, "bad",
+        this._liveEnc(op.id + "w0"));
+      this.audioSafe("news");
+      if (window.StarMap) StarMap.refreshInfo();
+    });
     Bus.on("piracyResolved", p => {
+      if (window.Story && Story.piracyDispatch) Story.piracyDispatch(p);
       if (window.Game._booting) return;   // offline verdicts land in the "while you were away" recap
       const where = this.sysName(p.sysId);
       if (p.verb === "escort") {
@@ -4727,7 +4828,7 @@ const UI = {
       const where = this.sysName(p.sysId);
       let msg, kind;
       if (p.caught) {
-        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the stolen cargo was recovered.`;
+        msg = `🚨 A Senate patrol ran ${p.ship} down near ${where} — the ship was destroyed with all hands, the stolen cargo recovered.`;
         kind = "bad";
       } else if (p.destroyed) {
         msg = `🚨 ${p.ship} shot its way clear near ${where} — ${p.destroyed} patrol pair${p.destroyed === 1 ? "" : "s"} destroyed`
@@ -4738,7 +4839,9 @@ const UI = {
         kind = "info";
       }
       const r = p.report ? (this.s().reports || []).find(x => x.uid === p.report) : null;
-      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
+      if (r && window.Encounters && window.EncounterView && Encounters.fromReport(r))
+        this.toast(msg + " ▶ watch the chase", kind, 7500, () => EncounterView.replay(r));
+      else if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
       else this.toast(msg, kind, 7500);
       this.audioSafe("news");
       this.bumpComms();

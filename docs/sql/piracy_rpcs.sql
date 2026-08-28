@@ -42,11 +42,13 @@
 -- means you accepted a quoted risk when you dispatched: an edict passed an
 -- hour later does not retroactively re-roll a fight already in flight.
 --
--- ANTI-GRIEF (§6.6) HOLDS ON THE LEDGER TOO
--- The worst outcome is losing the cargo you just stole plus a repair bill. A
--- chase never destroys a hull, never impounds one, and never touches banked
--- positions or credits. Being caught returns the stolen units to the shelf
--- they were bound for — the delivery arrives late rather than never.
+-- THE STAKES (updated — the §6.6 stance is deliberately broken here)
+-- Armed robbery books the baron straight onto the watchlist (CRIMECFG.watch),
+-- and a chase that runs the hull down DESTROYS it with all hands: the stolen
+-- units return to the shelf they were bound for, and the ship is gone. What
+-- is still protected: banked positions and credits are never touched, and
+-- the op settles on a staged clock (battleMs + arriveMs + waveGapMs per
+-- wave) so a watched fight and an AFK one land the same ledger.
 --
 -- Apply LAST — after mining_rpcs.sql and every other file that declares
 -- app_commit. This file's app_commit / result_slice / app_pull extend those
@@ -152,6 +154,30 @@ end;
 $$;
 
 -- ===========================================================================
+-- Patrol presence: a pure seeded function of (system, 20-min slot)
+-- ===========================================================================
+-- Mirrors Police.patrolsIn. The band comes off the op's STAMPED law number
+-- (SECURITYCFG.bands boundaries 0.22 / 0.42 / 0.62): policed/guarded always
+-- field 1-3 pairs, contested about half the slots, the frontier a quarter,
+-- lawless none. POLICECFG.presenceSlotMs = 1200000.
+create or replace function app._patrols_in(p_sys text, p_law double precision, p_t double precision)
+returns int
+language plpgsql immutable as $$
+declare
+  s bigint;
+  u double precision;
+begin
+  s := market.seed_hash('cosmocrat-market-v1', 'patrolN', coalesce(p_sys, ''),
+    floor(p_t / 1200000.0)::bigint::text);
+  u := market.u01(s, 0);
+  if p_law >= 0.62 then return 1 + floor(market.u01(s, 1) * 3)::int;
+  elsif p_law >= 0.42 then return case when u < 0.5 then 1 else 0 end;
+  elsif p_law >= 0.22 then return case when u < 0.25 then 1 else 0 end;
+  else return 0; end if;
+end;
+$$;
+
+-- ===========================================================================
 -- The chase: a pure function of the op, mirroring Police.pursue
 -- ===========================================================================
 -- Returns null when no response forms. The caller applies the ledger effects;
@@ -174,10 +200,17 @@ declare
   def double precision;
   p_destroy double precision;
   p_catch double precision;
+  w_dmg double precision;
+  wave_list jsonb := '[]'::jsonb;
+  pairs int;
 begin
+  -- The gate is PRESENCE, not dice (Police.chaseOutcome): a patrol on station
+  -- when the deed ends always answers; empty space never does. The old
+  -- u01(s, 0) gate draw is simply unused — wave draws use absolute indexes.
+  pairs := app._patrols_in(p_op->>'sysId', law,
+    coalesce((p_op->>'resolveAt')::float8, 0) + 30000.0);
+  if pairs = 0 then return null; end if;
   s := market.seed_hash('cosmocrat-market-v1', 'police', p_op->>'id');
-  -- POLICECFG.responseBase 0.9, clamped to responseClamp [0, 0.95].
-  if market.u01(s, 0) >= least(greatest(0.9 * law, 0), 0.95) then return null; end if;
 
   for w in 0..2 loop                      -- POLICECFG.maxWaves = 3
     base := 1 + w * 4;
@@ -188,25 +221,92 @@ begin
     if market.u01(s, base) < p_destroy then
       destroyed := destroyed + 1;
       crime := crime + 25;                -- CRIMECFG.gain.police
-      dmg := dmg + (0.06 + market.u01(s, base + 1) * 0.10);
+      w_dmg := 0.06 + market.u01(s, base + 1) * 0.10;
+      dmg := dmg + w_dmg;
       if not got_item and market.u01(s, base + 2) < 0.2 then got_item := true; end if;
+      wave_list := wave_list || jsonb_build_array(jsonb_build_object(
+        'destroyed', true, 'dmg', w_dmg));
       continue;
     end if;
     p_catch := least(greatest(def / nullif(def + p_atk, 0) * 1.1, 0.1), 0.92);
     if market.u01(s, base + 3) < p_catch then
       caught := true;
-      dmg := dmg + (0.06 + market.u01(s, base + 1) * 0.10);
+      w_dmg := 0.06 + market.u01(s, base + 1) * 0.10;
+      dmg := dmg + w_dmg;
+      wave_list := wave_list || jsonb_build_array(jsonb_build_object(
+        'caught', true, 'dmg', w_dmg));
       exit;
     end if;
     escaped := true;
+    wave_list := wave_list || jsonb_build_array('{}'::jsonb);   -- outran the lights
     exit;
   end loop;
   if not caught and not escaped then escaped := true; end if;   -- broke every wave
 
   return jsonb_build_object(
     'waves', waves, 'destroyed', destroyed, 'caught', caught, 'escaped', escaped,
-    'item', got_item, 'dmg', dmg, 'crime', crime);
+    'item', got_item, 'dmg', dmg, 'crime', crime, 'waveList', wave_list,
+    'pairs', pairs);
 end;
+$$;
+
+-- ===========================================================================
+-- The manhunt: what happens to a CRIMINAL baron's hull on the way OUT
+-- ===========================================================================
+-- Mirrors Police.manhuntOutcome. Past CRIMECFG.criminal (300) the law stops
+-- waiting for a fresh crime — a patrol runs the hull down for the record it
+-- already carries. The crime gate is read LIVE from the state (not stamped on
+-- the op) on both sides, so dropping back under the line calls them off.
+-- There is no outrun branch: you break the pair or they take the hull.
+create or replace function app._police_manhunt(p_op jsonb, p_atk double precision,
+                                               p_crime double precision)
+returns jsonb
+language plpgsql immutable as $$
+declare
+  s bigint;
+  law double precision := least(greatest(coalesce((p_op->>'law')::float8, 0.5), 0), 1);
+  over double precision;
+  chance double precision;
+  def double precision;
+  broke boolean;
+begin
+  if p_crime >= 300 then                              -- CRIMECFG.criminal: hunted everywhere
+    over := greatest(p_crime - 300, 0);
+    -- POLICECFG.manhuntBase 0.45, manhuntPer100 0.25, manhuntClamp [0, 0.9]
+    chance := least(greatest(0.45 * (1 + over / 100 * 0.25), 0), 0.9);
+  elsif p_crime >= 100 and law >= 0.42 then           -- CRIMECFG.watch, contested and up
+    -- A Watchlisted baron's dispatched hull is ACTIVELY hunted whenever a
+    -- patrol is on station — certain, not a roll (Police.manhuntOutcome).
+    if app._patrols_in(p_op->>'sysId', law, coalesce((p_op->>'startedAt')::float8, 0)) = 0 then
+      return null;
+    end if;
+    chance := 1;
+  else
+    return null;
+  end if;
+  s := market.seed_hash('cosmocrat-market-v1', 'manhunt', p_op->>'id');
+  if market.u01(s, 0) >= chance then return null; end if;
+  def := 700.0 * (1 + law * 1.4);                     -- pairScoreAt(law, 0)
+  broke := market.u01(s, 1) < least(greatest(p_atk / nullif(p_atk + def, 0), 0.02), 0.75);
+  return jsonb_build_object(
+    'broke', broke, 'caught', not broke,
+    'dmg', case when broke then 0.06 + market.u01(s, 2) * 0.10 else 0 end,
+    -- POLICECFG.manhuntAt [0.30, 0.70] — where in the outbound leg they cut in
+    'frac', 0.30 + market.u01(s, 3) * 0.40);
+end;
+$$;
+
+-- Prepend one report row, capped at the client's 20 — the server files the
+-- rob and chase engagements for a signed-in baron the same way police.js
+-- files them for a guest, so Dispatches ▶ Replay works on the ledger too.
+create or replace function app._piracy_report_push(p_reports jsonb, p_report jsonb)
+returns jsonb
+language sql immutable as $$
+  select coalesce(jsonb_agg(e.value order by e.ord), '[]'::jsonb)
+  from (select t.value, t.ordinality as ord
+        from jsonb_array_elements(jsonb_build_array(p_report) || coalesce(p_reports, '[]'::jsonb))
+          with ordinality t
+        limit 20) e;
 $$;
 
 -- ===========================================================================
@@ -221,7 +321,8 @@ language sql immutable as $$
   from jsonb_array_elements(coalesce(p_ships, '[]'::jsonb)) s(value);
 $$;
 
--- DMGCFG.maxDmg 0.95 — a chase damages, it never destroys (§6.6.5).
+-- DMGCFG.maxDmg 0.95 — wear from waves the hull survived is clamped; a
+-- CAUGHT hull isn't damaged, it's removed outright by the resolver.
 create or replace function app._piracy_damage(p_ships jsonb, p_uid text, p_frac double precision)
 returns jsonb
 language sql immutable as $$
@@ -273,6 +374,17 @@ declare
   qty int;
   item_uid text;
   got_item boolean;
+  reports jsonb;
+  pre_loot jsonb;
+  settle_at double precision;
+  chase_dmg double precision;
+  rep_row jsonb;
+  wv jsonb;
+  w_i int;
+  last_report text;
+  manhunt jsonb;
+  mh_end double precision;
+  ship_gone boolean;
 begin
   positions := coalesce(st->'positions', '{}'::jsonb);
   avg_cost := coalesce(st->'avgCost', '{}'::jsonb);
@@ -284,6 +396,7 @@ begin
   credits := coalesce((st->>'credits')::float8, 0);
   crime := coalesce((st->>'crime')::float8, 50);
   seq := coalesce((st->>'seq')::int, 1);
+  reports := coalesce(st->'reports', '[]'::jsonb);
 
   for op in select value from jsonb_array_elements(coalesce(st->'piracy', '[]'::jsonb)) loop
     op_n := op_n + 1;
@@ -295,22 +408,120 @@ begin
     -- Hull gone (sold, lost, never existed): close the op out.
     if sh is null then continue; end if;
 
-    -- The fight, once, when the intercept matures.
-    if not coalesce((op->>'resolved')::boolean, false)
-       and p_now_ms >= coalesce((op->>'resolveAt')::float8, 0) then
+    -- THE MANHUNT (POLICECFG.manhunt*, mirrors Piracy.resolve's branch): past
+    -- the criminal line the law cuts the hull off partway OUT, before the mark
+    -- is ever reached. Once-gated on op.mh so offline equals online.
+    ship_gone := false;
+    if not coalesce((op->>'mh')::boolean, false)
+       and not coalesce((op->>'resolved')::boolean, false) then
+      atk_cap := app._piracy_atk_cap(sh);
+      atk := least(greatest(coalesce((op->>'atk')::float8, 0), 0), atk_cap);
+      manhunt := app._police_manhunt(op, atk, crime);
+      if manhunt is not null then
+        -- Contact at frac of the outbound leg, then a duel window clamped to
+        -- what is left of that leg (Piracy.manhuntEndAt): POLICECFG.waveGapMs
+        -- 40000, or 90% of the time remaining, whichever is shorter — so a
+        -- short hop never overruns the mark.
+        mh_end := coalesce((op->>'startedAt')::float8, 0)
+          + coalesce((op->>'travelMs')::float8,
+                     coalesce((op->>'resolveAt')::float8, 0) - coalesce((op->>'startedAt')::float8, 0))
+            * (manhunt->>'frac')::float8;
+        mh_end := mh_end + least(40000.0,
+          greatest(0, (coalesce((op->>'resolveAt')::float8, 0) - mh_end) * 0.9));
+        if p_now_ms >= mh_end then
+          op := jsonb_set(op, '{mh}', 'true'::jsonb);
+          last_report := (op->>'id') || 'mh0';
+          rep_row := jsonb_build_object(
+            'uid', last_report, 'title', 'Manhunt',
+            'type', 'smuggle', 'success', (manhunt->>'broke')::boolean,
+            'ts', p_now_ms, 'faction', 'police', 'police', true,
+            'danger', 'high', 'enemyCount', 2, 'wave', 0,
+            'credits', 0, 'items', '[]'::jsonb, 'impounded', '[]'::jsonb,
+            'lost', case when (manhunt->>'caught')::boolean
+              then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name'))
+              else '[]'::jsonb end,
+            'wipe', (manhunt->>'caught')::boolean,
+            'damaged', case when (manhunt->>'broke')::boolean
+                             and coalesce((manhunt->>'dmg')::float8, 0) > 0
+              then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name',
+                'pct', greatest(1, round(coalesce((manhunt->>'dmg')::float8, 0) * 100)::int)))
+              else '[]'::jsonb end,
+            'roster', jsonb_build_array(jsonb_build_object(
+              'uid', sh->>'uid', 'name', sh->>'name', 'type', sh->>'type')));
+          reports := app._piracy_report_push(reports, rep_row);
+          if (manhunt->>'broke')::boolean then
+            crime := crime + 25;                       -- CRIMECFG.gain.police
+            ships := app._piracy_damage(ships, op->>'shipUid', (manhunt->>'dmg')::float8);
+          else
+            ships := (select coalesce(jsonb_agg(x.value), '[]'::jsonb)
+                      from jsonb_array_elements(ships) x(value)
+                      where x.value->>'uid' <> op->>'shipUid');
+            ship_gone := true;
+          end if;
+          runs := runs || jsonb_build_array(jsonb_build_object(
+            'verb', op->>'verb', 'won', false, 'name', op->>'name', 'kind', op->>'kind',
+            'sysId', op->>'sysId', 'fromSys', op->>'fromSys',
+            'credits', 0, 'loot', 'null'::jsonb,
+            'dmg', coalesce((manhunt->>'dmg')::float8, 0),
+            'crime', case when (manhunt->>'broke')::boolean then 25 else 0 end,
+            'ship', sh->>'name',
+            'manhunt', jsonb_build_object(
+              'caught', (manhunt->>'caught')::boolean,
+              'crime', case when (manhunt->>'broke')::boolean then 25 else 0 end,
+              'report', last_report, 'ship', sh->>'name', 'sysId', op->>'sysId',
+              'lost', case when (manhunt->>'caught')::boolean
+                      then jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name')
+                      else 'null'::jsonb end)));
+        end if;
+      end if;
+    end if;
+    -- Hull taken by the manhunt: the op dies with it.
+    if ship_gone then continue; end if;
+
+    -- The fight, once, when the STAGED clock has fully run (mirrors
+    -- Piracy.settleAt): the boarding takes PIRACYCFG.battleMs 30000, the law
+    -- POLICECFG.arriveMs 25000 to reach the scene and waveGapMs 40000 per
+    -- wave fought. Outcome and chase are pure of the op, so pre-reading them
+    -- to derive the settle time changes nothing about what settles.
+    settle_at := null;
+    if not coalesce((op->>'resolved')::boolean, false) then
       atk_cap := app._piracy_atk_cap(sh);
       atk := least(greatest(coalesce((op->>'atk')::float8, 0), 0), atk_cap);
       outcome := app._piracy_outcome(op, atk_cap);
+      pre_loot := case when outcome->'loot' = 'null'::jsonb then null else outcome->'loot' end;
+      -- A won ROB draws the law for the stolen hold; a won TOLL draws it for
+      -- the shakedown. The gate inside _police_chase is patrol PRESENCE. The
+      -- toll's response arrives slower: arriveMs 25000 x tollArriveMult 2.5.
+      chase := case when pre_loot is not null
+                      or (op->>'verb' = 'toll' and (outcome->>'won')::boolean)
+                    then app._police_chase(op, atk) else null end;
+      settle_at := coalesce((op->>'resolveAt')::float8, 0) + 30000.0
+        + case when chase is not null
+               then (case when op->>'verb' = 'toll' then 62500.0 else 25000.0 end)
+                    + coalesce(jsonb_array_length(chase->'waveList'), 0) * 40000.0
+               else 0 end;
+    end if;
+
+    if settle_at is not null and p_now_ms >= settle_at then
       op := jsonb_set(op, '{resolved}', 'true'::jsonb);
 
       dmg := coalesce((outcome->>'dmg')::float8, 0);
       credits := credits + coalesce((outcome->>'credits')::float8, 0);
-      loot := case when outcome->'loot' = 'null'::jsonb then null else outcome->'loot' end;
+      loot := pre_loot;
 
       -- CRIMECFG.gain: piracy 12 / piracyFail 6 / toll 4. Escort is lawful.
       gain := case
         when op->>'verb' = 'rob' then case when (outcome->>'won')::boolean then 12 else 6 end
         when op->>'verb' = 'toll' then 4 else 0 end;
+      -- Armed robbery books the baron straight onto the watchlist
+      -- (CRIMECFG.watch 100), won or not — at or past it, the plain gain
+      -- applies. Applied BEFORE the chase's own charges, as the client does
+      -- (Crime.bookRobbery, then Police.pursue's per-pair adds).
+      if op->>'verb' = 'rob' then
+        crime := case when crime < 100 then 100 else crime + gain end;
+      else
+        crime := crime + gain;
+      end if;
 
       -- PIRACYCFG.rep — standing swings only on a verb that landed.
       if (outcome->>'won')::boolean then
@@ -326,7 +537,42 @@ begin
       end if;
 
       got_item := false;
-      chase := null;
+      -- A caught toll forfeits the payment: the credits were recovered with
+      -- the wreck. (They were added above; take them back before anything
+      -- else reads them.)
+      if op->>'verb' = 'toll' and chase is not null
+         and coalesce((chase->>'caught')::boolean, false) then
+        credits := credits - coalesce((outcome->>'credits')::float8, 0);
+        outcome := jsonb_set(outcome, '{credits}', to_jsonb(0));
+        ships := (select coalesce(jsonb_agg(x.value), '[]'::jsonb)
+                  from jsonb_array_elements(ships) x(value)
+                  where x.value->>'uid' <> op->>'shipUid');
+      end if;
+      -- Wear and charges from a TOLL chase (no loot block to carry them).
+      if loot is null and chase is not null then
+        chase_dmg := coalesce((
+          select sum((w.value->>'dmg')::float8)
+          from jsonb_array_elements(chase->'waveList') w(value)
+          where coalesce((w.value->>'destroyed')::boolean, false)), 0);
+        dmg := dmg + chase_dmg;
+        crime := crime + coalesce((chase->>'crime')::float8, 0);
+        if coalesce((chase->>'item')::boolean, false) then
+          if (select count(*) from jsonb_object_keys(items))
+             < coalesce((st->'inventory'->>'capacity')::int, 6) then
+            seq := seq + 1;
+            item_uid := 'i' || seq;
+            items := jsonb_set(items, array[item_uid], jsonb_build_object(
+              'uid', item_uid, 'kind', 'reactor', 'rarity', 'legendary',
+              'name', 'Senate Enforcement Core', 'police', true,
+              'primary', jsonb_build_object('stat', 'firepower', 'amount', 0.45,
+                'pct', true, 'kind', 'reactor'),
+              'bonus', jsonb_build_object('stat', 'shields', 'amount', 60,
+                'pct', false, 'kind', 'shield'),
+              'value', 151200), true);
+            got_item := true;
+          end if;
+        end if;
+      end if;
       if loot is not null then
         -- §4.2: the delivery never arrives — the destination sector's shelf
         -- loses what the hold now carries. This is the whole point of robbing:
@@ -350,14 +596,22 @@ begin
         end if;
 
         -- §5.1 response: the law can answer a successful robbery on the way
-        -- home (js/police.js). Same seed, same draw order.
-        chase := app._police_chase(op, atk);
+        -- home (js/police.js). Same seed, same draw order — chase was
+        -- pre-read above to derive the settle time.
         if chase is not null then
-          dmg := dmg + coalesce((chase->>'dmg')::float8, 0);
+          -- Hull wear from the waves actually FOUGHT AND SURVIVED: a caught
+          -- wave destroys the ship outright, so its damage roll never lands
+          -- (Police.pursue skips addDamage on the caught branch the same way).
+          chase_dmg := coalesce((
+            select sum((w.value->>'dmg')::float8)
+            from jsonb_array_elements(chase->'waveList') w(value)
+            where coalesce((w.value->>'destroyed')::boolean, false)), 0);
+          dmg := dmg + chase_dmg;
           crime := crime + coalesce((chase->>'crime')::float8, 0);
           if coalesce((chase->>'caught')::boolean, false) then
-            -- Caught: the stolen units go back on the shelf they were bound
-            -- for. Never the hull, never banked stock, never credits.
+            -- Run down: the stolen units go back on the shelf they were
+            -- bound for, and the raiding hull is DESTROYED WITH ALL HANDS.
+            -- Banked stock and credits are still never touched.
             if sector is not null then
               for e in select key as k, (value#>>'{}')::int as q from jsonb_each(loot) loop
                 update public.sector_stock set units = units + e.q
@@ -366,6 +620,9 @@ begin
             end if;
             op := jsonb_set(op, '{loot}', 'null'::jsonb);
             loot := null;
+            ships := (select coalesce(jsonb_agg(x.value), '[]'::jsonb)
+                      from jsonb_array_elements(ships) x(value)
+                      where x.value->>'uid' <> op->>'shipUid');
           end if;
           -- The police-only accessory (POLICE_ITEM), minted server-side
           -- because items are server-owned. Inventory full: the wreck burns
@@ -390,8 +647,69 @@ begin
         end if;
       end if;
 
-      crime := crime + gain;
-      if dmg > 0 then ships := app._piracy_damage(ships, op->>'shipUid', dmg); end if;
+      -- A run-down hull takes no repair bill — it's gone.
+      if dmg > 0 and not coalesce((chase->>'caught')::boolean, false) then
+        ships := app._piracy_damage(ships, op->>'shipUid', dmg);
+      end if;
+
+      -- The boarding action goes on the record (Piracy._fileRobReport shape):
+      -- a replayable Dispatches report for a signed-in baron, exactly as the
+      -- client files one for a guest. policeInbound tells combat.js the law
+      -- answered — the hauler jumps clear at the end of the movie.
+      last_report := null;
+      if op->>'verb' = 'rob' then
+        last_report := (op->>'id') || 'rob';
+        rep_row := jsonb_build_object(
+          'uid', last_report,
+          'title', 'Intercept — ' || coalesce(op->>'name', 'the mark'),
+          'type', 'combat', 'success', (outcome->>'won')::boolean,
+          'ts', p_now_ms, 'faction', 'free_trade',
+          'danger', case when op->>'kind' = 'freighter' then 'moderate' else 'low' end,
+          'enemyCount', case when op->>'kind' = 'freighter' then 3 else 2 end,
+          'hauler', jsonb_build_object('name', op->>'name', 'kind', op->>'kind'),
+          'policeInbound', chase is not null,
+          'credits', coalesce((outcome->>'credits')::float8, 0),
+          'items', '[]'::jsonb, 'lost', '[]'::jsonb, 'impounded', '[]'::jsonb,
+          'damaged', case when coalesce((outcome->>'dmg')::float8, 0) > 0
+            then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name',
+              'pct', greatest(1, round(coalesce((outcome->>'dmg')::float8, 0) * 100)::int)))
+            else '[]'::jsonb end,
+          'roster', jsonb_build_array(jsonb_build_object(
+            'uid', sh->>'uid', 'name', sh->>'name', 'type', sh->>'type')));
+        reports := app._piracy_report_push(reports, rep_row);
+      end if;
+      -- One report per wave actually FOUGHT (destroyed or caught — an outran
+      -- wave files nothing), mirroring Police._fileReport.
+      if chase is not null then
+        w_i := 0;
+        for wv in select value from jsonb_array_elements(coalesce(chase->'waveList', '[]'::jsonb)) loop
+          if coalesce((wv->>'destroyed')::boolean, false) or coalesce((wv->>'caught')::boolean, false) then
+            last_report := (op->>'id') || 'w' || w_i;
+            rep_row := jsonb_build_object(
+              'uid', last_report,
+              'title', (array['Patrol response', 'Reinforced response', 'Vanguard response'])[least(w_i, 2) + 1],
+              'type', 'smuggle', 'success', coalesce((wv->>'destroyed')::boolean, false),
+              'ts', p_now_ms, 'faction', 'police', 'police', true,
+              'danger', (array['moderate', 'high', 'extreme'])[least(w_i, 2) + 1],
+              'enemyCount', least(8, 2 * (coalesce((chase->>'pairs')::int, 1) + w_i)),
+              'wave', w_i,
+              'credits', 0, 'items', '[]'::jsonb, 'impounded', '[]'::jsonb,
+              'lost', case when coalesce((wv->>'caught')::boolean, false)
+                then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name'))
+                else '[]'::jsonb end,
+              'wipe', coalesce((wv->>'caught')::boolean, false),
+              'damaged', case when not coalesce((wv->>'caught')::boolean, false)
+                              and coalesce((wv->>'dmg')::float8, 0) > 0
+                then jsonb_build_array(jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name',
+                  'pct', greatest(1, round(coalesce((wv->>'dmg')::float8, 0) * 100)::int)))
+                else '[]'::jsonb end,
+              'roster', jsonb_build_array(jsonb_build_object(
+                'uid', sh->>'uid', 'name', sh->>'name', 'type', sh->>'type')));
+            reports := app._piracy_report_push(reports, rep_row);
+          end if;
+          w_i := w_i + 1;
+        end loop;
+      end if;
 
       entry := jsonb_build_object(
         'verb', op->>'verb', 'won', (outcome->>'won')::boolean,
@@ -400,12 +718,17 @@ begin
         'credits', coalesce((outcome->>'credits')::float8, 0),
         'loot', coalesce(loot, 'null'::jsonb),
         'dmg', dmg, 'crime', gain + coalesce((chase->>'crime')::float8, 0),
-        'ship', sh->>'name');
+        'ship', sh->>'name',
+        'report', case when op->>'verb' = 'rob' then to_jsonb((op->>'id') || 'rob') else 'null'::jsonb end);
       if chase is not null then
         entry := jsonb_set(entry, '{chase}', chase || jsonb_build_object(
           'item', case when got_item then jsonb_build_object('name', 'Senate Enforcement Core')
                   else 'null'::jsonb end,
           'ship', sh->>'name', 'sysId', op->>'sysId',
+          'report', case when last_report like '%w%' then to_jsonb(last_report) else 'null'::jsonb end,
+          'lost', case when coalesce((chase->>'caught')::boolean, false)
+                  then jsonb_build_object('uid', sh->>'uid', 'name', sh->>'name')
+                  else 'null'::jsonb end,
           -- The seized count reads the PRE-seizure loot: op.loot is already
           -- nulled out by the time we get here.
           'seized', case when coalesce((chase->>'caught')::boolean, false)
@@ -414,10 +737,32 @@ begin
                           from jsonb_each(outcome->'loot') le) else 0 end));
       end if;
       runs := runs || jsonb_build_array(entry);
+
+      -- The landing gate below needs the chase's length on later pulls, when
+      -- `resolved` short-circuits the pre-read. Stamp it once, here.
+      op := jsonb_set(op, '{chaseLenMs}', to_jsonb(
+        case when chase is not null
+             then (case when op->>'verb' = 'toll' then 62500.0 else 25000.0 end)
+                  + coalesce(jsonb_array_length(chase->'waveList'), 0) * 40000.0
+             else 0 end));
+
+      -- A run-down hull never lands: the op dies with the ship, here.
+      if coalesce((chase->>'caught')::boolean, false) then continue; end if;
     end if;
 
-    -- Home with the take: bank the loot, flag it hot, free the hull.
-    if p_now_ms >= coalesce((op->>'returnAt')::float8, 0)
+    -- Home with the take. The run home only departs once everything at the
+    -- scene is over — the boarding, and the duel if the law answered — so
+    -- landing is settleAt + the return leg (Piracy.landAt). settleAt is
+    -- resolveAt + 30000 + chase_len and travelMs is returnAt - resolveAt,
+    -- which makes that exactly returnAt + 30000 + chase_len.
+    -- NOTE the parentheses around the CASE: PL/pgSQL reads an IF condition by
+    -- scanning for the terminating THEN at paren depth zero, and does not know
+    -- that a bare CASE opens a THEN of its own. Without them it ends the
+    -- condition at the CASE's THEN and the function fails to compile with
+    -- "syntax error at end of input".
+    if p_now_ms >= coalesce((op->>'returnAt')::float8, 0) + 30000.0
+         + (case when coalesce((op->>'chaseLenMs')::float8, -1) >= 0
+                 then (op->>'chaseLenMs')::float8 else 0 end)
        and coalesce((op->>'resolved')::boolean, false) then
       if op->'loot' is not null and op->'loot' <> 'null'::jsonb then
         for e in select key as k, (value#>>'{}')::int as q from jsonb_each(op->'loot') loop
@@ -450,6 +795,7 @@ begin
 
   st := jsonb_set(st, '{piracy}', ops);
   st := jsonb_set(st, '{piracyHits}', hits);
+  st := jsonb_set(st, '{reports}', reports);
   st := jsonb_set(st, '{positions}', positions);
   st := jsonb_set(st, '{avgCost}', avg_cost);
   st := jsonb_set(st, '{hot}', hot);

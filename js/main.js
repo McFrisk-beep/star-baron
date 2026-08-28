@@ -506,6 +506,10 @@ const Game = {
             }
           }
         }
+        // Every settled run reports in on the Fleet Dispatch thread too — the
+        // WYWA modal is a summary, the dispatch is the record.
+        if (window.Story && Story.piracyDispatch)
+          for (const p of pulled.piracy || []) Story.piracyDispatch(p);
         offlineIndustry = offlineIndustry.concat(
           (pulled.piracy || []).map(piracy => ({ piracy })));
         offlineMercs = Fleet.pruneMercs(now);
@@ -749,11 +753,15 @@ const Game = {
         this._lastPullTry = now;
         void this.pullCatchUp().then(async away => {
           this._pullInflight = false;
+          this._surfaceAway(away);
           if (window.Charters) Charters.reconcileShips();
           await this.syncSectorStock();
           this.requestSave();
         }).catch(() => { this._pullInflight = false; });
       }
+      // Cross-player fights: publish my windows, fetch everyone's
+      // (self-throttled to ~1/min; quietly off without the table).
+      if (window.Encounters) void Encounters.sync(now);
       // Missions still have a dedicated RPC; pull also resolves them — either is fine.
       void Promise.resolve(Missions.resolveMatured(now)).then(done => {
         if (done && done.length) this.requestSave();
@@ -990,6 +998,33 @@ const Game = {
       return null;
     } finally {
       Economy._pending = Math.max(0, Economy._pending - 1);
+    }
+  },
+
+  // Mid-session pulls used to drop the whole `away` payload on the floor — a
+  // signed-in baron's server-settled piracy verdict or belt batch banked in
+  // total silence (the credits just moved). Route the slices through the same
+  // Bus events the local resolver emits, so a live tab hears about server
+  // settles too. Boot-time pulls keep the WYWA modal instead.
+  _surfaceAway(away) {
+    if (!away || this._booting || !window.Bus) return;
+    for (const m of away.mining || []) {
+      if (window.Assets && m.sysId && m.qty > 0) Assets.parkBlocks(m.sysId, m.commodity, m.qty);
+    }
+    for (const raid of away.miningRaids || []) Bus.emit("miningRaid", raid);
+    for (const p of away.piracy || []) {
+      // Park the bay blocks the server's positions already carry (the boot
+      // path does the same at main.js boot) — a caught run ships loot:null.
+      if (window.Assets && p.fromSys && p.loot) {
+        for (const [id, qty] of Object.entries(p.loot)) {
+          if (qty > 0) Assets.parkBlocks(p.fromSys, id, qty);
+        }
+      }
+      // A manhunt ended the run before the verb — report it as itself, not as
+      // a failed rob (the rob never happened).
+      if (p.manhunt) { Bus.emit("manhunt", p.manhunt); continue; }
+      Bus.emit("piracyResolved", p);
+      if (p.chase) Bus.emit("policeChase", p.chase);
     }
   },
 

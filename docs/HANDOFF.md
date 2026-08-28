@@ -25,7 +25,7 @@ accounts, cloud saves, an admin content CMS, and a shared persistent world.
 - **Run locally:** open `index.html` (works on `file://`), or serve the folder
   (`python3 -m http.server`) — a real URL is needed for Supabase email-confirm
   redirects and is how it's deployed.
-- **Deploy:** GitHub Pages from `main` (`https://mcfrisk-beep.github.io/star-baron/`).
+- **Deploy:** Netlify from `main` (`https://cosmocrat.netlify.app`); PR deploy previews at `deploy-preview-<n>--cosmocrat.netlify.app`. `_headers` marks HTML/JS/CSS no-cache so deploys land on the next reload.
 - **Repo:** `mcfrisk-beep/star-baron`, default branch `main`.
 
 ---

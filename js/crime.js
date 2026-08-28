@@ -25,6 +25,14 @@ const Crime = {
   // Local bookkeeping only — online, the RPC that authorised the act returns the
   // authoritative value and applyServer() overwrites this.
   add(n) { return this.set(this.value() + (Number(n) || 0)); },
+  // Armed robbery puts you straight on the watchlist: below `watch` the record
+  // JUMPS to it (the police can chase you the moment you rob); at or above it,
+  // the normal gain applies on top. Mirrored in docs/sql/piracy_rpcs.sql and
+  // pinned by tools/check_piracy_parity.js.
+  bookRobbery(gain) {
+    const w = this.cfg().watch || 100, v = this.value();
+    return this.set(v < w ? w : v + (Number(gain) || 0));
+  },
   applyServer(v) { if (v != null) this.set(v); return this.value(); },
   gain(kind) { return (this.cfg().gain || {})[kind] || 0; },
 
@@ -35,6 +43,14 @@ const Crime = {
     return out;
   },
   label(v = this.value()) { return this.tier(v).label; },
+  // The tag a baron's hulls fly under: null while the record is clean, the
+  // tier otherwise ("Watchlisted" at watch, "Barred" at lockout, "Criminal"
+  // at criminal). Read by the chart and the fleet list — a hot record should
+  // be legible on the ship, not buried in a Senate tab.
+  tag(v = this.value()) {
+    const t = this.tier(v);
+    return t.id === "clean" ? null : t;
+  },
   watched(v = this.value()) { return v >= this.cfg().watch; },
   locked(v = this.value()) { return v >= this.cfg().lockout; },      // Senate bars you
   isCriminal(v = this.value()) { return v >= this.cfg().criminal; },

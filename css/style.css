@@ -2110,3 +2110,21 @@ body.reduced .hub-prompt { animation: none; }
 .senate-barred { border-left: 3px solid var(--down); }
 .senate-barred h2 { margin-bottom: 8px; }
 .senate-barred .locked-note { max-width: 68ch; }
+
+/* Piracy duel on the galaxy chart (js/voyage.js _circle, js/starmap.js).
+   Two hulls holding station and trading fire, then a fireball for whoever
+   lost. The positions are computed per frame; everything here is paint. */
+.voy-duel-flash { fill: #ffd8a0; }
+.voy-duel .voy-hull-fleet, .voy-duel .voy-hull-police { filter: drop-shadow(0 0 3px rgba(255,180,90,.9)); }
+.voy-boom { fill: #ffb04b; }
+.voy-boom-ring { fill: none; stroke: #ff7a3d; stroke-width: 1.4; }
+.voy-name.boom { fill: #ffb04b; font-size: 8px; font-weight: 600; }
+/* The crime tag a baron's hull flies (fill comes from the tier colour). */
+.voy-name.crime { font-size: 8px; font-weight: 600; }
+body.reduced .voy-duel-flash { display: none; }
+
+/* Dispatch deletion (js/ui.js _dispatchListHtml): quiet until hovered. */
+.disp-row { position: relative; }
+.disp-del { position: absolute; right: 4px; bottom: 4px; background: none; border: none;
+  color: rgba(170,185,220,.45); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.disp-del:hover { color: #ff5d73; }

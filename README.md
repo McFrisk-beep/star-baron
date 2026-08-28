@@ -12,7 +12,7 @@ pattern.
 
 ## Play
 
-- **Live:** https://mcfrisk-beep.github.io/star-baron/ (once Pages is enabled)
+- **Live:** https://cosmocrat.netlify.app (Netlify, deployed from `main`; `_headers` keeps JS/CSS revalidated)
 - **Local:** just open `index.html` in a browser. No server needed — game data
   loads as plain `<script>` globals so there are no `fetch()` / CORS issues on
   `file://`.

@@ -89,9 +89,56 @@
   a mission-shaped report lands in Comms → Dispatches that `BattleView`
   replays off the smuggle template (a run for the gate, pursuers cutting
   angles), fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
-  formidable but killable: caught costs exactly the stolen cargo (recovered
-  to the shelf it was bound for) plus a repair bill — never the hull, never
-  banked stock, never credits; each destroyed pair adds
+  formidable but killable — and the stakes are real, at the owner's
+  direction: armed robbery books the baron straight onto the watchlist
+  (`Crime.bookRobbery` jumps the record to `CRIMECFG.watch`; at or past it
+  the plain gain applies), and being run down DESTROYS the raiding hull with
+  all hands — the stolen cargo is recovered to the shelf it was bound for
+  and the ship is gone. This does not touch §6.6.5, which protects the
+  *victim* of a raid: risking the aggressor's own hull is §6.6.2's consent
+  through action — you dispatched it against the law on purpose. Banked
+  stock and credits are still never touched. The whole op runs on a staged
+  clock (`PIRACYCFG.battleMs` for the boarding, `POLICECFG.arriveMs` +
+  `waveGapMs` per wave for the response) and settles once, at the end —
+  watched or AFK, the same ledger. The run home departs only after the scene
+  is over, and the chart shows it: both hulls hold station and circle a
+  common point while the guns work, then the loser leaves a fireball
+  (`duelTurnMs` / `duelRadius` / `wreckMs`, all pure of the stage clock, so
+  every watcher sees the same dance).
+
+- **Canvas-first battles (owner's direction):** fights live in the WORLD,
+  not in a cinematic. `js/encounters.js` describes every engagement as a
+  deterministic ENCOUNTER — cast, window, and a shield/hull/projectile
+  schedule that lands exactly on the pre-rolled verdict; the canvas renders
+  it and never decides it. The system scene draws live encounters small
+  (sprites, mini bars, incoming fire, fireballs) and every fight is
+  clickable; `js/encounterview.js` is the MAGNIFIER — the same snapshot
+  drawn big, live (close it and the fight ticks on in the scene) or as a
+  ▶ Replay rebuilt from the report alone (the uid is the seed, the roster
+  and hauler/wave/enemyCount are the cast, success/lost/damaged the
+  verdict — nothing new stored, server-filed reports replay too).
+  `docs/sql/encounter_presence.sql` makes fights CROSS-PLAYER: a client
+  posts report-shaped windows in advance, spectators poll ~1/min and replay
+  the identical fight from the seed — same ships, same shots, same winner,
+  on every screen. `tools/check_encounters.js` pins the bars landing on the
+  verdict to the digit, the hauler never dying and always jumping, snapshot
+  purity, live/replay uid identity, and the spectator round-trip. Missions
+  and charters still use the legacy BattleView cinematic until they get
+  encounters of their own.
+
+- **The manhunt (§5.2, `POLICECFG.manhunt*`)** — past `CRIMECFG.criminal`
+  the law stops waiting for a fresh crime: a patrol cuts a dispatched hull
+  off partway OUT, before it reaches the mark, purely for the record it
+  carries. Odds scale with how far over the line the baron is
+  (`manhuntBase`, `manhuntPer100`, clamped), and there is no outrun branch —
+  you break the pair (hull damage, `CRIMECFG.gain.police`) or they take the
+  hull. The gate is read LIVE on both sides rather than stamped on the op,
+  so lying low genuinely calls them off mid-flight; the roll itself is
+  seeded on the op id like everything else. Only fleet ships a baron
+  *dispatched* are hunted — the flagship they fly themselves is never taken,
+  so a criminal record makes you unable to work, never unable to play.
+  `tools/check_piracy_parity.js` pins the JS and SQL rolls together and
+  `tools/check_police.js` covers the outcomes. Each destroyed pair adds
   `CRIMECFG.gain.police` (the worst charge on the books) and draws a heavier
   wave, up to `maxWaves`, and a broken pair sometimes yields `POLICE_ITEM` —
   the one accessory `Items.gen` cannot roll. This deliberately trades §5.2's

@@ -387,6 +387,66 @@ const Story = {
   _postOut(sl, text) { this._push({ arc: sl.id, from: "You", portrait: null, text, type: "out" }); },
   _postReward(sl, text) { this._push({ arc: sl.id, from: sl.from, portrait: sl.portrait, text, type: "reward" }); },
 
+  // ---- system dispatches (no storyline behind them) ------------------------
+  // A plain inbound message on a named thread: fleet results, the law's
+  // paperwork. conversations() already renders arcs with no storyline.
+  postSystem(arc, from, text, portrait) {
+    this._push({ arc, from, portrait: portrait != null ? portrait : null, text, type: "in" });
+  },
+  // Delete a whole conversation — the player's own inbox, their call. Any
+  // storyline progress for the arc goes with it (deleting a live quest thread
+  // abandons the quest; the UI confirms first).
+  deleteConversation(arc) {
+    const st = this.s(); if (!st) return;
+    st.inbox = st.inbox.filter(m => m.arc !== arc);
+    if (st.prog && st.prog[arc]) delete st.prog[arc];
+    this._recountUnread();
+    if (window.Game && Game.requestSave) Game.requestSave();
+  },
+
+  // The piracy verdict, written home (owner's direction): every settled run
+  // reports in — what happened, what it brought, and what the law did about
+  // it. A hull lost with all hands sends its last transmission instead, cut
+  // off mid-word.
+  piracyDispatch(r) {
+    if (!r) return;
+    const ARC = "fleet-dispatch", FROM = "Fleet Dispatch";
+    const comm = id => (window.COMMODITIES && (COMMODITIES.find(c => c.id === id) || {}).name) || id;
+    const where = (window.Galaxy && Galaxy.get(r.sysId)) ? Galaxy.get(r.sysId).name : "the scene";
+    const lost = (r.chase && r.chase.lost) || (r.manhunt && r.manhunt.lost) || null;
+    if (lost) {
+      this.postSystem(ARC, lost.name || r.ship || "Your hull",
+        `…they're on us — hull's breached — mayday, mayday, we're being—`);
+      this.postSystem(ARC, FROM,
+        `Signal lost near ${where}. ${lost.name || r.ship || "The hull"} is gone with all hands`
+        + (r.manhunt ? " — a Senate manhunt ran it down before it ever reached the mark."
+          : r.chase ? ` — a Senate patrol ran it down${r.chase.seized ? `; the cargo (${r.chase.seized} units) was recovered` : ""}.`
+          : "."));
+      return;
+    }
+    if (r.manhunt) {
+      this.postSystem(ARC, FROM, `${r.ship} shot its way clear of a Senate manhunt near ${where}`
+        + ` — hull damage taken, and the charge sheet grew (+${r.manhunt.crime || 0} crime).`);
+      return;
+    }
+    let text;
+    if (r.verb === "escort") text = `${r.ship} brought ${r.name} in safe near ${where} — +${Util.credits(r.credits)}c, lawful work.`;
+    else if (!r.won) text = `${r.ship} was driven off ${r.name} near ${where} — nothing taken, repairs needed, and the attempt is on your record.`;
+    else if (r.verb === "toll") text = `${r.name} paid your toll near ${where} — +${Util.credits(r.credits)}c.`;
+    else {
+      const bits = Object.entries(r.loot || {}).map(([id, q]) => `${q} ${comm(id)}`);
+      text = `${r.ship} stripped ${r.name} near ${where}` + (bits.length ? ` — took ${bits.join(", ")}.` : ".")
+        + " The take lands with the hull, flagged hot — customs will want a look.";
+    }
+    if (r.chase) {
+      text += r.chase.destroyed
+        ? ` The law answered: ${r.chase.destroyed} patrol pair${r.chase.destroyed === 1 ? "" : "s"} destroyed on the way home`
+          + (r.chase.item && !r.chase.item.full ? `, ${r.chase.item.name} salvaged` : "") + "."
+        : " The law answered — the hull outran the lights.";
+    }
+    this.postSystem(ARC, FROM, text);
+  },
+
   // Keep only the 30 most-recently-active conversations (drop whole threads).
   _pruneContacts() {
     const st = this.s(); const lastTs = {};

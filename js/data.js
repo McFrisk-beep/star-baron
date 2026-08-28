@@ -658,6 +658,11 @@ const PIRACYCFG = {
   tollFrac: [0.16, 0.30],        // of the manifest's quoted value, paid in credits
   escortPayFrac: [0.10, 0.16],   // the relief sponsor's lawful fee, same base
   atkDmg: [0.04, 0.12],          // hull damage when the target's guns win
+  // The boarding action itself takes this long: the op settles (and the take
+  // banks) only once the fight window has run, live or AFK — the ledger lands
+  // when the movie would have ended. Derived stage times only; nothing new is
+  // stored on the op, so the SQL derives the same clock from resolveAt.
+  battleMs: 30 * 1000,
   // Standing swings per verb (Rep.change deltas).
   rep: {
     rob:    [["free_trade", -3], ["syndicate", 2]],
@@ -692,10 +697,17 @@ const POLICECFG = {
   patrolLoopMinMs: 20 * 60 * 1000, // one patrol hop + dwell
   patrolLoopMaxMs: 35 * 60 * 1000,
   patrolFlyFrac: 0.85,
-  // Response after a successful rob: odds scale with the law present where it
-  // happened (stamped on the op at dispatch — the risk you accepted).
-  responseBase: 0.9,               // × the system's security score
-  responseClamp: [0, 0.95],        // truly lawless space answers to nobody
+  // PRESENCE (owner's direction): high-law space is never unwatched. Patrols
+  // per system is a pure seeded function of (system, 20-min slot): policed and
+  // guarded always field 1-3, contested has one about half the time, the
+  // frontier a quarter, lawless none — and the RESPONSE is no longer a dice
+  // roll: a rob or a toll draws the law 100% of the time a patrol is present
+  // at the scene, never when space is empty. Band boundaries come off the op's
+  // stamped law (0.22 / 0.42 / 0.62 — SECURITYCFG.bands), so the SQL derives
+  // the identical count. A tolled captain files a complaint, not a distress
+  // call — the response comes, but slower.
+  presenceSlotMs: 20 * 60 * 1000,
+  tollArriveMult: 2.5,
   // One patrol pair's worth, in Charters.defenseScore units, deepened by the
   // local law and escalating per wave when you keep shooting back.
   pairScore: 700,
@@ -707,6 +719,27 @@ const POLICECFG = {
   catchClamp: [0.1, 0.92],
   chaseDmg: [0.06, 0.16],          // hull damage per wave actually fought
   itemChance: 0.2,                 // salvage roll per destroyed pair (the police-only kit)
+  // The response plays out in real time on the chart: the nearest precinct's
+  // pair takes arriveMs to reach the scene after the boarding ends, and each
+  // wave is fought over waveGapMs. The op's settle waits for the last wave —
+  // watched or AFK, the same clock. Mirrored in docs/sql/piracy_rpcs.sql.
+  arriveMs: 25 * 1000,
+  waveGapMs: 40 * 1000,
+  // The duel itself, once they close: both hulls hold station and circle a
+  // common point while the guns work. Purely presentational — the outcome was
+  // decided by the seeded rolls before a single frame drew.
+  duelTurnMs: 18 * 1000,         // one slow revolution
+  duelRadius: 0.014,             // galaxy-fraction separation between the two
+  wreckMs: 3 * 1000,             // how long the loser's fireball stays on the chart
+  // THE MANHUNT (CRIMECFG.criminal and above). Past the criminal line the law
+  // stops waiting for you to commit a crime: a patrol that finds one of your
+  // dispatched hulls in its lane runs it down. Only fleet ships you SENT are
+  // hunted — the flagship you fly yourself is never taken, so a criminal
+  // record makes you unable to work, never unable to play.
+  manhuntBase: 0.45,             // odds a patrol finds the hull at all
+  manhuntPer100: 0.25,           // +this much, relatively, per 100 over the line
+  manhuntClamp: [0, 0.9],
+  manhuntAt: [0.30, 0.70],       // where in the outbound leg they cut you off
 };
 
 // The police-only accessory, stripped from a broken patrol ship. Deliberately

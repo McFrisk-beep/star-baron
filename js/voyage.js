@@ -148,6 +148,17 @@ const Voyages = {
   // ---- own voyages: projections of existing state --------------------------
   // Each: { id, kind, label, name?, you:true, sprite, plan?|sysId, at? }
   //   at = pos() result when moving; sysId set when parked in a system.
+  // Two hulls holding station and circling a common point — the shape a duel
+  // takes on the chart. Pure of the clock (no state, no easing), so it draws
+  // identically for every watcher. `phase` puts the two on opposite arcs.
+  _circle(center, now, phase) {
+    const c = window.POLICECFG || {};
+    const turn = c.duelTurnMs || 18000, r = c.duelRadius || 0.014;
+    const th = (now % turn) / turn * Math.PI * 2 + phase;
+    return { x: center.x + Math.cos(th) * r, y: center.y + Math.sin(th) * r,
+      heading: th + Math.PI / 2, a: null, b: null, leg: 0, p: 0.5, legP: 0.15 };
+  },
+
   active(now = Date.now()) {
     const s = this.s();
     if (!s || !window.Lanes || !Object.keys(Lanes.adj).length) return [];
@@ -226,6 +237,117 @@ const Voyages = {
       if (plan) out.push({ ...base, plan, at: this.pos(plan, now) });
       else if (p >= 0.45 && p < 0.55) out.push({ ...base, sysId: e.sysId, phaseLabel: "Charting the system" });
     }
+
+    // piracy intercepts — out to the mark, the boarding, the duel, the run
+    // home. Every stage time is derived (Piracy.robEndAt/duelAt/settleAt), so
+    // this stays a pure view of the clock: two watchers see the same dance,
+    // and a closed tab misses the movie but never the ledger.
+    if (window.Piracy && window.Fleet) for (const op of s.piracy || []) {
+      const scene = Galaxy.get(op.sysId);
+      if (!scene || !Galaxy.get(op.fromSys) || op.sysId === op.fromSys) continue;
+      const sh = Fleet.ship(op.shipUid);
+      const base = { id: "pr:" + op.id, kind: "raider", you: true,
+        name: sh ? sh.name : "Raider",
+        label: (sh ? sh.name : "Raider") + " — intercept",
+        sprite: sh ? this._fleetSprite([sh.uid]) : "ship:sparrow" };
+      const robEnd = Piracy.robEndAt(op), duelOn = Piracy.duelAt(op), settle = Piracy.settleAt(op);
+      const pre = Piracy.preview(op);
+      const chase = pre.chase;
+      const legMs = op.travelMs || Math.max(1, op.returnAt - op.resolveAt);
+      // The engagement is anchored where the CONTACT is, not at the star:
+      // the boarding follows the hauler's own live chart position, and once
+      // it breaks away the scene stays pinned where it was at robEnd.
+      const anchor = Piracy.contactAt(op, Math.min(now, robEnd)) || { x: scene.pos.x, y: scene.pos.y };
+      if (now < op.resolveAt) {
+        const plan = this.plan(op.fromSys, op.sysId, op.startedAt, op.resolveAt - op.startedAt);
+        // The manhunt cuts the hull off partway out: both stop dead on the
+        // lane and circle, exactly as the post-robbery duel does, only here
+        // it happens before the mark is ever reached.
+        const mhAt = Piracy.manhuntAt(op), mhEnd = Piracy.manhuntEndAt(op);
+        const cut = plan && mhAt !== Infinity ? this.pos(plan, mhAt) : null;
+        if (cut && now >= mhAt && now < mhEnd) {
+          out.push({ ...base, id: "pr:mh:" + op.id, duel: true, engaged: true,
+            label: (sh ? sh.name : "Raider") + " — run down by a patrol",
+            at: this._circle(cut, now, 0) });
+          out.push({ id: "pr:mh:pol:" + op.id, kind: "police", police: true,
+            pair: true, npc: true, duel: true, engaged: true,
+            name: "Senate Manhunt", label: "Senate Manhunt",
+            sprite: "race:voidkin", manifest: [], at: this._circle(cut, now, Math.PI) });
+        } else if (cut && now >= mhEnd && Piracy.manhunt(op).caught) {
+          const wreckMs = (window.POLICECFG || {}).wreckMs || 0;
+          if (now < mhEnd + wreckMs) {
+            out.push({ id: "pr:mh:boom:" + op.id, kind: "wreck", boom: true, you: true, engaged: true,
+              at: this._circle(cut, mhEnd, 0),
+              label: (sh ? sh.name : "Your hull") + " — lost to a manhunt" });
+          }
+        } else if (plan) {
+          out.push({ ...base, plan, at: this.pos(plan, now) });
+        }
+      } else if (now < settle) {
+        // At the scene: the boarding (alongside the hauler), then — if the
+        // law answered — holding where it broke away, then the duel itself.
+        if (chase && now >= duelOn) {
+          // Both hulls stop dead and circle a common point while the guns
+          // work. Fresh marker ids so the renderer builds them with the
+          // duel's own furniture (muzzle flashes) instead of reusing the
+          // transit element.
+          out.push({ ...base, id: "pr:duel:" + op.id, duel: true, engaged: true,
+            label: (sh ? sh.name : "Raider") + " — under fire",
+            at: this._circle(anchor, now, 0) });
+          out.push({ id: "pr:duel:pol:" + op.id, kind: "police", police: true,
+            pair: true, npc: true, duel: true, engaged: true,
+            name: "Senate Response", label: "Senate Response",
+            sprite: "race:voidkin", manifest: [],
+            at: this._circle(anchor, now, Math.PI) });
+        } else {
+          // A real chart position at every moment — a marker with no `at`
+          // falls out of markers() and the hull "vanishes" mid-op.
+          out.push({ ...base, engaged: true, op,
+            at: { x: anchor.x, y: anchor.y, heading: anchor.heading || 0, a: null, b: null, leg: 0, p: 0.5, legP: 0.15 },
+            label: (sh ? sh.name : "Raider") + " — " + (now < robEnd
+              ? (op.verb === "escort" ? "flying escort" : op.verb === "toll" ? "shaking the captain down" : "boarding action")
+              : "holding — patrol closing") });
+        }
+      } else if (!(chase && chase.caught)) {
+        // Survived the scene: the run home departs at the settle.
+        const plan = this.plan(op.sysId, op.fromSys, settle, legMs);
+        const at = plan && this.pos(plan, now);
+        if (at && at.p < 1) out.push({ ...base, plan, at });
+      }
+      // The law burning in for the ANCHOR once the boarding ends — from the
+      // sector's precinct seat when it has one that isn't the scene itself,
+      // else scrambled from the scene's own station. Either way the pair that
+      // fights the duel is SEEN arriving; it never just materialises. (The
+      // old form skipped the approach entirely whenever the robbery happened
+      // AT the precinct capital, which read as "the police are gone".)
+      if (chase && now >= robEnd && now < duelOn) {
+        const sec2 = window.Stock ? Galaxy.sectors.find(x => x.id === Stock.sectorOf(op.sysId)) : null;
+        const seat = sec2 && window.Police
+          ? sec2.systems.find(id => (Galaxy.get(id) || {}).capital && Police.hasPrecinct(id)) : null;
+        const src = seat && seat !== op.sysId ? Galaxy.get(seat).pos : scene.pos;
+        const f = (now - robEnd) / Math.max(1, duelOn - robEnd);
+        const ease = f * f * (3 - 2 * f);
+        const px = src.x + (anchor.x - src.x) * ease, py = src.y + (anchor.y - src.y) * ease;
+        out.push({ id: "pr:pol:" + op.id, kind: "police", police: true,
+          pair: true, npc: true, engaged: true, name: "Senate Response", label: "Senate Response",
+          sprite: "race:voidkin", manifest: [],
+          at: { x: px, y: py, heading: Math.atan2(anchor.y - py, anchor.x - px),
+            a: null, b: null, leg: 0, p: 0.5, legP: 0.5 } });
+      }
+      // The fireball. Whoever lost the duel burns at the scene for a beat
+      // after the settle — the only way the chart ever says who died.
+      const wreck = (window.POLICECFG || {}).wreckMs || 0;
+      if (chase && now >= settle && now < settle + wreck) {
+        out.push({ id: "pr:boom:" + op.id, kind: "wreck", boom: true, npc: !chase.caught, engaged: true,
+          you: !!chase.caught, at: this._circle(anchor, settle, chase.caught ? 0 : Math.PI),
+          label: chase.caught ? (sh ? sh.name : "Your hull") + " — lost with all hands"
+                              : "Senate patrol — destroyed" });
+      }
+    }
+    // Every hull a baron has in the black flies their crime tag once the
+    // record leaves clean — one read, applied to whatever active() produced.
+    const tag = window.Crime ? Crime.tag() : null;
+    if (tag) for (const v of out) if (v.you) v.tag = tag;
     return out;
   },
 
@@ -302,8 +424,11 @@ const Voyages = {
   // Everything moving, for the galaxy chart. Parked entries are skipped there.
   markers(now = Date.now()) {
     const npc = window.Traffic ? Traffic.flights(now) : [];
-    const pol = window.Police ? Police.patrols(now) : [];
-    return this.active(now).concat(this.others(now)).concat(npc).concat(pol).filter(v => v.at);
+    // Ambient patrols are deliberately NOT on the galaxy chart (owner's
+    // direction): the law's whereabouts is something you learn by flying,
+    // not by reading the map. They still appear in the system scene
+    // (inSystem), and the response/duel markers still draw when they engage.
+    return this.active(now).concat(this.others(now)).concat(npc).filter(v => v.at);
   },
 
   // What's visibly IN a system for the system view. Docked flagships are

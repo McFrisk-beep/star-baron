@@ -147,6 +147,27 @@ const StarMap = {
         live.add(v.id);
         const el = this._voyEls[v.id] || (this._voyEls[v.id] = this._mkVoyEl(layer, v));
         el.g.setAttribute("transform", `translate(${(v.at.x * W).toFixed(1)},${(v.at.y * H).toFixed(1)})`);
+        // A wreck is a fireball, not a ship: it has no hull to turn or plume
+        // to flicker. Expand and fade over POLICECFG.wreckMs, then the live
+        // set drops it.
+        if (el.boom) {
+          const f = Util.clamp((now - el.t0) / ((window.POLICECFG || {}).wreckMs || 3000), 0, 1);
+          el.boom.setAttribute("r", (3 + f * 16).toFixed(1));
+          el.boom.setAttribute("opacity", (1 - f).toFixed(2));
+          if (el.ring) {
+            el.ring.setAttribute("r", (5 + f * 26).toFixed(1));
+            el.ring.setAttribute("opacity", ((1 - f) * 0.5).toFixed(2));
+          }
+          continue;
+        }
+        // Duel: guns working between two hulls holding station. The flash is
+        // a sawtooth on a fixed beat, jittered per marker so the two sides
+        // don't fire in lockstep.
+        if (el.flash) {
+          const beat = 640, k = ((now + el.jit) % beat) / beat;
+          el.flash.setAttribute("opacity", k < 0.32 ? (0.9 - k * 2.2).toFixed(2) : "0");
+          el.flash.setAttribute("r", (2.2 + k * 5).toFixed(1));
+        }
         // flown turns: ease the drawn heading toward the route bearing
         if (el.hdg == null) el.hdg = v.at.heading;
         const diff = Math.atan2(Math.sin(v.at.heading - el.hdg), Math.cos(v.at.heading - el.hdg));
@@ -187,6 +208,26 @@ const StarMap = {
   _mkVoyEl(layer, v) {
     const ns = "http://www.w3.org/2000/svg";
     const g = document.createElementNS(ns, "g");
+    // A wreck: the fireball a lost duel leaves behind. No hull, no plume —
+    // the tick expands and fades it, then it is gone.
+    if (v.boom) {
+      const ring = document.createElementNS(ns, "circle");
+      ring.setAttribute("class", "voy-boom-ring");
+      g.appendChild(ring);
+      const core = document.createElementNS(ns, "circle");
+      core.setAttribute("class", "voy-boom");
+      g.appendChild(core);
+      if (v.label) {
+        const t = document.createElementNS(ns, "text");
+        t.setAttribute("class", "voy-name boom");
+        t.setAttribute("y", -14);
+        t.textContent = v.label;
+        g.appendChild(t);
+      }
+      g.setAttribute("class", "voy " + (v.you ? "voy-fleets" : "voy-law"));
+      layer.appendChild(g);
+      return { g, boom: core, ring, t0: Date.now() };
+    }
     const hullG = document.createElementNS(ns, "g");   // rotates: plume + hull together
     const plume = document.createElementNS(ns, "polygon");
     plume.setAttribute("class", "voy-plume");
@@ -261,15 +302,41 @@ const StarMap = {
       const t = document.createElementNS(ns, "text");
       t.setAttribute("class", "voy-name" + (v.you ? " you" : ""));
       t.setAttribute("y", -11);
-      t.textContent = v.name;   // textContent — other barons' names are untrusted text
+      // textContent — other barons' names are untrusted text
+      t.textContent = v.name + (v.you && v.tag ? " · " + v.tag.label : "");
+      if (v.you && v.tag) t.setAttribute("fill", v.tag.color);
       g.appendChild(t);
+      nameEl = t;
+    }
+    // A baron's own hull flies its crime tag over it once the record leaves
+    // clean — Watchlisted, then Barred, then Criminal. The law reads it off
+    // the transponder; so should the player (js/crime.js tag()).
+    if (v.you && v.tag && !nameEl) {
+      const t = document.createElementNS(ns, "text");
+      t.setAttribute("class", "voy-name you crime");
+      t.setAttribute("fill", v.tag.color);
+      t.setAttribute("y", -11);
+      t.textContent = v.name ? v.name + " · " + v.tag.label : v.tag.label;
+      g.appendChild(t);
+      nameEl = t;
+    }
+    // Muzzle flash for a hull locked in a duel, animated by the tick.
+    let flash = null, jit = 0;
+    if (v.duel) {
+      flash = document.createElementNS(ns, "circle");
+      flash.setAttribute("class", "voy-duel-flash");
+      flash.setAttribute("cx", 6); flash.setAttribute("cy", 0);
+      flash.setAttribute("opacity", 0);
+      g.appendChild(flash);
+      jit = v.police ? 320 : 0;
     }
     // Layer class: LAW covers the Senate's own hulls, TRAFFIC the NPC economy,
     // FLEETS anything crewed by a baron. The CSS hides the whole group, names
     // and strobes included.
-    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets"));
+    g.setAttribute("class", "voy " + (v.police ? "voy-law" : v.npc ? "voy-traffic" : "voy-fleets")
+      + (v.duel ? " voy-duel" : ""));
     layer.appendChild(g);
-    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights };
+    return { g, hull: hullG, poly: hull, name: nameEl, plume, tail, lights, flash, jit };
   },
   _stopVoyageLayer() {
     if (this._voyRaf) (this._voyRafIsTimer ? clearTimeout : cancelAnimationFrame)(this._voyRaf);
@@ -1422,6 +1489,9 @@ const StarMap = {
           return;
         }
         const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
+        // A live fight is clickable: open the magnifier on the same encounter.
+        const fight = (this._encHitboxes || []).find(h => Math.hypot(wx - h.x, wy - h.y) <= h.r);
+        if (fight && window.EncounterView) { EncounterView.open(fight.enc, { live: true }); return; }
         const hit = window.POIs && POIs.at(sys.id, wx, wy, 16 / cam.zoom);
         if (hit) { this._showPoiTip(hit, mx, my); return; }
         // An NPC hauler is a contact (§4): click it for the intercept card.
@@ -1749,6 +1819,7 @@ const StarMap = {
       // formation, couriers — crossing between the gates their route actually
       // uses — and survey hulls parked at their seeded work-site (§6.2).
       this._drawVoyagers(ctx, sys, gates(), sx, sy, voyFx, opts.followVoy, { cx, cy, R });
+      if (window.Piracy && window.Fleet) this._drawPiracyScene(ctx, sys, voyFx, { cx, cy, R });
 
       ctx.restore();   // end camera transform
 
@@ -1936,6 +2007,13 @@ const StarMap = {
     try { list = Voyages.inSystem(sys.id, now); } catch (e) { return; }
     const seen = new Set();
     for (const v of list) {
+      // A hauler mid-boarding is held at the intercept point — the piracy
+      // scene pass draws it there; its lane position resumes when it breaks
+      // away (the run continues, emptied or saved).
+      if (window.Piracy && v.npc && !v.police && Piracy.opOnFlight) {
+        const bop = Piracy.opOnFlight(v.id, v.loop);
+        if (bop && !bop.resolved && now >= bop.resolveAt && now < Piracy.robEndAt(bop)) continue;
+      }
       seen.add(v.id);
       let x, y, want, thrust = 1;
       const gp = gateAt.find(g => g.to === v.gate) || gateAt[0];
@@ -2356,6 +2434,150 @@ const StarMap = {
   // Your parked mining ops in this system: the hull at its rock with a work
   // pulse and its name — the stationary target, visibly yours. Transits keep
   // to the fleet badge for now (chart markers are a later step).
+  // ---- piracy in the scene (docs/SPACE_INTERACTIVITY.md §4/§5.2) ----------
+  // The intercept plays out IN the system view, not just as chart dots: the
+  // raider holds the hauler at a seeded intercept point out in the system,
+  // guns working; the hauler breaks away when the window closes; the police
+  // pair arrives, the two circle each other trading fire, and the loser goes
+  // up in a fireball. All timing is the derived stage clock (Piracy.robEndAt
+  // / duelAt / settleAt), so every watcher sees the same scene and a closed
+  // tab misses only the movie. Transits in and out ride the generic voyager
+  // pipeline — this pass owns only the engagement itself.
+  _drawPiracyScene(ctx, sys, fx, geom) {
+    const now = Date.now();
+    const ops = (window.Game && Game.state.piracy) || [];
+    const wreckMs = (window.POLICECFG || {}).wreckMs || 3000;
+    this._encHitboxes = [];
+    const label = (text, x, y, col) => {
+      ctx.save();
+      ctx.font = "10px system-ui, sans-serif"; ctx.textAlign = "center";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
+      ctx.strokeText(text, x, y); ctx.fillStyle = col; ctx.fillText(text, x, y);
+      ctx.restore();
+    };
+    // Live encounters at their seeded intercept points — the fight the whole
+    // redesign is about: real ships, shield/hull bars, projectiles, and a
+    // click on any of it opens the zoom view (the magnifier).
+    const encs = window.Encounters
+      ? Encounters.active(now).concat(Encounters.remoteActive(now)) : [];
+    for (const e of encs) {
+      const encSys = e.op ? e.op.sysId : e.sysId;
+      if (encSys !== sys.id || (e.kind === "manhunt" && !e.remote)) continue;
+      const seedBase = e.op ? e.op.id : (e.anchorSeed || e.uid);
+      const hs = window.Combat ? Combat.seedFrom("prx:" + seedBase) : 1;
+      const r = geom.R * (0.45 + (hs % 25) / 100);
+      const aa = ((hs >> 5) % 628) / 100;
+      const ax = geom.cx + Math.cos(aa) * r, ay = geom.cy + Math.sin(aa) * r;
+      this._drawEncounter(ctx, e, ax, ay, 150, now);
+      this._encHitboxes.push({ x: ax, y: ay, r: 80, enc: e });
+      if (e.op) fx.pos["pr:" + e.op.id] = { x: ax, y: ay };  // the Live View chase cam
+      if (e.remote && e.display) {
+        ctx.save();
+        ctx.font = "600 10px system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(4,8,18,.9)";
+        ctx.strokeText(e.display, ax, ay - 96);
+        ctx.fillStyle = "#ffd9a0"; ctx.fillText(e.display, ax, ay - 96);
+        ctx.restore();
+      }
+    }
+    for (const op of ops) {
+      if (op.sysId !== sys.id || now < op.resolveAt) continue;
+      const robEnd = Piracy.robEndAt(op), duelOn = Piracy.duelAt(op), settle = Piracy.settleAt(op);
+      if (now >= settle + wreckMs) continue;
+      const pre = Piracy.preview(op);
+      const sh = window.Fleet ? Fleet.ship(op.shipUid) : null;
+      const hs = window.Combat ? Combat.seedFrom("prx:" + op.id) : 1;
+      const r = geom.R * (0.45 + (hs % 25) / 100);
+      const aa = ((hs >> 5) % 628) / 100;
+      const ax = geom.cx + Math.cos(aa) * r, ay = geom.cy + Math.sin(aa) * r;
+      // Between the boarding and the duel: the raider holds, the pair closes.
+      if (pre.chase && now >= robEnd && now < duelOn) {
+        const polImg = this.img(ASSET.raceship("voidkin"));
+        const shipImg = sh ? this.img(ASSET.shipArt(sh.type, sh.uid)) : null;
+        const f = (now - robEnd) / Math.max(1, duelOn - robEnd);
+        const gx = geom.cx + (ax - geom.cx) * -0.2, gy = geom.cy + (ay - geom.cy) * -0.2;
+        const px2 = gx + (ax - gx) * f, py2 = gy + (ay - gy) * f;
+        const pa = Math.atan2(ay - py2, ax - px2);
+        const draw = (img, x, y, ang, sz, fb) => {
+          ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+          if (img && img.ok) ctx.drawImage(img, -sz, -sz * 0.6, sz * 2, sz * 1.2);
+          else { ctx.fillStyle = fb; ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.5); ctx.lineTo(-sz * 0.7, -sz * 0.5); ctx.closePath(); ctx.fill(); }
+          ctx.restore();
+        };
+        draw(polImg, px2, py2, pa, 11, "#8fb4ff");
+        draw(polImg, px2 - Math.cos(pa) * 20 + Math.cos(pa + 1.6) * 12,
+          py2 - Math.sin(pa) * 20 + Math.sin(pa + 1.6) * 12, pa, 9, "#8fb4ff");
+        this._copLights(ctx, px2, py2, 10, now);
+        draw(shipImg, ax, ay, pa + Math.PI, 11, "#3fe3ff");
+        label("patrol closing", ax, ay - 22, "#ff9a4b");
+      }
+      // The fireball after the settle: whoever lost burns at the point. The
+      // survivor's exit rides the generic voyager pipeline.
+      if (pre.chase && now >= settle) {
+        const f = Util.clamp((now - settle) / wreckMs, 0, 1);
+        const caught = pre.chase.caught;
+        ctx.save();
+        ctx.globalAlpha = 1 - f;
+        const g = ctx.createRadialGradient(ax, ay, 1, ax, ay, 8 + f * 34);
+        g.addColorStop(0, "rgba(255,230,170,.95)");
+        g.addColorStop(0.4, "rgba(255,140,60,.8)");
+        g.addColorStop(1, "rgba(255,90,40,0)");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ax, ay, 8 + f * 34, 0, 7); ctx.fill();
+        ctx.restore();
+        label(caught ? (sh ? sh.name : "your hull") + " — lost with all hands" : "Senate patrol — destroyed",
+          ax, ay - 26, caught ? "#ff5d73" : "#3ad6a0");
+      }
+    }
+  },
+
+  // One live encounter, small, at (ax, ay): ships from the same snapshot the
+  // zoom view magnifies, with mini shield/hull bars — theater with a fixed
+  // ending, never a decision.
+  _drawEncounter(ctx, enc, ax, ay, scale, now) {
+    const snap = Encounters.snapshot(enc, now);
+    const px = v => ax + (v - 0.5) * scale, py = v => ay + (v - 0.5) * scale;
+    for (const sh2 of snap.shots) {
+      const f = Math.max(0, Math.min(1, sh2.f));
+      ctx.save();
+      ctx.strokeStyle = `rgba(255,160,110,${(0.8 * (1 - Math.abs(f - 0.6))).toFixed(2)})`;
+      ctx.lineWidth = 1.4;
+      const ix = px(sh2.x1) + (px(sh2.x2) - px(sh2.x1)) * f, iy = py(sh2.y1) + (py(sh2.y2) - py(sh2.y1)) * f;
+      ctx.beginPath(); ctx.moveTo(px(sh2.x1), py(sh2.y1)); ctx.lineTo(ix, iy); ctx.stroke();
+      ctx.restore();
+    }
+    for (const b of snap.booms) {
+      ctx.save(); ctx.globalAlpha = 1 - b.age;
+      const g = ctx.createRadialGradient(px(b.x), py(b.y), 1, px(b.x), py(b.y), 4 + b.age * 26);
+      g.addColorStop(0, "rgba(255,230,170,.95)"); g.addColorStop(1, "rgba(255,90,40,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px(b.x), py(b.y), 4 + b.age * 26, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+    for (const s of snap.ships) {
+      const x = px(s.x), y = py(s.y);
+      const sz = Math.max(9, s.size * scale * 1.1);
+      const [kind, id] = String(s.sprite || "ship:shuttle").split(":");
+      const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
+      ctx.save(); ctx.translate(x, y); ctx.rotate(s.ang || 0);
+      if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
+      else {
+        ctx.fillStyle = s.side === "you" ? "#3fe3ff" : s.police ? "#8fb4ff" : "#b8a67f";
+        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.5); ctx.lineTo(-sz * 0.7, -sz * 0.5); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      if (s.police) this._copLights(ctx, x, y, sz * 0.7, now);
+      const bw = Math.max(16, sz * 1.6), bx = x - bw / 2, by = y + sz * 0.7;
+      ctx.fillStyle = "rgba(4,8,18,.7)"; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
+      ctx.fillStyle = "rgba(63,227,255,.9)"; ctx.fillRect(bx, by, bw * Math.max(0, s.sh), 1.6);
+      ctx.fillStyle = s.hull > 0.35 ? "rgba(120,220,120,.9)" : "rgba(255,93,115,.95)";
+      ctx.fillRect(bx, by + 2.2, bw * Math.max(0, s.hull), 1.8);
+    }
+    ctx.save();
+    ctx.font = "9px system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255,194,75,.85)";
+    ctx.fillText("⚔ click to watch", ax, ay + scale * 0.62);
+    ctx.restore();
+  },
+
   _drawMiningOps(ctx, sys, now, zoom) {
     const wall = Date.now();
     for (const op of Mining.atSystem(sys.id)) {
@@ -2662,7 +2884,7 @@ const StarMap = {
     if (!verbs.length)
       return `<div class="pt-sub tip-dim">${v.raided ? "Nothing left to take."
         : "The Senate writ runs here — the verb is not offered."}</div>`;
-    if (!Piracy.local())
+    if (!Piracy.canSettle())
       return `<div class="pt-sub">Piracy settles on the local ledger for now — signed-in dispatch waits on a piracy SQL surface.</div>`;
     const hulls = Fleet.idle().filter(sh => !sh.mercenary && Fleet.stats(sh).firepower >= 1)
       .sort((a, b) => Fleet.stats(b).firepower - Fleet.stats(a).firepower);
@@ -2687,11 +2909,13 @@ const StarMap = {
         parts.push(`${vb} ${Math.round(Piracy.chance(shipUid, v, sysId, vb) * 100)}% · +${vb === "rob" ? g.piracy : g.toll} crime`);
       }
     }
-    // The other half of the quote (police.js): how likely a successful rob is
-    // to draw a patrol response here. The same number pursue() rolls against.
+    // The other half of the quote (police.js): whether the law is on station
+    // HERE, right now. The response is certain when a patrol is present —
+    // the risk you can read is whether one is, and how many.
     if (window.Police && window.Security && Piracy.verbs(v, sysId).includes("rob")) {
-      const p = Police.responseChance(Security.score(sysId));
-      if (p > 0) parts.push(`🚨 law answers ${Math.round(p * 100)}%`);
+      const n = Police.patrolsIn(sysId, Security.score(sysId), Date.now());
+      parts.push(n ? `🚨 ${n} patrol${n === 1 ? "" : "s"} on station — the law WILL answer`
+        : "🌑 no patrols on station");
     }
     return parts.join(" · ");
   },

@@ -5,8 +5,11 @@
    verb), a robbed delivery drains the DESTINATION shelf (§4.2 — the loot →
    scarcity → spike loop), stolen goods are flagged hot and only the hot slice
    is seizable at customs (§4.4), the outcome is a pure function of the op so
-   offline equals online, a failed run still costs crime (§6.7 — high
-   variance, never free), and no hull is ever lost or impounded to it.
+   offline equals online, a rob books you straight onto the watchlist (§6.7
+   still holds — high variance, never free), and the op settles on the staged
+   clock (Piracy.settleAt): the boarding takes PIRACYCFG.battleMs before a
+   single credit moves. (Losing the hull to the LAW is police.js's business —
+   see tools/check_police.js; this file never loads it.)
    Run: node tools/check_piracy.js */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
@@ -107,7 +110,7 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
   const before = {};
   for (const id of r.op.manifest) before[id] = c.Stock.available(destSec, id);
   const crime0 = c.Crime.value(), rep0 = c.Rep.get("free_trade");
-  const made = c.Piracy.resolve(r.op.returnAt + 1);    // one late call: fight + landing
+  const made = c.Piracy.resolve(c.Piracy.landAt(r.op) + 1);   // one late call: fight + landing
   assert.strictEqual(made.length, 1, "one verdict");
   const p = made[0].piracy;
   assert.ok(p.won && p.verb === "rob", "the rob landed");
@@ -123,7 +126,8 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
     assert.strictEqual(c.Game.state.positions[id] || 0, q, "loot banked in positions");
     assert.strictEqual(c.Piracy.hotQty(id), q, "…and every unit is hot");
   }
-  assert.ok(c.Crime.value() === crime0 + c.CRIMECFG.gain.piracy, "piracy is on your record");
+  assert.strictEqual(c.Crime.value(), c.CRIMECFG.watch,
+    "armed robbery books you straight onto the watchlist");
   assert.ok(c.Rep.get("free_trade") < rep0, "the League noticed");
   // §6.6-adjacent: the hull always comes home, never worse than damaged.
   assert.ok(c.Game.state.ships.includes(gun) && gun.status === "idle", "hull home, idle");
@@ -143,13 +147,13 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
   const gun = c.Fleet.makeShip("gunboat"); c.Game.state.ships.push(gun);
   const r = c.Piracy.start(v, "rob", gun.uid, sysId, t);
   r.op.chance = 0;
-  const crime0 = c.Crime.value();
-  const made = c.Piracy.resolve(r.op.returnAt + 1);
+  const made = c.Piracy.resolve(c.Piracy.landAt(r.op) + 1);
   const p = made[0].piracy;
   assert.ok(!p.won, "driven off");
   assert.strictEqual(Object.keys(c.Game.state.positions).length, 0, "no loot");
   assert.strictEqual(c.Game.state.credits, 0, "no credits");
-  assert.strictEqual(c.Crime.value(), crime0 + c.CRIMECFG.gain.piracyFail, "the attempt is on the record");
+  assert.strictEqual(c.Crime.value(), c.CRIMECFG.watch,
+    "a failed rob still books you onto the watchlist — you tried");
   assert.ok(gun.dmg > 0 && gun.dmg <= c.PIRACYCFG.atkDmg[1], `a repair bill, clamped (${gun.dmg})`);
   assert.strictEqual(gun.status, "idle", "the hull still comes home");
 }
@@ -167,7 +171,7 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
   const destSec = c.Stock.sectorOf(r.op.toSys);
   const before = c.Stock.available(destSec, r.op.manifest[0]);
   const crime0 = c.Crime.value();
-  c.Piracy.resolve(r.op.returnAt + 1);
+  c.Piracy.resolve(c.Piracy.landAt(r.op) + 1);
   assert.ok(c.Game.state.credits > 0, "the captain paid");
   assert.strictEqual(c.Stock.available(destSec, r.op.manifest[0]), before,
     "a tolled delivery still arrives — the shelf is untouched");
@@ -184,7 +188,7 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
   const r2 = c2.Piracy.start(relief, "escort", esc.uid, sys2, t2);
   assert.ok(r2.ok, r2.msg);
   const crime2 = c2.Crime.value(), rep2 = c2.Rep.get("free_trade");
-  c2.Piracy.resolve(r2.op.returnAt + 1);
+  c2.Piracy.resolve(c2.Piracy.landAt(r2.op) + 1);
   assert.ok(c2.Game.state.credits > 0, "the sponsor pays");
   assert.strictEqual(c2.Crime.value(), crime2, "escorting is legal");
   assert.ok(c2.Rep.get("free_trade") > rep2, "the League approves");
@@ -204,10 +208,10 @@ const contactAt = (c, minLeftMs = 5 * 60 * 1000) => {
   };
   const a = setup(chunk), b = setup(drip);
   assert.strictEqual(a.op.id, b.op.id, "same op id in both runs (the seed)");
-  chunk.Piracy.resolve(a.op.returnAt + 5000);
-  drip.Piracy.resolve(b.op.resolveAt + 1);
-  drip.Piracy.resolve(b.op.returnAt + 1);
-  drip.Piracy.resolve(b.op.returnAt + 5000);
+  chunk.Piracy.resolve(chunk.Piracy.landAt(a.op) + 5000);
+  drip.Piracy.resolve(b.op.resolveAt + 1);              // mid-boarding: nothing settles
+  drip.Piracy.resolve(drip.Piracy.settleAt(b.op) + 1);  // the fight window ran — settle
+  drip.Piracy.resolve(drip.Piracy.landAt(b.op) + 5000); // the hull lands
   assert.deepStrictEqual(chunk.Game.state.positions, drip.Game.state.positions, "same loot either way");
   assert.strictEqual(chunk.Game.state.credits, drip.Game.state.credits, "same credits");
   assert.strictEqual(chunk.Crime.value(), drip.Crime.value(), "same record");
