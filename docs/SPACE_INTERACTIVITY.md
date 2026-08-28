@@ -106,6 +106,26 @@
   (`duelTurnMs` / `duelRadius` / `wreckMs`, all pure of the stage clock, so
   every watcher sees the same dance).
 
+- **Canvas-first battles (owner's direction):** fights live in the WORLD,
+  not in a cinematic. `js/encounters.js` describes every engagement as a
+  deterministic ENCOUNTER — cast, window, and a shield/hull/projectile
+  schedule that lands exactly on the pre-rolled verdict; the canvas renders
+  it and never decides it. The system scene draws live encounters small
+  (sprites, mini bars, incoming fire, fireballs) and every fight is
+  clickable; `js/encounterview.js` is the MAGNIFIER — the same snapshot
+  drawn big, live (close it and the fight ticks on in the scene) or as a
+  ▶ Replay rebuilt from the report alone (the uid is the seed, the roster
+  and hauler/wave/enemyCount are the cast, success/lost/damaged the
+  verdict — nothing new stored, server-filed reports replay too).
+  `docs/sql/encounter_presence.sql` makes fights CROSS-PLAYER: a client
+  posts report-shaped windows in advance, spectators poll ~1/min and replay
+  the identical fight from the seed — same ships, same shots, same winner,
+  on every screen. `tools/check_encounters.js` pins the bars landing on the
+  verdict to the digit, the hauler never dying and always jumping, snapshot
+  purity, live/replay uid identity, and the spectator round-trip. Missions
+  and charters still use the legacy BattleView cinematic until they get
+  encounters of their own.
+
 - **The manhunt (§5.2, `POLICECFG.manhunt*`)** — past `CRIMECFG.criminal`
   the law stops waiting for a fresh crime: a patrol cuts a dispatched hull
   off partway OUT, before it reaches the mark, purely for the record it
