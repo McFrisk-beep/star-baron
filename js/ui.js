@@ -2026,7 +2026,8 @@ const UI = {
       const p = e.target.closest("[data-replay]");
       if (p) {   // seeded by mission uid — the same fight plays every time
         const r = this.s().reports.find(x => x.uid === p.dataset.replay);
-        if (r && window.BattleView) BattleView.open(r);
+        if (r && window.Encounters && window.EncounterView && Encounters.fromReport(r)) EncounterView.replay(r);
+        else if (r && window.BattleView) BattleView.open(r);
         return;
       }
       const d = e.target.closest("[data-dismiss]"); if (!d) return;
@@ -4733,13 +4734,17 @@ const UI = {
     // player's ship begins on a watched tab, SHOW it — the same movie, same
     // uid, the settle will file as a replayable report. battleSkip (set by
     // skipping an offered movie early) turns this back into toast offers.
-    this._autoBattle = r => {
-      if (!r || !window.BattleView || !window.Combat) return false;
-      if (document.hidden || (this.s().settings || {}).battleSkip) return false;
-      if (BattleView.isOpen()) return false;
-      if (!Combat.replayable(r)) return false;
-      BattleView.open(r, { offered: true });
-      return true;
+    // Canvas-first (owner's direction): fights live in the system scene, and
+    // this offers the MAGNIFIER on them — a clickable toast that opens the
+    // zoom view on the live encounter. Never auto-opens, never hijacks.
+    this._watchToast = (msg, kind, enc) => {
+      if (enc && window.EncounterView && !EncounterView.isOpen()) {
+        this.toast(msg + " ▶ watch", kind, 8000, () => EncounterView.open(enc, { live: true }));
+      } else this.toast(msg, kind, 6500);
+    };
+    this._liveEnc = uid => {
+      const list = window.Encounters ? Encounters.active(Date.now()) : [];
+      return list.find(e => e.uid === uid) || null;
     };
     Bus.on("piracyStart", op => {
       if (window.Game._booting) return;
@@ -4755,13 +4760,10 @@ const UI = {
     Bus.on("piracyEngaged", ({ op }) => {
       if (window.Game._booting) return;
       const where = this.sysName(op.sysId);
-      const r = op.verb === "rob" && window.Piracy ? Piracy.previewReport(op) : null;
       const msg = op.verb === "toll"
         ? `🏴 Shaking ${op.name}'s captain down near ${where}…`
         : `⚔ Engaging ${op.name} near ${where} — going for the hold.`;
-      if (this._autoBattle(r)) this.toast(msg, "info", 5000);
-      else if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the boarding", "info", 7000, () => BattleView.open(r, { offered: true }));
-      else this.toast(msg, "info", 6000);
+      this._watchToast(msg, "info", this._liveEnc(op.id + "rob"));
       this.audioSafe("news");
     });
     Bus.on("policeInbound", ({ op, waves }) => {
@@ -4773,10 +4775,9 @@ const UI = {
     Bus.on("manhuntEngaged", ({ op }) => {
       if (window.Game._booting) return;
       const sh = Fleet.ship(op.shipUid);
-      this.toast(`🚨 A Senate patrol cut ${sh ? sh.name : "your hull"} off en route to `
-        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason.`,
-        "bad", 8000);
-      this._autoBattle(sh && window.Police ? Police.previewManhuntReport(op, sh) : null);
+      this._watchToast(`🚨 A Senate patrol cut ${sh ? sh.name : "your hull"} off en route to `
+        + `${this.sysName(op.sysId)} — you're wanted, and they don't need a reason.`, "bad",
+        this._liveEnc(op.id + "mh0"));
       this.audioSafe("news");
     });
     Bus.on("manhunt", m => {
@@ -4797,10 +4798,9 @@ const UI = {
     Bus.on("policeEngaged", ({ op, chase }) => {
       if (window.Game._booting) return;
       const sh = Fleet.ship(op.shipUid);
-      const r = sh && window.Police ? Police.previewWaveReport(op, sh, 0) : null;
-      this.toast(`⚔ The patrol has ${sh ? sh.name : "your hull"} at ${this.sysName(op.sysId)} — `
-        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing.`, "bad", 7000);
-      this._autoBattle(r);
+      this._watchToast(`⚔ The patrol has ${sh ? sh.name : "your hull"} at ${this.sysName(op.sysId)} — `
+        + `${chase.waves.length} wave${chase.waves.length === 1 ? "" : "s"} closing.`, "bad",
+        this._liveEnc(op.id + "w0"));
       this.audioSafe("news");
       if (window.StarMap) StarMap.refreshInfo();
     });
@@ -4839,7 +4839,9 @@ const UI = {
         kind = "info";
       }
       const r = p.report ? (this.s().reports || []).find(x => x.uid === p.report) : null;
-      if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
+      if (r && window.Encounters && window.EncounterView && Encounters.fromReport(r))
+        this.toast(msg + " ▶ watch the chase", kind, 7500, () => EncounterView.replay(r));
+      else if (r && this.offerWatch(r)) this.toast(msg + " ▶ watch the chase", kind, 7500, () => BattleView.open(r, { offered: true }));
       else this.toast(msg, kind, 7500);
       this.audioSafe("news");
       this.bumpComms();
