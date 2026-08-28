@@ -86,9 +86,9 @@
   pursuit on the way home, odds scaled by the law stamped on the op at
   dispatch, resolving *exactly like a mission* — the outcome is a pure seeded
   function of the op (offline banks the same chase a watched tab sees), then
-  a mission-shaped report lands in Comms → Dispatches that `BattleView`
-  replays off the smuggle template (a run for the gate, pursuers cutting
-  angles), fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
+  a mission-shaped report lands in Comms → Dispatches, and the duel renders
+  live in the system scene (`js/encounters.js` + `js/encounterscene.js`),
+  fielding `ENEMY_CATALOG.police` hulls in pairs. Police are
   formidable but killable — and the stakes are real, at the owner's
   direction: armed robbery books the baron straight onto the watchlist
   (`Crime.bookRobbery` jumps the record to `CRIMECFG.watch`; at or past it
@@ -107,24 +107,32 @@
   every watcher sees the same dance).
 
 - **Canvas-first battles (owner's direction):** fights live in the WORLD,
-  not in a cinematic. `js/encounters.js` describes every engagement as a
-  deterministic ENCOUNTER — cast, window, and a shield/hull/projectile
-  schedule that lands exactly on the pre-rolled verdict; the canvas renders
-  it and never decides it. The system scene draws live encounters small
-  (sprites, mini bars, incoming fire, fireballs) and every fight is
-  clickable; `js/encounterview.js` is the MAGNIFIER — the same snapshot
-  drawn big, live (close it and the fight ticks on in the scene) or as a
-  ▶ Replay rebuilt from the report alone (the uid is the seed, the roster
-  and hauler/wave/enemyCount are the cast, success/lost/damaged the
-  verdict — nothing new stored, server-filed reports replay too).
+  not in a cinematic — no modal, no "click to watch", no ▶ Replay.
+  `js/encounters.js` describes every engagement as a deterministic
+  ENCOUNTER — cast, window, and a shield/hull/projectile schedule that
+  lands exactly on the pre-rolled verdict (the uid is the seed, the roster
+  and hauler/wave/enemyCount/faction/danger are the cast,
+  success/lost/damaged the verdict — nothing new stored);
+  `js/encounterscene.js` is the ONE renderer, drawing it straight into the
+  system scene: glow beams, tracer near-misses, shield arcs and hull sparks
+  on the scheduled hits, thruster flares, seeded fireballs, per-kind
+  furniture (the smuggler's gate, the survey scan), bars, seeded ship
+  radio, and a pulsing LIVE caption naming the engagement. Every action is
+  an encounter kind: rob boardings, toll shakedowns, Senate patrol waves
+  and manhunts, fleet combat, escort raids, smuggling gate runs,
+  assassinations, transport ambushes, charters (which fight with the
+  freight templates) and survey hazards — plus mid-flight voyage events,
+  fielded as non-decisive skirmishes in the system the voyage is crossing.
+  Miss a fight live and the dispatch/fleet report is the record.
   `docs/sql/encounter_presence.sql` makes fights CROSS-PLAYER: a client
   posts report-shaped windows in advance, spectators poll ~1/min and replay
   the identical fight from the seed — same ships, same shots, same winner,
   on every screen. `tools/check_encounters.js` pins the bars landing on the
   verdict to the digit, the hauler never dying and always jumping, snapshot
-  purity, live/replay uid identity, and the spectator round-trip. Missions
-  and charters still use the legacy BattleView cinematic until they get
-  encounters of their own.
+  purity, live/replay uid identity, per-kind behavior (bloodless
+  shakedowns, gate runs, survey silence) and the spectator round-trip.
+  `tools/battle_demo.html` is the bench — every kind replayable on the
+  same renderer without flying it.
 
 - **The manhunt (§5.2, `POLICECFG.manhunt*`)** — past `CRIMECFG.criminal`
   the law stops waiting for a fresh crime: a patrol cuts a dispatched hull
@@ -205,7 +213,7 @@ Almost none of this is new machinery. It is new *verbs* on machinery that shippe
 | `js/voyage.js` — `plan()`, `pos(plan, t)`, `legPhase()` | Position is a pure function of `t`, so two flight plans intersect **analytically**. No simulation, no tick loop |
 | `js/traffic.js` | Named NPC freighters with a real ≤3-commodity manifest. Its own header calls them "the future targets for piracy" |
 | `js/charters.js` — `defenseScore`, `destroyChance`, `payoutFrac` | A fleet-vs-risk resolver that only needs pointing at a second fleet |
-| `js/combat.js` + `js/battleview.js` | Any resolved report can be choreographed and replayed. The fight already has a face |
+| `js/encounters.js` + `js/encounterscene.js` | Any resolved report rebuilds its fight on the scene canvas. The fight already has a face |
 | `js/stock.js` + `STOCKCFG` | Finite per-sector shelves with consumption, `npcOutputMult` relief and sentiment. **This is what makes theft matter** |
 | `js/crime.js` + `CRIMECFG` | A 0–1000 lawfulness score, server-owned, cooling 1/day. Its own ponytail note reserves it for "smuggling/piracy sources" |
 | `CUSTOMS` | Seizure odds, rep shielding, per-system scrutiny — a working fence-or-risk gate |
@@ -528,8 +536,8 @@ the sector green in the meantime.
 
 At intercept time, `Charters.defenseScore` / `destroyChance` runs attacker fleet
 against defender fleet instead of fleet against an abstract band — almost no new
-balance work. Both sides get a report; both can replay it in `BattleView`, which
-already exists. **Neither party needs to be online.**
+balance work. Both sides get a report; both scenes field the same seeded fight
+(`js/encounters.js`). **Neither party needs to be online.**
 
 ### 6.4 The defender's agency is preparation, not reflexes
 
@@ -602,7 +610,7 @@ the system that makes everything else consequential.
   shelf's own supply mechanism.
 - **It escalates if ignored:** camp → outpost → fortress across epochs. More
   suppression, a harder fight, better loot.
-- **Clearing it** is a multi-wave assault through `Combat` / `BattleView`, and
+- **Clearing it** is a multi-wave assault through the encounter model, and
   should be **contribution-based** (one row tallying damage) so several barons can
   chip at it asynchronously. Cleared, it respawns elsewhere in the sector next
   epoch: recurring content, no storage growth.

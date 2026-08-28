@@ -1489,9 +1489,6 @@ const StarMap = {
           return;
         }
         const wx = (mx - cam.x) / cam.zoom, wy = (my - cam.y) / cam.zoom;
-        // A live fight is clickable: open the magnifier on the same encounter.
-        const fight = (this._encHitboxes || []).find(h => Math.hypot(wx - h.x, wy - h.y) <= h.r);
-        if (fight && window.EncounterView) { EncounterView.open(fight.enc, { live: true }); return; }
         const hit = window.POIs && POIs.at(sys.id, wx, wy, 16 / cam.zoom);
         if (hit) { this._showPoiTip(hit, mx, my); return; }
         // An NPC hauler is a contact (§4): click it for the intercept card.
@@ -2447,7 +2444,6 @@ const StarMap = {
     const now = Date.now();
     const ops = (window.Game && Game.state.piracy) || [];
     const wreckMs = (window.POLICECFG || {}).wreckMs || 3000;
-    this._encHitboxes = [];
     const label = (text, x, y, col) => {
       ctx.save();
       ctx.font = "10px system-ui, sans-serif"; ctx.textAlign = "center";
@@ -2455,9 +2451,10 @@ const StarMap = {
       ctx.strokeText(text, x, y); ctx.fillStyle = col; ctx.fillText(text, x, y);
       ctx.restore();
     };
-    // Live encounters at their seeded intercept points — the fight the whole
-    // redesign is about: real ships, shield/hull bars, projectiles, and a
-    // click on any of it opens the zoom view (the magnifier).
+    // Live encounters at their seeded intercept points — everything renders
+    // IN the canvas: real ships, glow beams, shield/hull bars, fireballs.
+    // No click-to-watch, no modal; miss it live and the dispatch is the
+    // record (owner's direction).
     const encs = window.Encounters
       ? Encounters.active(now).concat(Encounters.remoteActive(now)) : [];
     for (const e of encs) {
@@ -2468,8 +2465,7 @@ const StarMap = {
       const r = geom.R * (0.45 + (hs % 25) / 100);
       const aa = ((hs >> 5) % 628) / 100;
       const ax = geom.cx + Math.cos(aa) * r, ay = geom.cy + Math.sin(aa) * r;
-      this._drawEncounter(ctx, e, ax, ay, 150, now);
-      this._encHitboxes.push({ x: ax, y: ay, r: 80, enc: e });
+      if (window.EncounterScene) EncounterScene.draw(ctx, e, { x: ax, y: ay, scale: 150, now });
       if (e.op) fx.pos["pr:" + e.op.id] = { x: ax, y: ay };  // the Live View chase cam
       if (e.remote && e.display) {
         ctx.save();
@@ -2528,54 +2524,6 @@ const StarMap = {
           ax, ay - 26, caught ? "#ff5d73" : "#3ad6a0");
       }
     }
-  },
-
-  // One live encounter, small, at (ax, ay): ships from the same snapshot the
-  // zoom view magnifies, with mini shield/hull bars — theater with a fixed
-  // ending, never a decision.
-  _drawEncounter(ctx, enc, ax, ay, scale, now) {
-    const snap = Encounters.snapshot(enc, now);
-    const px = v => ax + (v - 0.5) * scale, py = v => ay + (v - 0.5) * scale;
-    for (const sh2 of snap.shots) {
-      const f = Math.max(0, Math.min(1, sh2.f));
-      ctx.save();
-      ctx.strokeStyle = `rgba(255,160,110,${(0.8 * (1 - Math.abs(f - 0.6))).toFixed(2)})`;
-      ctx.lineWidth = 1.4;
-      const ix = px(sh2.x1) + (px(sh2.x2) - px(sh2.x1)) * f, iy = py(sh2.y1) + (py(sh2.y2) - py(sh2.y1)) * f;
-      ctx.beginPath(); ctx.moveTo(px(sh2.x1), py(sh2.y1)); ctx.lineTo(ix, iy); ctx.stroke();
-      ctx.restore();
-    }
-    for (const b of snap.booms) {
-      ctx.save(); ctx.globalAlpha = 1 - b.age;
-      const g = ctx.createRadialGradient(px(b.x), py(b.y), 1, px(b.x), py(b.y), 4 + b.age * 26);
-      g.addColorStop(0, "rgba(255,230,170,.95)"); g.addColorStop(1, "rgba(255,90,40,0)");
-      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(px(b.x), py(b.y), 4 + b.age * 26, 0, 7); ctx.fill();
-      ctx.restore();
-    }
-    for (const s of snap.ships) {
-      const x = px(s.x), y = py(s.y);
-      const sz = Math.max(9, s.size * scale * 1.1);
-      const [kind, id] = String(s.sprite || "ship:shuttle").split(":");
-      const im = this.img(kind === "race" ? ASSET.raceship(id) : ASSET.ship(id));
-      ctx.save(); ctx.translate(x, y); ctx.rotate(s.ang || 0);
-      if (im.ok) ctx.drawImage(im, -sz, -sz * 0.6, sz * 2, sz * 1.2);
-      else {
-        ctx.fillStyle = s.side === "you" ? "#3fe3ff" : s.police ? "#8fb4ff" : "#b8a67f";
-        ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.5); ctx.lineTo(-sz * 0.7, -sz * 0.5); ctx.closePath(); ctx.fill();
-      }
-      ctx.restore();
-      if (s.police) this._copLights(ctx, x, y, sz * 0.7, now);
-      const bw = Math.max(16, sz * 1.6), bx = x - bw / 2, by = y + sz * 0.7;
-      ctx.fillStyle = "rgba(4,8,18,.7)"; ctx.fillRect(bx - 1, by - 1, bw + 2, 5);
-      ctx.fillStyle = "rgba(63,227,255,.9)"; ctx.fillRect(bx, by, bw * Math.max(0, s.sh), 1.6);
-      ctx.fillStyle = s.hull > 0.35 ? "rgba(120,220,120,.9)" : "rgba(255,93,115,.95)";
-      ctx.fillRect(bx, by + 2.2, bw * Math.max(0, s.hull), 1.8);
-    }
-    ctx.save();
-    ctx.font = "9px system-ui, sans-serif"; ctx.textAlign = "center";
-    ctx.fillStyle = "rgba(255,194,75,.85)";
-    ctx.fillText("⚔ click to watch", ax, ay + scale * 0.62);
-    ctx.restore();
   },
 
   _drawMiningOps(ctx, sys, now, zoom) {

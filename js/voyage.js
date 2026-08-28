@@ -682,40 +682,12 @@ const Voyages = {
     const line = this.announceOutcome(e, out);
     if (window.UI) {
       const what = e.m ? e.m.title : "Charter fleet";
-      UI.toast(`${meta.ico} ${what} — ${line}${e.watch ? " · ▶ watch on Hub" : ""}`,
+      // Watchable events render live in the system scene (Encounters.active
+      // builds a skirmish encounter for the window) — no modal to offer.
+      UI.toast(`${meta.ico} ${what} — ${line}${e.watch ? " · live in the system scene" : ""}`,
         "warn", 6000);
       if (UI.page === "hub" && UI.updateMissions) UI.updateMissions();
     }
-  },
-
-  // ▶ watch: play the encounter, seeded by the event id — the same fight plays
-  // every time. Every voyage knows its verdict mid-flight now (§4.4):
-  // client-local ones from the dispatch stream, server-settled ones by
-  // mirroring the launch-stamped seed (missions) / the (id, startedAt) resolve
-  // seed (charters) — so a skirmish on a doomed run reads as your line getting
-  // mauled. The wallet still lands only at settle.
-  watch(eventId) {
-    const e = this.allEvents().find(x => x.id === eventId);
-    if (!e || !window.BattleView || !window.Combat) return;
-    const src = e.m || e.c;
-    const uids = e.m ? e.m.shipUids : Charters.shipUids(e.c);
-    const roster = (uids || []).map(u => {
-      const sh = Fleet.ship(u);
-      return sh ? { uid: sh.uid, name: sh.name, type: sh.type } : null;
-    }).filter(Boolean).slice(0, 12);
-    if (!roster.length) return;
-    const type = e.m ? (e.kind === "toll" || e.kind === "customs" ? "smuggle" : e.m.type)
-      : (e.c.band === "high" || e.c.band === "extreme" ? "smuggle" : "transport");
-    const verdict = e.m
-      ? (window.Missions ? Missions.rolledSuccess(e.m) : true)
-      : (window.Charters && Charters.predictClean ? Charters.predictClean(e.c) : true);
-    BattleView.open({
-      uid: "sk:" + e.id, skirmish: true,
-      title: (e.m ? e.m.title : "Charter fleet") + " — skirmish",
-      type, danger: e.m ? e.m.danger : e.c.band,
-      faction: src.faction || null, sysName: this._eventSys(e, Date.now()),
-      success: verdict, lost: [], damaged: [], impounded: [], items: [], roster,
-    });
   },
 
   // ---- wiring --------------------------------------------------------------

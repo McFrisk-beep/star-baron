@@ -9,8 +9,8 @@
    while banked stock and credits are still never touched;
    destroying police is the worst crime on the books and draws a heavier wave,
    capped; the police-only item comes from a broken pair and from nowhere
-   else; and every fought wave files a mission-shaped report BattleView can
-   replay, fielding police hulls in pairs.
+   else; and every fought wave files a mission-shaped report the scene canvas
+   can field (Encounters.fromReport), with police hulls in pairs.
    Run: node tools/check_police.js */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm"), assert = require("assert");
@@ -18,7 +18,7 @@ const fs = require("fs"), path = require("path"), vm = require("vm"), assert = r
 const FILES = ["store.js", "data.js", "flavor.js", "market.js", "galaxy.js", "lanes.js",
   "security.js", "pois.js", "stock.js", "stations.js", "reputation.js", "crime.js",
   "fleet.js", "charters.js", "voyage.js", "raiders.js", "traffic.js", "items.js",
-  "combat.js", "piracy.js", "police.js"];
+  "combat.js", "piracy.js", "police.js", "encounters.js"];
 const T0 = 1_720_000_000_000;
 const boot = () => {
   const ctx = vm.createContext({ console, Math, Date, setTimeout, clearTimeout });
@@ -177,16 +177,16 @@ const robbedOp = (c, law, loot = { foodstuffs: 10 }) => ({
   assert.ok(out.lost && out.lost.uid === sh.uid && out.lost.name === sh.name,
     "the hull is lost with all hands");
   assert.ok(!c.Game.state.ships.includes(sh), "…and gone from the fleet");
-  // The fight is on the record and watchable, fielding a pair.
+  // The fight is on the record and the scene can field it, as a pair.
   const rep = c.Game.state.reports.find(r => r.uid === out.report);
   assert.ok(rep && !rep.success && rep.faction === "police", "a failed-escape report is filed");
   assert.ok(rep.wipe && rep.lost.length === 1 && rep.lost[0].uid === sh.uid,
     "…as a wipe, naming the lost hull");
-  assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
-  const script = c.Combat.script(rep, rep.roster);
-  assert.strictEqual(script.ships.filter(s => s.side === "enemy").length, 2, "the first wave is one pair");
+  const enc = c.Encounters.fromReport(rep);
+  assert.ok(enc && enc.kind === "wave", "…and the scene canvas can field it");
+  assert.strictEqual(enc.sides.foe.length, 2, "the first wave is one pair");
   const names = new Set(c.ENEMY_CATALOG.police.map(e => e.name));
-  for (const s of script.ships) if (s.side === "enemy") assert.ok(names.has(s.name), "police hulls on the field");
+  for (const s of enc.sides.foe) assert.ok(names.has(s.name), "police hulls on the field");
 }
 
 // ---- destroyed: the worst crime on the books, escalating, capped -----------
@@ -470,7 +470,7 @@ const mhOp = (c, shipUid, from) => ({
   assert.strictEqual(Object.keys(c.Game.state.positions).length, 0, "the rob never happened — no loot");
   const rep = c.Game.state.reports.find(r => r.uid === m.report);
   assert.ok(rep && rep.wipe && !rep.success && rep.faction === "police", "filed as a police wipe");
-  assert.ok(c.Combat.replayable(rep), "…and BattleView can play it");
+  assert.ok(c.Encounters.fromReport(rep), "…and the scene canvas can field it");
 }
 
 // Shot their way clear: damaged, charged for the pair, and the run continues.
@@ -499,11 +499,11 @@ const mhOp = (c, shipUid, from) => ({
   assert.ok(!again.some(x => x.piracy && x.piracy.manhunt), "a manhunt resolves exactly once");
 }
 
-// ---- the movie fields what the chart sold ----------------------------------
-// A rob report plays the ACTUAL hauler — convoy role (it never shoots), never
-// destroyed, and it runs for its jump in every outcome — plus its hired guns.
+// ---- the scene fields what the chart sold ----------------------------------
+// A rob encounter plays the ACTUAL hauler — convoy (it never shoots, never
+// dies) and it runs for its jump in every outcome — plus its hired guns.
 // A police wave plays a UNIFORM pair matched to the wave. Counts and sprites
-// must agree with what the player saw outside the movie.
+// must agree with what the player saw outside the fight.
 {
   const c = boot();
   const mk = (success, policeInbound) => ({
@@ -516,25 +516,20 @@ const mhOp = (c, shipUid, from) => ({
     roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
   });
   for (const success of [true, false]) {
-    const rep = mk(success, success);
-    assert.ok(c.Combat.replayable(rep), "a rob report is replayable");
-    const script = c.Combat.script(rep, rep.roster);
-    const foes = script.ships.filter(x => x.side === "enemy");
-    assert.strictEqual(foes.length, 3, "the movie fields exactly the report's count");
-    const hauler = foes.find(x => x.name === "Star Maw");
+    const enc = c.Encounters.fromReport(mk(success, success));
+    assert.ok(enc && enc.kind === "boarding", "a rob report fields a boarding");
+    assert.strictEqual(enc.sides.foe.length, 3, "the scene fields exactly the report's count");
+    const hauler = enc.sides.foe.find(x => x.name === "Star Maw");
     assert.ok(hauler, "the hauler ITSELF is on the field");
     assert.strictEqual(hauler.sprite, "ship:freighter", "…wearing the chart's own hull");
-    assert.strictEqual(hauler.role, "convoy", "…flying convoy");
-    assert.ok(!hauler.deathT, "…and it is never destroyed — stripped, not sunk");
-    assert.ok(hauler.jumpT, "…and it runs for its jump, win or lose");
-    for (const e of foes.filter(x => x !== hauler))
+    assert.ok(hauler.convoy, "…flying convoy — it never shoots, never dies");
+    assert.notStrictEqual(hauler.fate, "dead", "…stripped, not sunk");
+    const D = enc.t1 - enc.t0;
+    assert.ok(!c.Encounters.snapshot(enc, D * 0.99).ships.some(x => x.convoy && x.side === "foe"),
+      "…and it runs for its jump, win or lose");
+    for (const e of enc.sides.foe.filter(x => x !== hauler))
       assert.ok(c.ENEMY_CATALOG.corporate.some(g => g.name === e.name && g.tier <= 1),
         "the guns are light hired security, not warships");
-    // The hauler never fires: no weapon event originates from it.
-    for (const ev of script.events) {
-      if (["beam", "missile", "flak"].includes(ev.kind))
-        assert.notStrictEqual(ev.from, hauler.id, "the hauler never shoots — its job is to run");
-    }
   }
   // Police waves: uniform pairs, stepped by the wave.
   for (const wave of [0, 1, 2]) {
@@ -546,11 +541,10 @@ const mhOp = (c, shipUid, from) => ({
       lost: [{ uid: "s1", name: "Test Hull" }], damaged: [],
       roster: [{ uid: "s1", name: "Test Hull", type: "corvette" }],
     };
-    const script = c.Combat.script(rep, rep.roster);
-    const foes = script.ships.filter(x => x.side === "enemy");
-    assert.strictEqual(foes.length, 2 * (wave + 1), `wave ${wave} fields its pairs exactly`);
+    const enc = c.Encounters.fromReport(rep);
+    assert.strictEqual(enc.sides.foe.length, 2 * (wave + 1), `wave ${wave} fields its pairs exactly`);
     const want = c.ENEMY_CATALOG.police[wave].name;
-    for (const e of foes) assert.strictEqual(e.name, want,
+    for (const e of enc.sides.foe) assert.strictEqual(e.name, want,
       `wave ${wave} flies a UNIFORM ${want} formation — no mixed bag`);
   }
 }

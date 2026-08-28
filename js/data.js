@@ -676,7 +676,7 @@ const PIRACYCFG = {
    The law's RESPONSE half: precincts in top-band systems, standing sector
    patrols that always fly in pairs, and a chase after a successful robbery
    that resolves exactly like a mission battle — wallet first, then a
-   replayable report in Dispatches. Still no AI anywhere: patrols are seeded
+   report in Dispatches. Still no AI anywhere: patrols are seeded
    flight plans (the §5.2 idea, given hulls and lights), and the chase is a
    pure function of the op — a night offline banks the same pursuit a watched
    tab would have seen.

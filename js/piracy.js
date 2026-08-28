@@ -311,13 +311,21 @@ const Piracy = {
       roster: [{ uid: sh.uid, name: sh.name, type: sh.type }],
     };
   },
-  // The same movie, before the settle: the rolls are pure, so the live-watch
-  // offer at engage time and the post-settle replay show the identical fight.
+  // The same fight, before the settle: the rolls are pure, so the live scene
+  // at engage time and any later rebuild show the identical engagement. Toll
+  // shakedowns get the same report shape flagged `toll` — the scene renders
+  // them as a stand-off alongside the mark, not a boarding.
   previewReport(op) {
     const sh = Fleet.ship(op.shipUid);
-    if (!sh || op.verb !== "rob") return null;
+    if (!sh || op.verb === "escort") return null;
     const p = this.preview(op);
-    return this.robReport(op, sh, p.out, !!p.chase, Date.now());
+    const r = this.robReport(op, sh, p.out, !!p.chase, Date.now());
+    if (op.verb === "toll") {
+      r.toll = true;
+      const sys = window.Galaxy ? Galaxy.get(op.sysId) : null;
+      r.title = `Shakedown — ${op.name}` + (sys ? ` (${sys.name})` : "");
+    }
+    return r;
   },
   _fileRobReport(op, sh, out, policeInbound, now) {
     const s = this.s();
@@ -455,7 +463,7 @@ const Piracy = {
         const r = { verb: op.verb, won: out.won, name: op.name, kind: op.kind,
           sysId: op.sysId, credits: out.credits, loot: op.loot || null,
           dmg: out.dmg, crime, ship: sh.name };
-        // The boarding action itself is a replayable Dispatches report.
+        // The boarding action itself files a Dispatches report.
         if (op.verb === "rob")
           r.report = this._fileRobReport(op, sh, out, !!(op.loot && this.preview(op).chase), now);
         // §5.1 response: a rob or a toll that LANDED draws the law (police.js)
